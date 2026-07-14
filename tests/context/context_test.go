@@ -118,6 +118,10 @@ func seedArtifact(t *testing.T, ctx context.Context, s store.Store, sessionID, b
 // seedSession writes a session and returns it.
 func seedSession(t *testing.T, ctx context.Context, s store.Store, sessionID string) {
 	t.Helper()
+	// Set up the active project (required since INV-7 / migration v7).
+	if err := s.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("SetActiveProject: %v", err)
+	}
 	wc := store.WriteContext{Actor: "test", SessionID: sessionID, WritePath: "seed"}
 	sess := &session.Session{
 		SessionID: sessionID,

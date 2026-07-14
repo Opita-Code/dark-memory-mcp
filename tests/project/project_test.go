@@ -507,6 +507,138 @@ func TestProject_MigrationV7_AutoSeed_Idempotent(t *testing.T) {
 	}
 }
 
+// W3-002 (T4a): GetSession must filter by active project. Cross-project
+// reads return nil.
+func TestProject_GetSession_CrossProject_ReturnsNil(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+
+	if err := s.CreateProject(ctx, &project.Project{ProjectID: "acme", DisplayName: "ACME"}); err != nil {
+		t.Fatalf("create acme: %v", err)
+	}
+	if err := s.CreateProject(ctx, &project.Project{ProjectID: "globex", DisplayName: "Globex"}); err != nil {
+		t.Fatalf("create globex: %v", err)
+	}
+
+	// Write a session in project A.
+	s.SetActiveProject(ctx, "acme")
+	wcA := store.WriteContext{Actor: "test", SessionID: "sess-A", WritePath: "test", ProjectID: "acme"}
+	if _, err := s.SaveSession(ctx, wcA, &session.Session{SessionID: "sess-A", Status: string(session.StatusActive)}); err != nil {
+		t.Fatalf("save A: %v", err)
+	}
+
+	// Switch to project B; GetSession("sess-A") must return nil.
+	s.SetActiveProject(ctx, "globex")
+	got, err := s.GetSession(ctx, "sess-A")
+	if err != nil {
+		t.Fatalf("GetSession from globex: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("INV-7 violated: project globex saw project acme's session %+v", got)
+	}
+
+	// Back in A: same id returns the row.
+	s.SetActiveProject(ctx, "acme")
+	gotA, err := s.GetSession(ctx, "sess-A")
+	if err != nil {
+		t.Fatalf("GetSession from acme: %v", err)
+	}
+	if gotA == nil || gotA.SessionID != "sess-A" {
+		t.Fatalf("project acme should see own session, got: %+v", gotA)
+	}
+}
+
+// W3-002 (T4a): ListSessions must filter by active project.
+func TestProject_ListSessions_CrossProject_Isolated(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+
+	if err := s.CreateProject(ctx, &project.Project{ProjectID: "acme", DisplayName: "ACME"}); err != nil {
+		t.Fatalf("create acme: %v", err)
+	}
+	if err := s.CreateProject(ctx, &project.Project{ProjectID: "globex", DisplayName: "Globex"}); err != nil {
+		t.Fatalf("create globex: %v", err)
+	}
+
+	s.SetActiveProject(ctx, "acme")
+	if _, err := s.SaveSession(ctx, store.WriteContext{Actor: "test", SessionID: "sess-A", WritePath: "test", ProjectID: "acme"},
+		&session.Session{SessionID: "sess-A", Status: string(session.StatusActive)}); err != nil {
+		t.Fatalf("save A: %v", err)
+	}
+	s.SetActiveProject(ctx, "globex")
+	if _, err := s.SaveSession(ctx, store.WriteContext{Actor: "test", SessionID: "sess-B", WritePath: "test", ProjectID: "globex"},
+		&session.Session{SessionID: "sess-B", Status: string(session.StatusActive)}); err != nil {
+		t.Fatalf("save B: %v", err)
+	}
+
+	// From B: ListSessions must show only sess-B.
+	sessions, err := s.ListSessions(ctx, 100)
+	if err != nil {
+		t.Fatalf("ListSessions from globex: %v", err)
+	}
+	for _, sess := range sessions {
+		if sess.SessionID == "sess-A" {
+			t.Fatalf("INV-7 violated: project globex saw project acme's session %+v", sess)
+		}
+	}
+
+	// From A: must show sess-A only.
+	s.SetActiveProject(ctx, "acme")
+	sessionsA, err := s.ListSessions(ctx, 100)
+	if err != nil {
+		t.Fatalf("ListSessions from acme: %v", err)
+	}
+	for _, sess := range sessionsA {
+		if sess.SessionID == "sess-B" {
+			t.Fatalf("INV-7 violated: project acme saw project globex's session %+v", sess)
+		}
+	}
+}
+
+// W3-002 (T4a): CloseSession must require the session to belong to the
+// active project. Cross-project close attempts return ErrNotFound and
+// do NOT mutate the row.
+func TestProject_CloseSession_CrossProject_NotClosed(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+
+	if err := s.CreateProject(ctx, &project.Project{ProjectID: "acme", DisplayName: "ACME"}); err != nil {
+		t.Fatalf("create acme: %v", err)
+	}
+	if err := s.CreateProject(ctx, &project.Project{ProjectID: "globex", DisplayName: "Globex"}); err != nil {
+		t.Fatalf("create globex: %v", err)
+	}
+
+	s.SetActiveProject(ctx, "acme")
+	if _, err := s.SaveSession(ctx, store.WriteContext{Actor: "test", SessionID: "sess-A", WritePath: "test", ProjectID: "acme"},
+		&session.Session{SessionID: "sess-A", Status: string(session.StatusActive)}); err != nil {
+		t.Fatalf("save A: %v", err)
+	}
+
+	// Try to close from globex.
+	s.SetActiveProject(ctx, "globex")
+	err := s.CloseSession(ctx, store.WriteContext{Actor: "test", SessionID: "sess-A", WritePath: "test", ProjectID: "globex"}, "sess-A")
+	if err == nil {
+		t.Fatalf("expected error closing cross-project session, got nil")
+	}
+	if !errIs(err, store.ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got: %v", err)
+	}
+
+	// Switch back to A and confirm sess-A is still active.
+	s.SetActiveProject(ctx, "acme")
+	got, err := s.GetSession(ctx, "sess-A")
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if got == nil {
+		t.Fatalf("sess-A disappeared")
+	}
+	if got.Status != string(session.StatusActive) {
+		t.Fatalf("sess-A was closed by cross-project attempt, status=%s", got.Status)
+	}
+}
+
 // helpers
 func errIs(err, target error) bool {
 	for e := err; e != nil; {

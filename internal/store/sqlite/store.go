@@ -388,6 +388,10 @@ func (s *Store) ListWrites(ctx context.Context, f audit.ListFilters) ([]audit.Wr
 // ----- sessions -----
 
 func (s *Store) SaveSession(ctx context.Context, wc store.WriteContext, sess *session.Session) (int64, error) {
+	if err := s.requireProject(); err != nil {
+		return 0, err
+	}
+	projectID := projectIDOrActive(wc.ProjectID, s.ActiveProject()) // capture before locking
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if sess.StartedAt == "" {
@@ -398,10 +402,10 @@ func (s *Store) SaveSession(ctx context.Context, wc store.WriteContext, sess *se
 	}
 	res, err := s.db.ExecContext(ctx,
 		`INSERT INTO sessions (session_id, status, constitution_id, constitution_ver, active_mods,
-		                     started_at, closed_at, notes, parent_session_id, operator)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		                     started_at, closed_at, notes, parent_session_id, operator, project_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sess.SessionID, sess.Status, sess.ConstitutionID, sess.ConstitutionVer, sess.ActiveMods,
-		sess.StartedAt, sess.ClosedAt, sess.Notes, sess.ParentSessionID, sess.Operator)
+		sess.StartedAt, sess.ClosedAt, sess.Notes, sess.ParentSessionID, sess.Operator, projectID)
 	if err != nil {
 		return 0, err
 	}
@@ -423,10 +427,16 @@ func (s *Store) SaveSession(ctx context.Context, wc store.WriteContext, sess *se
 }
 
 func (s *Store) GetSession(ctx context.Context, sessionID string) (*session.Session, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.ActiveProject() // capture before locking
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	row := s.db.QueryRowContext(ctx,
 		`SELECT id, session_id, status, constitution_id, constitution_ver, active_mods,
 		        started_at, closed_at, notes, parent_session_id, operator
-		 FROM sessions WHERE session_id = ?`, sessionID)
+		 FROM sessions WHERE session_id = ? AND project_id = ?`, sessionID, activeProject)
 	var sess session.Session
 	var notes, closedAt sql.NullString
 	if err := row.Scan(&sess.ID, &sess.SessionID, &sess.Status, &sess.ConstitutionID, &sess.ConstitutionVer, &sess.ActiveMods,
@@ -446,12 +456,16 @@ func (s *Store) GetSession(ctx context.Context, sessionID string) (*session.Sess
 }
 
 func (s *Store) CloseSession(ctx context.Context, wc store.WriteContext, sessionID string) error {
+	if err := s.requireProject(); err != nil {
+		return err
+	}
+	activeProject := s.ActiveProject() // capture before locking
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE sessions SET status = ?, closed_at = ? WHERE session_id = ? AND status = ?`,
-		string(session.StatusClosed), now, sessionID, string(session.StatusActive))
+		`UPDATE sessions SET status = ?, closed_at = ? WHERE session_id = ? AND project_id = ? AND status = ?`,
+		string(session.StatusClosed), now, sessionID, activeProject, string(session.StatusActive))
 	if err != nil {
 		return err
 	}
@@ -471,13 +485,19 @@ func (s *Store) CloseSession(ctx context.Context, wc store.WriteContext, session
 }
 
 func (s *Store) ListSessions(ctx context.Context, limit int) ([]session.Session, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.ActiveProject() // capture before locking
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if limit <= 0 {
 		limit = 50
 	}
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, session_id, status, constitution_id, constitution_ver, active_mods,
 		        started_at, closed_at, notes, parent_session_id, operator
-		 FROM sessions ORDER BY id DESC LIMIT ?`, limit)
+		 FROM sessions WHERE project_id = ? ORDER BY id DESC LIMIT ?`, activeProject, limit)
 	if err != nil {
 		return nil, err
 	}
