@@ -544,10 +544,16 @@ func (s *Store) SaveRun(ctx context.Context, wc store.WriteContext, run *researc
 }
 
 func (s *Store) GetRun(ctx context.Context, id int64) (*research.ResearchRun, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.ActiveProject() // capture before locking
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	row := s.db.QueryRowContext(ctx,
 		`SELECT id, session_id, query, intent, backend_used, backends_tried,
 		        took_ms, confidence_avg, errors, created_at
-		 FROM research_runs WHERE id = ?`, id)
+		 FROM research_runs WHERE id = ? AND project_id = ?`, id, activeProject)
 	var run research.ResearchRun
 	var btJSON, errsJSON, sessionID, backendUsed sql.NullString
 	if err := row.Scan(&run.ID, &sessionID, &run.Query, &run.Intent, &backendUsed, &btJSON,
@@ -701,13 +707,19 @@ func (s *Store) Recall(ctx context.Context, opts research.RecallOptions) ([]rese
 }
 
 func (s *Store) ListItems(ctx context.Context, runID int64, source string, limit int) ([]research.Item, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.ActiveProject() // capture before locking
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if limit <= 0 {
 		limit = 50
 	}
 	q := `SELECT id, run_id, title, url, snippet, source, confidence,
 	             freshness_at, lang, raw, created_at
-	      FROM research_items WHERE 1=1`
-	args := []any{}
+	      FROM research_items WHERE project_id = ?`
+	args := []any{activeProject}
 	if runID > 0 {
 		q += ` AND run_id = ?`
 		args = append(args, runID)

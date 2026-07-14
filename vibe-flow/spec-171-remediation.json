@@ -1,0 +1,66 @@
+{
+  "vibe_case": "C1",
+  "constitution": "INV-7 remediation",
+  "spec": {
+    "purpose": "Wave 3 part 1.5: remediate the 5 HIGH findings from review/w3p1. Each task has tests + impl + artifacts. spec 157 stays drift_detected until all 5 are resolved.",
+    "review_under_remediation": "review/w3p1",
+    "spec_originally_drifted": 157,
+    "tasks": [
+      {
+        "id": "T1",
+        "finding": "W3-001",
+        "title": "GetRun + ListItems cross-project isolation",
+        "deliverable": "Both methods filter by active project; tests prove cross-project reads return nil/empty",
+        "tests": [
+          "TestProject_GetRun_CrossProject_ReturnsNil",
+          "TestProject_ListItems_CrossProject_ReturnsEmpty",
+          "TestProject_GetRun_NoActiveProject_Refused",
+          "TestProject_ListItems_NoActiveProject_Refused",
+          "TestProject_GetRun_SameProject_OK (positive control)"
+        ],
+        "files": ["internal/store/sqlite/store.go", "tests/project/project_test.go"]
+      },
+      {
+        "id": "T2",
+        "finding": "W3-005",
+        "title": "Validate SetActiveProject against projects table",
+        "deliverable": "SetActiveProject(id) returns ErrInvalidArgument if id does not exist; special case 'default' allowed for legacy callers",
+        "tests": [
+          "TestProject_SetActiveProject_RejectsUnknown",
+          "TestProject_SetActiveProject_AllowsDefault"
+        ],
+        "files": ["internal/store/sqlite/store.go", "tests/project/project_test.go"]
+      },
+      {
+        "id": "T3",
+        "finding": "W3-004",
+        "title": "Default project auto-seed on Open",
+        "deliverable": "After migrate v7, a 'default' project row exists without manual CreateProject; backward compat for v6 schemas",
+        "tests": [
+          "TestProject_MigrationV7_AutoSeedsDefault",
+          "TestProject_ListProjects_AfterFreshOpen_IncludesDefault"
+        ],
+        "files": ["internal/migrate/sqlite/ddl.go", "tests/project/project_test.go"]
+      },
+      {
+        "id": "T4",
+        "finding": "W3-002",
+        "title": "Apply requireProject + WHERE project_id=? to remaining read methods",
+        "deliverable": "GetSession, ListSessions, GetSpec, ListSpecs, GetBrandGuide, ListBrandGuides, GetComplianceRule, ListComplianceRules, GetArtifact, ListArtifacts, LatestDriftForArtifact, ListDriftReports, LatestSDDEvaluation, ListSDDEvaluations, GetConstitution, ListConstitutions, GetMod, ListMods, ListModLoads, Stats — all filtered by project_id (or documented as global/intentionally unfiltered)",
+        "decision_point": "ActiveConstitution and Stats are global by design (audit, observability). Document explicitly. The remaining ~16 read methods get explicit requireProject + WHERE project_id=?.",
+        "tests": ["tests/project/cross_project_isolation_test.go (suite)"],
+        "files": ["internal/store/sqlite/store.go", "tests/project/project_test.go"]
+      },
+      {
+        "id": "T5",
+        "finding": "W3-003",
+        "title": "Postgres option (b): drop RLS, add explicit WHERE project_id=$1",
+        "deliverable": "Migration v7 postgres no longer creates RLS policies; each read gets explicit WHERE project_id=$1 + requireProject; withProjectTx removed (was dead code); SQL near-mirror of SQLite.",
+        "tests": ["Postgres tests remain SKIP until DARK_TEST_POSTGRES_DSN is set; SQL pattern symmetry verified by inspection"],
+        "files": ["internal/migrate/postgres/ddl.go", "internal/store/postgres/store.go"]
+      }
+    ],
+    "exit_criteria": "All 5 tasks T1-T5 done; spec 170 review re-run shows 0 HIGH; spec 157 marked drift_resolved; Wave 3 part 2 (orchestrators) unblocked."
+  },
+  "tasks_ordered": ["T1", "T2", "T3", "T4", "T5"]
+}

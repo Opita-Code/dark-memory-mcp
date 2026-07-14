@@ -240,6 +240,128 @@ func TestProject_WriteTagging(t *testing.T) {
 	}
 }
 
+// W3-001 (T1): GetRun must filter by active project. Cross-project
+// reads return nil (not the other project's run).
+func TestProject_GetRun_CrossProject_ReturnsNil(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+
+	if err := s.CreateProject(ctx, &project.Project{ProjectID: "acme", DisplayName: "ACME"}); err != nil {
+		t.Fatalf("create acme: %v", err)
+	}
+	if err := s.CreateProject(ctx, &project.Project{ProjectID: "globex", DisplayName: "Globex"}); err != nil {
+		t.Fatalf("create globex: %v", err)
+	}
+
+	// Write a run in project A.
+	s.SetActiveProject("acme")
+	runA := &research.ResearchRun{
+		SessionID: "sess-A", Query: "ACME-secret", Intent: "cve",
+	}
+	idA, err := s.SaveRun(ctx, store.WriteContext{Actor: "test", SessionID: "sess-A", WritePath: "test", ProjectID: "acme"}, runA)
+	if err != nil {
+		t.Fatalf("save A: %v", err)
+	}
+	if idA == 0 {
+		t.Fatalf("expected id > 0")
+	}
+
+	// Switch to project B and try to fetch A's run by id.
+	s.SetActiveProject("globex")
+	got, err := s.GetRun(ctx, idA)
+	if err != nil {
+		t.Fatalf("GetRun from globex: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("INV-7 violated: project globex saw project acme's run (id=%d query=%s)", got.ID, got.Query)
+	}
+
+	// Switch back to A and confirm same id returns the row.
+	s.SetActiveProject("acme")
+	gotA, err := s.GetRun(ctx, idA)
+	if err != nil {
+		t.Fatalf("GetRun from acme: %v", err)
+	}
+	if gotA == nil || gotA.Query != "ACME-secret" {
+		t.Fatalf("project acme should see own run, got: %+v", gotA)
+	}
+}
+
+// W3-001 (T1): ListItems must filter by active project. Cross-project
+// reads return empty.
+func TestProject_ListItems_CrossProject_ReturnsEmpty(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+
+	if err := s.CreateProject(ctx, &project.Project{ProjectID: "acme", DisplayName: "ACME"}); err != nil {
+		t.Fatalf("create acme: %v", err)
+	}
+	if err := s.CreateProject(ctx, &project.Project{ProjectID: "globex", DisplayName: "Globex"}); err != nil {
+		t.Fatalf("create globex: %v", err)
+	}
+
+	// Write a run with items in project A.
+	s.SetActiveProject("acme")
+	idA, err := s.SaveRun(ctx, store.WriteContext{Actor: "test", SessionID: "sess-A", WritePath: "test", ProjectID: "acme"}, &research.ResearchRun{
+		SessionID: "sess-A", Query: "ACME-secret", Intent: "cve",
+		Items: []research.Item{
+			{Title: "acme-only", Snippet: "acme internal", Source: "test", Confidence: 0.9},
+			{Title: "another acme item", Snippet: "private", Source: "test", Confidence: 0.5},
+		},
+	})
+	if err != nil {
+		t.Fatalf("save A: %v", err)
+	}
+
+	// Switch to project B and try to read items of A's run.
+	s.SetActiveProject("globex")
+	itemsB, err := s.ListItems(ctx, idA, "", 50)
+	if err != nil {
+		t.Fatalf("ListItems from globex: %v", err)
+	}
+	if len(itemsB) != 0 {
+		t.Fatalf("INV-7 violated: project globex saw %d items from project acme", len(itemsB))
+	}
+
+	// Switch back to A and confirm same id returns its 2 items.
+	s.SetActiveProject("acme")
+	itemsA, err := s.ListItems(ctx, idA, "", 50)
+	if err != nil {
+		t.Fatalf("ListItems from acme: %v", err)
+	}
+	if len(itemsA) != 2 {
+		t.Fatalf("project acme should see 2 items, got %d", len(itemsA))
+	}
+}
+
+// W3-001 (T1): GetRun with no active project must return ErrSessionRequired.
+func TestProject_GetRun_NoActiveProject_Refused(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+
+	_, err := s.GetRun(ctx, 1)
+	if err == nil {
+		t.Fatalf("expected error when no active project, got nil")
+	}
+	if !errIs(err, store.ErrSessionRequired) {
+		t.Fatalf("expected ErrSessionRequired, got: %v", err)
+	}
+}
+
+// W3-001 (T1): ListItems with no active project must return ErrSessionRequired.
+func TestProject_ListItems_NoActiveProject_Refused(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+
+	_, err := s.ListItems(ctx, 1, "", 10)
+	if err == nil {
+		t.Fatalf("expected error when no active project, got nil")
+	}
+	if !errIs(err, store.ErrSessionRequired) {
+		t.Fatalf("expected ErrSessionRequired, got: %v", err)
+	}
+}
+
 // helpers
 func errIs(err, target error) bool {
 	for e := err; e != nil; {
