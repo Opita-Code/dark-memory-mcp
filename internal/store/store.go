@@ -154,7 +154,14 @@ type Store interface {
 	// to filter every read and tag every write. Empty string clears
 	// (denies all reads until a project is set). Project isolation is
 	// the default; pass CrossProject=true to opt-out for a single read.
-	SetActiveProject(projectID string)
+	//
+	// Returns ErrInvalidArgument if projectID is non-empty and does not
+	// exist in the projects table (catches typos at set-time). The
+	// special id "default" is always allowed even if no row exists yet
+	// (legacy compat; the auto-seed in T3 makes the row materialise
+	// before any production caller runs). On rejection the previous
+	// active project is preserved.
+	SetActiveProject(ctx context.Context, projectID string) error
 	// ActiveProject returns the currently installed project_id.
 	ActiveProject() string
 	// CreateProject inserts a new project. Idempotent on (project_id).

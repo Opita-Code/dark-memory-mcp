@@ -1,4 +1,4 @@
-// Package project_test covers the project namespace (INV-7):
+﻿// Package project_test covers the project namespace (INV-7):
 // isolation between parallel projects sharing the same dark.db, plus
 // the migration v7 backward-compatibility (existing 164 specs in
 // 'default' project), and the Store.SetActiveProject enforcement.
@@ -49,7 +49,7 @@ func TestProject_Isolation_WriteAQueryB_Empty(t *testing.T) {
 	}
 
 	// Switch to project A, write a run + items.
-	s.SetActiveProject("acme")
+	s.SetActiveProject(ctx, "acme")
 	wcA := store.WriteContext{Actor: "test", SessionID: "sess-A", WritePath: "test", ProjectID: "acme"}
 	runA := &research.ResearchRun{
 		SessionID: "sess-A", Query: "CVE-2024-AAA", Intent: "cve",
@@ -63,7 +63,7 @@ func TestProject_Isolation_WriteAQueryB_Empty(t *testing.T) {
 
 	// Switch to project B, write a different run + items so we can verify
 	// both projects have audit rows.
-	s.SetActiveProject("globex")
+	s.SetActiveProject(ctx, "globex")
 	wcB := store.WriteContext{Actor: "test", SessionID: "sess-B", WritePath: "test", ProjectID: "globex"}
 	runB := &research.ResearchRun{
 		SessionID: "sess-B", Query: "GLOBEX-001", Intent: "web",
@@ -74,7 +74,7 @@ func TestProject_Isolation_WriteAQueryB_Empty(t *testing.T) {
 	if _, err := s.SaveRun(ctx, wcB, runB); err != nil {
 		t.Fatalf("save globex run: %v", err)
 	}
-	// Query in B for ACME's CVE — must return 0.
+	// Query in B for ACME's CVE â€” must return 0.
 	items, err := s.Recall(ctx, research.RecallOptions{Query: "CVE-2024-AAA", Limit: 10})
 	if err != nil {
 		t.Fatalf("recall from globex: %v", err)
@@ -84,7 +84,7 @@ func TestProject_Isolation_WriteAQueryB_Empty(t *testing.T) {
 	}
 
 	// Sanity: project A still sees its own data.
-	s.SetActiveProject("acme")
+	s.SetActiveProject(ctx, "acme")
 	itemsA, err := s.Recall(ctx, research.RecallOptions{Query: "CVE-2024-AAA", Limit: 10})
 	if err != nil {
 		t.Fatalf("recall from acme: %v", err)
@@ -129,7 +129,7 @@ func TestProject_MigrationV7_BackwardCompat(t *testing.T) {
 		t.Fatalf("create default: %v", err)
 	}
 	// Set active to 'default' (legacy path).
-	s.SetActiveProject("default")
+	s.SetActiveProject(ctx, "default")
 	wc := store.WriteContext{Actor: "test", SessionID: "legacy-sess", WritePath: "test", ProjectID: "default"}
 	sess := &session.Session{SessionID: "legacy-sess", Status: string(session.StatusActive)}
 	if _, err := s.SaveSession(ctx, wc, sess); err != nil {
@@ -211,7 +211,7 @@ func TestProject_WriteTagging(t *testing.T) {
 	}
 
 	// Write in A
-	s.SetActiveProject("a")
+	s.SetActiveProject(ctx, "a")
 	if _, err := s.SaveRun(ctx, store.WriteContext{Actor: "test", SessionID: "s1", WritePath: "test", ProjectID: "a"}, &research.ResearchRun{
 		SessionID: "s1", Query: "Q1", Intent: "cve",
 	}); err != nil {
@@ -219,7 +219,7 @@ func TestProject_WriteTagging(t *testing.T) {
 	}
 
 	// Write in B
-	s.SetActiveProject("b")
+	s.SetActiveProject(ctx, "b")
 	if _, err := s.SaveRun(ctx, store.WriteContext{Actor: "test", SessionID: "s2", WritePath: "test", ProjectID: "b"}, &research.ResearchRun{
 		SessionID: "s2", Query: "Q2", Intent: "cve",
 	}); err != nil {
@@ -227,7 +227,7 @@ func TestProject_WriteTagging(t *testing.T) {
 	}
 
 	// Switch back to A, confirm A sees only Q1.
-	s.SetActiveProject("a")
+	s.SetActiveProject(ctx, "a")
 	runsA, _ := s.ListRuns(ctx, "", 10)
 	qCount := 0
 	for _, r := range runsA {
@@ -254,7 +254,7 @@ func TestProject_GetRun_CrossProject_ReturnsNil(t *testing.T) {
 	}
 
 	// Write a run in project A.
-	s.SetActiveProject("acme")
+	s.SetActiveProject(ctx, "acme")
 	runA := &research.ResearchRun{
 		SessionID: "sess-A", Query: "ACME-secret", Intent: "cve",
 	}
@@ -267,7 +267,7 @@ func TestProject_GetRun_CrossProject_ReturnsNil(t *testing.T) {
 	}
 
 	// Switch to project B and try to fetch A's run by id.
-	s.SetActiveProject("globex")
+	s.SetActiveProject(ctx, "globex")
 	got, err := s.GetRun(ctx, idA)
 	if err != nil {
 		t.Fatalf("GetRun from globex: %v", err)
@@ -277,7 +277,7 @@ func TestProject_GetRun_CrossProject_ReturnsNil(t *testing.T) {
 	}
 
 	// Switch back to A and confirm same id returns the row.
-	s.SetActiveProject("acme")
+	s.SetActiveProject(ctx, "acme")
 	gotA, err := s.GetRun(ctx, idA)
 	if err != nil {
 		t.Fatalf("GetRun from acme: %v", err)
@@ -301,7 +301,7 @@ func TestProject_ListItems_CrossProject_ReturnsEmpty(t *testing.T) {
 	}
 
 	// Write a run with items in project A.
-	s.SetActiveProject("acme")
+	s.SetActiveProject(ctx, "acme")
 	idA, err := s.SaveRun(ctx, store.WriteContext{Actor: "test", SessionID: "sess-A", WritePath: "test", ProjectID: "acme"}, &research.ResearchRun{
 		SessionID: "sess-A", Query: "ACME-secret", Intent: "cve",
 		Items: []research.Item{
@@ -314,7 +314,7 @@ func TestProject_ListItems_CrossProject_ReturnsEmpty(t *testing.T) {
 	}
 
 	// Switch to project B and try to read items of A's run.
-	s.SetActiveProject("globex")
+	s.SetActiveProject(ctx, "globex")
 	itemsB, err := s.ListItems(ctx, idA, "", 50)
 	if err != nil {
 		t.Fatalf("ListItems from globex: %v", err)
@@ -324,7 +324,7 @@ func TestProject_ListItems_CrossProject_ReturnsEmpty(t *testing.T) {
 	}
 
 	// Switch back to A and confirm same id returns its 2 items.
-	s.SetActiveProject("acme")
+	s.SetActiveProject(ctx, "acme")
 	itemsA, err := s.ListItems(ctx, idA, "", 50)
 	if err != nil {
 		t.Fatalf("ListItems from acme: %v", err)
@@ -359,6 +359,69 @@ func TestProject_ListItems_NoActiveProject_Refused(t *testing.T) {
 	}
 	if !errIs(err, store.ErrSessionRequired) {
 		t.Fatalf("expected ErrSessionRequired, got: %v", err)
+	}
+}
+
+// W3-005 (T2): SetActiveProject must validate against the projects
+// table. Unknown ids are rejected with ErrInvalidArgument; the previous
+// active project is preserved. Empty string still clears.
+func TestProject_SetActiveProject_RejectsUnknown(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+
+	if err := s.CreateProject(ctx, &project.Project{ProjectID: "acme", DisplayName: "ACME"}); err != nil {
+		t.Fatalf("create acme: %v", err)
+	}
+	// Set active to a known project.
+	if err := s.SetActiveProject(ctx, "acme"); err != nil {
+		t.Fatalf("set acme: %v", err)
+	}
+	// Try to set to a typo.
+	if err := s.SetActiveProject(ctx, "acme-typo"); err == nil {
+		t.Fatalf("expected error setting unknown project, got nil")
+	} else if !errIs(err, store.ErrInvalidArgument) {
+		t.Fatalf("expected ErrInvalidArgument, got: %v", err)
+	}
+	// Active project must be unchanged (still "acme", not "").
+	if got := s.ActiveProject(); got != "acme" {
+		t.Fatalf("active project must remain acme after rejection, got %q", got)
+	}
+}
+
+// W3-005 (T2): 'default' is the well-known catch-all project and is
+// allowed even before CreateProject is called for it (legacy compat).
+// T3 will auto-seed the row on Open, but this special case preserves
+// backward compat in the meantime.
+func TestProject_SetActiveProject_AllowsDefault(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+
+	// No CreateProject("default") â€” legacy code path.
+	if err := s.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set default without row should succeed, got: %v", err)
+	}
+	if got := s.ActiveProject(); got != "default" {
+		t.Fatalf("active must be default, got %q", got)
+	}
+}
+
+// W3-005 (T2): Empty string clears the active project (resets to
+// "no project" state). Reads will then return ErrSessionRequired.
+func TestProject_SetActiveProject_ClearOK(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+
+	if err := s.CreateProject(ctx, &project.Project{ProjectID: "acme", DisplayName: "ACME"}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := s.SetActiveProject(ctx, "acme"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	if err := s.SetActiveProject(ctx, ""); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	if got := s.ActiveProject(); got != "" {
+		t.Fatalf("active must be empty after clear, got %q", got)
 	}
 }
 

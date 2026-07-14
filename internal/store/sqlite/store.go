@@ -112,10 +112,25 @@ func (s *Store) SetCanary(token string) {
 // SetActiveProject installs the project_id (INV-7) that the store.Store uses
 // to filter every read and tag every write. Empty string clears and
 // causes subsequent reads to return store.ErrSessionRequired.
-func (s *Store) SetActiveProject(projectID string) {
+//
+// W3-005: non-empty projectID is validated against the projects table;
+// unknown ids return ErrInvalidArgument and leave the previous active
+// project unchanged. The special id "default" is always allowed
+// (legacy compat — see interface docs).
+func (s *Store) SetActiveProject(ctx context.Context, projectID string) error {
+	if projectID != "" && projectID != "default" {
+		p, err := s.GetProject(ctx, projectID)
+		if err != nil {
+			return err
+		}
+		if p == nil {
+			return fmt.Errorf("%w: project_id %q does not exist; create it first", store.ErrInvalidArgument, projectID)
+		}
+	}
 	s.mu.Lock()
 	s.activeProject = projectID
 	s.mu.Unlock()
+	return nil
 }
 
 // ActiveProject returns the currently installed project_id. Empty if
