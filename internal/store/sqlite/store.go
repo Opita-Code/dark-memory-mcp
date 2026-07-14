@@ -888,6 +888,10 @@ func (s *Store) ResearchStatus(ctx context.Context) (*research.Status, error) {
 // ----- specs -----
 
 func (s *Store) SaveSpec(ctx context.Context, wc store.WriteContext, sp *vibeflow.Spec) (int64, error) {
+	if err := s.requireProject(); err != nil {
+		return 0, err
+	}
+	projectID := projectIDOrActive(wc.ProjectID, s.ActiveProject()) // capture before locking
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if sp.CreatedAt == "" {
@@ -897,10 +901,10 @@ func (s *Store) SaveSpec(ctx context.Context, wc store.WriteContext, sp *vibeflo
 		sp.UpdatedAt = sp.CreatedAt
 	}
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO vibe_specs (vibe_case, session_id, constitution_json, spec_json, tasks_json, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO vibe_specs (vibe_case, session_id, constitution_json, spec_json, tasks_json, created_at, updated_at, project_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		sp.VibeCase, nullStr(sp.SessionID), nullStr(sp.Constitution), nullStr(sp.Spec), nullStr(sp.Tasks),
-		sp.CreatedAt, sp.UpdatedAt)
+		sp.CreatedAt, sp.UpdatedAt, projectID)
 	if err != nil {
 		return 0, err
 	}
@@ -919,9 +923,15 @@ func (s *Store) SaveSpec(ctx context.Context, wc store.WriteContext, sp *vibeflo
 }
 
 func (s *Store) GetSpec(ctx context.Context, id int64) (*vibeflow.Spec, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.ActiveProject() // capture before locking
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	row := s.db.QueryRowContext(ctx,
 		`SELECT id, vibe_case, session_id, constitution_json, spec_json, tasks_json, created_at, updated_at
-		 FROM vibe_specs WHERE id = ?`, id)
+		 FROM vibe_specs WHERE id = ? AND project_id = ?`, id, activeProject)
 	var sp vibeflow.Spec
 	var sessionID, constitution, specJSON, tasks, updatedAt sql.NullString
 	if err := row.Scan(&sp.ID, &sp.VibeCase, &sessionID, &constitution, &specJSON, &tasks, &sp.CreatedAt, &updatedAt); err != nil {
@@ -949,6 +959,10 @@ func (s *Store) GetSpec(ctx context.Context, id int64) (*vibeflow.Spec, error) {
 }
 
 func (s *Store) UpdateSpec(ctx context.Context, wc store.WriteContext, id int64, sp *vibeflow.Spec) error {
+	if err := s.requireProject(); err != nil {
+		return err
+	}
+	activeProject := s.ActiveProject() // capture before locking
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now().UTC().Format(time.RFC3339Nano)
@@ -960,8 +974,8 @@ func (s *Store) UpdateSpec(ctx context.Context, wc store.WriteContext, id int64,
 			spec_json         = COALESCE(NULLIF(?, ''), spec_json),
 			tasks_json        = COALESCE(NULLIF(?, ''), tasks_json),
 			updated_at        = ?
-		 WHERE id = ?`,
-		sp.VibeCase, sp.SessionID, sp.Constitution, sp.Spec, sp.Tasks, now, id)
+		 WHERE id = ? AND project_id = ?`,
+		sp.VibeCase, sp.SessionID, sp.Constitution, sp.Spec, sp.Tasks, now, id, activeProject)
 	if err != nil {
 		return err
 	}
@@ -982,9 +996,13 @@ func (s *Store) UpdateSpec(ctx context.Context, wc store.WriteContext, id int64,
 }
 
 func (s *Store) DeleteSpec(ctx context.Context, wc store.WriteContext, id int64) error {
+	if err := s.requireProject(); err != nil {
+		return err
+	}
+	activeProject := s.ActiveProject() // capture before locking
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	res, err := s.db.ExecContext(ctx, `DELETE FROM vibe_specs WHERE id = ?`, id)
+	res, err := s.db.ExecContext(ctx, `DELETE FROM vibe_specs WHERE id = ? AND project_id = ?`, id, activeProject)
 	if err != nil {
 		return err
 	}
@@ -1005,12 +1023,18 @@ func (s *Store) DeleteSpec(ctx context.Context, wc store.WriteContext, id int64)
 }
 
 func (s *Store) ListSpecs(ctx context.Context, f vibeflow.SpecListFilters) ([]vibeflow.Spec, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.ActiveProject() // capture before locking
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if f.Limit <= 0 {
 		f.Limit = 50
 	}
 	q := `SELECT id, vibe_case, session_id, constitution_json, spec_json, tasks_json, created_at, updated_at
-	      FROM vibe_specs WHERE 1=1`
-	args := []any{}
+	      FROM vibe_specs WHERE project_id = ?`
+	args := []any{activeProject}
 	if f.VibeCase != "" {
 		q += ` AND vibe_case = ?`
 		args = append(args, f.VibeCase)

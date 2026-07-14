@@ -16,6 +16,7 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/session"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 	"github.com/dark-agents/dark-memory-mcp/internal/store/runtime"
+	"github.com/dark-agents/dark-memory-mcp/internal/vibeflow"
 )
 
 func openTestStore(t *testing.T) store.Store {
@@ -636,6 +637,72 @@ func TestProject_CloseSession_CrossProject_NotClosed(t *testing.T) {
 	}
 	if got.Status != string(session.StatusActive) {
 		t.Fatalf("sess-A was closed by cross-project attempt, status=%s", got.Status)
+	}
+}
+
+// W3-002 (T4b): SaveSpec + GetSpec + ListSpecs + UpdateSpec + DeleteSpec
+// must filter by active project. Cross-project reads return nil/empty.
+func TestProject_Specs_CrossProject_Isolated(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+
+	if err := s.CreateProject(ctx, &project.Project{ProjectID: "acme", DisplayName: "ACME"}); err != nil {
+		t.Fatalf("create acme: %v", err)
+	}
+	if err := s.CreateProject(ctx, &project.Project{ProjectID: "globex", DisplayName: "Globex"}); err != nil {
+		t.Fatalf("create globex: %v", err)
+	}
+
+	// Write a spec in project A.
+	s.SetActiveProject(ctx, "acme")
+	wcA := store.WriteContext{Actor: "test", SessionID: "sess-A", WritePath: "test", ProjectID: "acme"}
+	spA := &vibeflow.Spec{
+		VibeCase: "C1", SessionID: "sess-A",
+		Constitution: `{"c":1}`, Spec: `{"a":1}`, Tasks: `[{"id":"1"}]`,
+	}
+	idA, err := s.SaveSpec(ctx, wcA, spA)
+	if err != nil {
+		t.Fatalf("SaveSpec A: %v", err)
+	}
+
+	// From B: GetSpec must return nil.
+	s.SetActiveProject(ctx, "globex")
+	got, err := s.GetSpec(ctx, idA)
+	if err != nil {
+		t.Fatalf("GetSpec from globex: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("INV-7 violated: project globex saw project acme's spec %+v", got)
+	}
+
+	// From B: ListSpecs must not include the A spec.
+	listB, _ := s.ListSpecs(ctx, vibeflow.SpecListFilters{Limit: 100})
+	for _, sp := range listB {
+		if sp.ID == idA {
+			t.Fatalf("INV-7 violated: project globex saw project acme's spec in ListSpecs")
+		}
+	}
+
+	// Cross-project Update returns ErrNoRows (no row matches the project filter).
+	err = s.UpdateSpec(ctx, store.WriteContext{Actor: "test", SessionID: "sess-B", WritePath: "test", ProjectID: "globex"},
+		idA, &vibeflow.Spec{VibeCase: "C2"})
+	if err == nil {
+		t.Fatalf("expected error updating cross-project spec, got nil")
+	}
+
+	// Cross-project Delete returns ErrNoRows and does NOT delete the row.
+	if err := s.DeleteSpec(ctx, store.WriteContext{Actor: "test", SessionID: "sess-B", WritePath: "test", ProjectID: "globex"}, idA); err == nil {
+		t.Fatalf("expected error deleting cross-project spec, got nil")
+	}
+
+	// From A: same id still returns the spec (B's delete was a no-op).
+	s.SetActiveProject(ctx, "acme")
+	gotA, err := s.GetSpec(ctx, idA)
+	if err != nil {
+		t.Fatalf("GetSpec from acme: %v", err)
+	}
+	if gotA == nil || gotA.ID != idA {
+		t.Fatalf("project acme should still see own spec, got: %+v", gotA)
 	}
 }
 
