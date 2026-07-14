@@ -1,0 +1,39 @@
+{
+  "$schema": "https://dark-agents.dev/schemas/spec/v1.json",
+  "spec_id": "dark-memory-mcp-rfc-1",
+  "vibe_case": "C1",
+  "case_kind": "C1",
+  "session_id": "dark-memory-mcp-v1",
+  "title": "Dark Memory MCP — Main RFC (supersedes fragmented spec_id 141-145)",
+  "intent": {
+    "what": "Single canonical RFC for Dark Memory MCP. Replaces the five fragmented specs (141-145) that were persisted earlier as a flat CRUD-by-table design. This RFC defines intent-driven tools (~25), context-object retrieval, sequence-aware responses, six type-system invariants, dual-driver storage (SQLite default, Postgres opt-in), and a coexistent sibling relationship with dark-research-mcp.",
+    "why": "The earlier design was surface-level (CRUD per DB table). This RFC addresses the actual friction: the LLM has to call 5-7 tools in sequence to publish one artifact and gets flat rows back. New design: orchestrators as functions, context objects as return shape, sequence-aware `next` field, defense as type-system contract.",
+    "five_commitments": [
+      "P1 Intent before CRUD — every tool answers an intent, not a DB op",
+      "P2 Context object — retrieval returns composed view, not row dump",
+      "P3 Sequence-aware — response includes `next` tool suggestion",
+      "P4 Defense as contract — six invariants at the Store interface boundary",
+      "P5 Economy by default — every retrieval runs Atlan dedup→filter→truncate→compress→cap"
+    ],
+    "supersedes": "spec_id 141, 142, 143, 144, 145 (the fragmented CRUD plan)",
+    "sub_specs_to_cascade": 10
+  },
+  "constitution_ref": "vibe-flow/constitution/dark-memory-mcp.constitution.toml",
+  "brand_ref": "vibe-flow/brands/dark-memory-mcp.brand.json",
+  "tasks_ref": "vibe-flow/tasks/dark-memory-mcp-rfc.tasks.json",
+  "constitution": "vibe-flow/constitution/dark-memory-mcp.constitution.toml",
+  "tasks": "vibe-flow/tasks/dark-memory-mcp-rfc.tasks.json",
+  "rfc_path": "vibe-flow/main/DARK_MEMORY_MCP_RFC.md",
+  "acceptance_criteria": {
+    "must_have": [
+      "RFC published at vibe-flow/main/DARK_MEMORY_MCP_RFC.md and parseable",
+      "spec_id 141-145 superseded via dark_research_drift_log entries referencing this RFC",
+      "10 sub-specs created in dark.db referencing this RFC",
+      "Each sub-spec has its own spec_create + tasks + artifacts + drift check",
+      "go test ./tests/dual_driver/ passes on SQLite",
+      "All 6 invariants tested in tests/invariants/",
+      "All 25 orchestrators unit-tested in tests/orchestrator/",
+      "dark-memory-mcp binary compiles + registers 25 tools + survives 1000-call stress"
+    ]
+  }
+}

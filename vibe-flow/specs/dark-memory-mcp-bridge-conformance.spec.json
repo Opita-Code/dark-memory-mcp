@@ -1,0 +1,38 @@
+{
+  "$schema": "https://dark-agents.dev/schemas/spec/v1.json",
+  "spec_id": "dark-memory-mcp-bridge-conformance",
+  "vibe_case": "C1",
+  "case_kind": "C1",
+  "session_id": "dark-memory-mcp-v1",
+  "title": "Bridge Conformance & Coexistence Architecture (sub-spec 12)",
+  "intent": {
+    "what": "Declarative conformance profile: dark-agents MCPs (dark-research-mcp, dark-memory-mcp, future) conform to MCP 2025-06-18 with extensions. The dark-recall plugin becomes optional opencode-specific glue, not 'the integration layer'. Coexistence versioning (cx.v1/cx.v2/cx.v3) is declared in serverInfo.coexistence_group. Shared state via dark.db with table-level ownership.",
+    "why": "OSINT confirms MCP itself IS the bridge. The harness (Claude, opencode, Cursor, VS Code) is MCP-native per the [MCP architecture](https://modelcontextprotocol.io/docs/concepts/architecture). Writing per-MCP integration glue reinvents what MCP already provides. This document stops the diversification of connection patterns.",
+    "five_commitments": [
+      "No per-MCP integration glue at the harness layer. Harness is MCP-native.",
+      "dark-recall plugin is opencode-specific optional glue, not 'the integration layer'.",
+      "Coexistence contract declared in serverInfo.coexistence_group, not custom headers.",
+      "Every dark-agents MCP conforms to MCP 2025-06-18 with the profile in section 2.",
+      "dark-research-mcp dark_mem_* stays for legacy; new features in dark_memory_*."
+    ],
+    "supersedes": "previous per-MCP integration design (see sub-spec 7 dark-recall v2.3 and sub-spec 8 deprecation shim — these are now scoped to their actual role: opencode-specific UX + legacy compat)",
+    "rfc_path": "vibe-flow/main/BRIDGE_AND_COEXISTENCE.md",
+    "depends_on_sub_specs": [154, 155, 156, 157, 158, 159, 160, 161]
+  },
+  "constitution_ref": "vibe-flow/constitution/dark-memory-mcp.constitution.toml",
+  "brand_ref": "vibe-flow/brands/dark-memory-mcp.brand.json",
+  "tasks_ref": "vibe-flow/tasks/dark-memory-mcp-bridge-conformance.tasks.json",
+  "constitution": "vibe-flow/constitution/dark-memory-mcp.constitution.toml",
+  "tasks": "vibe-flow/tasks/dark-memory-mcp-bridge-conformance.tasks.json",
+  "acceptance_criteria": {
+    "must_have": [
+      "BRIDGE_AND_COEXISTENCE.md published at vibe-flow/main/ and referenced by DARK_MEMORY_MCP_RFC.md",
+      "dark-memory-mcp initialize response includes coexistence_group=dark-agents/memory and coexistence_version=cx.v2",
+      "dark-research-mcp initialize response includes coexistence_group=dark-agents/memory",
+      "tools/list returns exactly 25 dark_memory_* orchestrators in canonical order",
+      "dark-recall plugin v2.3 detects both servers and prefers dark_memory_* with dark_mem_* fallback",
+      "Failure isolation: killing one server does not block the other",
+      "tests/conformance/inspector_test.go runs the MCP Inspector against both servers and asserts the conformance profile"
+    ]
+  }
+}

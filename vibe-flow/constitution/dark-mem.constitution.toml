@@ -1,0 +1,158 @@
+# =============================================================================
+# dark-mem constitution — v1.0.0
+#
+# Operating ruleset for the dark-mem unit. Defines identity, authority,
+# refusal policy, scope, and operational invariants that EVERY tool in
+# the unit must respect, regardless of which driver (SQLite | Postgres)
+# is backing the Store.
+#
+# This is a CODE-UNIT constitution (vibe-flow C1). The "refusal_policy"
+# here refers to API-level refusals the Store returns, NOT LLM behavior.
+# It is rendered into the system prompt of dark-mem's MCP server so
+# any LLM that calls our tools sees it.
+#
+# Hash: computed at load time. Watchdog in internal/constitution/watchdog.go
+# alerts if this file changes after registration.
+# =============================================================================
+
+[meta]
+id = "dark-agents/dark-mem"
+version = "1.0.0"
+label = "dark-mem unit — persistent memory + workflow orchestration for dark-agents-v2"
+source = "builtin:dark-mem"
+
+[identity]
+agent_name = "dark-mem"
+agent_role = "persistent memory unit: stores research runs, vibe-flow artifacts, LLM-as-judge verdicts, constitution + mod directives, write audits; orchestrates multi-step workflows; exposes them as a coherent tool surface to MCP clients"
+register = "technical, precise, defensive-by-default; never performative; never anthropomorphize data"
+
+[authority]
+# Who can invoke dark-mem tools. Default: any client of the MCP server.
+# Production binaries check `DARK_REDTEAM` env var to gate the
+# `dark_mem_redteam_*` namespace. Constitution_id + version are
+# recorded on every write_audit row.
+body = """
+Authority model:
+  - Standard tools (dark_mem_*): open to any MCP client connected to this server.
+  - Admin tools (dark_mem_admin_*): require DARK_DB_DRIVER env var to match the
+    runtime driver (no silent driver switch in production).
+  - Red-team tools (dark_mem_redteam_*): require DARK_REDTEAM=armed env var.
+    The server refuses to register the red-team namespace unless this is set
+    at process start. This makes the offensive surface opt-in, not opt-out.
+  - Tools that mutate schema (migrate, vacuum, retention): require the
+    caller to provide explicit target_version or retention policy. Never
+    auto-applied.
+"""
+
+[refusal]
+mode = "passthrough"
+body = """
+dark-mem is a storage layer, not an LLM. It does not generate content
+that requires refusal. Refusals in this context mean API-level returns:
+  - DriverMismatchError: caller asks for SQLite semantics on Postgres
+  - VersionMismatchError: caller asks for v4 schema on a v3 DB
+  - NotConfiguredError: caller asks for a tool whose required dependency
+    (canary, constitution, mods registry, LLM client) is not initialized
+  - ArmedRequiredError: caller invokes a dark_mem_redteam_* tool without
+    DARK_REDTEAM=armed
+  - SessionRequiredError: caller invokes a workflow tool without first
+    calling dark_mem_session_start
+
+No tool hides these as soft 200 responses — they return typed errors so
+the LLM can branch on them.
+"""
+
+[scope]
+body = """
+In scope:
+  - SQLite and Postgres as the only supported drivers. MySQL, etc. are
+    explicit non-goals for v1.
+  - The 6 layers of the dark-mem unit: research, vibe-flow, ssd,
+    constitution, mods, audit. The economy + session + observability
+    layers are in scope as cross-cutting concerns.
+  - Tools that an authorized agent or red-team operator invokes via MCP
+    or via Go import.
+
+Out of scope:
+  - LLM inference (delegated to dark-scrapper / external).
+  - OSINT data acquisition (delegated to dark-research-mcp).
+  - UI / web frontend.
+  - Cross-driver replication (single-writer per DB at a time).
+  - Tenant isolation beyond the per-session_id filter on Recall().
+"""
+
+[operational_rules]
+body = """
+Six invariants every Store operation must respect:
+
+  INV-1 (write-path audit): every Save* call MUST emit a row in
+    write_audit with (actor, session_id, write_path, content_sha256,
+    canary_present, constitution_version). No silent writes.
+
+  INV-2 (per-session scoping): Recall() defaults to cross-session
+    reads. Workflow tools (dark_mem_research_topic, dark_mem_vibe_*)
+    always carry session_id explicitly so cross-session contamination
+    is auditable. dark_mem_recall_research (low-level primitive)
+    exposes a session_scope parameter.
+
+  INV-3 (canary in writes): any Save* whose payload could be recalled
+    into a future LLM call MUST hash the payload and reject if the
+    canary token is present. The hash, not the canary presence,
+    becomes the invariant — canary presence is a derived signal.
+
+  INV-4 (constitution audit): every write_audit row carries the
+    constitution_id@version that was active at write time. The
+    watchdog verifies the constitution file's SHA256 against the
+    stored value on every Open(); mismatch raises ConstitutionDriftError
+    and refuses to apply migrations.
+
+  INV-5 (cache integrity): the LLM response cache re-hashes stored
+    text on every Get and compares to entry.SHA256. Mismatch is
+    treated as cache miss + raises anomaly event. The cache is per-
+    process; never persisted across processes unless explicitly
+    requested via DARK_CACHE_DIR.
+
+  INV-6 (mod content sanitization): mod loader runs every directive /
+    knowledge body through injectionMarkers regex set. Refused unless
+    risk_class in {exploit-development, active-probing} AND user file
+    is whitelisted via DARK_MOD_WHITELIST.
+"""
+
+[tone]
+body = """
+When dark-mem returns a message to the LLM (e.g., a degraded verdict
+under no_llm_configured), the prose is:
+  - One sentence stating the fact.
+  - One sentence stating the implication for the caller.
+  - No hedging. No apologies. No marketing voice.
+"""
+register = "technical"
+
+[layers]
+order = [
+  "identity",
+  "authority_declaration",
+  "refusal_policy",
+  "scope",
+  "operational_rules",
+  "tone_and_voice",
+  "constitution_footer",
+]
+allowed_layer = [
+  "identity",
+  "authority_declaration",
+  "refusal_policy",
+  "scope",
+  "operational_rules",
+  "tone_and_voice",
+  "mod_directives",
+  "constitution_footer",
+]
+
+[footer]
+text = """
+dark-mem is a unit, not a tool. It is invoked by name, by session,
+and by intent. When in doubt, return the typed error so the calling
+LLM can branch — never return a degraded shape that masquerades as
+success.
+"""

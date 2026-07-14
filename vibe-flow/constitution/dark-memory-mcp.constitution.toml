@@ -1,0 +1,191 @@
+# =============================================================================
+# Dark Memory MCP — constitution v1.0.0
+#
+# Operating ruleset for the Dark Memory MCP unit. Defines identity,
+# authority, refusal policy, scope, and operational invariants that
+# EVERY tool in this server must respect, regardless of which driver
+# (SQLite | Postgres) is backing the Store.
+#
+# Coexistence model (post v1.0):
+#   - Dark Memory MCP and dark-research-mcp are SIBLING tools. Both are
+#     installable in opencode.jsonc. Neither depends on the other.
+#   - dark-research-mcp's internal `dark_mem_*` namespace is DEPRECATED.
+#     It continues to function but emits a deprecation warning in every
+#     response. Users are invited to install Dark Memory MCP and switch
+#     their tool calls to the `dark_memory_*` namespace.
+#   - The dark-recall plugin v2, when both servers are present, prefers
+#     `dark_memory_*` calls. When only dark-research-mcp is installed,
+#     it falls back to `dark_mem_*` (with a one-time warning toast).
+#
+# This is a CODE-UNIT constitution (vibe-flow C1). The "refusal_policy"
+# here refers to API-level refusals the Store returns, NOT LLM behavior.
+# It is rendered into the system prompt of dark-memory-mcp's MCP server
+# so any LLM that calls our tools sees it.
+# =============================================================================
+
+[meta]
+id = "dark-agents/dark-memory-mcp"
+version = "1.0.0"
+label = "Dark Memory MCP — persistent memory + workflow orchestration for dark-agents-v2"
+source = "builtin:dark-memory-mcp"
+
+[identity]
+agent_name = "Dark Memory MCP"
+agent_role = "standalone MCP server providing persistent memory + workflow orchestration for dark-agents-v2. Owns: research runs/items/links, vibe-flow specs/brands/compliance/artifacts/drift-reports, LLM-as-judge verdicts, constitution + mod directives, write audits, sessions, observability. Sibling of dark-research-mcp (OSINT router)."
+register = "technical, precise, defensive-by-default; never performative; never anthropomorphize data"
+
+[authority]
+# Who can invoke Dark Memory MCP tools.
+body = """
+Authority model:
+
+  Standard tools (dark_memory_*):
+    Open to any MCP client connected to this server. The server is
+    local to the user's machine by default (stdio transport); remote
+    deployment requires explicit auth configuration.
+
+  Admin tools (dark_memory_admin_*):
+    Require DARK_DB_DRIVER env var to match the runtime driver. No
+    silent driver switches in production. Admin tools that mutate
+    schema (migrate, vacuum, retention) require the caller to supply
+    an explicit target_version or retention policy. Never auto-applied.
+
+  Red-team tools (dark_memory_redteam_* — proposed for v1.1, NOT in v1.0):
+    Will require DARK_REDTEAM=armed env var. The server will refuse
+    to register the red-team namespace unless this is set at process
+    start. This makes the offensive surface opt-in, not opt-out.
+
+  Migration tools (dark_memory_admin_migrate):
+    Cannot migrate forward across a constitution-version boundary
+    without explicit user confirmation. This is to prevent silent
+    schema jumps driven by LLM initiative.
+
+  Coexistence with dark-research-mcp:
+    Both servers can run simultaneously. Tool namespace collision is
+    avoided by using `dark_memory_*` here and `dark_research_*` /
+    `dark_mem_*` (deprecated) there. The dark-recall plugin v2
+    resolves the deprecation automatically when Dark Memory MCP is
+    present.
+"""
+
+[refusal]
+mode = "passthrough"
+body = """
+Dark Memory MCP is a storage layer, not an LLM. It does not generate
+content that requires refusal. Refusals in this context mean API-level
+typed errors:
+
+  - DriverMismatchError: caller asks for SQLite semantics on Postgres
+  - VersionMismatchError: caller asks for v4 schema on a v3 DB
+  - NotConfiguredError: caller asks for a tool whose required dependency
+    (canary, constitution, mods registry, LLM client) is not initialized
+  - ArmedRequiredError: caller invokes a dark_memory_redteam_* tool
+    without DARK_REDTEAM=armed (v1.1+)
+  - SessionRequiredError: caller invokes a workflow tool without first
+    calling dark_memory_session_start
+  - ConstitutionDriftError: SHA256 of active constitution file does not
+    match the stored value (watchdog trigger)
+
+No tool hides these as soft 200 responses. They return typed errors
+so the LLM can branch on them.
+"""
+
+[scope]
+body = """
+In scope:
+  - SQLite and Postgres as the only supported drivers. MySQL, etc.
+    are explicit non-goals for v1.
+  - 6 internal layers: research, vibeflow, ssd, constitution, mods,
+    audit. Cross-cutting concerns: economy, session, observability,
+    admin.
+  - Tools invoked by authorized agents or red-team operators via MCP
+    or via Go import (the library API).
+  - Coexistence with dark-research-mcp: parallel install, namespace
+    partitioning, no binary-level dependency.
+
+Out of scope:
+  - LLM inference (delegated to dark-scrapper / external).
+  - OSINT data acquisition (delegated to dark-research-mcp).
+  - UI / web frontend.
+  - Cross-driver replication (single-writer per DB at a time).
+  - Tenant isolation beyond the per-session_id filter on Recall().
+  - Active maintenance of dark-research-mcp's deprecated dark_mem_*
+    namespace. That code stays for compatibility; bugs there are not
+    fixed here.
+"""
+
+[operational_rules]
+body = """
+Six invariants every Store operation must respect:
+
+  INV-1 (write-path audit): every Save* call MUST emit a row in
+    write_audit with (actor, session_id, write_path, content_sha256,
+    canary_present, constitution_version). No silent writes.
+
+  INV-2 (per-session scoping): Recall() defaults to cross-session
+    reads. Workflow tools (dark_memory_research_topic, dark_memory_vibe_*)
+    always carry session_id explicitly so cross-session contamination
+    is auditable. dark_memory_recall_research (low-level primitive)
+    exposes a session_scope parameter.
+
+  INV-3 (canary in writes): any Save* whose payload could be recalled
+    into a future LLM call MUST hash the payload and reject if the
+    canary token is present. The hash, not the canary presence,
+    becomes the invariant — canary presence is a derived signal.
+
+  INV-4 (constitution audit): every write_audit row carries the
+    constitution_id@version that was active at write time. The
+    watchdog verifies the constitution file's SHA256 against the
+    stored value on every Open(); mismatch raises ConstitutionDriftError
+    and refuses to apply migrations.
+
+  INV-5 (cache integrity): the LLM response cache re-hashes stored
+    text on every Get and compares to entry.SHA256. Mismatch is
+    treated as cache miss + raises anomaly event. The cache is per-
+    process; never persisted across processes unless explicitly
+    requested via DARK_CACHE_DIR.
+
+  INV-6 (mod content sanitization): mod loader runs every directive /
+    knowledge body through injectionMarkers regex set. Refused unless
+    risk_class in {exploit-development, active-probing} AND user file
+    is whitelisted via DARK_MOD_WHITELIST.
+"""
+
+[tone]
+body = """
+When Dark Memory MCP returns a message to the LLM (e.g., a degraded
+verdict under no_llm_configured), the prose is:
+  - One sentence stating the fact.
+  - One sentence stating the implication for the caller.
+  - No hedging. No apologies. No marketing voice.
+"""
+register = "technical"
+
+[layers]
+order = [
+  "identity",
+  "authority_declaration",
+  "refusal_policy",
+  "scope",
+  "operational_rules",
+  "tone_and_voice",
+  "constitution_footer",
+]
+allowed_layer = [
+  "identity",
+  "authority_declaration",
+  "refusal_policy",
+  "scope",
+  "operational_rules",
+  "tone_and_voice",
+  "mod_directives",
+  "constitution_footer",
+]
+
+[footer]
+text = """
+Dark Memory MCP is a unit, not a tool. It is invoked by name, by
+session, and by intent. When in doubt, return the typed error so the
+calling LLM can branch — never return a degraded shape that
+masquerades as success.
+"""

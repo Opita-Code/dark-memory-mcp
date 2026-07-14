@@ -1,0 +1,117 @@
+{
+  "$schema": "https://dark-agents.dev/schemas/spec/v1.json",
+  "spec_id": "dark-mem-v1",
+  "vibe_case": "C1",
+  "case_kind": "C1",
+  "session_id": "dark-mem-v1-init",
+  "title": "dark-mem: persistent memory unit for dark-agents-v2 (v1)",
+  "intent": {
+    "what": "Extract dark-mem from dark-research-mcp into a standalone Go module that exposes a library API AND an MCP server. The library has zero MCP dependency; the binary wires it to MCP. Provide dual-driver persistence (SQLite + Postgres) with a single Store interface. Implement the six operational invariants from the constitution. Expose ~50 tools organized by lifecycle: session, research, vibeflow, ssd, constitution, mods, economy, observability, admin.",
+    "why": "Three forces converge: (1) SQLite's single-writer mutex is the operational ceiling under multi-agent load — Postgres with proper connection pooling removes it; (2) dark-mem currently lives as `internal/mem/` inside dark-research-mcp, which couples memory to the OSINT router and makes it impossible to evolve independently or share with other agents; (3) the dark-recall v2 plugin auto-prefills recalled research into every LLM turn, and the existing schema does not distinguish cross-session reads from per-session reads — engineering decisions baked into the unit's contract (not a CVE, an architecture gap). The standalone unit lets dark-research-mcp shrink to a pure router, lets other agents import dark-mem, and centralizes the defensive invariants in one audited codebase.",
+    "non_goals": [
+      "MySQL or other drivers",
+      "Cross-driver replication or sharding",
+      "LLM inference (delegated to dark-scrapper)",
+      "UI / web frontend",
+      "Tenant isolation beyond session_id filter"
+    ],
+    "in_scope_layers": [
+      "research",
+      "vibeflow",
+      "ssd",
+      "constitution",
+      "mods",
+      "audit",
+      "economy",
+      "session",
+      "observability",
+      "admin"
+    ],
+    "out_of_scope_layers": [
+      "inference",
+      "osint-acquisition",
+      "ui"
+    ]
+  },
+  "constitution_ref": "vibe-flow/constitution/dark-mem.constitution.toml",
+  "brand_ref": "vibe-flow/brands/dark-mem.brand.json",
+  "tasks_ref": "vibe-flow/tasks/dark-mem-v1.tasks.json",
+  "constitution": "vibe-flow/constitution/dark-mem.constitution.toml",
+  "tasks": "vibe-flow/tasks/dark-mem-v1.tasks.json",
+  "acceptance_criteria": {
+    "must_have": [
+      "go.mod declares module github.com/dark-agents/dark-mem with NO mcp-go dependency",
+      "internal/store.Store interface exists; both internal/store/sqlite and internal/store/postgres implement it",
+      "go test ./tests/dual_driver/... passes against BOTH drivers with identical assertions",
+      "dark-mem-mcp binary starts, registers all tools, and survives 1000-call stress test",
+      "dark-mem-cli binary supports: migrate, vacuum, schema-status, set-driver",
+      "Write audit row emitted for every Save* call (verify in tests/audit_test.go)",
+      "Canary check rejects Save* whose payload contains the active canary (verify in tests/canary_test.go)",
+      "Per-session Recall filter returns correct subset (verify in tests/session_scope_test.go)",
+      "Constitution watchdog raises on SHA256 mismatch (verify in tests/watchdog_test.go)",
+      "All 6 invariants from the constitution are exercised by at least one test"
+    ],
+    "should_have": [
+      "Migrations v1–v6 applied cleanly to a fresh dark.db",
+      "Migrations v1–v6 applied cleanly to a fresh Postgres database",
+      "Existing dark.db (v3 schema) migrates forward to v6 without data loss",
+      "Performance: P50 SaveRun latency < 5ms on SQLite, < 10ms on Postgres (LAN)",
+      "Performance: P50 Recall latency < 10ms on SQLite with 10k rows, < 30ms on Postgres with 100k rows",
+      "dark-research-mcp imports the library and replaces internal/mem/"
+    ],
+    "could_have": [
+      "Tool: dark_mem_economize applies Atlan 5-bucket pipeline",
+      "Tool: dark_mem_memory_state returns the LLM-visible memory footprint",
+      "Vector recall via pgvector extension (Postgres-only, optional)"
+    ]
+  },
+  "api_surface": {
+    "library": "github.com/dark-agents/dark-mem/store",
+    "library_constructors": [
+      "sqlite.Open(ctx, cfg) (*Store, error)",
+      "postgres.Open(ctx, cfg) (*Store, error)",
+      "mem.Open(ctx, cfg) (*Store, error)  // driver auto-detection"
+    ],
+    "mcp_tools_count": 52,
+    "tool_namespaces": [
+      "dark_mem_session_* (3 tools)",
+      "dark_mem_research_* (6 tools)",
+      "dark_mem_recall_* (6 tools)",
+      "dark_mem_vibe_* (4 tools)",
+      "dark_mem_spec_* (5 tools)",
+      "dark_mem_brand_* (4 tools)",
+      "dark_mem_compliance_* (3 tools)",
+      "dark_mem_artifact_* (6 tools)",
+      "dark_mem_drift_* (3 tools)",
+      "dark_mem_ssd_* (9 tools)",
+      "dark_mem_constitution_* (4 tools)",
+      "dark_mem_mod_* (5 tools)",
+      "dark_mem_economy_* (3 tools)",
+      "dark_mem_observability_* (4 tools)",
+      "dark_mem_admin_* (8 tools)"
+    ]
+  },
+  "migration_plan": {
+    "from_sqlite_only": [
+      "1. Build dark-mem with both drivers (sqlite + postgres)",
+      "2. Run dark-mem-cli migrate against existing SQLite dark.db — applies v4-v6",
+      "3. Verify write_audit table populated for every legacy write (backfill or skip)",
+      "4. Swap DARK_DB_DSN to Postgres; run dark-mem-cli migrate — applies v1-v6 fresh",
+      "5. Cut traffic over via DARK_DB_DRIVER env var in opencode.jsonc",
+      "6. Keep SQLite as fallback (DARK_DB_DRIVER=sqlite)"
+    ],
+    "from_dark_research_mcp": [
+      "1. dark-research-mcp replaces internal/mem/ with import github.com/dark-agents/dark-mem",
+      "2. Tools renamed: dark_research_spec_create → dark_mem_spec_create etc.",
+      "3. dark-research-mcp v0.x deprecation notice; v1.0 requires dark-mem as dependency",
+      "4. opencode.jsonc adds the dark-mem MCP server alongside dark-research-mcp"
+    ]
+  },
+  "evidence_required": [
+    "go test ./... — passes on both drivers",
+    "go vet ./... — clean",
+    "go build ./... — produces dark-mem-mcp.exe + dark-mem-cli.exe + dark-mem-inspect.exe",
+    "End-to-end: dark-mem-mcp starts, registers 52 tools, accepts 1000 calls without deadlock",
+    "Drift verdict: dark_ssd_drift_judge applied to the generated artifacts vs this spec"
+  ]
+}

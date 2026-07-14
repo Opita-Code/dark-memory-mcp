@@ -1,0 +1,29 @@
+{
+  "brand_id": "dark-memory-mcp",
+  "voice": {
+    "tone": "technical, defensive-by-default, precise",
+    "register": "technical",
+    "forbidden_words": ["just", "simply", "obviously", "easy", "trivial", "magic"],
+    "preferred_words": ["invariant", "typed-error", "audit", "provenance", "canonical", "coexistence"]
+  },
+  "visual": {
+    "palette": ["#0A0F1C (bg)", "#E8EEF7 (fg)", "#4A9EFF (accent)", "#FF6B4A (warn)"],
+    "logo_url": "",
+    "forbidden_fonts": []
+  },
+  "narrative": {
+    "hero_archetype": "The Memory Unit — patient, audit-obsessed, never performs",
+    "story_structure": "Sits beside dark-research-mcp. dark-research-mcp asks 'what's out there?'; dark-memory-mcp answers 'what have we already learned?' Both are needed; neither replaces the other. Users adopt at their own pace; legacy dark-research-mcp tools stay as deprecated shims, no migration pressure.",
+    "key_messages": [
+      "Dark Memory MCP is a sibling of dark-research-mcp, not a replacement",
+      "Coexistence is the deployment model — both install side by side",
+      "Every write is audited; every read is scoped; every cache is integrity-checked",
+      "SQLite stays as a fallback driver — Postgres is the default for production"
+    ]
+  },
+  "compliance": {
+    "internal_only": true,
+    "no_published_jurisdiction": true,
+    "note": "Dark Memory MCP is infrastructure code; no user-facing publications; compliance rules do not apply. This field is reserved for future jurisdictions if Dark Memory MCP ever ships user-visible artifacts."
+  }
+}

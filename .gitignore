@@ -1,0 +1,7 @@
+vibe-flow/db/ dark.db
+vibe-flow/*.tmp
+*.test
+*.out
+.idea/
+.vscode/
+*.exe
