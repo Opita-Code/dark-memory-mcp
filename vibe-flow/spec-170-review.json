@@ -1,0 +1,23 @@
+{
+  "vibe_case": "C2",
+  "constitution": "review-findings",
+  "spec": {
+    "purpose": "Wave 3 part 1 review findings (project namespace / INV-7)",
+    "review_id": "w3p1",
+    "reviewed_at": "2026-07-14T23:50:00Z",
+    "reviewer": "dark-agents-v2 reviewer",
+    "spec_under_review": 157,
+    "summary": "11 findings: 5 HIGH, 4 MEDIUM, 2 LOW. Wave 3 part 1 was premature-closed; re-open spec 157 as drift_detected. Findings doc: review-w3p1-findings.json",
+    "findings_count": 11,
+    "high": 5,
+    "medium": 4,
+    "low": 2,
+    "verdict": "drift_detected"
+  },
+  "tasks": [
+    "Create findings doc (review-w3p1-findings.json)",
+    "Log all 8 review-surveyed files as artifacts under spec 170",
+    "Log drift_detected on spec 157",
+    "Schedule remediation sub-spec 171 (Wave 3 part 1.5 fixes)"
+  ]
+}
