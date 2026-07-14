@@ -88,11 +88,42 @@ func openSQLite(ctx context.Context, cfg store.Config) (store.Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	// W3-004 (T3): After migration v7, ensure the 'default' project row
+	// exists. Backward compat — existing data (164+ specs) sits in
+	// project_id='default' via the column DEFAULT, and SetActiveProject
+	// special-cases 'default' so legacy callers work. Auto-seeding makes
+	// the row materialise so ListProjects / GetProject('default') return
+	// non-empty on first open. Idempotent via INSERT OR IGNORE.
+	if err := s.ensureDefaultProject(ctx); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("sqlite: ensure default project: %w", err)
+	}
 	if err := s.runWatchdog(ctx); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
 	return s, nil
+}
+
+// ensureDefaultProject is called from openSQLite after migrations.
+// Idempotent: if a 'default' row already exists (e.g. second open of
+// the same DB file), this is a no-op. Safe to call repeatedly.
+func (s *Store) ensureDefaultProject(ctx context.Context) error {
+	var n int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM projects WHERE project_id = 'default'`).Scan(&n); err != nil {
+		return fmt.Errorf("count default: %w", err)
+	}
+	if n > 0 {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT OR IGNORE INTO projects (project_id, display_name, created_at) VALUES ('default', 'Default Project', ?)`,
+		time.Now().UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return fmt.Errorf("insert default: %w", err)
+	}
+	return nil
 }
 
 // buildSafetyHolder prefers cfg.Safety (test-injected) over a fresh

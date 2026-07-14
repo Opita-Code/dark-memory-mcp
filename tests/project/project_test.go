@@ -425,6 +425,88 @@ func TestProject_SetActiveProject_ClearOK(t *testing.T) {
 	}
 }
 
+// W3-004 (T3): After Open() (which runs migration v7), the 'default'
+// project row must exist without an explicit CreateProject call.
+// Backward compat for legacy data and dark-research-mcp coexistence.
+func TestProject_MigrationV7_AutoSeedsDefault(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+
+	// No CreateProject calls. The 'default' row must be there.
+	got, err := s.GetProject(ctx, "default")
+	if err != nil {
+		t.Fatalf("GetProject(default): %v", err)
+	}
+	if got == nil {
+		t.Fatalf("default project not auto-seeded after Open()")
+	}
+	if got.DisplayName == "" {
+		t.Fatalf("default project has empty display name: %+v", got)
+	}
+
+	// ListProjects must include 'default'.
+	list, err := s.ListProjects(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListProjects: %v", err)
+	}
+	found := false
+	for _, p := range list {
+		if p.ProjectID == "default" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("ListProjects did not include 'default': %+v", list)
+	}
+}
+
+// W3-004 (T3): Idempotent. Reopening the same DB file does NOT create
+// a duplicate 'default' row.
+func TestProject_MigrationV7_AutoSeed_Idempotent(t *testing.T) {
+	ctx := context.Background()
+	cfg := store.Config{
+		Driver:      store.DriverSQLite,
+		DSN:         filepath.Join(t.TempDir(), "test.db"),
+		WALMode:     true,
+		ForeignKeys: true,
+		BusyTimeout: 5 * time.Second,
+	}
+	// First open: creates default.
+	s1, err := runtime.Open(ctx, cfg)
+	if err != nil {
+		t.Fatalf("open 1: %v", err)
+	}
+	if err := s1.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set active default (1): %v", err)
+	}
+	if err := s1.Close(); err != nil {
+		t.Fatalf("close 1: %v", err)
+	}
+	// Second open on same file: default must still be there, no duplicate.
+	s2, err := runtime.Open(ctx, cfg)
+	if err != nil {
+		t.Fatalf("open 2: %v", err)
+	}
+	defer s2.Close()
+	if err := s2.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set active default (2): %v", err)
+	}
+	list, err := s2.ListProjects(ctx, 100)
+	if err != nil {
+		t.Fatalf("ListProjects: %v", err)
+	}
+	defaultCount := 0
+	for _, p := range list {
+		if p.ProjectID == "default" {
+			defaultCount++
+		}
+	}
+	if defaultCount != 1 {
+		t.Fatalf("expected exactly 1 'default' project after reopen, got %d", defaultCount)
+	}
+}
+
 // helpers
 func errIs(err, target error) bool {
 	for e := err; e != nil; {
