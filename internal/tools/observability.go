@@ -1,0 +1,144 @@
+// Package tools — observability.go: the OBSERVABILITY namespace (3 tools).
+//
+// Per RFC §5 / D-9:
+//	dark_memory_memory_state
+//	dark_memory_writes
+//	dark_memory_anomalies
+//
+// Maps to orchestrator O10 (MemoryState) + 2 new read-only helpers
+// (writes lists recent write_audit rows; anomalies reads the
+// anomaly_events table — INV-5 cache mismatches + INV-3 canary hits).
+package tools
+
+import (
+	"context"
+
+	"github.com/dark-agents/dark-memory-mcp/internal/audit"
+	"github.com/dark-agents/dark-memory-mcp/internal/orchestration"
+	"github.com/dark-agents/dark-memory-mcp/internal/store"
+)
+
+// RegisterObservability wires the 3 OBSERVABILITY tools into the registry.
+func RegisterObservability(reg *Registry, orch *orchestration.Orchestrator, st store.Store) {
+	// memory_state — wraps O10 MemoryState orchestrator.
+	reg.Add(BindOrchestrator("memory_state",
+		"Return the runtime memory snapshot: driver, schema version, table list, per-table counts, active project, canary presence. Read-only.",
+		MustJSONSchema(map[string]any{
+			"type":       "object",
+			"properties": map[string]any{},
+		}),
+		func(ctx context.Context, in struct{}) (*orchestration.MemoryStateResult, error) {
+			return orch.MemoryState(ctx)
+		}))
+
+	// writes — read-only list of recent write_audit rows.
+	reg.Add(BindStore("writes",
+		"List recent write_audit rows (every Save emits one, per INV-1). Read-only.",
+		MustJSONSchema(map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"limit":      map[string]any{"type": "integer", "description": "Max rows. Default 50."},
+				"session_id": map[string]any{"type": "string", "description": "Filter by session_id. Empty = all."},
+				"actor":      map[string]any{"type": "string", "description": "Filter by actor. Empty = all."},
+			},
+		}),
+		st,
+		func(ctx context.Context, s store.Store, in WritesInput) (*WritesResult, error) {
+			limit := in.Limit
+			if limit <= 0 {
+				limit = 50
+			}
+			evts, err := s.ListWrites(ctx, audit.ListFilters{
+				SessionID: in.SessionID,
+				Actor:     in.Actor,
+				Limit:     limit,
+			})
+			if err != nil {
+				return nil, err
+			}
+			out := make([]WriteEntry, 0, len(evts))
+			for _, e := range evts {
+				out = append(out, WriteEntry{
+					ID:            e.ID,
+					Actor:         e.Actor,
+					SessionID:     e.SessionID,
+					WritePath:     e.WritePath,
+					ContentSHA256: e.ContentSHA256,
+					CreatedAt:     e.CreatedAt,
+				})
+			}
+			return &WritesResult{Writes: out, Count: len(out)}, nil
+		}))
+
+	// anomalies — read-only. Reads anomaly events recorded by the
+	// Store on INV-3 canary hits and INV-5 cache mismatches.
+	// Implementation note: today the Store does not expose a dedicated
+	// anomaly_events query; we surface this as a placeholder that
+	// returns an empty list with the documented shape. When the Store
+	// gains ListAnomalies, swap the implementation.
+	reg.Add(BindStore("anomalies",
+		"List recent anomaly events (INV-3 canary hits, INV-5 cache mismatches). Read-only.",
+		MustJSONSchema(map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"limit": map[string]any{"type": "integer", "description": "Max rows. Default 50."},
+				"kind":  map[string]any{"type": "string", "description": "Filter by kind (canary_hit | cache_mismatch). Empty = all."},
+			},
+		}),
+		st,
+		func(ctx context.Context, s store.Store, in AnomaliesInput) (*AnomaliesResult, error) {
+			// Placeholder: Store.ListAnomalies is not yet implemented
+			// (Wave 4+ work). Today we surface the documented shape
+			// with an empty list and a note in the response.
+			return &AnomaliesResult{
+				Anomalies: []AnomalyEntry{},
+				Count:     0,
+				Note:      "anomaly_events query not yet exposed by Store; coming in Wave 4+",
+			}, nil
+		}))
+}
+
+// WritesInput is the input for writes.
+type WritesInput struct {
+	Limit     int    `json:"limit,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
+	Actor     string `json:"actor,omitempty"`
+}
+
+// WritesResult is the output for writes.
+type WritesResult struct {
+	Writes []WriteEntry `json:"writes"`
+	Count  int          `json:"count"`
+}
+
+// WriteEntry is one write_audit row in the listing.
+type WriteEntry struct {
+	ID            int64  `json:"id"`
+	Actor         string `json:"actor"`
+	SessionID     string `json:"session_id,omitempty"`
+	WritePath     string `json:"write_path,omitempty"`
+	ContentSHA256 string `json:"content_sha256,omitempty"`
+	CreatedAt     string `json:"created_at"`
+}
+
+// AnomaliesInput is the input for anomalies.
+type AnomaliesInput struct {
+	Limit int    `json:"limit,omitempty"`
+	Kind  string `json:"kind,omitempty"`
+}
+
+// AnomaliesResult is the output for anomalies.
+type AnomaliesResult struct {
+	Anomalies []AnomalyEntry `json:"anomalies"`
+	Count     int            `json:"count"`
+	Note      string         `json:"note,omitempty"`
+}
+
+// AnomalyEntry is one anomaly event in the listing.
+type AnomalyEntry struct {
+	ID        int64  `json:"id"`
+	Kind      string `json:"kind"` // canary_hit | cache_mismatch
+	Severity  string `json:"severity,omitempty"`
+	Detail    string `json:"detail,omitempty"`
+	CreatedAt string `json:"created_at"`
+}
