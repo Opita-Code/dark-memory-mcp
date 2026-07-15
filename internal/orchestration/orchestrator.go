@@ -39,15 +39,16 @@ import (
 
 // Orchestrator is the typed workflow API. Construct with New().
 type Orchestrator struct {
-	Store  store.Store
-	Safety *safety.Holder
-	now    func() time.Time // injectable for tests
+	Store    store.Store
+	Safety   *safety.Holder
+	now      func() time.Time // injectable for tests
+	backends []ResearchBackend // registered research backends (O3)
 }
 
 // New constructs an Orchestrator with the given Store and Safety
 // holder. Safety may be nil (orchestrator will construct an empty
 // Holder). now is injectable for deterministic tests; pass nil to
-// default to time.Now.
+// default to time.Now. Use WithBackends to register research backends.
 func New(s store.Store, safe *safety.Holder) *Orchestrator {
 	if safe == nil {
 		h := &safety.Holder{}

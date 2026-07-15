@@ -18,6 +18,8 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/session"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 	"github.com/dark-agents/dark-memory-mcp/internal/store/runtime"
+
+	"fmt"
 )
 
 func openOrchestratorTestEnv(t *testing.T) (*orchestration.Orchestrator, store.Store) {
@@ -351,6 +353,175 @@ func TestSessionClose_CrossProject(t *testing.T) {
 	}
 	if out.SessionID != start.SessionID {
 		t.Fatalf("session id mismatch on close")
+	}
+}
+
+// O3: ResearchTopic — happy path with one mock backend returning 3 items.
+func TestResearchTopic_OneBackend(t *testing.T) {
+	ctx := context.Background()
+	orch, s := openOrchestratorTestEnv(t)
+	if err := s.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	backend := &orchestration.MockResearchBackend{
+		Name_: "mock_web",
+		Items: []research.Item{
+			{Title: "Result A", Source: "mock_web", Confidence: 0.9},
+			{Title: "Result B", Source: "mock_web", Confidence: 0.7},
+			{Title: "Result C", Source: "mock_web", Confidence: 0.5},
+		},
+	}
+	orch.WithBackend(backend)
+
+	out, err := orch.ResearchTopic(ctx, orchestration.ResearchTopicInput{
+		Query:  "supply chain attacks",
+		Intent: "web",
+	})
+	if err != nil {
+		t.Fatalf("ResearchTopic: %v", err)
+	}
+	if out.RunID == 0 {
+		t.Fatalf("RunID should be > 0")
+	}
+	if out.ItemsCount != 3 {
+		t.Fatalf("ItemsCount should be 3, got %d", out.ItemsCount)
+	}
+	if backend.Calls != 1 {
+		t.Fatalf("backend should have been called once, got %d", backend.Calls)
+	}
+	if backend.LastQ != "supply chain attacks" {
+		t.Fatalf("backend received wrong query: %q", backend.LastQ)
+	}
+
+	// Verify the run + items were persisted.
+	got, err := s.GetRun(ctx, out.RunID)
+	if err != nil {
+		t.Fatalf("GetRun: %v", err)
+	}
+	if got == nil || got.Query != "supply chain attacks" {
+		t.Fatalf("run round-trip mismatch: %+v", got)
+	}
+	items, err := s.ListItems(ctx, out.RunID, "", 50)
+	if err != nil {
+		t.Fatalf("ListItems: %v", err)
+	}
+	if len(items) != 3 {
+		t.Fatalf("ListItems should return 3, got %d", len(items))
+	}
+}
+
+// O3: ResearchTopic — MaxItems cap.
+func TestResearchTopic_MaxItemsCap(t *testing.T) {
+	ctx := context.Background()
+	orch, _ := openOrchestratorTestEnv(t)
+	if err := orch.Store.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	// Backend returns 10 items; MaxItems=3 caps to 3.
+	all := make([]research.Item, 10)
+	for i := range all {
+		all[i] = research.Item{Title: "X", Source: "mock", Confidence: 0.5}
+	}
+	orch.WithBackend(&orchestration.MockResearchBackend{Name_: "mock", Items: all})
+
+	out, err := orch.ResearchTopic(ctx, orchestration.ResearchTopicInput{
+		Query:    "Q",
+		Intent:   "web",
+		MaxItems: 3,
+	})
+	if err != nil {
+		t.Fatalf("ResearchTopic: %v", err)
+	}
+	if out.ItemsCount != 3 {
+		t.Fatalf("ItemsCount should be 3 (capped), got %d", out.ItemsCount)
+	}
+}
+
+// O3: ResearchTopic — missing query rejected.
+func TestResearchTopic_MissingQuery(t *testing.T) {
+	ctx := context.Background()
+	orch, _ := openOrchestratorTestEnv(t)
+	if err := orch.Store.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	_, err := orch.ResearchTopic(ctx, orchestration.ResearchTopicInput{Intent: "web"})
+	if err == nil {
+		t.Fatalf("expected error for missing query")
+	}
+	if !errIs(err, store.ErrInvalidArgument) {
+		t.Fatalf("expected ErrInvalidArgument, got: %v", err)
+	}
+}
+
+// O3: ResearchTopic — backend error does not fail the call; logged into Errors.
+func TestResearchTopic_BackendErrorGracefulDegradation(t *testing.T) {
+	ctx := context.Background()
+	orch, s := openOrchestratorTestEnv(t)
+	if err := s.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	failing := &orchestration.MockResearchBackend{
+		Name_: "mock_failing",
+		Err:   fmt.Errorf("simulated backend failure"),
+	}
+	working := &orchestration.MockResearchBackend{
+		Name_: "mock_working",
+		Items: []research.Item{
+			{Title: "ok-1", Source: "mock_working", Confidence: 0.9},
+		},
+	}
+	orch.WithBackend(failing).WithBackend(working)
+
+	out, err := orch.ResearchTopic(ctx, orchestration.ResearchTopicInput{Query: "Q", Intent: "web"})
+	if err != nil {
+		t.Fatalf("ResearchTopic should succeed despite one backend failing: %v", err)
+	}
+	if out.ItemsCount != 1 {
+		t.Fatalf("should have 1 item from working backend, got %d", out.ItemsCount)
+	}
+
+	// Verify Errors slice has the failing backend logged.
+	got, _ := s.GetRun(ctx, out.RunID)
+	if got == nil {
+		t.Fatalf("GetRun returned nil")
+	}
+	if len(got.Errors) != 1 || got.Errors[0].Backend != "mock_failing" {
+		t.Fatalf("Errors should record failing backend, got: %+v", got.Errors)
+	}
+}
+
+// O3: ResearchTopic — fan-out across multiple backends aggregates items.
+func TestResearchTopic_MultipleBackendsAggregate(t *testing.T) {
+	ctx := context.Background()
+	orch, _ := openOrchestratorTestEnv(t)
+	if err := orch.Store.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	orch.WithBackend(&orchestration.MockResearchBackend{
+		Name_: "b1", Items: []research.Item{{Title: "from-b1", Source: "b1", Confidence: 0.9}},
+	}).WithBackend(&orchestration.MockResearchBackend{
+		Name_: "b2", Items: []research.Item{
+			{Title: "from-b2-a", Source: "b2", Confidence: 0.8},
+			{Title: "from-b2-b", Source: "b2", Confidence: 0.7},
+		},
+	})
+
+	out, err := orch.ResearchTopic(ctx, orchestration.ResearchTopicInput{Query: "Q", Intent: "web"})
+	if err != nil {
+		t.Fatalf("ResearchTopic: %v", err)
+	}
+	if out.ItemsCount != 3 {
+		t.Fatalf("expected 3 items aggregated, got %d", out.ItemsCount)
+	}
+
+	got, _ := orch.Store.GetRun(ctx, out.RunID)
+	if got == nil || len(got.BackendsTried) != 2 {
+		t.Fatalf("BackendsTried should record both, got: %+v", got)
 	}
 }
 
