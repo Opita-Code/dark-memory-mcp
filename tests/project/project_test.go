@@ -16,6 +16,8 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/session"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 	"github.com/dark-agents/dark-memory-mcp/internal/store/runtime"
+	"github.com/dark-agents/dark-memory-mcp/internal/constitution"
+	"github.com/dark-agents/dark-memory-mcp/internal/mods"
 	"github.com/dark-agents/dark-memory-mcp/internal/ssd"
 	"github.com/dark-agents/dark-memory-mcp/internal/vibeflow"
 )
@@ -1103,6 +1105,155 @@ func TestProject_SDDEvaluations_CrossProject_Isolated(t *testing.T) {
 	}
 	if gotA == nil || gotA.ID != evalID {
 		t.Fatalf("acme should see own sdd, got: %+v", gotA)
+	}
+}
+
+// W3-002 (T4f, constitution): constitution is GLOBAL by design — see
+// spec 171 T4f decision. A constitution registered in any project is
+// visible from any other project. Same rationale as compliance:
+// constitutions define agent posture at system level.
+func TestProject_Constitution_GlobalByDesign(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+
+	if err := s.CreateProject(ctx, &project.Project{ProjectID: "acme-eu", DisplayName: "ACME EU"}); err != nil {
+		t.Fatalf("create eu: %v", err)
+	}
+	if err := s.CreateProject(ctx, &project.Project{ProjectID: "acme-us", DisplayName: "ACME US"}); err != nil {
+		t.Fatalf("create us: %v", err)
+	}
+
+	// Register a constitution in default project.
+	if err := s.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set default: %v", err)
+	}
+	if err := s.SaveConstitution(ctx, store.WriteContext{Actor: "test", SessionID: "sess", WritePath: "test", ProjectID: "default"},
+		&constitution.Constitution{
+			ConstitutionID: "redteam-v1",
+			Version:        "1.0.0",
+			Label:          "Red-team posture",
+			SHA256:         "abc123",
+			Enabled:        true,
+			ParsedJSON:     `{"posture":"redteam"}`,
+		}); err != nil {
+		t.Fatalf("save cons: %v", err)
+	}
+
+	// From acme-eu: must see the constitution.
+	if err := s.SetActiveProject(ctx, "acme-eu"); err != nil {
+		t.Fatalf("set eu: %v", err)
+	}
+	gotEU, err := s.GetConstitution(ctx, "redteam-v1", "1.0.0")
+	if err != nil {
+		t.Fatalf("GetConstitution eu: %v", err)
+	}
+	if gotEU == nil || gotEU.ConstitutionID != "redteam-v1" {
+		t.Fatalf("acme-eu must see global constitution, got: %+v", gotEU)
+	}
+
+	// From acme-us: same.
+	if err := s.SetActiveProject(ctx, "acme-us"); err != nil {
+		t.Fatalf("set us: %v", err)
+	}
+	gotUS, err := s.GetConstitution(ctx, "redteam-v1", "1.0.0")
+	if err != nil {
+		t.Fatalf("GetConstitution us: %v", err)
+	}
+	if gotUS == nil || gotUS.ConstitutionID != "redteam-v1" {
+		t.Fatalf("acme-us must see global constitution, got: %+v", gotUS)
+	}
+
+	// ListConstitutions must include the row from any project.
+	listEU, _ := s.ListConstitutions(ctx, 100)
+	listUS, _ := s.ListConstitutions(ctx, 100)
+	foundEU, foundUS := false, false
+	for _, c := range listEU {
+		if c.ConstitutionID == "redteam-v1" {
+			foundEU = true
+		}
+	}
+	for _, c := range listUS {
+		if c.ConstitutionID == "redteam-v1" {
+			foundUS = true
+		}
+	}
+	if !foundEU || !foundUS {
+		t.Fatalf("constitution must be visible from any project; eu-found=%v us-found=%v", foundEU, foundUS)
+	}
+}
+
+// W3-002 (T4f, mods): mods CATALOG is GLOBAL — mod_id is unique across
+// projects. mod_loads (the audit trail of who loaded what) IS per-project.
+func TestProject_Mods_CrossProject_Loads(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+
+	if err := s.CreateProject(ctx, &project.Project{ProjectID: "acme", DisplayName: "ACME"}); err != nil {
+		t.Fatalf("create acme: %v", err)
+	}
+	if err := s.CreateProject(ctx, &project.Project{ProjectID: "globex", DisplayName: "Globex"}); err != nil {
+		t.Fatalf("create globex: %v", err)
+	}
+
+	// Register a mod globally (default project).
+	if err := s.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set default: %v", err)
+	}
+	modID := "shared-mod"
+	if err := s.SaveMod(ctx, store.WriteContext{Actor: "test", SessionID: "sess", WritePath: "test", ProjectID: "default"},
+		&mods.Mod{
+			ModID: modID, Name: "Shared Mod", Version: "1.0", Source: "test",
+			ManifestJSON: `{"k":"v"}`, SHA256: "abc",
+		}); err != nil {
+		t.Fatalf("save mod: %v", err)
+	}
+
+	// From acme: GetMod returns it (catalog is global).
+	if err := s.SetActiveProject(ctx, "acme"); err != nil {
+		t.Fatalf("set acme: %v", err)
+	}
+	got, err := s.GetMod(ctx, modID)
+	if err != nil {
+		t.Fatalf("GetMod from acme: %v", err)
+	}
+	if got == nil || got.ModID != modID {
+		t.Fatalf("acme must see global mod, got: %+v", got)
+	}
+
+	// Record a load event in acme.
+	loadID, err := s.RecordModLoad(ctx, store.WriteContext{Actor: "test", SessionID: "sess", WritePath: "test", ProjectID: "acme"},
+		&mods.ModLoad{
+			ModID: modID, SessionID: "sess-A",
+			DurationMs: 100, CapabilitiesCount: 5,
+		})
+	if err != nil {
+		t.Fatalf("RecordModLoad acme: %v", err)
+	}
+
+	// From globex: ListModLoads must NOT include the acme load.
+	if err := s.SetActiveProject(ctx, "globex"); err != nil {
+		t.Fatalf("set globex: %v", err)
+	}
+	listGlobal, _ := s.ListModLoads(ctx, modID, 100)
+	for _, l := range listGlobal {
+		if l.ID == loadID {
+			t.Fatalf("INV-7 violated: globex saw acme's mod load %+v", l)
+		}
+	}
+
+	// Back in acme: ListModLoads returns the load.
+	if err := s.SetActiveProject(ctx, "acme"); err != nil {
+		t.Fatalf("set acme (back): %v", err)
+	}
+	listAcme, _ := s.ListModLoads(ctx, modID, 100)
+	found := false
+	for _, l := range listAcme {
+		if l.ID == loadID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("acme ListModLoads must include own load, got %d rows: %+v", len(listAcme), listAcme)
 	}
 }
 

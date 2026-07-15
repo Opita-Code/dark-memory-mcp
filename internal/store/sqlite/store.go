@@ -1895,6 +1895,18 @@ func scanSDDEvalRows(rows *sql.Rows) (*ssd.SDDEvaluation, error) {
 }
 
 // ----- constitution -----
+// IMPORTANT (spec 171 T4f): constitutions are GLOBAL by design.
+// Constitutions define the agent's posture at system level (INV-4
+// watchdog verifies the active constitution). They are NOT
+// project-scoped: every project sees the same constitution catalog.
+// The `constitutions` table has no `project_id` column — there is
+// nothing to filter by. Same rationale as `vibe_compliance`
+// (jurisdiction = property of law) — see spec 171 T4c decision.
+//
+// To move constitutions to project scope, migration v9 must add
+// `project_id` to the table and refactor `runWatchdog` (INV-4) to
+// pick one per active project. That is intentionally out of scope
+// today.
 
 func (s *Store) SaveConstitution(ctx context.Context, wc store.WriteContext, c *constitution.Constitution) error {
 	s.mu.Lock()
@@ -1936,11 +1948,12 @@ func (s *Store) SaveConstitution(ctx context.Context, wc store.WriteContext, c *
 		ConstitutionID:  c.ConstitutionID,
 		ConstitutionVer: c.Version,
 		CreatedAt:       c.CreatedAt,
-		Notes:           "constitution_id=" + c.ConstitutionID + "@" + c.Version,
+		Notes:           "constitution_id=" + c.ConstitutionID + "@" + c.Version + " (global)",
 	}, "")
 }
 
 func (s *Store) GetConstitution(ctx context.Context, constitutionID, version string) (*constitution.Constitution, error) {
+	// Global by design — see T4f decision.
 	row := s.db.QueryRowContext(ctx,
 		`SELECT id, constitution_id, version, label, source, file_path, parsed_json, sha256,
 		        enabled, created_at, activated_at
@@ -1950,6 +1963,7 @@ func (s *Store) GetConstitution(ctx context.Context, constitutionID, version str
 }
 
 func (s *Store) ListConstitutions(ctx context.Context, limit int) ([]constitution.Constitution, error) {
+	// Global by design — see T4f decision.
 	if limit <= 0 {
 		limit = 50
 	}
@@ -2026,6 +2040,18 @@ func (s *Store) VerifyConstitutionHash(ctx context.Context, constitutionID, sha2
 }
 
 // ----- mods -----
+// IMPORTANT (spec 171 T4f): mods CATALOG is GLOBAL by design.
+// The `mods` table has UNIQUE(mod_id) — mod_id identifies a mod once
+// across all projects. Each project can use any mod, but the catalog
+// itself is a single shared registry. Per-project isolation is
+// recorded in `mod_loads` (the audit trail of who loaded what) —
+// that table has `project_id` and IS project-scoped. See
+// RecordModLoad / ListModLoads below.
+//
+// Splitting the catalog per project would require migration v9
+// (composite UNIQUE(project_id, mod_id) on mods) and disabling the
+// cross-project mod-share pattern. That is intentionally out of
+// scope today.
 
 func (s *Store) SaveMod(ctx context.Context, wc store.WriteContext, m *mods.Mod) error {
 	s.mu.Lock()
@@ -2066,11 +2092,12 @@ func (s *Store) SaveMod(ctx context.Context, wc store.WriteContext, m *mods.Mod)
 		ConstitutionID:  wc.ConstitutionID,
 		ConstitutionVer: wc.ConstitutionVer,
 		CreatedAt:       m.UpdatedAt,
-		Notes:           "mod_id=" + m.ModID,
+		Notes:           "mod_id=" + m.ModID + " (global catalog)",
 	}, "")
 }
 
 func (s *Store) GetMod(ctx context.Context, modID string) (*mods.Mod, error) {
+	// Global catalog — see T4f decision.
 	row := s.db.QueryRowContext(ctx,
 		`SELECT id, mod_id, name, version, source, manifest_json, sha256, risk_class,
 		        target_scope, requires_tor, created_at, updated_at
@@ -2079,6 +2106,7 @@ func (s *Store) GetMod(ctx context.Context, modID string) (*mods.Mod, error) {
 }
 
 func (s *Store) ListMods(ctx context.Context, limit int) ([]mods.Mod, error) {
+	// Global catalog — see T4f decision.
 	if limit <= 0 {
 		limit = 50
 	}
@@ -2147,6 +2175,10 @@ func scanModRows(rows *sql.Rows) (*mods.Mod, error) {
 }
 
 func (s *Store) RecordModLoad(ctx context.Context, wc store.WriteContext, load *mods.ModLoad) (int64, error) {
+	if err := s.requireProject(); err != nil {
+		return 0, err
+	}
+	projectID := projectIDOrActive(wc.ProjectID, s.ActiveProject()) // capture before locking
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if load.LoadedAt == "" {
@@ -2154,10 +2186,10 @@ func (s *Store) RecordModLoad(ctx context.Context, wc store.WriteContext, load *
 	}
 	res, err := s.db.ExecContext(ctx,
 		`INSERT INTO mod_loads (mod_id, session_id, loaded_at, duration_ms,
-		                       capabilities_count, error, constitution_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		                       capabilities_count, error, constitution_id, project_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		load.ModID, nullStr(load.SessionID), load.LoadedAt, load.DurationMs,
-		load.CapabilitiesCount, nullStr(load.Error), nullStr(load.ConstitutionID))
+		load.CapabilitiesCount, nullStr(load.Error), nullStr(load.ConstitutionID), projectID)
 	if err != nil {
 		return 0, err
 	}
@@ -2171,17 +2203,23 @@ func (s *Store) RecordModLoad(ctx context.Context, wc store.WriteContext, load *
 		ConstitutionID:  load.ConstitutionID,
 		ConstitutionVer: wc.ConstitutionVer,
 		CreatedAt:       load.LoadedAt,
-		Notes:           "mod_id=" + load.ModID,
+		Notes:           "mod_id=" + load.ModID + " project_id=" + projectID,
 	}, "")
 }
 
 func (s *Store) ListModLoads(ctx context.Context, modID string, limit int) ([]mods.ModLoad, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.ActiveProject() // capture before locking
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if limit <= 0 {
 		limit = 50
 	}
 	q := `SELECT id, mod_id, session_id, loaded_at, duration_ms, capabilities_count, error, constitution_id
-	      FROM mod_loads WHERE 1=1`
-	args := []any{}
+	      FROM mod_loads WHERE project_id = ?`
+	args := []any{activeProject}
 	if modID != "" {
 		q += ` AND mod_id = ?`
 		args = append(args, modID)
