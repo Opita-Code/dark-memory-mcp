@@ -72,12 +72,14 @@ func RegisterObservability(reg *Registry, orch *orchestration.Orchestrator, st s
 
 	// anomalies — read-only. Reads anomaly events recorded by the
 	// Store on INV-3 canary hits and INV-5 cache mismatches.
-	// Implementation note: today the Store does not expose a dedicated
-	// anomaly_events query; we surface this as a placeholder that
-	// returns an empty list with the documented shape. When the Store
-	// gains ListAnomalies, swap the implementation.
+	// HONEST NOTE: today the Store does not expose a dedicated
+	// anomaly_events query (Wave 4+ work). The description makes
+	// this explicit so the LLM does not retry thinking the query
+	// will eventually return data. The response shape is stable
+	// (empty list + note) so future implementations can fill it
+	// in without breaking callers.
 	reg.Add(BindStore("anomalies",
-		"List recent anomaly events (INV-3 canary hits, INV-5 cache mismatches). Read-only.",
+		"List recent anomaly events (INV-3 canary hits, INV-5 cache mismatches). NOT YET IMPLEMENTED: returns an empty list with a note. Read-only.",
 		MustJSONSchema(map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -87,9 +89,11 @@ func RegisterObservability(reg *Registry, orch *orchestration.Orchestrator, st s
 		}),
 		st,
 		func(ctx context.Context, s store.Store, in AnomaliesInput) (*AnomaliesResult, error) {
-			// Placeholder: Store.ListAnomalies is not yet implemented
-			// (Wave 4+ work). Today we surface the documented shape
-			// with an empty list and a note in the response.
+			// Honest placeholder: schema is stable (empty list +
+			// note) but the underlying Store.ListAnomalies is not
+			// implemented yet. When it is, swap this for a real
+			// Store call. The description string above is the
+			// contract the LLM sees.
 			return &AnomaliesResult{
 				Anomalies: []AnomalyEntry{},
 				Count:     0,

@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"sort"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/tools"
 	mcplib "github.com/mark3labs/mcp-go/mcp"
@@ -34,20 +35,70 @@ type Server struct {
 // New constructs the Server. Does NOT start the stdio transport; call
 // ServeStdio for that. Tool registration must happen between New and
 // ServeStdio (or via RegisterAll called from New — see flag below).
+//
+// Three mcp-go options are wired here:
+//   - WithToolCapabilities(true): advertises listChanged so harnesses
+//     can hot-reload the tool list.
+//   - WithRecovery(): catches panics in any tool handler so one bad
+//     call can't bring down the server.
+//   - WithToolFilter(canonicalOrderFilter): mcp-go's handleListTools
+//     sorts tools alphabetically by name (verified by reading the
+//     upstream source at v0.40.0). Our canonical order per RFC D-9
+//     is namespace-grouped (SESSION → RESEARCH → VIBE → CONTEXT →
+//     JUDGE → POLICY → OBSERVABILITY → ADMIN); the filter re-sorts
+//     to that order so tools/list emits the contract promised by
+//     spec 164 bridge.4.
+//   - WithInstructions(...): bake coexistence_group into the
+//     initialize response so harnesses can detect dark-agents/memory
+//     membership via the standard MCP instructions field (bridge.2).
 func New(ctx context.Context) (*Server, error) {
 	boot, err := Boot(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	// Build the mcp-go server. serverInfo carries the canonical
-	// coexistence_group (BRIDGE_AND_COEXISTENCE.md §3 / spec 164
-	// bridge.2); harnesses inspect this field to discover that this
-	// server is part of the dark-agents/memory group.
+	// Canonical-order position map (built once at boot; reused on
+	// every tools/list request via the filter closure).
+	canonicalPos := make(map[string]int, 32)
+	for i, n := range tools.CanonicalOrder() {
+		canonicalPos[tools.WireName(n)] = i
+	}
+	canonicalOrderFilter := func(_ context.Context, listed []mcplib.Tool) []mcplib.Tool {
+		// Stable sort by canonical position; tools not in canonical
+		// (shouldn't happen given RegisterAll sanity-check) sink to
+		// the end in alphabetical order.
+		sort.SliceStable(listed, func(i, j int) bool {
+			pi, oki := canonicalPos[listed[i].Name]
+			pj, okj := canonicalPos[listed[j].Name]
+			switch {
+			case oki && okj:
+				return pi < pj
+			case oki:
+				return true
+			case okj:
+				return false
+			default:
+				return listed[i].Name < listed[j].Name
+			}
+		})
+		return listed
+	}
+
 	mcpSrv := server.NewMCPServer(
 		boot.Config.ServerName,
 		boot.Config.ServerVersion,
 		server.WithToolCapabilities(true),
+		server.WithRecovery(),
+		server.WithToolFilter(canonicalOrderFilter),
+		// coexistence_group baked into the standard MCP instructions
+		// field. mcp-go v0.40.0's Implementation struct doesn't carry
+		// custom fields, so we use the instructions channel (visible
+		// to all MCP-native harnesses that read initialize response).
+		// The exact string is documented in BRIDGE_AND_COEXISTENCE.md §3.
+		server.WithInstructions(fmt.Sprintf(
+			"dark-memory-mcp server. coexistence_group=%s (spec 164 bridge.2). Canonical 25-tool order preserved per spec 164 bridge.4. This server is part of the dark-agents/memory coexistence group; harnesses detecting another dark-agents/* server should prefer the local dark_memory_* tools over dark_mem_*.",
+			boot.Config.CoexistenceGroup,
+		)),
 	)
 
 	return &Server{

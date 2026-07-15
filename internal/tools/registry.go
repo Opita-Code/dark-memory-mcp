@@ -167,3 +167,16 @@ const WirePrefix = "dark_memory_"
 func WireName(bare string) string {
 	return WirePrefix + bare
 }
+
+// CanonicalPosition returns the index of wireName in the canonical
+// 25-tool order, or -1 if not found. Used by tools/list filters that
+// need to re-sort the alphabetically-sorted output of mcp-go's
+// handleListTools back to the RFC D-9 namespace-grouped order.
+func CanonicalPosition(wireName string) int {
+	for i, n := range canonicalToolOrder {
+		if WireName(n) == wireName {
+			return i
+		}
+	}
+	return -1
+}

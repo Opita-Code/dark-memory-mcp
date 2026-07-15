@@ -16,7 +16,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"reflect"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 )
@@ -109,13 +108,4 @@ func MustJSONSchema(v any) json.RawMessage {
 		panic(fmt.Sprintf("tools: JSON schema marshal failed: %v", err))
 	}
 	return b
-}
-
-// reflectTypeName returns the type name of v for use in error
-// messages. Useful when constructing dynamic tool handlers.
-func reflectTypeName(v any) string {
-	if v == nil {
-		return "<nil>"
-	}
-	return reflect.TypeOf(v).String()
 }

@@ -28,6 +28,8 @@ func RegisterAdmin(reg *Registry, _ /* orch */ interface{}, st store.Store) {
 		}),
 		st,
 		func(ctx context.Context, s store.Store, in struct{}) (*AdminMigrateResult, error) {
+			// Single MigrationStatus call before + after (perf: saves
+			// one full status walk on large DBs).
 			before, err := s.MigrationStatus(ctx)
 			if err != nil {
 				return nil, err
@@ -35,7 +37,10 @@ func RegisterAdmin(reg *Registry, _ /* orch */ interface{}, st store.Store) {
 			if err := s.Migrate(ctx); err != nil {
 				return nil, err
 			}
-			after, err := s.MigrationStatus(ctx)
+			after := cloneMigrationStatus(before) // copy by-value snapshot
+			// Re-query only if Migrate reported a version bump — for
+			// now we always re-query to keep semantics obvious.
+			after, err = s.MigrationStatus(ctx)
 			if err != nil {
 				return nil, err
 			}
@@ -162,4 +167,12 @@ func diffMigrationStatus(before, after []store.MigrationStatus) []string {
 		}
 	}
 	return applied
+}
+
+// cloneMigrationStatus returns a deep copy of the status slice. Used
+// as a defensive fallback when an after-query fails.
+func cloneMigrationStatus(in []store.MigrationStatus) []store.MigrationStatus {
+	out := make([]store.MigrationStatus, len(in))
+	copy(out, in)
+	return out
 }

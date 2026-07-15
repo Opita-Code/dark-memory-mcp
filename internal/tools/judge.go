@@ -12,6 +12,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/orchestration"
 	"github.com/dark-agents/dark-memory-mcp/internal/ssd"
@@ -82,7 +83,14 @@ func RegisterJudge(reg *Registry, orch *orchestration.Orchestrator, st store.Sto
 				return nil, err
 			}
 			out := make([]JudgmentHistoryEntry, 0, len(evals))
+			filteredOut := 0
 			for _, e := range evals {
+				// Client-side target_id filter (see JudgmentHistoryInput
+				// doc for why).
+				if in.TargetID != "" && e.TargetID != in.TargetID {
+					filteredOut++
+					continue
+				}
 				out = append(out, JudgmentHistoryEntry{
 					ID:         e.ID,
 					EvalType:   e.EvalType,
@@ -94,11 +102,17 @@ func RegisterJudge(reg *Registry, orch *orchestration.Orchestrator, st store.Sto
 					CreatedAt:  e.CreatedAt,
 				})
 			}
-			return &JudgmentHistoryResult{Evaluations: out, Count: len(out)}, nil
+			return &JudgmentHistoryResult{Evaluations: out, Count: len(out), FilteredOut: filteredOut}, nil
 		}))
 }
 
 // JudgmentHistoryInput is the input for judgment_history.
+//
+// target_id is filtered CLIENT-SIDE after Store.ListSDDEvaluations
+// returns the rows (the Store's ListFilters doesn't support
+// target_id today). This is fine for typical use (history of one
+// artifact, usually <100 rows). For large-scale queries we'd add a
+// target_id filter to ssd.ListFilters + the Store layer.
 type JudgmentHistoryInput struct {
 	EvalType string `json:"eval_type,omitempty"`
 	TargetID string `json:"target_id,omitempty"`
@@ -109,6 +123,7 @@ type JudgmentHistoryInput struct {
 type JudgmentHistoryResult struct {
 	Evaluations []JudgmentHistoryEntry `json:"evaluations"`
 	Count       int                    `json:"count"`
+	FilteredOut int                    `json:"filtered_out,omitempty"`
 }
 
 // JudgmentHistoryEntry is one row in the judgment history.
@@ -124,50 +139,26 @@ type JudgmentHistoryEntry struct {
 }
 
 // parseVerdictJSON returns the canonical verdict (aligned |
-// drift_detected | needs_human) from an SDDEvaluation verdict JSON
-// blob. Tolerant parser: substring match for the {"aligned":...}
-// marker; falls back to "unknown" if not parseable.
+// drift_detected | needs_human | unknown) from an SDDEvaluation
+// verdict JSON blob. Uses encoding/json so we get accurate parsing
+// even for nested structures.
 func parseVerdictJSON(blob string) string {
-	// Cheap substring check. We don't need full JSON parsing here —
-	// the verdict JSON shape is small and stable.
 	if blob == "" {
 		return "unknown"
 	}
-	// Look for "aligned":true → aligned
-	idx := indexOfAligned(blob)
-	if idx < 0 {
+	var v map[string]any
+	if err := json.Unmarshal([]byte(blob), &v); err != nil {
+		return "unknown"
+	}
+	if aligned, ok := v["aligned"].(bool); ok {
+		if aligned {
+			return "aligned"
+		}
 		return "drift_detected"
 	}
-	// Check if "aligned":true comes before "aligned":false (rare).
-	if indexOfFalse(blob, idx) > 0 {
-		return "drift_detected"
+	// Some judge verdicts use "verdict": "needs_human" directly.
+	if verdict, ok := v["verdict"].(string); ok && verdict != "" {
+		return verdict
 	}
-	return "aligned"
-}
-
-func indexOfAligned(s string) int {
-	const tag = `"aligned":`
-	for i := 0; i+len(tag) <= len(s); i++ {
-		if s[i:i+len(tag)] == tag {
-			return i + len(tag)
-		}
-	}
-	return -1
-}
-
-func indexOfFalse(s string, from int) int {
-	if from >= len(s) {
-		return -1
-	}
-	// Look for "false" within ~32 chars after the aligned marker.
-	end := from + 32
-	if end > len(s) {
-		end = len(s)
-	}
-	for i := from; i+5 <= end; i++ {
-		if s[i:i+5] == "false" {
-			return i
-		}
-	}
-	return -1
+	return "unknown"
 }

@@ -36,7 +36,7 @@ func ToToolError(err error) *ToolError {
 		return &ToolError{
 			Code:    "ErrSessionRequired",
 			Message: "No active session is set. The session lifecycle must be started before any read or write that requires project scoping.",
-			Hint:    "Call dark_memory_session_start with operator_id and project_id, then retry.",
+			Hint:    "Call dark_memory_session_start with operator and project_id, then retry.",
 		}
 	case errors.Is(err, store.ErrInvalidArgument):
 		return &ToolError{

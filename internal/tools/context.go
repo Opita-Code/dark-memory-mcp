@@ -13,8 +13,8 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 
-	"github.com/dark-agents/dark-memory-mcp/internal/session"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 	"github.com/dark-agents/dark-memory-mcp/internal/vibeflow"
 )
@@ -162,23 +162,15 @@ type SessionContextInput struct {
 }
 
 // countJSONTasks returns the task count from a JSON tasks blob. If
-// the blob is empty or malformed, returns 0. Cheap parser: just
-// counts "id" keys at top level.
+// the blob is empty or malformed, returns 0. Uses proper JSON
+// unmarshal so we don't over-count nested "id" fields.
 func countJSONTasks(blob string) int {
 	if blob == "" {
 		return 0
 	}
-	// Lightweight: count occurrences of `"id":`. Not exact but cheap
-	// and adequate for a context projection (the full count is
-	// available via vibe_spec).
-	n := 0
-	for i := 0; i+5 < len(blob); i++ {
-		if blob[i] == '"' && blob[i+1] == 'i' && blob[i+2] == 'd' && blob[i+3] == '"' && blob[i+4] == ':' {
-			n++
-		}
+	var arr []map[string]any
+	if err := json.Unmarshal([]byte(blob), &arr); err != nil {
+		return 0
 	}
-	return n
+	return len(arr)
 }
-
-// silence unused import (session is imported via sessionStatusFromSession)
-var _ = session.StatusActive
