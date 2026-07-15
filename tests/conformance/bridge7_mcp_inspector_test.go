@@ -76,6 +76,14 @@ func spawnServer(t *testing.T) (*mcpclient.Client, string) {
 	return cl, dbPath
 }
 
+// Human gate finding (gate.4 / review-w4-004): under cold-cache the
+// stdio client + mcp-go Initialize + sqlite open + watchdog can
+// exceed 10s on busy Windows runners. The conformance test was
+// flaky when run as part of the full suite. Bumped from 10s to 30s
+// across all 4 tests below. Re-ran 2x consecutively after the fix
+// (13.622s) — no flake.
+const bridgeTimeout = 30 * time.Second
+
 // TestBridge7_Initialize asserts that the initialize handshake
 // succeeds, the server version is reported, and coexistence_group
 // is visible in the instructions field (bridge.2).
@@ -83,7 +91,7 @@ func TestBridge7_Initialize(t *testing.T) {
 	cl, _ := spawnServer(t)
 	defer func() { _ = cl.Close() }()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), bridgeTimeout)
 	defer cancel()
 
 	result, err := cl.Initialize(ctx, mcp.InitializeRequest{})
@@ -121,13 +129,13 @@ func TestBridge7_ListToolsCanonical(t *testing.T) {
 
 	// Use a fresh context per call (mcp-go's stdio client can hang
 	// if a request's context expires before the response is read).
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), bridgeTimeout)
 	defer cancel()
 	if _, err := cl.Initialize(ctx, mcp.InitializeRequest{}); err != nil {
 		t.Fatalf("initialize: %v", err)
 	}
 
-	ctx2, cancel2 := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx2, cancel2 := context.WithTimeout(context.Background(), bridgeTimeout)
 	defer cancel2()
 	result, err := cl.ListTools(ctx2, mcp.ListToolsRequest{})
 	if err != nil {
@@ -159,7 +167,7 @@ func TestBridge7_CallToolMemoryState(t *testing.T) {
 	cl, _ := spawnServer(t)
 	defer func() { _ = cl.Close() }()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), bridgeTimeout)
 	defer cancel()
 
 	if _, err := cl.Initialize(ctx, mcp.InitializeRequest{}); err != nil {
@@ -211,7 +219,7 @@ func TestBridge7_CallToolErrorPath(t *testing.T) {
 	cl, _ := spawnServer(t)
 	defer func() { _ = cl.Close() }()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), bridgeTimeout)
 	defer cancel()
 
 	if _, err := cl.Initialize(ctx, mcp.InitializeRequest{}); err != nil {
