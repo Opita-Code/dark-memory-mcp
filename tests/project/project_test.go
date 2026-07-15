@@ -867,7 +867,118 @@ func TestProject_Compliance_GlobalByDesign(t *testing.T) {
 	}
 }
 
+// W3-002 (T4d): SaveArtifact + GetArtifact + UpdateArtifact + DeleteArtifact
+// + ListArtifacts + SetArtifactValidation must filter by active project.
+// Cross-project reads return nil/empty; cross-project writes are no-ops.
+func TestProject_Artifacts_CrossProject_Isolated(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+
+	if err := s.CreateProject(ctx, &project.Project{ProjectID: "acme", DisplayName: "ACME"}); err != nil {
+		t.Fatalf("create acme: %v", err)
+	}
+	if err := s.CreateProject(ctx, &project.Project{ProjectID: "globex", DisplayName: "Globex"}); err != nil {
+		t.Fatalf("create globex: %v", err)
+	}
+
+	// Write an artifact in project A.
+	if err := s.SetActiveProject(ctx, "acme"); err != nil {
+		t.Fatalf("set acme: %v", err)
+	}
+	artA := &vibeflow.Artifact{
+		SessionID: "sess-A", VibeCase: "C2", ArtifactType: "image",
+		BrandID: "acme", Jurisdiction: "EU", HasDisclosure: true,
+		ArtifactURL: "file:///acme.png", ValidationStatus: "pending",
+	}
+	idA, err := s.SaveArtifact(ctx, store.WriteContext{Actor: "test", SessionID: "sess-A", WritePath: "test", ProjectID: "acme"}, artA)
+	if err != nil {
+		t.Fatalf("SaveArtifact A: %v", err)
+	}
+
+	// From B: GetArtifact returns nil.
+	if err := s.SetActiveProject(ctx, "globex"); err != nil {
+		t.Fatalf("set globex: %v", err)
+	}
+	got, err := s.GetArtifact(ctx, idA)
+	if err != nil {
+		t.Fatalf("GetArtifact from globex: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("INV-7 violated: project globex saw project acme's artifact %+v", got)
+	}
+
+	// From B: ListArtifacts must not include A's artifact.
+	listB, _ := s.ListArtifacts(ctx, vibeflow.ArtifactListFilters{Limit: 100})
+	for _, a := range listB {
+		if a.ID == idA {
+			t.Fatalf("INV-7 violated: project globex saw project acme's artifact in ListArtifacts")
+		}
+	}
+
+	// Cross-project update returns ErrNoRows.
+	if err := s.UpdateArtifact(ctx, store.WriteContext{Actor: "test", SessionID: "sess-B", WritePath: "test", ProjectID: "globex"},
+		idA, &vibeflow.ArtifactUpdate{ValidationStatus: strPtr("approved")}); err == nil {
+		t.Fatalf("expected error updating cross-project artifact, got nil")
+	}
+
+	// Cross-project SetArtifactValidation returns ErrNoRows.
+	if err := s.SetArtifactValidation(ctx, store.WriteContext{Actor: "test", SessionID: "sess-B", WritePath: "test", ProjectID: "globex"},
+		idA, "approved"); err == nil {
+		t.Fatalf("expected error setting validation on cross-project artifact, got nil")
+	}
+
+	// Cross-project Delete returns ErrNoRows and does NOT remove the row.
+	if err := s.DeleteArtifact(ctx, store.WriteContext{Actor: "test", SessionID: "sess-B", WritePath: "test", ProjectID: "globex"},
+		idA); err == nil {
+		t.Fatalf("expected error deleting cross-project artifact, got nil")
+	}
+
+	// Back in A: artifact still there (B's delete was a no-op).
+	if err := s.SetActiveProject(ctx, "acme"); err != nil {
+		t.Fatalf("set acme (back): %v", err)
+	}
+	gotA, err := s.GetArtifact(ctx, idA)
+	if err != nil {
+		t.Fatalf("GetArtifact from acme: %v", err)
+	}
+	if gotA == nil || gotA.ID != idA {
+		t.Fatalf("project acme should still see own artifact, got: %+v", gotA)
+	}
+
+	// Same-project Update works.
+	if err := s.UpdateArtifact(ctx, store.WriteContext{Actor: "test", SessionID: "sess-A", WritePath: "test", ProjectID: "acme"},
+		idA, &vibeflow.ArtifactUpdate{ValidationStatus: strPtr("approved")}); err != nil {
+		t.Fatalf("UpdateArtifact same-project: %v", err)
+	}
+	gotApproved, _ := s.GetArtifact(ctx, idA)
+	if gotApproved == nil || gotApproved.ValidationStatus != "approved" {
+		t.Fatalf("UpdateArtifact didn't apply, got: %+v", gotApproved)
+	}
+
+	// Same-project SetArtifactValidation works.
+	if err := s.SetArtifactValidation(ctx, store.WriteContext{Actor: "test", SessionID: "sess-A", WritePath: "test", ProjectID: "acme"},
+		idA, "shipped"); err != nil {
+		t.Fatalf("SetArtifactValidation same-project: %v", err)
+	}
+	gotShipped, _ := s.GetArtifact(ctx, idA)
+	if gotShipped == nil || gotShipped.ValidationStatus != "shipped" {
+		t.Fatalf("SetArtifactValidation didn't apply, got: %+v", gotShipped)
+	}
+
+	// Same-project Delete works.
+	if err := s.DeleteArtifact(ctx, store.WriteContext{Actor: "test", SessionID: "sess-A", WritePath: "test", ProjectID: "acme"},
+		idA); err != nil {
+		t.Fatalf("DeleteArtifact same-project: %v", err)
+	}
+	goneA, _ := s.GetArtifact(ctx, idA)
+	if goneA != nil {
+		t.Fatalf("DeleteArtifact didn't remove, got: %+v", goneA)
+	}
+}
+
 // helpers
+func strPtr(s string) *string { return &s }
+
 func errIs(err, target error) bool {
 	for e := err; e != nil; {
 		if e == target {

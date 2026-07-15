@@ -1333,6 +1333,10 @@ func (s *Store) ListComplianceRules(ctx context.Context, limit int) ([]vibeflow.
 // ----- artifacts -----
 
 func (s *Store) SaveArtifact(ctx context.Context, wc store.WriteContext, a *vibeflow.Artifact) (int64, error) {
+	if err := s.requireProject(); err != nil {
+		return 0, err
+	}
+	projectID := projectIDOrActive(wc.ProjectID, s.ActiveProject()) // capture before locking
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if a.CreatedAt == "" {
@@ -1347,10 +1351,10 @@ func (s *Store) SaveArtifact(ctx context.Context, wc store.WriteContext, a *vibe
 	}
 	res, err := s.db.ExecContext(ctx,
 		`INSERT INTO vibe_artifacts (session_id, vibe_case, spec_id, artifact_url, artifact_type,
-		                           brand_id, jurisdiction, has_disclosure, validation_status, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		                           brand_id, jurisdiction, has_disclosure, validation_status, created_at, project_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		nullStr(a.SessionID), a.VibeCase, nullInt(a.SpecID), nullStr(a.ArtifactURL), a.ArtifactType,
-		nullStr(a.BrandID), nullStr(a.Jurisdiction), hasDisclosure, a.ValidationStatus, a.CreatedAt)
+		nullStr(a.BrandID), nullStr(a.Jurisdiction), hasDisclosure, a.ValidationStatus, a.CreatedAt, projectID)
 	if err != nil {
 		return 0, err
 	}
@@ -1369,14 +1373,24 @@ func (s *Store) SaveArtifact(ctx context.Context, wc store.WriteContext, a *vibe
 }
 
 func (s *Store) GetArtifact(ctx context.Context, id int64) (*vibeflow.Artifact, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.ActiveProject() // capture before locking
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	row := s.db.QueryRowContext(ctx,
 		`SELECT id, session_id, vibe_case, spec_id, artifact_url, artifact_type,
 		        brand_id, jurisdiction, has_disclosure, validation_status, created_at
-		 FROM vibe_artifacts WHERE id = ?`, id)
+		 FROM vibe_artifacts WHERE id = ? AND project_id = ?`, id, activeProject)
 	return scanArtifact(row)
 }
 
 func (s *Store) UpdateArtifact(ctx context.Context, wc store.WriteContext, id int64, u *vibeflow.ArtifactUpdate) error {
+	if err := s.requireProject(); err != nil {
+		return err
+	}
+	activeProject := s.ActiveProject() // capture before locking
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var hasDisclosure *int
@@ -1396,8 +1410,8 @@ func (s *Store) UpdateArtifact(ctx context.Context, wc store.WriteContext, id in
 			jurisdiction      = COALESCE(?, jurisdiction),
 			has_disclosure    = COALESCE(?, has_disclosure),
 			validation_status = COALESCE(?, validation_status)
-		 WHERE id = ?`,
-		u.SessionID, u.SpecID, u.ArtifactURL, u.BrandID, u.Jurisdiction, hasDisclosure, u.ValidationStatus, id)
+		 WHERE id = ? AND project_id = ?`,
+		u.SessionID, u.SpecID, u.ArtifactURL, u.BrandID, u.Jurisdiction, hasDisclosure, u.ValidationStatus, id, activeProject)
 	if err != nil {
 		return err
 	}
@@ -1418,9 +1432,13 @@ func (s *Store) UpdateArtifact(ctx context.Context, wc store.WriteContext, id in
 }
 
 func (s *Store) DeleteArtifact(ctx context.Context, wc store.WriteContext, id int64) error {
+	if err := s.requireProject(); err != nil {
+		return err
+	}
+	activeProject := s.ActiveProject() // capture before locking
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	res, err := s.db.ExecContext(ctx, `DELETE FROM vibe_artifacts WHERE id = ?`, id)
+	res, err := s.db.ExecContext(ctx, `DELETE FROM vibe_artifacts WHERE id = ? AND project_id = ?`, id, activeProject)
 	if err != nil {
 		return err
 	}
@@ -1441,13 +1459,19 @@ func (s *Store) DeleteArtifact(ctx context.Context, wc store.WriteContext, id in
 }
 
 func (s *Store) ListArtifacts(ctx context.Context, f vibeflow.ArtifactListFilters) ([]vibeflow.Artifact, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.ActiveProject() // capture before locking
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if f.Limit <= 0 {
 		f.Limit = 50
 	}
 	q := `SELECT id, session_id, vibe_case, spec_id, artifact_url, artifact_type,
 	             brand_id, jurisdiction, has_disclosure, validation_status, created_at
-	      FROM vibe_artifacts WHERE 1=1`
-	args := []any{}
+	      FROM vibe_artifacts WHERE project_id = ?`
+	args := []any{activeProject}
 	if f.VibeCase != "" {
 		q += ` AND vibe_case = ?`
 		args = append(args, f.VibeCase)
@@ -1511,10 +1535,15 @@ func (s *Store) ListArtifacts(ctx context.Context, f vibeflow.ArtifactListFilter
 }
 
 func (s *Store) SetArtifactValidation(ctx context.Context, wc store.WriteContext, id int64, status string) error {
+	if err := s.requireProject(); err != nil {
+		return err
+	}
+	activeProject := s.ActiveProject() // capture before locking
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE vibe_artifacts SET validation_status = ? WHERE id = ?`, status, id)
+		`UPDATE vibe_artifacts SET validation_status = ? WHERE id = ? AND project_id = ?`,
+		status, id, activeProject)
 	if err != nil {
 		return err
 	}
