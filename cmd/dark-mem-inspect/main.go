@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/audit"
-	"github.com/dark-agents/dark-memory-mcp/internal/safety"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 	"github.com/dark-agents/dark-memory-mcp/internal/store/runtime"
 )
@@ -129,11 +128,12 @@ func run(args []string, stdout, stderr *os.File) int {
 		}
 	}()
 
-	// Best-effort: surface canary without exposing the token. We
-	// construct a fresh Holder so we don't depend on the orchestrator
-	// package; the Store doesn't expose its canary directly.
-	h := &safety.Holder{}
-	canaryPresent := !h.Active().IsZero()
+	// Query the Store's actual canary (Review-w4-001). Previously this
+	// constructed a fresh empty Holder that always returned IsZero=true,
+	// so operators running `dark-mem-inspect` to verify INV-3 were
+	// being lied to. The Store hides the token value — we only expose
+	// whether one is installed (boolean).
+	canaryPresent := st.CanaryPresent()
 
 	version, vErr := st.SchemaVersion(ctx)
 	migrations, mErr := st.MigrationStatus(ctx)

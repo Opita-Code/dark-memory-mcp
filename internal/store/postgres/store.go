@@ -125,6 +125,14 @@ func (s *Store) SetCanary(token string) {
 	s.canary.Set(safety.CanaryToken(token))
 }
 
+// CanaryPresent reports whether a canary token is currently installed
+// (INV-3). Mirrors the sqlite impl; the in-memory Holder is the source
+// of truth (Review-w4-001: dark-mem-inspect now queries Store instead
+// of creating a fresh empty Holder that always returned false).
+func (s *Store) CanaryPresent() bool {
+	return !s.canary.Active().IsZero()
+}
+
 // SetActiveProject installs the project_id (INV-7) for the
 // `dark_mem.project_id` session GUC; the store.Store writes it via SET LOCAL
 // at the start of every transaction so the DB rejects cross-project

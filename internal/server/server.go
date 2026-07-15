@@ -129,11 +129,25 @@ func (s *Server) RegisterAll() error {
 // registerOne adds a single Tool to the mcp-go server.
 //
 // We use NewToolWithRawSchema (not NewTool + WithRawInputSchema)
-// because NewTool initializes InputSchema.Type="object" by default,
-// which trips mcp-go's "both InputSchema and RawInputSchema set"
-// conflict check at tools/list serialization time. NewToolWithRawSchema
-// starts with a clean Tool (InputSchema unset) and sets RawInputSchema
-// directly — bypassing the conflict.
+// because mcp-go's Tool.MarshalJSON (verified in v0.56.0 mcp/tools.go
+// lines 678-687) still has an intentional conflict check that errors
+// when both InputSchema.Type and RawInputSchema are set:
+//
+//	if t.RawInputSchema != nil {
+//	    if t.InputSchema.Type != "" {
+//	        return nil, fmt.Errorf("tool %s has both InputSchema
+//	            and RawInputSchema set: %w", t.Name, errToolSchemaConflict)
+//	    }
+//	    m["inputSchema"] = t.RawInputSchema
+//	}
+//
+// NewTool initializes InputSchema.Type="object" by default, so
+// using NewTool + WithRawInputSchema trips that check. NewToolWithRawSchema
+// starts with a clean Tool (InputSchema.Type="") and sets
+// RawInputSchema directly — bypassing the conflict. The upstream
+// ToolInputSchema MarshalJSON was fixed in v0.53.0 (PR #858), but
+// that fix is independent of the Tool-level conflict check which
+// is intentional.
 //
 // Discovered via the bridge.7 conformance test: tools/list returned
 // a serialization error and the client never received a response

@@ -4,7 +4,7 @@
 // replace directive pointing at the parent module.
 module github.com/dark-agents/dark-memory-mcp/cmd/dark-mem-cli
 
-go 1.25.0
+go 1.25.5
 
 require (
 	github.com/dark-agents/dark-memory-mcp v0.0.0

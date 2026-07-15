@@ -149,6 +149,14 @@ type Store interface {
 	// that contain the canary) and INV-4 (verify constitution SHA).
 	// Empty string clears.
 	SetCanary(token string)
+	// CanaryPresent reports whether a canary is currently installed.
+	// Used by dark-mem-inspect to verify INV-3 status without exposing
+	// the token value (an unprivileged read). Takes no ctx because the
+	// canary lives in-process in a sync-protected Holder; no DB hop.
+	// Review-w4-001: prior to this, dark-mem-inspect reported a fresh
+	// empty Holder and always printed canary_present=false — operators
+	// were being lied to. See drift_log 206.
+	CanaryPresent() bool
 	// ActiveConstitution is GLOBAL by design (spec 171 T4g).
 	// Returns the (id, version, sha256) of the active constitution,
 	// as currently seen by the watchdog. Empty values if no

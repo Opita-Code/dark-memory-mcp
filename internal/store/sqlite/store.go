@@ -140,6 +140,13 @@ func (s *Store) SetCanary(token string) {
 	s.canary.Set(safety.CanaryToken(token))
 }
 
+// CanaryPresent reports whether a canary token is currently installed
+// (INV-3). Cheap, lock-free-ish (RLock). Review-w4-001: previously
+// dark-mem-inspect printed false even when the Store had a canary.
+func (s *Store) CanaryPresent() bool {
+	return !s.canary.Active().IsZero()
+}
+
 // SetActiveProject installs the project_id (INV-7) that the store.Store uses
 // to filter every read and tag every write. Empty string clears and
 // causes subsequent reads to return store.ErrSessionRequired.

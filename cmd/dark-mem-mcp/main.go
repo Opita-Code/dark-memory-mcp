@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"syscall"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/server"
@@ -16,6 +17,19 @@ import (
 )
 
 func main() {
+	// Review-w4-002: panic recovery at the boot layer. mcp-go's
+	// WithRecovery() only catches panics INSIDE tool handlers (per its
+	// own docs). A panic during server.New or tools.RegisterAll would
+	// still crash the binary with a stack trace, killing the opencode
+	// subprocess and leaving the harness without a coherent error.
+	// The CLI binary has the same protection; mirror it here.
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "dark-mem-mcp: panic during boot: %v\n%s\n", r, debug.Stack())
+			os.Exit(1)
+		}
+	}()
+
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
