@@ -118,6 +118,11 @@ var (
 	ErrAlreadyExists      = errors.New("store: row already exists")
 	ErrNotFound           = errors.New("store: row not found")
 	ErrInvalidArgument    = errors.New("store: invalid argument")
+	// ErrInvalidState: state transition is invalid given the row's
+	// current state (e.g. resolving a drift that was already
+	// reconciled). Distinct from ErrAlreadyExists (which is about
+	// row creation) and ErrNotFound (which is about row absence).
+	ErrInvalidState       = errors.New("store: invalid state for requested operation")
 )
 
 // Store is the abstraction over the persistent backend. Two implementations:
