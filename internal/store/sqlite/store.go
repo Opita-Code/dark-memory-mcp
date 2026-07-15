@@ -1080,6 +1080,10 @@ func (s *Store) ListSpecs(ctx context.Context, f vibeflow.SpecListFilters) ([]vi
 // ----- brand guides -----
 
 func (s *Store) SaveBrandGuide(ctx context.Context, wc store.WriteContext, b *vibeflow.BrandGuide) error {
+	if err := s.requireProject(); err != nil {
+		return err
+	}
+	projectID := projectIDOrActive(wc.ProjectID, s.ActiveProject()) // capture before locking
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if b.CreatedAt == "" {
@@ -1087,16 +1091,16 @@ func (s *Store) SaveBrandGuide(ctx context.Context, wc store.WriteContext, b *vi
 	}
 	b.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO vibe_brands (brand_id, voice_json, visual_json, narrative_json, compliance_json, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)
-		 ON CONFLICT(brand_id) DO UPDATE SET
+		`INSERT INTO vibe_brands (brand_id, voice_json, visual_json, narrative_json, compliance_json, created_at, updated_at, project_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(project_id, brand_id) DO UPDATE SET
 		   voice_json = excluded.voice_json,
 		   visual_json = excluded.visual_json,
 		   narrative_json = excluded.narrative_json,
 		   compliance_json = excluded.compliance_json,
 		   updated_at = excluded.updated_at`,
 		b.BrandID, nullStr(b.Voice), nullStr(b.Visual), nullStr(b.Narrative), nullStr(b.Compliance),
-		b.CreatedAt, b.UpdatedAt)
+		b.CreatedAt, b.UpdatedAt, projectID)
 	if err != nil {
 		return err
 	}
@@ -1109,14 +1113,20 @@ func (s *Store) SaveBrandGuide(ctx context.Context, wc store.WriteContext, b *vi
 		ConstitutionID:  wc.ConstitutionID,
 		ConstitutionVer: wc.ConstitutionVer,
 		CreatedAt:       b.UpdatedAt,
-		Notes:           "brand_id=" + b.BrandID,
+		Notes:           "brand_id=" + b.BrandID + " project_id=" + projectID,
 	}, "")
 }
 
 func (s *Store) GetBrandGuide(ctx context.Context, brandID string) (*vibeflow.BrandGuide, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.ActiveProject() // capture before locking
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	row := s.db.QueryRowContext(ctx,
 		`SELECT brand_id, voice_json, visual_json, narrative_json, compliance_json, created_at, updated_at
-		 FROM vibe_brands WHERE brand_id = ?`, brandID)
+		 FROM vibe_brands WHERE brand_id = ? AND project_id = ?`, brandID, activeProject)
 	var b vibeflow.BrandGuide
 	var voice, visual, narrative, compliance, updatedAt sql.NullString
 	if err := row.Scan(&b.BrandID, &voice, &visual, &narrative, &compliance, &b.CreatedAt, &updatedAt); err != nil {
@@ -1144,13 +1154,18 @@ func (s *Store) GetBrandGuide(ctx context.Context, brandID string) (*vibeflow.Br
 }
 
 func (s *Store) DeleteBrandGuide(ctx context.Context, wc store.WriteContext, brandID string) error {
+	if err := s.requireProject(); err != nil {
+		return err
+	}
+	activeProject := s.ActiveProject() // capture before locking
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	// Path-safety: prevent slashes / NUL / whitespace in brand_id.
 	if strings.ContainsAny(brandID, "/\\\x00\n\r") {
 		return fmt.Errorf("%w: brand_id contains invalid characters", store.ErrInvalidArgument)
 	}
-	res, err := s.db.ExecContext(ctx, `DELETE FROM vibe_brands WHERE brand_id = ?`, brandID)
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM vibe_brands WHERE brand_id = ? AND project_id = ?`, brandID, activeProject)
 	if err != nil {
 		return err
 	}
@@ -1167,17 +1182,23 @@ func (s *Store) DeleteBrandGuide(ctx context.Context, wc store.WriteContext, bra
 		ConstitutionID:  wc.ConstitutionID,
 		ConstitutionVer: wc.ConstitutionVer,
 		CreatedAt:       time.Now().UTC().Format(time.RFC3339Nano),
-		Notes:           "brand_id=" + brandID,
+		Notes:           "brand_id=" + brandID + " project_id=" + activeProject,
 	}, "")
 }
 
 func (s *Store) ListBrandGuides(ctx context.Context, limit int) ([]vibeflow.BrandGuide, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.ActiveProject() // capture before locking
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if limit <= 0 {
 		limit = 100
 	}
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT brand_id, voice_json, visual_json, narrative_json, compliance_json, created_at, updated_at
-		 FROM vibe_brands ORDER BY updated_at DESC, brand_id ASC LIMIT ?`, limit)
+		 FROM vibe_brands WHERE project_id = ? ORDER BY updated_at DESC, brand_id ASC LIMIT ?`, activeProject, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1210,6 +1231,13 @@ func (s *Store) ListBrandGuides(ctx context.Context, limit int) ([]vibeflow.Bran
 }
 
 // ----- compliance rules -----
+// IMPORTANT (spec 171 T4c): vibe_compliance is GLOBAL by jurisdiction.
+// A rule for "EU" is visible from any project — jurisdiction is a
+// property of law (GDPR is GDPR), not of project. Save / Get / List
+// ignore project_id on purpose. If multi-jurisdiction-per-project
+// isolation ever becomes a requirement, swap PK to (project_id,
+// jurisdiction) via a follow-up migration; current behaviour is
+// preserved here on purpose.
 
 func (s *Store) SaveComplianceRule(ctx context.Context, wc store.WriteContext, r *vibeflow.ComplianceRule) error {
 	s.mu.Lock()
@@ -1240,11 +1268,12 @@ func (s *Store) SaveComplianceRule(ctx context.Context, wc store.WriteContext, r
 		ConstitutionID:  wc.ConstitutionID,
 		ConstitutionVer: wc.ConstitutionVer,
 		CreatedAt:       r.CreatedAt,
-		Notes:           "jurisdiction=" + r.Jurisdiction,
+		Notes:           "jurisdiction=" + r.Jurisdiction + " (global)",
 	}, "")
 }
 
 func (s *Store) GetComplianceRule(ctx context.Context, jurisdiction string) (*vibeflow.ComplianceRule, error) {
+	// Global by design — see T4c decision.
 	row := s.db.QueryRowContext(ctx,
 		`SELECT jurisdiction, rules_json, effective_at, source_url, created_at
 		 FROM vibe_compliance WHERE jurisdiction = ?`, jurisdiction)
@@ -1269,6 +1298,7 @@ func (s *Store) GetComplianceRule(ctx context.Context, jurisdiction string) (*vi
 }
 
 func (s *Store) ListComplianceRules(ctx context.Context, limit int) ([]vibeflow.ComplianceRule, error) {
+	// Global by design — see T4c decision.
 	if limit <= 0 {
 		limit = 50
 	}

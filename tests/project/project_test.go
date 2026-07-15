@@ -706,6 +706,167 @@ func TestProject_Specs_CrossProject_Isolated(t *testing.T) {
 	}
 }
 
+// W3-002 (T4c, brands): same brand_id can exist in two different
+// projects with different voice/visual. Each project only sees its own.
+func TestProject_Brands_CrossProject_CompositeUnique(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+
+	if err := s.CreateProject(ctx, &project.Project{ProjectID: "acme-corp", DisplayName: "ACME Corp"}); err != nil {
+		t.Fatalf("create acme-corp: %v", err)
+	}
+	if err := s.CreateProject(ctx, &project.Project{ProjectID: "acme-eu", DisplayName: "ACME EU", ParentProjectID: "acme-corp"}); err != nil {
+		t.Fatalf("create acme-eu: %v", err)
+	}
+	if err := s.CreateProject(ctx, &project.Project{ProjectID: "acme-us", DisplayName: "ACME US", ParentProjectID: "acme-corp"}); err != nil {
+		t.Fatalf("create acme-us: %v", err)
+	}
+
+	// acme-corp defines the canonical brand.
+	if err := s.SetActiveProject(ctx, "acme-corp"); err != nil {
+		t.Fatalf("set acme-corp: %v", err)
+	}
+	if err := s.SaveBrandGuide(ctx, store.WriteContext{Actor: "test", SessionID: "sess", WritePath: "test", ProjectID: "acme-corp"},
+		&vibeflow.BrandGuide{BrandID: "acme-base", Voice: `{"id":"base"}`}); err != nil {
+		t.Fatalf("save base: %v", err)
+	}
+
+	// acme-eu has its own override for the same brand_id.
+	if err := s.SetActiveProject(ctx, "acme-eu"); err != nil {
+		t.Fatalf("set acme-eu: %v", err)
+	}
+	if err := s.SaveBrandGuide(ctx, store.WriteContext{Actor: "test", SessionID: "sess", WritePath: "test", ProjectID: "acme-eu"},
+		&vibeflow.BrandGuide{BrandID: "acme-base", Voice: `{"id":"eu-override"}`}); err != nil {
+		t.Fatalf("save eu override: %v", err)
+	}
+
+	// acme-us has its own override.
+	if err := s.SetActiveProject(ctx, "acme-us"); err != nil {
+		t.Fatalf("set acme-us: %v", err)
+	}
+	if err := s.SaveBrandGuide(ctx, store.WriteContext{Actor: "test", SessionID: "sess", WritePath: "test", ProjectID: "acme-us"},
+		&vibeflow.BrandGuide{BrandID: "acme-base", Voice: `{"id":"us-override"}`}); err != nil {
+		t.Fatalf("save us override: %v", err)
+	}
+
+	// From acme-eu: GetBrandGuide("acme-base") returns EU's record only.
+	if err := s.SetActiveProject(ctx, "acme-eu"); err != nil {
+		t.Fatalf("set acme-eu (2): %v", err)
+	}
+	gotEU, err := s.GetBrandGuide(ctx, "acme-base")
+	if err != nil {
+		t.Fatalf("GetBrandGuide eu: %v", err)
+	}
+	if gotEU == nil || gotEU.Voice != `{"id":"eu-override"}` {
+		t.Fatalf("acme-eu should see eu-override, got: %+v", gotEU)
+	}
+
+	// From acme-us: GetBrandGuide("acme-base") returns US's record only.
+	if err := s.SetActiveProject(ctx, "acme-us"); err != nil {
+		t.Fatalf("set acme-us (2): %v", err)
+	}
+	gotUS, err := s.GetBrandGuide(ctx, "acme-base")
+	if err != nil {
+		t.Fatalf("GetBrandGuide us: %v", err)
+	}
+	if gotUS == nil || gotUS.Voice != `{"id":"us-override"}` {
+		t.Fatalf("acme-us should see us-override, got: %+v", gotUS)
+	}
+
+	// From acme-corp: GetBrandGuide("acme-base") returns canonical base.
+	if err := s.SetActiveProject(ctx, "acme-corp"); err != nil {
+		t.Fatalf("set acme-corp (2): %v", err)
+	}
+	gotBase, err := s.GetBrandGuide(ctx, "acme-base")
+	if err != nil {
+		t.Fatalf("GetBrandGuide base: %v", err)
+	}
+	if gotBase == nil || gotBase.Voice != `{"id":"base"}` {
+		t.Fatalf("acme-corp should see base, got: %+v", gotBase)
+	}
+
+	// ListBrandGuides is project-scoped: each project sees only its own.
+	if err := s.SetActiveProject(ctx, "acme-eu"); err != nil {
+		t.Fatalf("set acme-eu (3): %v", err)
+	}
+	listEU, _ := s.ListBrandGuides(ctx, 100)
+	if len(listEU) != 1 || listEU[0].Voice != `{"id":"eu-override"}` {
+		t.Fatalf("acme-eu list should have 1 brand (its override), got %d: %+v", len(listEU), listEU)
+	}
+	if err := s.SetActiveProject(ctx, "acme-us"); err != nil {
+		t.Fatalf("set acme-us (3): %v", err)
+	}
+	listUS, _ := s.ListBrandGuides(ctx, 100)
+	if len(listUS) != 1 || listUS[0].Voice != `{"id":"us-override"}` {
+		t.Fatalf("acme-us list should have 1 brand (its override), got %d: %+v", len(listUS), listUS)
+	}
+
+	// Delete cross-project must not touch the other project's record.
+	if err := s.DeleteBrandGuide(ctx, store.WriteContext{Actor: "test", SessionID: "sess", WritePath: "test", ProjectID: "acme-us"},
+		"acme-base"); err != nil {
+		t.Fatalf("delete us: %v", err)
+	}
+	if err := s.SetActiveProject(ctx, "acme-eu"); err != nil {
+		t.Fatalf("set acme-eu (4): %v", err)
+	}
+	gotEUAfter, err := s.GetBrandGuide(ctx, "acme-base")
+	if err != nil {
+		t.Fatalf("GetBrandGuide eu after us delete: %v", err)
+	}
+	if gotEUAfter == nil || gotEUAfter.Voice != `{"id":"eu-override"}` {
+		t.Fatalf("acme-eu brand must survive acme-us delete, got: %+v", gotEUAfter)
+	}
+}
+
+// W3-002 (T4c, compliance): jurisdiction is GLOBAL by design. A rule
+// registered with project_id='default' is visible from any project.
+// Documented as a deliberate choice — see spec 171 T4c decision.
+func TestProject_Compliance_GlobalByDesign(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+
+	if err := s.CreateProject(ctx, &project.Project{ProjectID: "acme-eu", DisplayName: "ACME EU"}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := s.CreateProject(ctx, &project.Project{ProjectID: "acme-us", DisplayName: "ACME US"}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// Register a compliance rule in default project.
+	s.SetActiveProject(ctx, "default")
+	if err := s.SaveComplianceRule(ctx, store.WriteContext{Actor: "test", SessionID: "sess", WritePath: "test", ProjectID: "default"},
+		&vibeflow.ComplianceRule{Jurisdiction: "EU", Rules: `{"required":["disclosure"]}`}); err != nil {
+		t.Fatalf("save rule: %v", err)
+	}
+
+	// From acme-eu: GetComplianceRule("EU") returns the global rule.
+	s.SetActiveProject(ctx, "acme-eu")
+	gotEU, err := s.GetComplianceRule(ctx, "EU")
+	if err != nil {
+		t.Fatalf("GetComplianceRule eu: %v", err)
+	}
+	if gotEU == nil || gotEU.Rules != `{"required":["disclosure"]}` {
+		t.Fatalf("acme-eu must see global EU rule, got: %+v", gotEU)
+	}
+
+	// From acme-us: same rule, no isolation.
+	s.SetActiveProject(ctx, "acme-us")
+	gotUS, err := s.GetComplianceRule(ctx, "EU")
+	if err != nil {
+		t.Fatalf("GetComplianceRule us: %v", err)
+	}
+	if gotUS == nil || gotUS.Rules != `{"required":["disclosure"]}` {
+		t.Fatalf("acme-us must see global EU rule, got: %+v", gotUS)
+	}
+
+	// ListComplianceRules also global: same list from any project.
+	listEU, _ := s.ListComplianceRules(ctx, 100)
+	listUS, _ := s.ListComplianceRules(ctx, 100)
+	if len(listEU) != len(listUS) || len(listEU) < 1 {
+		t.Fatalf("compliance list must be global; acme-eu=%d, acme-us=%d", len(listEU), len(listUS))
+	}
+}
+
 // helpers
 func errIs(err, target error) bool {
 	for e := err; e != nil; {
