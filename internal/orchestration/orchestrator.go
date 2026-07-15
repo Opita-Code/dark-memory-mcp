@@ -43,12 +43,14 @@ type Orchestrator struct {
 	Safety   *safety.Holder
 	now      func() time.Time // injectable for tests
 	backends []ResearchBackend // registered research backends (O3)
+	selector LLMSelector       // LLM selector for O5 Judge
 }
 
 // New constructs an Orchestrator with the given Store and Safety
 // holder. Safety may be nil (orchestrator will construct an empty
 // Holder). now is injectable for deterministic tests; pass nil to
-// default to time.Now. Use WithBackends to register research backends.
+// default to time.Now. Use WithBackends to register research backends
+// and WithLLMSelector to wire the Judge pipeline.
 func New(s store.Store, safe *safety.Holder) *Orchestrator {
 	if safe == nil {
 		h := &safety.Holder{}
@@ -59,6 +61,26 @@ func New(s store.Store, safe *safety.Holder) *Orchestrator {
 		Safety: safe,
 		now:    func() time.Time { return time.Now().UTC() },
 	}
+}
+
+// WithLLMSelector attaches an LLMSelector to the orchestrator. Used
+// by O5 Judge. If not set, NewSelfHarnessClient is called at Judge time
+// (auto-detect from env).
+func (o *Orchestrator) WithLLMSelector(s LLMSelector) *Orchestrator {
+	o.selector = s
+	return o
+}
+
+// ensureLLMSelector lazily constructs a default OSINTSelector backed
+// by SelfHarnessClient (auto-detect harness LLM). Called at Judge time.
+func (o *Orchestrator) ensureLLMSelector() LLMSelector {
+	if o.selector != nil {
+		return o.selector
+	}
+	// Default: use the harness's LLM. If no key is set, the
+	// selector will return ErrNoLLMAvailable on Select.
+	client, _ := NewSelfHarnessClient()
+	return NewOSINTSelector(client)
 }
 
 // errMissingField is a small helper that wraps ErrInvalidArgument.

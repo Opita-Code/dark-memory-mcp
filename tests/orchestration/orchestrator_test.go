@@ -15,6 +15,7 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/orchestration"
 	"github.com/dark-agents/dark-memory-mcp/internal/project"
 	"github.com/dark-agents/dark-memory-mcp/internal/research"
+	"github.com/dark-agents/dark-memory-mcp/internal/safety"
 	"github.com/dark-agents/dark-memory-mcp/internal/session"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 	"github.com/dark-agents/dark-memory-mcp/internal/store/runtime"
@@ -645,6 +646,238 @@ func TestRecallContext_NoProject(t *testing.T) {
 	}
 	if !errIs(err, store.ErrSessionRequired) {
 		t.Fatalf("expected ErrSessionRequired, got: %v", err)
+	}
+}
+
+// O5: Judge — happy path with mock LLM returning a verdict.
+func TestJudge_HappyPath(t *testing.T) {
+	ctx := context.Background()
+	orch, s := openOrchestratorTestEnv(t)
+	if err := s.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	mock := &orchestration.MockLLMClient{
+		Name_:       "mock_v1",
+		VerdictJSON: `{"match":0.92,"issues":[]}`,
+		Confidence:  0.92,
+		Model:       "mock-1",
+	}
+	orch.WithLLMSelector(orchestration.NewOSINTSelector(mock))
+
+	out, err := orch.Judge(ctx, orchestration.JudgeInput{
+		EvalType:   "brand_match",
+		TargetType: "brand",
+		TargetID:   "acme-base",
+		Content:    "Our brand voice is bold and warm.",
+	})
+	if err != nil {
+		t.Fatalf("Judge: %v", err)
+	}
+	if out.EvaluationID == 0 {
+		t.Fatalf("EvaluationID should be > 0")
+	}
+	if out.Confidence < 0 || out.Confidence > 1 {
+		t.Fatalf("Confidence out of [0,1] range: %f", out.Confidence)
+	}
+	if mock.Calls != 1 {
+		t.Fatalf("LLM should have been called once, got %d", mock.Calls)
+	}
+	if mock.LastReq.EvalType != "brand_match" {
+		t.Fatalf("LLM received wrong eval_type: %q", mock.LastReq.EvalType)
+	}
+
+	// SDDEvaluation persisted.
+	writes, _ := s.ListWrites(ctx, audit.ListFilters{Actor: "orchestrator_judge", Limit: 10})
+	if len(writes) == 0 {
+		t.Fatalf("expected write_audit row for sdd_evaluations")
+	}
+}
+
+// O5: Judge — low confidence verdict still gets saved.
+func TestJudge_LowConfidenceStillSaves(t *testing.T) {
+	ctx := context.Background()
+	orch, s := openOrchestratorTestEnv(t)
+	if err := s.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	mock := &orchestration.MockLLMClient{
+		Name_:       "mock_v1",
+		VerdictJSON: `{"match":0.3}`,
+		Confidence:  0.3,
+		Model:       "mock-1",
+	}
+	orch.WithLLMSelector(orchestration.NewOSINTSelector(mock))
+
+	out, err := orch.Judge(ctx, orchestration.JudgeInput{
+		EvalType:   "brand_match",
+		TargetType: "brand",
+		TargetID:   "weak",
+		Content:    "ambiguous content",
+	})
+	if err != nil {
+		t.Fatalf("Judge should still save low-confidence verdicts: %v", err)
+	}
+	if out.Confidence > 0.5 {
+		t.Fatalf("test expected low confidence, got %f", out.Confidence)
+	}
+}
+
+// O5: Judge — content with canary token is refused (INV-3).
+func TestJudge_CanaryRejection(t *testing.T) {
+	ctx := context.Background()
+	orch, _ := openOrchestratorTestEnv(t)
+	if err := orch.Store.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	// Install a canary token, then submit content that contains it.
+	canary := "DEADBEEF-CANARY-XYZ"
+	orch.Safety.Set(safety.CanaryToken(canary))
+
+	mock := &orchestration.MockLLMClient{Name_: "should-not-be-called"}
+	orch.WithLLMSelector(orchestration.NewOSINTSelector(mock))
+
+	_, err := orch.Judge(ctx, orchestration.JudgeInput{
+		EvalType:   "brand_match",
+		TargetType: "brand",
+		TargetID:   "poison",
+		Content:    "This contains the canary: " + canary + " — do not score me.",
+	})
+	if err == nil {
+		t.Fatalf("expected canary rejection error")
+	}
+	if !errIs(err, store.ErrCanaryInPayload) {
+		t.Fatalf("expected ErrCanaryInPayload, got: %v", err)
+	}
+	if mock.Calls != 0 {
+		t.Fatalf("LLM should NOT have been called when canary is in payload, got %d calls", mock.Calls)
+	}
+}
+
+// O5: Judge — no LLM available returns ErrNoLLMAvailable.
+func TestJudge_NoLLMAvailable(t *testing.T) {
+	ctx := context.Background()
+	orch, _ := openOrchestratorTestEnv(t)
+	if err := orch.Store.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	// No selector configured; the default one will use
+	// SelfHarnessClient which returns ErrNoLLMAvailable in tests
+	// (env vars not set).
+	_, err := orch.Judge(ctx, orchestration.JudgeInput{
+		EvalType:   "brand_match",
+		TargetType: "brand",
+		TargetID:   "x",
+		Content:    "y",
+	})
+	if err == nil {
+		t.Fatalf("expected ErrNoLLMAvailable (no harness key set in tests)")
+	}
+	if !errIs(err, orchestration.ErrNoLLMAvailable) {
+		t.Fatalf("expected ErrNoLLMAvailable, got: %v", err)
+	}
+}
+
+// O5: Judge — missing content rejected.
+func TestJudge_MissingContent(t *testing.T) {
+	ctx := context.Background()
+	orch, _ := openOrchestratorTestEnv(t)
+	if err := orch.Store.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	_, err := orch.Judge(ctx, orchestration.JudgeInput{
+		EvalType:   "brand_match",
+		TargetType: "brand",
+		TargetID:   "x",
+	})
+	if err == nil {
+		t.Fatalf("expected error for missing content")
+	}
+	if !errIs(err, store.ErrInvalidArgument) {
+		t.Fatalf("expected ErrInvalidArgument, got: %v", err)
+	}
+}
+
+// O5: SelfHarnessClient — env detection returns ErrNoLLMAvailable
+// when no key is set in test env.
+func TestSelfHarnessClient_NoKey(t *testing.T) {
+	// Wipe env vars that SelfHarnessClient reads (test isolation).
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("GEMINI_API_KEY", "")
+	t.Setenv("DARK_SCRAPPER_URL", "")
+	c, err := orchestration.NewSelfHarnessClient()
+	if err == nil {
+		t.Fatalf("expected ErrNoLLMAvailable, got client %v", c)
+	}
+	if !errIs(err, orchestration.ErrNoLLMAvailable) {
+		t.Fatalf("expected ErrNoLLMAvailable, got: %v", err)
+	}
+}
+
+// O5: SelfHarnessClient — env detection picks ANTHROPIC_API_KEY first.
+func TestSelfHarnessClient_AnthropicPriority(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+	t.Setenv("OPENAI_API_KEY", "sk-openai-test")
+	c, err := orchestration.NewSelfHarnessClient()
+	if err != nil {
+		t.Fatalf("expected client, got err: %v", err)
+	}
+	if c.Name() != "self_harness_anthropic" {
+		t.Fatalf("expected self_harness_anthropic, got %q", c.Name())
+	}
+}
+
+// O5: OSINT catalog — known provider returns per-eval recommendation.
+func TestRecommendedModel_KnownProvider(t *testing.T) {
+	cases := []struct {
+		provider, evalType, want string
+	}{
+		{"anthropic", "drift_judge", "claude-opus-4-7"}, // opus for reasoning
+		{"anthropic", "brand_match", "claude-haiku-4-5"}, // haiku for fast
+		{"openai", "compliance_check", "gpt-5"},
+		{"google", "grounding_check", "gemini-2.5-pro"},
+		{"deepseek", "drift_judge", "deepseek-r1"}, // r1 for reasoning
+		{"perplexity", "grounding_check", "sonar-pro"}, // search-augmented
+	}
+	for _, c := range cases {
+		got := orchestration.RecommendedModel(c.provider, c.evalType)
+		if got != c.want {
+			t.Errorf("RecommendedModel(%s, %s) = %q, want %q", c.provider, c.evalType, got, c.want)
+		}
+	}
+}
+
+// O5: OSINT catalog — unknown provider returns "" (caller falls
+// through to client auto-config).
+func TestRecommendedModel_UnknownProvider(t *testing.T) {
+	got := orchestration.RecommendedModel("my-internal-model-v1", "brand_match")
+	if got != "" {
+		t.Fatalf("unknown provider should return empty string, got %q", got)
+	}
+	if orchestration.IsKnownProvider("my-internal-model-v1") {
+		t.Fatalf("IsKnownProvider should return false for unknown provider")
+	}
+	if !orchestration.IsKnownProvider("anthropic") {
+		t.Fatalf("IsKnownProvider should return true for anthropic")
+	}
+}
+
+// O5: ListProviders returns the top-10.
+func TestListProviders(t *testing.T) {
+	providers := orchestration.ListProviders()
+	if len(providers) < 10 {
+		t.Fatalf("expected at least 10 providers, got %d: %v", len(providers), providers)
+	}
+	want := []string{"anthropic", "openai", "google", "mistral", "cohere", "meta", "xai", "deepseek", "qwen", "perplexity"}
+	for i, w := range want {
+		if i >= len(providers) || providers[i] != w {
+			t.Errorf("provider %d: got %q, want %q", i, providers[i], w)
+		}
 	}
 }
 
