@@ -525,6 +525,129 @@ func TestResearchTopic_MultipleBackendsAggregate(t *testing.T) {
 	}
 }
 
+// O4: RecallContext — happy path with persisted data.
+func TestRecallContext_HappyPath(t *testing.T) {
+	ctx := context.Background()
+	orch, s := openOrchestratorTestEnv(t)
+	if err := s.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	// Seed a run + 5 items.
+	_, err := s.SaveRun(ctx, store.WriteContext{Actor: "test", SessionID: "sess-A", WritePath: "test"},
+		&research.ResearchRun{
+			SessionID: "sess-A",
+			Query:     "supply chain attacks",
+			Intent:    "web",
+			Items: []research.Item{
+				{Title: "Supply chain A", Snippet: "first sentence about attacks. more text.", Source: "web", Confidence: 0.9},
+				{Title: "Supply chain B", Snippet: "second item snippet", Source: "web", Confidence: 0.7},
+				{Title: "Supply chain C", Snippet: "third item snippet", Source: "web", Confidence: 0.6},
+				{Title: "Other topic", Snippet: "unrelated content", Source: "news", Confidence: 0.8},
+				{Title: "another acme item", Snippet: "supply chain context", Source: "news", Confidence: 0.5},
+			},
+		})
+	if err != nil {
+		t.Fatalf("SaveRun: %v", err)
+	}
+
+	out, err := orch.RecallContext(ctx, orchestration.RecallContextInput{
+		Query: "supply chain",
+	})
+	if err != nil {
+		t.Fatalf("RecallContext: %v", err)
+	}
+	// Should find the 4 matching items (not "Other topic"), compressed
+	// (snippet truncated to first sentence).
+	if len(out.Items) == 0 {
+		t.Fatalf("expected items, got 0")
+	}
+	// Items are sorted by confidence and capped at 10 by default.
+	for _, it := range out.Items {
+		if !strings.Contains(it.Title, "Supply chain") && !strings.Contains(it.Title, "another") {
+			t.Fatalf("unexpected item title: %q", it.Title)
+		}
+	}
+	if out.TokensUsed <= 0 {
+		t.Fatalf("TokensUsed should be > 0, got %d", out.TokensUsed)
+	}
+}
+
+// O4: RecallContext — missing query rejected.
+func TestRecallContext_MissingQuery(t *testing.T) {
+	ctx := context.Background()
+	orch, s := openOrchestratorTestEnv(t)
+	if err := s.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	_, err := orch.RecallContext(ctx, orchestration.RecallContextInput{})
+	if err == nil {
+		t.Fatalf("expected error for missing query")
+	}
+	if !errIs(err, store.ErrInvalidArgument) {
+		t.Fatalf("expected ErrInvalidArgument, got: %v", err)
+	}
+}
+
+// O4: RecallContext — tight MaxTokens reduces items further.
+func TestRecallContext_TightBudget(t *testing.T) {
+	ctx := context.Background()
+	orch, s := openOrchestratorTestEnv(t)
+	if err := s.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	// Seed many items, all roughly matching the query. Use a snippet
+	// without periods so the first-sentence compression leaves most
+	// of the text intact, making the token budget harder to satisfy.
+	// Each item has a unique URL so dedup doesn't collapse them.
+	items := make([]research.Item, 20)
+	for i := range items {
+		items[i] = research.Item{
+			Title:     fmt.Sprintf("Supply chain item %02d", i),
+			URL:       fmt.Sprintf("https://example.com/supply-chain-%02d", i),
+			Snippet:   strings.Repeat("lorem-ipsum-dolor-sit-amet ", 100),
+			Source:    "web",
+			Confidence: float32(0.5 + float32(i)*0.02),
+		}
+	}
+	if _, err := s.SaveRun(ctx, store.WriteContext{Actor: "test", SessionID: "sess-A", WritePath: "test"},
+		&research.ResearchRun{
+			SessionID: "sess-A", Query: "seed", Intent: "web", Items: items,
+		}); err != nil {
+		t.Fatalf("SaveRun: %v", err)
+	}
+
+	out, err := orch.RecallContext(ctx, orchestration.RecallContextInput{
+		Query: "supply chain", MaxTokens: 200,
+	})
+	if err != nil {
+		t.Fatalf("RecallContext: %v", err)
+	}
+	// Tight budget should produce 3 items at most (cap rule for
+	// MaxTokens < 500).
+	if len(out.Items) > 3 {
+		t.Fatalf("tight budget should yield <=3 items, got %d", len(out.Items))
+	}
+	if !out.Truncated {
+		t.Fatalf("Truncated should be true when budget was tight")
+	}
+}
+
+// O4: RecallContext — no active project returns ErrSessionRequired.
+func TestRecallContext_NoProject(t *testing.T) {
+	ctx := context.Background()
+	orch, _ := openOrchestratorTestEnv(t)
+	// Don't set active project.
+	_, err := orch.RecallContext(ctx, orchestration.RecallContextInput{Query: "Q"})
+	if err == nil {
+		t.Fatalf("expected error for no active project")
+	}
+	if !errIs(err, store.ErrSessionRequired) {
+		t.Fatalf("expected ErrSessionRequired, got: %v", err)
+	}
+}
+
 // O2: summary counts reflect activity. Write a research run in the
 // session, then close and check ItemsTotal > 0.
 func TestSessionClose_SummaryCounts(t *testing.T) {
