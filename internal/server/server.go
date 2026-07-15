@@ -127,13 +127,21 @@ func (s *Server) RegisterAll() error {
 }
 
 // registerOne adds a single Tool to the mcp-go server.
+//
+// We use NewToolWithRawSchema (not NewTool + WithRawInputSchema)
+// because NewTool initializes InputSchema.Type="object" by default,
+// which trips mcp-go's "both InputSchema and RawInputSchema set"
+// conflict check at tools/list serialization time. NewToolWithRawSchema
+// starts with a clean Tool (InputSchema unset) and sets RawInputSchema
+// directly — bypassing the conflict.
+//
+// Discovered via the bridge.7 conformance test: tools/list returned
+// a serialization error and the client never received a response
+// (the server logged "failed to write response: ... tool
+// dark_memory_active_policy has both InputSchema and RawInputSchema set").
 func (s *Server) registerOne(t *tools.Tool) error {
 	wireName := tools.WireName(t.Name)
-	tool := mcplib.NewTool(
-		wireName,
-		mcplib.WithDescription(t.Description),
-		mcplib.WithRawInputSchema(t.InputSchema),
-	)
+	tool := mcplib.NewToolWithRawSchema(wireName, t.Description, t.InputSchema)
 	handler := s.wrapHandler(t)
 	s.mcpSrv.AddTool(tool, handler)
 	return nil
