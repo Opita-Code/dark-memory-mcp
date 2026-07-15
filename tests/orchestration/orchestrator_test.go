@@ -6,12 +6,16 @@ package orchestration_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/audit"
+	"github.com/dark-agents/dark-memory-mcp/internal/constitution"
+	"github.com/dark-agents/dark-memory-mcp/internal/mods"
 	"github.com/dark-agents/dark-memory-mcp/internal/orchestration"
 	"github.com/dark-agents/dark-memory-mcp/internal/project"
 	"github.com/dark-agents/dark-memory-mcp/internal/research"
@@ -929,5 +933,1472 @@ func TestSessionClose_SummaryCounts(t *testing.T) {
 		// items + 1 run audit = at least 4 audit rows, plus the
 		// SessionStart and SessionClose rows.
 		t.Fatalf("WritesTotal should be >=3, got %d", out.WritesTotal)
+	}
+}
+
+// ============================================================================
+// O7: PublishVibe — spec_create + artifact_log + drift_judge + drift_log.
+// ============================================================================
+
+// O7: PublishVibe — happy path with mock LLM returning aligned verdict.
+func TestPublishVibe_HappyPath(t *testing.T) {
+	ctx := context.Background()
+	orch, s := openOrchestratorTestEnv(t)
+	if err := s.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	mock := &orchestration.MockLLMClient{
+		Name_:       "mock_v1",
+		VerdictJSON: `{"aligned":true,"confidence":0.92,"issues":[]}`,
+		Confidence:  0.92,
+		Model:       "mock-1",
+	}
+	orch.WithLLMSelector(orchestration.NewOSINTSelector(mock))
+
+	out, err := orch.PublishVibe(ctx, orchestration.PublishVibeInput{
+		Spec: orchestration.PublishSpecInput{
+			VibeCase: "C1",
+			Spec:     `{"intent":"ship a CLI"}`,
+			Tasks:    `[{"id":"t1","desc":"write code"}]`,
+		},
+		Artifact: orchestration.PublishArtifactInput{
+			ArtifactType: "code",
+			ArtifactURL:  "file:///tmp/example.go",
+			Text:         "package main\nfunc main(){println(\"hi\")}\n",
+		},
+	})
+	if err != nil {
+		t.Fatalf("PublishVibe: %v", err)
+	}
+	if out.SpecID == 0 {
+		t.Fatalf("SpecID should be > 0")
+	}
+	if out.ArtifactID == 0 {
+		t.Fatalf("ArtifactID should be > 0")
+	}
+	if out.DriftID == 0 {
+		t.Fatalf("DriftID should be > 0")
+	}
+	if out.Verdict != "aligned" {
+		t.Fatalf("Verdict should be aligned, got %q", out.Verdict)
+	}
+	if out.NextAction != "publish" {
+		t.Fatalf("NextAction should be publish, got %q", out.NextAction)
+	}
+	if out.Confidence < 0.9 {
+		t.Fatalf("Confidence should be >= 0.9, got %f", out.Confidence)
+	}
+
+	gotSpec, err := s.GetSpec(ctx, out.SpecID)
+	if err != nil || gotSpec == nil {
+		t.Fatalf("GetSpec: %v / nil=%v", err, gotSpec == nil)
+	}
+	if gotSpec.VibeCase != "C1" {
+		t.Fatalf("spec vibe_case round-trip: got %q", gotSpec.VibeCase)
+	}
+
+	gotArt, err := s.GetArtifact(ctx, out.ArtifactID)
+	if err != nil || gotArt == nil {
+		t.Fatalf("GetArtifact: %v / nil=%v", err, gotArt == nil)
+	}
+	if gotArt.ValidationStatus != "passed" {
+		t.Fatalf("artifact validation_status should be 'passed', got %q", gotArt.ValidationStatus)
+	}
+	if gotArt.SpecID != out.SpecID {
+		t.Fatalf("artifact spec_id should link back, got %d want %d", gotArt.SpecID, out.SpecID)
+	}
+
+	drift, err := s.LatestDriftForArtifact(ctx, out.ArtifactID)
+	if err != nil || drift == nil {
+		t.Fatalf("LatestDriftForArtifact: %v / nil=%v", err, drift == nil)
+	}
+	if drift.Verdict != "aligned" {
+		t.Fatalf("drift verdict should be aligned, got %q", drift.Verdict)
+	}
+	if drift.ReconciledAt == "" {
+		t.Fatalf("aligned drift should be auto-reconciled, got empty ReconciledAt")
+	}
+}
+
+// O7: PublishVibe — missing artifact_url is rejected.
+func TestPublishVibe_MissingArtifactURL(t *testing.T) {
+	ctx := context.Background()
+	orch, s := openOrchestratorTestEnv(t)
+	if err := s.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	_, err := orch.PublishVibe(ctx, orchestration.PublishVibeInput{
+		Spec:     orchestration.PublishSpecInput{VibeCase: "C1"},
+		Artifact: orchestration.PublishArtifactInput{ArtifactType: "code"},
+	})
+	if err == nil {
+		t.Fatalf("expected error for missing artifact_url")
+	}
+	if !errIs(err, store.ErrInvalidArgument) {
+		t.Fatalf("expected ErrInvalidArgument, got: %v", err)
+	}
+}
+
+// O7: PublishVibe — missing vibe_case is rejected.
+func TestPublishVibe_MissingVibeCase(t *testing.T) {
+	ctx := context.Background()
+	orch, s := openOrchestratorTestEnv(t)
+	if err := s.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	_, err := orch.PublishVibe(ctx, orchestration.PublishVibeInput{
+		Artifact: orchestration.PublishArtifactInput{
+			ArtifactType: "code",
+			ArtifactURL:  "file:///x",
+		},
+	})
+	if err == nil {
+		t.Fatalf("expected error for missing vibe_case")
+	}
+	if !errIs(err, store.ErrInvalidArgument) {
+		t.Fatalf("expected ErrInvalidArgument, got: %v", err)
+	}
+}
+
+// O7: PublishVibe — drift_detected verdict triggers NextAction=reconcile
+// and validation_status=failed.
+func TestPublishVibe_DriftDetected(t *testing.T) {
+	ctx := context.Background()
+	orch, s := openOrchestratorTestEnv(t)
+	if err := s.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	mock := &orchestration.MockLLMClient{
+		Name_:       "mock_v1",
+		VerdictJSON: `{"aligned":false,"drift_items":["missing_documentation"],"confidence":0.85}`,
+		Confidence:  0.85,
+		Model:       "mock-1",
+	}
+	orch.WithLLMSelector(orchestration.NewOSINTSelector(mock))
+
+	out, err := orch.PublishVibe(ctx, orchestration.PublishVibeInput{
+		Spec: orchestration.PublishSpecInput{VibeCase: "C1"},
+		Artifact: orchestration.PublishArtifactInput{
+			ArtifactType: "code",
+			ArtifactURL:  "file:///tmp/incomplete.go",
+			Text:         "package main",
+		},
+	})
+	if err != nil {
+		t.Fatalf("PublishVibe: %v", err)
+	}
+	if out.Verdict != "drift_detected" {
+		t.Fatalf("Verdict should be drift_detected, got %q", out.Verdict)
+	}
+	if out.NextAction != "reconcile" {
+		t.Fatalf("NextAction should be reconcile, got %q", out.NextAction)
+	}
+	if out.DriftID == 0 {
+		t.Fatalf("DriftID should be > 0 even on drift_detected")
+	}
+
+	gotArt, _ := s.GetArtifact(ctx, out.ArtifactID)
+	if gotArt.ValidationStatus != "failed" {
+		t.Fatalf("artifact validation_status should be 'failed', got %q", gotArt.ValidationStatus)
+	}
+
+	drift, _ := s.LatestDriftForArtifact(ctx, out.ArtifactID)
+	if drift == nil || drift.ReconciledAt != "" {
+		t.Fatalf("drift_detected should NOT be auto-reconciled; ReconciledAt=%q", drift.ReconciledAt)
+	}
+}
+
+// O7: PublishVibe — no LLM available still persists spec + artifact +
+// drift_log with verdict="drift_detected" + reasoning explaining skip.
+func TestPublishVibe_NoLLM(t *testing.T) {
+	ctx := context.Background()
+	orch, s := openOrchestratorTestEnv(t)
+	if err := s.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	out, err := orch.PublishVibe(ctx, orchestration.PublishVibeInput{
+		Spec: orchestration.PublishSpecInput{VibeCase: "C1"},
+		Artifact: orchestration.PublishArtifactInput{
+			ArtifactType: "code",
+			ArtifactURL:  "file:///tmp/no-llm.go",
+			Text:         "package main",
+		},
+	})
+	if err != nil {
+		t.Fatalf("PublishVibe should succeed even without LLM (audit trail complete): %v", err)
+	}
+	if out.SpecID == 0 || out.ArtifactID == 0 || out.DriftID == 0 {
+		t.Fatalf("all three rows should be persisted; got spec=%d art=%d drift=%d", out.SpecID, out.ArtifactID, out.DriftID)
+	}
+	if out.Verdict != "drift_detected" {
+		t.Fatalf("Verdict should be drift_detected (no LLM = can't judge = drift_detected), got %q", out.Verdict)
+	}
+	if out.NextAction != "human_gate" {
+		t.Fatalf("NextAction should be human_gate, got %q", out.NextAction)
+	}
+	if !strings.Contains(out.Reasoning, "drift_judge skipped") {
+		t.Fatalf("Reasoning should explain skip, got: %q", out.Reasoning)
+	}
+
+	drift, _ := s.LatestDriftForArtifact(ctx, out.ArtifactID)
+	if drift == nil {
+		t.Fatalf("drift row missing")
+	}
+	if !strings.Contains(drift.JudgeReasoning, "drift_judge skipped") {
+		t.Fatalf("drift.JudgeReasoning should mention skip, got: %q", drift.JudgeReasoning)
+	}
+}
+
+// O7: PublishVibe — AutoDriftCheck=false (explicit pointer) skips drift.
+func TestPublishVibe_AutoDriftCheckFalse(t *testing.T) {
+	ctx := context.Background()
+	orch, s := openOrchestratorTestEnv(t)
+	if err := s.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	mock := &orchestration.MockLLMClient{
+		Name_:       "should-not-be-called",
+		VerdictJSON: `{"aligned":true,"confidence":0.99}`,
+		Confidence:  0.99,
+	}
+	orch.WithLLMSelector(orchestration.NewOSINTSelector(mock))
+
+	autoCheckFalse := false
+	out, err := orch.PublishVibe(ctx, orchestration.PublishVibeInput{
+		Spec: orchestration.PublishSpecInput{VibeCase: "C1"},
+		Artifact: orchestration.PublishArtifactInput{
+			ArtifactType: "code",
+			ArtifactURL:  "file:///tmp/skip.go",
+			Text:         "package main",
+		},
+		AutoDriftCheck: &autoCheckFalse,
+	})
+	if err != nil {
+		t.Fatalf("PublishVibe: %v", err)
+	}
+	if out.Verdict != "skipped" {
+		t.Fatalf("Verdict should be skipped, got %q", out.Verdict)
+	}
+	if out.NextAction != "publish" {
+		t.Fatalf("NextAction should be publish, got %q", out.NextAction)
+	}
+	if mock.Calls != 0 {
+		t.Fatalf("LLM should not be called when AutoDriftCheck=false, got %d calls", mock.Calls)
+	}
+
+	gotArt, _ := s.GetArtifact(ctx, out.ArtifactID)
+	if gotArt.ValidationStatus != "pending" {
+		t.Fatalf("artifact validation_status should remain 'pending' on skipped drift, got %q", gotArt.ValidationStatus)
+	}
+}
+
+// O7: PublishVibe — no artifact text => verdict="skipped", no LLM call.
+func TestPublishVibe_NoText(t *testing.T) {
+	ctx := context.Background()
+	orch, s := openOrchestratorTestEnv(t)
+	if err := s.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	mock := &orchestration.MockLLMClient{Name_: "should-not-be-called"}
+	orch.WithLLMSelector(orchestration.NewOSINTSelector(mock))
+
+	out, err := orch.PublishVibe(ctx, orchestration.PublishVibeInput{
+		Spec: orchestration.PublishSpecInput{VibeCase: "C1"},
+		Artifact: orchestration.PublishArtifactInput{
+			ArtifactType: "code",
+			ArtifactURL:  "file:///tmp/no-text.go",
+		},
+	})
+	if err != nil {
+		t.Fatalf("PublishVibe: %v", err)
+	}
+	if out.Verdict != "skipped" {
+		t.Fatalf("Verdict should be skipped (no text), got %q", out.Verdict)
+	}
+	if mock.Calls != 0 {
+		t.Fatalf("LLM should not be called when text is empty, got %d calls", mock.Calls)
+	}
+}
+
+// O7: PublishVibe — content with canary token is rejected (INV-3).
+func TestPublishVibe_CanaryRejection(t *testing.T) {
+	ctx := context.Background()
+	orch, s := openOrchestratorTestEnv(t)
+	if err := s.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	canary := "DEADBEEF-PUBLISH-CANARY"
+	orch.Safety.Set(safety.CanaryToken(canary))
+
+	mock := &orchestration.MockLLMClient{Name_: "should-not-be-called"}
+	orch.WithLLMSelector(orchestration.NewOSINTSelector(mock))
+
+	out, err := orch.PublishVibe(ctx, orchestration.PublishVibeInput{
+		Spec: orchestration.PublishSpecInput{VibeCase: "C1"},
+		Artifact: orchestration.PublishArtifactInput{
+			ArtifactType: "code",
+			ArtifactURL:  "file:///tmp/poison.go",
+			Text:         "package main\n// contains " + canary + " marker\n",
+		},
+	})
+	if err != nil {
+		t.Fatalf("PublishVibe should not fail on canary (audit trail must complete): %v", err)
+	}
+	if out.Verdict != "drift_detected" {
+		t.Fatalf("Verdict should be drift_detected (canary triggers judge skip), got %q", out.Verdict)
+	}
+	if !strings.Contains(out.Reasoning, "canary") {
+		t.Fatalf("Reasoning should mention canary, got: %q", out.Reasoning)
+	}
+	if mock.Calls != 0 {
+		t.Fatalf("LLM should NOT be called when canary is in payload, got %d calls", mock.Calls)
+	}
+}
+
+// O7: PublishVibe — brand_match + compliance_check fire when set; 3 LLM calls.
+func TestPublishVibe_BrandAndCompliance(t *testing.T) {
+	ctx := context.Background()
+	orch, s := openOrchestratorTestEnv(t)
+	if err := s.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	mock := &orchestration.MockLLMClient{
+		Name_:       "mock_v1",
+		VerdictJSON: `{"aligned":true,"confidence":0.95}`,
+		Confidence:  0.95,
+	}
+	orch.WithLLMSelector(orchestration.NewOSINTSelector(mock))
+
+	out, err := orch.PublishVibe(ctx, orchestration.PublishVibeInput{
+		Spec: orchestration.PublishSpecInput{VibeCase: "C2"},
+		Artifact: orchestration.PublishArtifactInput{
+			ArtifactType:  "text",
+			ArtifactURL:   "https://example.com/post.html",
+			Text:          "Welcome to the platform.",
+			BrandID:       "acme",
+			Jurisdiction:  "EU",
+			HasDisclosure: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("PublishVibe: %v", err)
+	}
+	if out.BrandEvalID == 0 {
+		t.Fatalf("BrandEvalID should be > 0 when brand_id is set")
+	}
+	if out.ComplianceEvalID == 0 {
+		t.Fatalf("ComplianceEvalID should be > 0 when jurisdiction is set")
+	}
+	if mock.Calls != 3 {
+		t.Fatalf("LLM should be called 3 times (brand + compliance + drift), got %d", mock.Calls)
+	}
+
+	gotArt, _ := s.GetArtifact(ctx, out.ArtifactID)
+	if gotArt.BrandID != "acme" {
+		t.Fatalf("artifact brand_id round-trip: got %q", gotArt.BrandID)
+	}
+	if gotArt.Jurisdiction != "EU" {
+		t.Fatalf("artifact jurisdiction round-trip: got %q", gotArt.Jurisdiction)
+	}
+	if !gotArt.HasDisclosure {
+		t.Fatalf("artifact has_disclosure should be true")
+	}
+}
+
+// togglingMock is a per-call LLMClient that lets a test inject
+// different verdicts per sample.
+type togglingMock struct {
+	OnJudge func(orchestration.JudgeRequest) (*orchestration.JudgeResponse, error)
+}
+
+func (t *togglingMock) Name() string { return "toggling_mock" }
+func (t *togglingMock) Judge(ctx context.Context, req orchestration.JudgeRequest) (*orchestration.JudgeResponse, error) {
+	return t.OnJudge(req)
+}
+
+// ============================================================================
+// O8: JudgeConsensus — n-shot verdict with modal + confidence interval.
+// ============================================================================
+
+// O8: JudgeConsensus — happy path with 3 unanimous samples (all aligned).
+func TestJudgeConsensus_Unanimous(t *testing.T) {
+	ctx := context.Background()
+	orch, s := openOrchestratorTestEnv(t)
+	if err := s.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	mock := &orchestration.MockLLMClient{
+		Name_:       "mock_v1",
+		VerdictJSON: `{"aligned":true,"confidence":0.92,"issues":[]}`,
+		Confidence:  0.92,
+		Model:       "mock-1",
+	}
+	orch.WithLLMSelector(orchestration.NewOSINTSelector(mock))
+
+	out, err := orch.JudgeConsensus(ctx, orchestration.JudgeConsensusInput{
+		EvalType:   "compliance_check",
+		TargetType: "spec",
+		TargetID:   "high-stakes-claim-1",
+		Content:    "GDPR disclosure text",
+		N:          3,
+	})
+	if err != nil {
+		t.Fatalf("JudgeConsensus: %v", err)
+	}
+	if out.ModalVerdict != "aligned" {
+		t.Fatalf("ModalVerdict should be aligned, got %q", out.ModalVerdict)
+	}
+	if out.ModalCount != 3 {
+		t.Fatalf("ModalCount should be 3, got %d", out.ModalCount)
+	}
+	if out.ModalFraction < 0.99 {
+		t.Fatalf("ModalFraction should be ~1.0, got %f", out.ModalFraction)
+	}
+	if out.AvgConfidence < 0.91 {
+		t.Fatalf("AvgConfidence should be ~0.92, got %f", out.AvgConfidence)
+	}
+	if out.StdDevConfidence != 0 {
+		t.Fatalf("StdDevConfidence should be 0 when all samples equal, got %f", out.StdDevConfidence)
+	}
+	if out.Verdict != "aligned" {
+		t.Fatalf("Verdict should be aligned, got %q", out.Verdict)
+	}
+	if out.NextAction != "publish" {
+		t.Fatalf("NextAction should be publish, got %q", out.NextAction)
+	}
+	if len(out.Samples) != 3 {
+		t.Fatalf("Samples should have 3 entries, got %d", len(out.Samples))
+	}
+	if out.EvaluationID == 0 {
+		t.Fatalf("EvaluationID (consensus row) should be > 0")
+	}
+	if mock.Calls != 3 {
+		t.Fatalf("LLM should have been called 3 times, got %d", mock.Calls)
+	}
+}
+
+// O8: JudgeConsensus — majority verdict (2 aligned, 1 drift_detected).
+func TestJudgeConsensus_Majority(t *testing.T) {
+	ctx := context.Background()
+	orch, s := openOrchestratorTestEnv(t)
+	if err := s.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	calls := 0
+	mock := &togglingMock{
+		OnJudge: func(req orchestration.JudgeRequest) (*orchestration.JudgeResponse, error) {
+			calls++
+			v := `{"aligned":true,"confidence":0.9}`
+			if calls == 3 {
+				v = `{"aligned":false,"confidence":0.8,"drift_items":["missing_doc"]}`
+			}
+			return &orchestration.JudgeResponse{VerdictJSON: v, Confidence: 0.9, Model: "mock", Provider: "mock"}, nil
+		},
+	}
+	orch.WithLLMSelector(orchestration.NewOSINTSelector(mock))
+
+	out, err := orch.JudgeConsensus(ctx, orchestration.JudgeConsensusInput{
+		EvalType:   "drift_judge",
+		TargetType: "artifact",
+		TargetID:   "majority-test",
+		Content:    "Some text",
+		N:          3,
+	})
+	if err != nil {
+		t.Fatalf("JudgeConsensus: %v", err)
+	}
+	if out.ModalVerdict != "aligned" {
+		t.Fatalf("ModalVerdict should be aligned (2/3), got %q", out.ModalVerdict)
+	}
+	if out.ModalCount != 2 {
+		t.Fatalf("ModalCount should be 2, got %d", out.ModalCount)
+	}
+	if out.ModalFraction < 0.66 || out.ModalFraction > 0.67 {
+		t.Fatalf("ModalFraction should be ~0.667, got %f", out.ModalFraction)
+	}
+	if out.Verdict != "aligned" {
+		t.Fatalf("Verdict should follow modal (>= 0.6 fraction), got %q", out.Verdict)
+	}
+	if out.NextAction != "publish" {
+		t.Fatalf("NextAction should be publish, got %q", out.NextAction)
+	}
+}
+
+// O8: JudgeConsensus — low agreement (2 aligned, 2 drift in N=4) triggers needs_human.
+func TestJudgeConsensus_LowAgreement(t *testing.T) {
+	ctx := context.Background()
+	orch, s := openOrchestratorTestEnv(t)
+	if err := s.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	calls := 0
+	mock := &togglingMock{
+		OnJudge: func(req orchestration.JudgeRequest) (*orchestration.JudgeResponse, error) {
+			calls++
+			v := `{"aligned":true,"confidence":0.9}`
+			if calls%2 == 0 {
+				v = `{"aligned":false,"confidence":0.85}`
+			}
+			return &orchestration.JudgeResponse{VerdictJSON: v, Confidence: 0.9, Model: "mock", Provider: "mock"}, nil
+		},
+	}
+	orch.WithLLMSelector(orchestration.NewOSINTSelector(mock))
+
+	out, err := orch.JudgeConsensus(ctx, orchestration.JudgeConsensusInput{
+		EvalType:   "brand_match",
+		TargetType: "brand",
+		TargetID:   "tie-test",
+		Content:    "x",
+		N:          4,
+	})
+	if err != nil {
+		t.Fatalf("JudgeConsensus: %v", err)
+	}
+	if out.ModalFraction >= 0.6 {
+		t.Fatalf("ModalFraction should be 0.5 (2/4), got %f", out.ModalFraction)
+	}
+	if out.Verdict != "needs_human" {
+		t.Fatalf("Verdict should be needs_human (low agreement), got %q", out.Verdict)
+	}
+	if out.NextAction != "human_gate" {
+		t.Fatalf("NextAction should be human_gate, got %q", out.NextAction)
+	}
+	if out.ModalVerdict != "aligned" && out.ModalVerdict != "drift_detected" {
+		t.Fatalf("ModalVerdict should be aligned or drift_detected, got %q", out.ModalVerdict)
+	}
+}
+
+// O8: JudgeConsensus — confidence variance surfaces in StdDev + interval.
+func TestJudgeConsensus_ConfidenceInterval(t *testing.T) {
+	ctx := context.Background()
+	orch, s := openOrchestratorTestEnv(t)
+	if err := s.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	confidences := []float32{0.7, 0.8, 0.9}
+	idx := 0
+	mock := &togglingMock{
+		OnJudge: func(req orchestration.JudgeRequest) (*orchestration.JudgeResponse, error) {
+			c := confidences[idx%len(confidences)]
+			idx++
+			return &orchestration.JudgeResponse{
+				VerdictJSON: `{"aligned":true}`,
+				Confidence:  c,
+				Model:       "mock", Provider: "mock",
+			}, nil
+		},
+	}
+	orch.WithLLMSelector(orchestration.NewOSINTSelector(mock))
+
+	out, err := orch.JudgeConsensus(ctx, orchestration.JudgeConsensusInput{
+		EvalType:   "grounding_check",
+		TargetType: "claim",
+		TargetID:   "ci-test",
+		Content:    "text",
+		N:          3,
+	})
+	if err != nil {
+		t.Fatalf("JudgeConsensus: %v", err)
+	}
+	expected := float32(0.8)
+	if out.AvgConfidence != expected {
+		t.Fatalf("AvgConfidence should be %f, got %f", expected, out.AvgConfidence)
+	}
+	if out.StdDevConfidence < 0.08 || out.StdDevConfidence > 0.12 {
+		t.Fatalf("StdDevConfidence should be ~0.1, got %f", out.StdDevConfidence)
+	}
+	if out.ConfidenceLow < 0.7 || out.ConfidenceLow > 0.72 {
+		t.Fatalf("ConfidenceLow should be ~0.7, got %f", out.ConfidenceLow)
+	}
+	if out.ConfidenceHigh < 0.88 || out.ConfidenceHigh > 0.92 {
+		t.Fatalf("ConfidenceHigh should be ~0.9, got %f", out.ConfidenceHigh)
+	}
+}
+
+// O8: JudgeConsensus — N clamps to [1, 7]; N=0 defaults 3; N=99 clamps to 7.
+func TestJudgeConsensus_NClamping(t *testing.T) {
+	ctx := context.Background()
+	orch, s := openOrchestratorTestEnv(t)
+	if err := s.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	mock := &orchestration.MockLLMClient{
+		Name_:       "mock",
+		VerdictJSON: `{"aligned":true,"confidence":0.9}`,
+		Confidence:  0.9,
+	}
+	orch.WithLLMSelector(orchestration.NewOSINTSelector(mock))
+
+	out, err := orch.JudgeConsensus(ctx, orchestration.JudgeConsensusInput{
+		EvalType: "brand_match", TargetType: "brand", TargetID: "n0", Content: "x",
+	})
+	if err != nil {
+		t.Fatalf("N=0: %v", err)
+	}
+	if len(out.Samples) != 3 {
+		t.Fatalf("N=0 should default to 3, got %d samples", len(out.Samples))
+	}
+
+	mock.Calls = 0
+	out, err = orch.JudgeConsensus(ctx, orchestration.JudgeConsensusInput{
+		EvalType: "brand_match", TargetType: "brand", TargetID: "n99", Content: "x", N: 99,
+	})
+	if err != nil {
+		t.Fatalf("N=99: %v", err)
+	}
+	if len(out.Samples) != 7 {
+		t.Fatalf("N=99 should clamp to 7, got %d samples", len(out.Samples))
+	}
+
+	mock.Calls = 0
+	out, err = orch.JudgeConsensus(ctx, orchestration.JudgeConsensusInput{
+		EvalType: "brand_match", TargetType: "brand", TargetID: "n2", Content: "x", N: 2,
+	})
+	if err != nil {
+		t.Fatalf("N=2: %v", err)
+	}
+	if len(out.Samples) != 2 {
+		t.Fatalf("N=2 should give 2 samples, got %d", len(out.Samples))
+	}
+}
+
+// O8: JudgeConsensus — canary rejection (INV-3).
+func TestJudgeConsensus_CanaryRejection(t *testing.T) {
+	ctx := context.Background()
+	orch, s := openOrchestratorTestEnv(t)
+	if err := s.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	canary := "DEADBEEF-CONSENSUS-CANARY"
+	orch.Safety.Set(safety.CanaryToken(canary))
+
+	mock := &orchestration.MockLLMClient{Name_: "should-not-be-called"}
+	orch.WithLLMSelector(orchestration.NewOSINTSelector(mock))
+
+	_, err := orch.JudgeConsensus(ctx, orchestration.JudgeConsensusInput{
+		EvalType:   "compliance_check",
+		TargetType: "artifact",
+		TargetID:   "poison",
+		Content:    "Contains " + canary + " token",
+		N:          3,
+	})
+	if err == nil {
+		t.Fatalf("expected canary rejection")
+	}
+	if !errIs(err, store.ErrCanaryInPayload) {
+		t.Fatalf("expected ErrCanaryInPayload, got: %v", err)
+	}
+	if mock.Calls != 0 {
+		t.Fatalf("LLM should not have been called when canary is in payload, got %d calls", mock.Calls)
+	}
+}
+
+// O8: JudgeConsensus — missing content rejected.
+func TestJudgeConsensus_MissingContent(t *testing.T) {
+	ctx := context.Background()
+	orch, s := openOrchestratorTestEnv(t)
+	if err := s.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	_, err := orch.JudgeConsensus(ctx, orchestration.JudgeConsensusInput{
+		EvalType:   "brand_match",
+		TargetType: "brand",
+		TargetID:   "x",
+	})
+	if err == nil {
+		t.Fatalf("expected error for missing content")
+	}
+	if !errIs(err, store.ErrInvalidArgument) {
+		t.Fatalf("expected ErrInvalidArgument, got: %v", err)
+	}
+}
+
+// O8: JudgeConsensus — the consensus row uses TargetID + ":consensus" suffix.
+func TestJudgeConsensus_TargetIDSuffix(t *testing.T) {
+	ctx := context.Background()
+	orch, s := openOrchestratorTestEnv(t)
+	if err := s.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	mock := &orchestration.MockLLMClient{
+		Name_:       "mock",
+		VerdictJSON: `{"aligned":true,"confidence":0.9}`,
+		Confidence:  0.9,
+	}
+	orch.WithLLMSelector(orchestration.NewOSINTSelector(mock))
+
+	out, err := orch.JudgeConsensus(ctx, orchestration.JudgeConsensusInput{
+		EvalType: "brand_match", TargetType: "brand", TargetID: "my-brand",
+		Content: "text", N: 3,
+	})
+	if err != nil {
+		t.Fatalf("JudgeConsensus: %v", err)
+	}
+
+	eval, err := s.LatestSDDEvaluation(ctx, "brand_match", "brand", "my-brand:consensus")
+	if err != nil {
+		t.Fatalf("LatestSDDEvaluation (consensus): %v", err)
+	}
+	if eval == nil {
+		t.Fatalf("consensus row missing")
+	}
+	if eval.ID != out.EvaluationID {
+		t.Fatalf("consensus eval id mismatch: got %d want %d", eval.ID, out.EvaluationID)
+	}
+}
+
+// ============================================================================
+// O9: ActivePolicy — read-only snapshot of constitution + mods + canary.
+// ============================================================================
+
+// O9: ActivePolicy — happy path with no active constitution (fresh store).
+func TestActivePolicy_Empty(t *testing.T) {
+	ctx := context.Background()
+	orch, _ := openOrchestratorTestEnv(t)
+	if err := orch.Store.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	out, err := orch.ActivePolicy(ctx)
+	if err != nil {
+		t.Fatalf("ActivePolicy: %v", err)
+	}
+	if out.ConstitutionID != "" {
+		t.Fatalf("ConstitutionID should be empty on fresh store, got %q", out.ConstitutionID)
+	}
+	if out.ConstitutionDrift {
+		t.Fatalf("ConstitutionDrift should be false on fresh store")
+	}
+	if len(out.Mods) != 0 {
+		t.Fatalf("Mods should be empty on fresh store, got %d", len(out.Mods))
+	}
+	if out.CanaryPresent {
+		t.Fatalf("CanaryPresent should be false when no canary installed")
+	}
+	if out.PolicyVersion != "1.0.0" {
+		t.Fatalf("PolicyVersion should be 1.0.0, got %q", out.PolicyVersion)
+	}
+}
+
+// O9: ActivePolicy — with a saved constitution, returns its id+version+sha.
+func TestActivePolicy_WithConstitution(t *testing.T) {
+	ctx := context.Background()
+	orch, s := openOrchestratorTestEnv(t)
+	if err := s.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	parsed := `{"id":"dark-agents/dark-memory-mcp","version":"1.0.0"}`
+	sum := sha256.Sum256([]byte(parsed))
+	wantSHA := hex.EncodeToString(sum[:])
+
+	wc := store.WriteContext{Actor: "test", WritePath: "test"}
+	if err := s.SaveConstitution(ctx, wc, &constitution.Constitution{
+		ConstitutionID: "dark-memory-mcp",
+		Version:        "1.0.0",
+		Label:          "Dark Memory MCP v1.0.0",
+		Source:         "builtin:dark-memory-mcp",
+		FilePath:       "/etc/dark-memory-mcp/constitution.toml",
+		ParsedJSON:     parsed,
+		SHA256:         wantSHA,
+		Enabled:        true,
+	}); err != nil {
+		t.Fatalf("SaveConstitution: %v", err)
+	}
+
+	out, err := orch.ActivePolicy(ctx)
+	if err != nil {
+		t.Fatalf("ActivePolicy: %v", err)
+	}
+	if out.ConstitutionID != "dark-memory-mcp" {
+		t.Fatalf("ConstitutionID should match, got %q", out.ConstitutionID)
+	}
+	if out.ConstitutionVersion != "1.0.0" {
+		t.Fatalf("ConstitutionVersion should match, got %q", out.ConstitutionVersion)
+	}
+	if out.ConstitutionSHA256 != wantSHA {
+		t.Fatalf("ConstitutionSHA256 should match, got %q want %q", out.ConstitutionSHA256, wantSHA)
+	}
+	if out.ConstitutionLabel != "Dark Memory MCP v1.0.0" {
+		t.Fatalf("ConstitutionLabel should match, got %q", out.ConstitutionLabel)
+	}
+	if out.ConstitutionDrift {
+		t.Fatalf("ConstitutionDrift should be false when SHAs match, reason=%q", out.DriftReason)
+	}
+}
+
+// O9: ActivePolicy — drift detected when stored SHA256 != actual SHA.
+func TestActivePolicy_ConstitutionDrift(t *testing.T) {
+	ctx := context.Background()
+	orch, s := openOrchestratorTestEnv(t)
+	if err := s.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	parsed := `{"id":"dark-agents/dark-memory-mcp","version":"1.0.0"}`
+	wrongSHA := "0000000000000000000000000000000000000000000000000000000000000000"
+
+	wc := store.WriteContext{Actor: "test", WritePath: "test"}
+	if err := s.SaveConstitution(ctx, wc, &constitution.Constitution{
+		ConstitutionID: "drifted",
+		Version:        "1.0.0",
+		Source:         "test",
+		FilePath:       "/tmp/x.toml",
+		ParsedJSON:     parsed,
+		SHA256:         wrongSHA,
+		Enabled:        true,
+	}); err != nil {
+		t.Fatalf("SaveConstitution: %v", err)
+	}
+
+	out, err := orch.ActivePolicy(ctx)
+	if err != nil {
+		t.Fatalf("ActivePolicy: %v", err)
+	}
+	if !out.ConstitutionDrift {
+		t.Fatalf("ConstitutionDrift should be true when SHAs differ")
+	}
+	if out.DriftReason == "" {
+		t.Fatalf("DriftReason should explain the mismatch")
+	}
+	if !strings.Contains(out.DriftReason, "mismatch") {
+		t.Fatalf("DriftReason should mention mismatch, got: %q", out.DriftReason)
+	}
+}
+
+// O9: ActivePolicy — canary is reported present (without token).
+func TestActivePolicy_CanaryPresent(t *testing.T) {
+	ctx := context.Background()
+	orch, _ := openOrchestratorTestEnv(t)
+	if err := orch.Store.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	orch.Safety.Set(safety.CanaryToken("DEADBEEF-REDACTED"))
+
+	out, err := orch.ActivePolicy(ctx)
+	if err != nil {
+		t.Fatalf("ActivePolicy: %v", err)
+	}
+	if !out.CanaryPresent {
+		t.Fatalf("CanaryPresent should be true after Set")
+	}
+}
+
+// O9: ActivePolicy — mods list reflects ListMods with ManifestJSON decoded.
+func TestActivePolicy_ModsList(t *testing.T) {
+	ctx := context.Background()
+	orch, s := openOrchestratorTestEnv(t)
+	if err := s.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	wc := store.WriteContext{Actor: "test", WritePath: "test"}
+	if err := s.SaveMod(ctx, wc, &mods.Mod{
+		ModID:   "sample",
+		Name:    "Sample Mod",
+		Version: "0.1.0",
+		Source:  "test",
+		ManifestJSON: `{"meta":{"id":"sample","version":"0.1.0","name":"Sample Mod"},"risk":{"risk_class":"research-only","target_scope":"public_internet"}}`,
+		RiskClass:    "research-only",
+		TargetScope:  "public_internet",
+	}); err != nil {
+		t.Fatalf("SaveMod: %v", err)
+	}
+
+	out, err := orch.ActivePolicy(ctx)
+	if err != nil {
+		t.Fatalf("ActivePolicy: %v", err)
+	}
+	if len(out.Mods) != 1 {
+		t.Fatalf("expected 1 mod, got %d", len(out.Mods))
+	}
+	if out.Mods[0].ModID != "sample" {
+		t.Fatalf("ModID should match, got %q", out.Mods[0].ModID)
+	}
+	if out.Mods[0].RiskClass != "research-only" {
+		t.Fatalf("RiskClass should decode from ManifestJSON, got %q", out.Mods[0].RiskClass)
+	}
+	if out.Mods[0].TargetScope != "public_internet" {
+		t.Fatalf("TargetScope should decode from ManifestJSON, got %q", out.Mods[0].TargetScope)
+	}
+}
+
+// ============================================================================
+// O10: MemoryState — runtime snapshot of dark.db.
+// ============================================================================
+
+// O10: MemoryState — empty store has expected zero counts.
+func TestMemoryState_Empty(t *testing.T) {
+	ctx := context.Background()
+	orch, _ := openOrchestratorTestEnv(t)
+	if err := orch.Store.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	out, err := orch.MemoryState(ctx)
+	if err != nil {
+		t.Fatalf("MemoryState: %v", err)
+	}
+	if out.Driver != "sqlite" {
+		t.Fatalf("Driver should be 'sqlite', got %q", out.Driver)
+	}
+	if out.SchemaVersion == 0 {
+		t.Fatalf("SchemaVersion should be > 0 after Migrate, got 0")
+	}
+	if out.SnapshotVersion != "1.0.0" {
+		t.Fatalf("SnapshotVersion should be 1.0.0, got %q", out.SnapshotVersion)
+	}
+	if out.Counts.Specs != 0 || out.Counts.Artifacts != 0 || out.Counts.SessionsActive != 0 {
+		t.Fatalf("empty store counts should be 0; got specs=%d art=%d sessions_active=%d",
+			out.Counts.Specs, out.Counts.Artifacts, out.Counts.SessionsActive)
+	}
+	if out.ActiveProject != "default" {
+		t.Fatalf("ActiveProject should be 'default', got %q", out.ActiveProject)
+	}
+}
+
+// O10: MemoryState — counts reflect persisted data.
+func TestMemoryState_Populated(t *testing.T) {
+	ctx := context.Background()
+	orch, s := openOrchestratorTestEnv(t)
+	if err := s.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	start, err := orch.SessionStart(ctx, orchestration.SessionStartInput{
+		Operator: "nico", ProjectID: "default",
+	})
+	if err != nil {
+		t.Fatalf("SessionStart: %v", err)
+	}
+
+	mock := &orchestration.MockLLMClient{
+		Name_:       "mock",
+		VerdictJSON: `{"aligned":true,"confidence":0.95}`,
+		Confidence:  0.95,
+	}
+	orch.WithLLMSelector(orchestration.NewOSINTSelector(mock))
+	if _, err := orch.PublishVibe(ctx, orchestration.PublishVibeInput{
+		Spec:     orchestration.PublishSpecInput{VibeCase: "C1"},
+		Artifact: orchestration.PublishArtifactInput{ArtifactType: "code", ArtifactURL: "file:///x.go", Text: "x"},
+	}); err != nil {
+		t.Fatalf("PublishVibe: %v", err)
+	}
+
+	if _, err := s.SaveRun(ctx, store.WriteContext{
+		Actor: "test", SessionID: start.SessionID, WritePath: "test",
+	}, &research.ResearchRun{
+		SessionID: start.SessionID, Query: "Q", Intent: "web",
+		Items: []research.Item{
+			{Title: "a", Source: "web", Confidence: 0.9},
+			{Title: "b", Source: "web", Confidence: 0.8},
+		},
+	}); err != nil {
+		t.Fatalf("SaveRun: %v", err)
+	}
+
+	out, err := orch.MemoryState(ctx)
+	if err != nil {
+		t.Fatalf("MemoryState: %v", err)
+	}
+	if out.Counts.Specs != 1 {
+		t.Fatalf("Specs should be 1, got %d", out.Counts.Specs)
+	}
+	if out.Counts.Artifacts != 1 {
+		t.Fatalf("Artifacts should be 1, got %d", out.Counts.Artifacts)
+	}
+	if out.Counts.SessionsActive != 1 {
+		t.Fatalf("SessionsActive should be 1, got %d", out.Counts.SessionsActive)
+	}
+	if out.Counts.SessionsTotal != 1 {
+		t.Fatalf("SessionsTotal should be 1, got %d", out.Counts.SessionsTotal)
+	}
+	if out.Counts.RunsTotal != 1 {
+		t.Fatalf("RunsTotal should be 1, got %d", out.Counts.RunsTotal)
+	}
+	if out.Counts.ItemsTotal != 2 {
+		t.Fatalf("ItemsTotal should be 2, got %d", out.Counts.ItemsTotal)
+	}
+	if out.Counts.WriteAuditTotal < 1 {
+		t.Fatalf("WriteAuditTotal should be >= 1, got %d", out.Counts.WriteAuditTotal)
+	}
+}
+
+// O10: MemoryState — SessionsActive drops to 0 after SessionClose.
+func TestMemoryState_SessionLifecycle(t *testing.T) {
+	ctx := context.Background()
+	orch, _ := openOrchestratorTestEnv(t)
+	if err := orch.Store.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	start, _ := orch.SessionStart(ctx, orchestration.SessionStartInput{Operator: "nico", ProjectID: "default"})
+	if _, err := orch.SessionClose(ctx, orchestration.SessionCloseInput{SessionID: start.SessionID}); err != nil {
+		t.Fatalf("SessionClose: %v", err)
+	}
+
+	out, err := orch.MemoryState(ctx)
+	if err != nil {
+		t.Fatalf("MemoryState: %v", err)
+	}
+	if out.Counts.SessionsActive != 0 {
+		t.Fatalf("SessionsActive should be 0 after close, got %d", out.Counts.SessionsActive)
+	}
+	if out.Counts.SessionsTotal != 1 {
+		t.Fatalf("SessionsTotal should be 1 (closed session still counted), got %d", out.Counts.SessionsTotal)
+	}
+}
+
+// O10: MemoryState — canary present is surfaced.
+func TestMemoryState_CanarySurfaced(t *testing.T) {
+	ctx := context.Background()
+	orch, _ := openOrchestratorTestEnv(t)
+	if err := orch.Store.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	orch.Safety.Set(safety.CanaryToken("DEADBEEF"))
+	out, err := orch.MemoryState(ctx)
+	if err != nil {
+		t.Fatalf("MemoryState: %v", err)
+	}
+	if !out.CanaryPresent {
+		t.Fatalf("CanaryPresent should be true after Set")
+	}
+}
+
+// ============================================================================
+// O11: ResolveDrift — human-gate action (accept | reject).
+// ============================================================================
+
+// O11: ResolveDrift — accept a drift_detected verdict.
+func TestResolveDrift_Accept(t *testing.T) {
+	ctx := context.Background()
+	orch, s := openOrchestratorTestEnv(t)
+	if err := s.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	mock := &orchestration.MockLLMClient{
+		Name_:       "mock",
+		VerdictJSON: `{"aligned":false,"drift_items":["missing_doc"]}`,
+		Confidence:  0.85,
+	}
+	orch.WithLLMSelector(orchestration.NewOSINTSelector(mock))
+	pub, err := orch.PublishVibe(ctx, orchestration.PublishVibeInput{
+		Spec:     orchestration.PublishSpecInput{VibeCase: "C1"},
+		Artifact: orchestration.PublishArtifactInput{ArtifactType: "code", ArtifactURL: "file:///x.go", Text: "incomplete code"},
+	})
+	if err != nil {
+		t.Fatalf("PublishVibe: %v", err)
+	}
+	if pub.Verdict != "drift_detected" {
+		t.Fatalf("setup: expected drift_detected, got %q", pub.Verdict)
+	}
+
+	out, err := orch.ResolveDrift(ctx, orchestration.ResolveDriftInput{
+		DriftID:    pub.DriftID,
+		Decision:   orchestration.DecisionAccept,
+		OperatorID: "nico",
+		Note:       "manually verified; missing_doc was a false positive",
+	})
+	if err != nil {
+		t.Fatalf("ResolveDrift: %v", err)
+	}
+	if out.Decision != "accept" {
+		t.Fatalf("Decision should echo, got %q", out.Decision)
+	}
+	if out.NewStatus != "passed" {
+		t.Fatalf("NewStatus should be 'passed' on accept, got %q", out.NewStatus)
+	}
+	if out.OperatorID != "nico" {
+		t.Fatalf("OperatorID should echo, got %q", out.OperatorID)
+	}
+	if out.ResolvedAt == "" {
+		t.Fatalf("ResolvedAt should be stamped")
+	}
+
+	gotArt, _ := s.GetArtifact(ctx, pub.ArtifactID)
+	if gotArt.ValidationStatus != "passed" {
+		t.Fatalf("artifact validation_status should be 'passed' after accept, got %q", gotArt.ValidationStatus)
+	}
+
+	drift, _ := s.LatestDriftForArtifact(ctx, pub.ArtifactID)
+	if drift.ReconciledAt == "" {
+		t.Fatalf("drift ReconciledAt should be stamped")
+	}
+	if !strings.Contains(drift.JudgeReasoning, "operator=nico") {
+		t.Fatalf("drift.JudgeReasoning should record operator, got: %q", drift.JudgeReasoning)
+	}
+}
+
+// O11: ResolveDrift — reject a drift_detected verdict.
+func TestResolveDrift_Reject(t *testing.T) {
+	ctx := context.Background()
+	orch, s := openOrchestratorTestEnv(t)
+	if err := s.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	mock := &orchestration.MockLLMClient{
+		Name_:       "mock",
+		VerdictJSON: `{"aligned":false,"drift_items":["missing_doc"]}`,
+		Confidence:  0.85,
+	}
+	orch.WithLLMSelector(orchestration.NewOSINTSelector(mock))
+	pub, err := orch.PublishVibe(ctx, orchestration.PublishVibeInput{
+		Spec:     orchestration.PublishSpecInput{VibeCase: "C1"},
+		Artifact: orchestration.PublishArtifactInput{ArtifactType: "code", ArtifactURL: "file:///y.go", Text: "broken"},
+	})
+	if err != nil {
+		t.Fatalf("PublishVibe: %v", err)
+	}
+
+	out, err := orch.ResolveDrift(ctx, orchestration.ResolveDriftInput{
+		DriftID: pub.DriftID, Decision: orchestration.DecisionReject, OperatorID: "nico",
+	})
+	if err != nil {
+		t.Fatalf("ResolveDrift: %v", err)
+	}
+	if out.NewStatus != "failed" {
+		t.Fatalf("NewStatus should be 'failed' on reject, got %q", out.NewStatus)
+	}
+
+	gotArt, _ := s.GetArtifact(ctx, pub.ArtifactID)
+	if gotArt.ValidationStatus != "failed" {
+		t.Fatalf("artifact validation_status should be 'failed' after reject, got %q", gotArt.ValidationStatus)
+	}
+}
+
+// O11: ResolveDrift — already-reconciled drift returns ErrInvalidState.
+func TestResolveDrift_DoubleResolve(t *testing.T) {
+	ctx := context.Background()
+	orch, s := openOrchestratorTestEnv(t)
+	if err := s.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	mock := &orchestration.MockLLMClient{
+		Name_:       "mock",
+		VerdictJSON: `{"aligned":false,"drift_items":["x"]}`,
+		Confidence:  0.85,
+	}
+	orch.WithLLMSelector(orchestration.NewOSINTSelector(mock))
+	pub, err := orch.PublishVibe(ctx, orchestration.PublishVibeInput{
+		Spec:     orchestration.PublishSpecInput{VibeCase: "C1"},
+		Artifact: orchestration.PublishArtifactInput{ArtifactType: "code", ArtifactURL: "file:///z.go", Text: "x"},
+	})
+	if err != nil {
+		t.Fatalf("PublishVibe: %v", err)
+	}
+
+	if _, err := orch.ResolveDrift(ctx, orchestration.ResolveDriftInput{
+		DriftID: pub.DriftID, Decision: orchestration.DecisionAccept, OperatorID: "nico",
+	}); err != nil {
+		t.Fatalf("first resolve: %v", err)
+	}
+
+	_, err = orch.ResolveDrift(ctx, orchestration.ResolveDriftInput{
+		DriftID: pub.DriftID, Decision: orchestration.DecisionReject, OperatorID: "nico",
+	})
+	if err == nil {
+		t.Fatalf("expected error on second resolve")
+	}
+	if !errIs(err, store.ErrInvalidState) {
+		t.Fatalf("expected ErrInvalidState, got: %v", err)
+	}
+}
+
+// O11: ResolveDrift — unknown drift_id returns ErrNotFound.
+func TestResolveDrift_NotFound(t *testing.T) {
+	ctx := context.Background()
+	orch, _ := openOrchestratorTestEnv(t)
+	if err := orch.Store.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	_, err := orch.ResolveDrift(ctx, orchestration.ResolveDriftInput{
+		DriftID: 9999, Decision: orchestration.DecisionAccept, OperatorID: "nico",
+	})
+	if err == nil {
+		t.Fatalf("expected error for unknown drift")
+	}
+	if !errIs(err, store.ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got: %v", err)
+	}
+}
+
+// O11: ResolveDrift — invalid decision rejected.
+func TestResolveDrift_InvalidDecision(t *testing.T) {
+	ctx := context.Background()
+	orch, _ := openOrchestratorTestEnv(t)
+	if err := orch.Store.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	_, err := orch.ResolveDrift(ctx, orchestration.ResolveDriftInput{
+		DriftID: 1, Decision: "maybe", OperatorID: "nico",
+	})
+	if err == nil {
+		t.Fatalf("expected error for invalid decision")
+	}
+	if !errIs(err, store.ErrInvalidArgument) {
+		t.Fatalf("expected ErrInvalidArgument, got: %v", err)
+	}
+}
+
+// O11: ResolveDrift — missing operator_id rejected.
+func TestResolveDrift_MissingOperator(t *testing.T) {
+	ctx := context.Background()
+	orch, _ := openOrchestratorTestEnv(t)
+	if err := orch.Store.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	_, err := orch.ResolveDrift(ctx, orchestration.ResolveDriftInput{
+		DriftID: 1, Decision: orchestration.DecisionAccept, OperatorID: "",
+	})
+	if err == nil {
+		t.Fatalf("expected error for missing operator")
+	}
+	if !errIs(err, store.ErrInvalidArgument) {
+		t.Fatalf("expected ErrInvalidArgument, got: %v", err)
+	}
+}
+
+// O11: ResolveDrift — missing drift_id rejected.
+func TestResolveDrift_MissingDriftID(t *testing.T) {
+	ctx := context.Background()
+	orch, _ := openOrchestratorTestEnv(t)
+	if err := orch.Store.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	_, err := orch.ResolveDrift(ctx, orchestration.ResolveDriftInput{
+		Decision: orchestration.DecisionAccept, OperatorID: "nico",
+	})
+	if err == nil {
+		t.Fatalf("expected error for missing drift_id")
+	}
+	if !errIs(err, store.ErrInvalidArgument) {
+		t.Fatalf("expected ErrInvalidArgument, got: %v", err)
+	}
+}
+
+// ============================================================================
+// O12: VibeSpec — spec_create wrapper with structured tasks validation.
+// ============================================================================
+
+// O12: VibeSpec — happy path with 3 valid tasks.
+func TestVibeSpec_HappyPath(t *testing.T) {
+	ctx := context.Background()
+	orch, s := openOrchestratorTestEnv(t)
+	if err := s.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	out, err := orch.VibeSpec(ctx, orchestration.VibeSpecInput{
+		VibeCase: "C1",
+		Spec:     `{"intent":"build a CLI"}`,
+		Tasks: []orchestration.VibeSpecTask{
+			{ID: "t1", Description: "Write code"},
+			{ID: "t2", Description: "Write tests", DependsOn: []string{"t1"}},
+			{ID: "t3", Description: "Document", DependsOn: []string{"t2"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("VibeSpec: %v", err)
+	}
+	if out.SpecID == 0 {
+		t.Fatalf("SpecID should be > 0")
+	}
+	if out.TasksValidated != 3 {
+		t.Fatalf("TasksValidated should be 3, got %d", out.TasksValidated)
+	}
+	if len(out.TaskIDs) != 3 {
+		t.Fatalf("TaskIDs should have 3 entries, got %d", len(out.TaskIDs))
+	}
+
+	gotSpec, _ := s.GetSpec(ctx, out.SpecID)
+	if gotSpec == nil {
+		t.Fatalf("GetSpec returned nil")
+	}
+	if gotSpec.Tasks == "" {
+		t.Fatalf("spec.Tasks should be serialised")
+	}
+	if !strings.Contains(gotSpec.Tasks, `"t1"`) {
+		t.Fatalf("spec.Tasks should contain t1, got: %q", gotSpec.Tasks)
+	}
+}
+
+// O12: VibeSpec — missing vibe_case rejected.
+func TestVibeSpec_MissingVibeCase(t *testing.T) {
+	ctx := context.Background()
+	orch, _ := openOrchestratorTestEnv(t)
+	if err := orch.Store.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	_, err := orch.VibeSpec(ctx, orchestration.VibeSpecInput{
+		Tasks: []orchestration.VibeSpecTask{{ID: "t1", Description: "x"}},
+	})
+	if err == nil {
+		t.Fatalf("expected error for missing vibe_case")
+	}
+	if !errIs(err, store.ErrInvalidArgument) {
+		t.Fatalf("expected ErrInvalidArgument, got: %v", err)
+	}
+}
+
+// O12: VibeSpec — empty tasks rejected.
+func TestVibeSpec_EmptyTasks(t *testing.T) {
+	ctx := context.Background()
+	orch, _ := openOrchestratorTestEnv(t)
+	if err := orch.Store.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	_, err := orch.VibeSpec(ctx, orchestration.VibeSpecInput{
+		VibeCase: "C1",
+		Tasks:    []orchestration.VibeSpecTask{},
+	})
+	if err == nil {
+		t.Fatalf("expected error for empty tasks")
+	}
+	if !errIs(err, store.ErrInvalidArgument) {
+		t.Fatalf("expected ErrInvalidArgument, got: %v", err)
+	}
+}
+
+// O12: VibeSpec — duplicate task ids rejected.
+func TestVibeSpec_DuplicateIDs(t *testing.T) {
+	ctx := context.Background()
+	orch, _ := openOrchestratorTestEnv(t)
+	if err := orch.Store.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	_, err := orch.VibeSpec(ctx, orchestration.VibeSpecInput{
+		VibeCase: "C1",
+		Tasks: []orchestration.VibeSpecTask{
+			{ID: "t1", Description: "a"},
+			{ID: "t1", Description: "b"},
+		},
+	})
+	if err == nil {
+		t.Fatalf("expected error for duplicate ids")
+	}
+	if !errIs(err, store.ErrInvalidArgument) {
+		t.Fatalf("expected ErrInvalidArgument, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "duplicate") {
+		t.Fatalf("error should mention duplicate, got: %v", err)
+	}
+}
+
+// O12: VibeSpec — empty task description rejected.
+func TestVibeSpec_EmptyDescription(t *testing.T) {
+	ctx := context.Background()
+	orch, _ := openOrchestratorTestEnv(t)
+	if err := orch.Store.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	_, err := orch.VibeSpec(ctx, orchestration.VibeSpecInput{
+		VibeCase: "C1",
+		Tasks:    []orchestration.VibeSpecTask{{ID: "t1", Description: ""}},
+	})
+	if err == nil {
+		t.Fatalf("expected error for empty description")
+	}
+	if !errIs(err, store.ErrInvalidArgument) {
+		t.Fatalf("expected ErrInvalidArgument, got: %v", err)
+	}
+}
+
+// O12: VibeSpec — depends_on referencing unknown task rejected.
+func TestVibeSpec_UnknownDependency(t *testing.T) {
+	ctx := context.Background()
+	orch, _ := openOrchestratorTestEnv(t)
+	if err := orch.Store.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	_, err := orch.VibeSpec(ctx, orchestration.VibeSpecInput{
+		VibeCase: "C1",
+		Tasks: []orchestration.VibeSpecTask{
+			{ID: "t1", Description: "a"},
+			{ID: "t2", Description: "b", DependsOn: []string{"ghost"}},
+		},
+	})
+	if err == nil {
+		t.Fatalf("expected error for unknown dependency")
+	}
+	if !errIs(err, store.ErrInvalidArgument) {
+		t.Fatalf("expected ErrInvalidArgument, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "ghost") {
+		t.Fatalf("error should mention unknown dep, got: %v", err)
+	}
+}
+
+// O12: VibeSpec — circular dependency rejected.
+func TestVibeSpec_Cycle(t *testing.T) {
+	ctx := context.Background()
+	orch, _ := openOrchestratorTestEnv(t)
+	if err := orch.Store.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	_, err := orch.VibeSpec(ctx, orchestration.VibeSpecInput{
+		VibeCase: "C1",
+		Tasks: []orchestration.VibeSpecTask{
+			{ID: "t1", Description: "a", DependsOn: []string{"t3"}},
+			{ID: "t2", Description: "b", DependsOn: []string{"t1"}},
+			{ID: "t3", Description: "c", DependsOn: []string{"t2"}},
+		},
+	})
+	if err == nil {
+		t.Fatalf("expected error for cycle")
+	}
+	if !errIs(err, store.ErrInvalidArgument) {
+		t.Fatalf("expected ErrInvalidArgument, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "cycle") {
+		t.Fatalf("error should mention cycle, got: %v", err)
+	}
+}
+
+// O12: VibeSpec — happy single-task spec (no warnings).
+func TestVibeSpec_ExternalRefs(t *testing.T) {
+	ctx := context.Background()
+	orch, _ := openOrchestratorTestEnv(t)
+	if err := orch.Store.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	out, err := orch.VibeSpec(ctx, orchestration.VibeSpecInput{
+		VibeCase: "C1",
+		Tasks: []orchestration.VibeSpecTask{
+			{ID: "t1", Description: "do work"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("happy single-task spec: %v", err)
+	}
+	if out.SpecID == 0 {
+		t.Fatalf("SpecID should be > 0")
+	}
+	if len(out.Warnings) != 0 {
+		t.Fatalf("expected no warnings, got: %v", out.Warnings)
 	}
 }
