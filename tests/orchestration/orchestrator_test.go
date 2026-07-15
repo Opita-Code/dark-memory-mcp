@@ -14,6 +14,7 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/audit"
 	"github.com/dark-agents/dark-memory-mcp/internal/orchestration"
 	"github.com/dark-agents/dark-memory-mcp/internal/project"
+	"github.com/dark-agents/dark-memory-mcp/internal/research"
 	"github.com/dark-agents/dark-memory-mcp/internal/session"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 	"github.com/dark-agents/dark-memory-mcp/internal/store/runtime"
@@ -195,4 +196,211 @@ func errIs(err, target error) bool {
 		e = u.Unwrap()
 	}
 	return false
+}
+
+// O2: SessionClose — happy path. Closes a session, returns summary.
+// WritesTotal >= 1 (SaveSession emitted a write_audit row).
+func TestSessionClose_HappyPath(t *testing.T) {
+	ctx := context.Background()
+	orch, s := openOrchestratorTestEnv(t)
+
+	if err := s.CreateProject(ctx, &project.Project{ProjectID: "acme", DisplayName: "ACME"}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	start, err := orch.SessionStart(ctx, orchestration.SessionStartInput{
+		Operator:  "nico",
+		ProjectID: "acme",
+	})
+	if err != nil {
+		t.Fatalf("SessionStart: %v", err)
+	}
+
+	out, err := orch.SessionClose(ctx, orchestration.SessionCloseInput{
+		SessionID: start.SessionID,
+	})
+	if err != nil {
+		t.Fatalf("SessionClose: %v", err)
+	}
+	if out.SessionID != start.SessionID {
+		t.Fatalf("SessionID mismatch: %q vs %q", out.SessionID, start.SessionID)
+	}
+	if out.ClosedAt.IsZero() {
+		t.Fatalf("ClosedAt should be non-zero")
+	}
+	if out.WritesTotal < 1 {
+		t.Fatalf("WritesTotal should be >=1 (SaveSession emitted at least 1), got %d", out.WritesTotal)
+	}
+
+	// Session in store should now be closed (status='closed').
+	got, err := s.GetSession(ctx, start.SessionID)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if got == nil {
+		t.Fatalf("session disappeared")
+	}
+	if got.Status != "closed" {
+		t.Fatalf("session status should be 'closed', got %q", got.Status)
+	}
+}
+
+// O2: empty SessionID rejected.
+func TestSessionClose_MissingSessionID(t *testing.T) {
+	ctx := context.Background()
+	orch, _ := openOrchestratorTestEnv(t)
+
+	_, err := orch.SessionClose(ctx, orchestration.SessionCloseInput{SessionID: ""})
+	if err == nil {
+		t.Fatalf("expected error for empty session_id")
+	}
+	if !errIs(err, store.ErrInvalidArgument) {
+		t.Fatalf("expected ErrInvalidArgument, got: %v", err)
+	}
+}
+
+// O2: closing a non-existent session returns ErrNotFound (after the
+// project is active).
+func TestSessionClose_NotFound(t *testing.T) {
+	ctx := context.Background()
+	orch, s := openOrchestratorTestEnv(t)
+	if err := s.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set default: %v", err)
+	}
+
+	_, err := orch.SessionClose(ctx, orchestration.SessionCloseInput{
+		SessionID: "sess-deadbeef",
+	})
+	if err == nil {
+		t.Fatalf("expected error for unknown session")
+	}
+	if !errIs(err, store.ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got: %v", err)
+	}
+}
+
+// O2: closing the same session twice: first succeeds, second returns
+// ErrNotFound (already closed).
+func TestSessionClose_DoubleClose(t *testing.T) {
+	ctx := context.Background()
+	orch, _ := openOrchestratorTestEnv(t)
+
+	start, err := orch.SessionStart(ctx, orchestration.SessionStartInput{
+		Operator:  "nico",
+		ProjectID: "default",
+	})
+	if err != nil {
+		t.Fatalf("SessionStart: %v", err)
+	}
+
+	if _, err := orch.SessionClose(ctx, orchestration.SessionCloseInput{SessionID: start.SessionID}); err != nil {
+		t.Fatalf("first close: %v", err)
+	}
+	_, err = orch.SessionClose(ctx, orchestration.SessionCloseInput{SessionID: start.SessionID})
+	if err == nil {
+		t.Fatalf("expected error on second close")
+	}
+	// CloseSession has WHERE status='active' filter; second close finds
+	// no active row -> ErrNotFound.
+	if !errIs(err, store.ErrNotFound) {
+		t.Fatalf("expected ErrNotFound on double-close, got: %v", err)
+	}
+}
+
+// O2: closing a session belonging to a different project returns
+// ErrNotFound (project filter blocks cross-project close).
+func TestSessionClose_CrossProject(t *testing.T) {
+	ctx := context.Background()
+	orch, s := openOrchestratorTestEnv(t)
+
+	if err := s.CreateProject(ctx, &project.Project{ProjectID: "acme", DisplayName: "ACME"}); err != nil {
+		t.Fatalf("create acme: %v", err)
+	}
+	if err := s.CreateProject(ctx, &project.Project{ProjectID: "globex", DisplayName: "Globex"}); err != nil {
+		t.Fatalf("create globex: %v", err)
+	}
+
+	// Open session in acme.
+	if err := s.SetActiveProject(ctx, "acme"); err != nil {
+		t.Fatalf("set acme: %v", err)
+	}
+	start, err := orch.SessionStart(ctx, orchestration.SessionStartInput{Operator: "nico", ProjectID: "acme"})
+	if err != nil {
+		t.Fatalf("SessionStart: %v", err)
+	}
+
+	// Switch to globex; close from globex should fail.
+	if err := s.SetActiveProject(ctx, "globex"); err != nil {
+		t.Fatalf("set globex: %v", err)
+	}
+	_, err = orch.SessionClose(ctx, orchestration.SessionCloseInput{SessionID: start.SessionID})
+	if err == nil {
+		t.Fatalf("expected error closing cross-project session")
+	}
+	if !errIs(err, store.ErrNotFound) {
+		t.Fatalf("expected ErrNotFound (project filter blocks), got: %v", err)
+	}
+
+	// Back in acme; close works.
+	if err := s.SetActiveProject(ctx, "acme"); err != nil {
+		t.Fatalf("set acme (back): %v", err)
+	}
+	out, err := orch.SessionClose(ctx, orchestration.SessionCloseInput{SessionID: start.SessionID})
+	if err != nil {
+		t.Fatalf("close from acme: %v", err)
+	}
+	if out.SessionID != start.SessionID {
+		t.Fatalf("session id mismatch on close")
+	}
+}
+
+// O2: summary counts reflect activity. Write a research run in the
+// session, then close and check ItemsTotal > 0.
+func TestSessionClose_SummaryCounts(t *testing.T) {
+	ctx := context.Background()
+	orch, s := openOrchestratorTestEnv(t)
+
+	if err := s.CreateProject(ctx, &project.Project{ProjectID: "acme", DisplayName: "ACME"}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	if err := s.SetActiveProject(ctx, "acme"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	start, err := orch.SessionStart(ctx, orchestration.SessionStartInput{Operator: "nico", ProjectID: "acme"})
+	if err != nil {
+		t.Fatalf("SessionStart: %v", err)
+	}
+
+	// Save a run + 3 items in this session.
+	if _, err := s.SaveRun(ctx, store.WriteContext{
+		Actor: "test", SessionID: start.SessionID, WritePath: "test",
+	}, &research.ResearchRun{
+		SessionID: start.SessionID,
+		Query:     "Q1", Intent: "cve",
+		Items: []research.Item{
+			{Title: "i1", Source: "test", Confidence: 0.9},
+			{Title: "i2", Source: "test", Confidence: 0.8},
+			{Title: "i3", Source: "test", Confidence: 0.7},
+		},
+	}); err != nil {
+		t.Fatalf("SaveRun: %v", err)
+	}
+
+	out, err := orch.SessionClose(ctx, orchestration.SessionCloseInput{SessionID: start.SessionID})
+	if err != nil {
+		t.Fatalf("SessionClose: %v", err)
+	}
+	if out.RunsTotal != 1 {
+		t.Fatalf("RunsTotal should be 1, got %d", out.RunsTotal)
+	}
+	if out.ItemsTotal != 3 {
+		t.Fatalf("ItemsTotal should be 3, got %d", out.ItemsTotal)
+	}
+	if out.WritesTotal < 3 {
+		// SaveRun emits 1 (run) + N (items) + audit via SaveRun. 3
+		// items + 1 run audit = at least 4 audit rows, plus the
+		// SessionStart and SessionClose rows.
+		t.Fatalf("WritesTotal should be >=3, got %d", out.WritesTotal)
+	}
 }
