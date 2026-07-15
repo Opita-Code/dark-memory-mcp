@@ -207,6 +207,12 @@ type Store interface {
 	ListBrandGuides(ctx context.Context, limit int) ([]vibeflow.BrandGuide, error)
 
 	// --- Vibeflow: compliance rules ---
+	// vibe_compliance is GLOBAL by jurisdiction. A rule for "EU" is
+	// visible from any project. See spec 171 T4c decision rationale:
+	// jurisdiction is a property of law (GDPR is GDPR), not of
+	// project. Save/Get/List ignore project_id on purpose. If
+	// per-project compliance ever becomes a requirement, swap the
+	// PK to (project_id, jurisdiction) in a follow-up migration.
 	SaveComplianceRule(ctx context.Context, wc WriteContext, r *vibeflow.ComplianceRule) error
 	GetComplianceRule(ctx context.Context, jurisdiction string) (*vibeflow.ComplianceRule, error)
 	ListComplianceRules(ctx context.Context, limit int) ([]vibeflow.ComplianceRule, error)
