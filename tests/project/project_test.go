@@ -16,6 +16,7 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/session"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 	"github.com/dark-agents/dark-memory-mcp/internal/store/runtime"
+	"github.com/dark-agents/dark-memory-mcp/internal/ssd"
 	"github.com/dark-agents/dark-memory-mcp/internal/vibeflow"
 )
 
@@ -973,6 +974,135 @@ func TestProject_Artifacts_CrossProject_Isolated(t *testing.T) {
 	goneA, _ := s.GetArtifact(ctx, idA)
 	if goneA != nil {
 		t.Fatalf("DeleteArtifact didn't remove, got: %+v", goneA)
+	}
+}
+
+// W3-002 (T4e, drift): SaveDriftReport + LatestDriftForArtifact +
+// ListDriftReports must filter by active project.
+func TestProject_DriftReports_CrossProject_Isolated(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+
+	if err := s.CreateProject(ctx, &project.Project{ProjectID: "acme", DisplayName: "ACME"}); err != nil {
+		t.Fatalf("create acme: %v", err)
+	}
+	if err := s.CreateProject(ctx, &project.Project{ProjectID: "globex", DisplayName: "Globex"}); err != nil {
+		t.Fatalf("create globex: %v", err)
+	}
+
+	// Write a real artifact in project A first (FK target for drift reports).
+	if err := s.SetActiveProject(ctx, "acme"); err != nil {
+		t.Fatalf("set acme: %v", err)
+	}
+	artID, err := s.SaveArtifact(ctx, store.WriteContext{Actor: "test", SessionID: "sess-A", WritePath: "test", ProjectID: "acme"},
+		&vibeflow.Artifact{
+			SessionID: "sess-A", VibeCase: "C2", ArtifactType: "image",
+			BrandID: "acme", Jurisdiction: "EU", HasDisclosure: true,
+			ArtifactURL: "file:///acme.png", ValidationStatus: "pending",
+		})
+	if err != nil {
+		t.Fatalf("SaveArtifact A: %v", err)
+	}
+
+	// Write a drift report for that artifact in project A.
+	driftID, err := s.SaveDriftReport(ctx, store.WriteContext{Actor: "test", SessionID: "sess-A", WritePath: "test", ProjectID: "acme"},
+		&vibeflow.DriftReport{
+			ArtifactID: artID, Verdict: "drift_detected",
+			SpecDiff: `{"diff":[1,2,3]}`, JudgeReasoning: "EU shapes differ",
+		})
+	if err != nil {
+		t.Fatalf("SaveDriftReport A: %v", err)
+	}
+
+	// From B: LatestDriftForArtifact returns nil.
+	if err := s.SetActiveProject(ctx, "globex"); err != nil {
+		t.Fatalf("set globex: %v", err)
+	}
+	got, err := s.LatestDriftForArtifact(ctx, artID)
+	if err != nil {
+		t.Fatalf("LatestDriftForArtifact from globex: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("INV-7 violated: project globex saw project acme's drift %+v", got)
+	}
+
+	// From B: ListDriftReports does not include the drift.
+	listB, _ := s.ListDriftReports(ctx, artID, "", 100)
+	for _, d := range listB {
+		if d.ID == driftID {
+			t.Fatalf("INV-7 violated: project globex saw drift in list")
+		}
+	}
+
+	// Back in A: same artifactID returns the report.
+	if err := s.SetActiveProject(ctx, "acme"); err != nil {
+		t.Fatalf("set acme (back): %v", err)
+	}
+	gotA, err := s.LatestDriftForArtifact(ctx, artID)
+	if err != nil {
+		t.Fatalf("LatestDriftForArtifact from acme: %v", err)
+	}
+	if gotA == nil || gotA.ID != driftID {
+		t.Fatalf("acme should see own drift, got: %+v", gotA)
+	}
+}
+
+// W3-002 (T4e, sdd): SaveSDDEvaluation + LatestSDDEvaluation +
+// ListSDDEvaluations must filter by active project.
+func TestProject_SDDEvaluations_CrossProject_Isolated(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+
+	if err := s.CreateProject(ctx, &project.Project{ProjectID: "acme", DisplayName: "ACME"}); err != nil {
+		t.Fatalf("create acme: %v", err)
+	}
+	if err := s.CreateProject(ctx, &project.Project{ProjectID: "globex", DisplayName: "Globex"}); err != nil {
+		t.Fatalf("create globex: %v", err)
+	}
+
+	// Write a SDD evaluation in project A.
+	if err := s.SetActiveProject(ctx, "acme"); err != nil {
+		t.Fatalf("set acme: %v", err)
+	}
+	evalID, err := s.SaveSDDEvaluation(ctx, store.WriteContext{Actor: "test", SessionID: "sess-A", WritePath: "test", ProjectID: "acme"},
+		&ssd.SDDEvaluation{
+			EvalType: "brand_match", TargetType: "brand", TargetID: "acme-base",
+			VerdictJSON: `{"match":0.95}`, Confidence: 0.95,
+		})
+	if err != nil {
+		t.Fatalf("SaveSDDEvaluation A: %v", err)
+	}
+
+	// From B: LatestSDDEvaluation returns nil.
+	if err := s.SetActiveProject(ctx, "globex"); err != nil {
+		t.Fatalf("set globex: %v", err)
+	}
+	got, err := s.LatestSDDEvaluation(ctx, "brand_match", "brand", "acme-base")
+	if err != nil {
+		t.Fatalf("LatestSDDEvaluation from globex: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("INV-7 violated: project globex saw project acme's sdd %+v", got)
+	}
+
+	// From B: ListSDDEvaluations does not include the eval.
+	listB, _ := s.ListSDDEvaluations(ctx, ssd.ListFilters{Limit: 100})
+	for _, e := range listB {
+		if e.ID == evalID {
+			t.Fatalf("INV-7 violated: project globex saw sdd in list")
+		}
+	}
+
+	// Back in A: same key returns the eval.
+	if err := s.SetActiveProject(ctx, "acme"); err != nil {
+		t.Fatalf("set acme (back): %v", err)
+	}
+	gotA, err := s.LatestSDDEvaluation(ctx, "brand_match", "brand", "acme-base")
+	if err != nil {
+		t.Fatalf("LatestSDDEvaluation from acme: %v", err)
+	}
+	if gotA == nil || gotA.ID != evalID {
+		t.Fatalf("acme should see own sdd, got: %+v", gotA)
 	}
 }
 

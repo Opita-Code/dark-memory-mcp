@@ -1603,16 +1603,20 @@ func scanArtifact(row *sql.Row) (*vibeflow.Artifact, error) {
 // ----- drift reports -----
 
 func (s *Store) SaveDriftReport(ctx context.Context, wc store.WriteContext, d *vibeflow.DriftReport) (int64, error) {
+	if err := s.requireProject(); err != nil {
+		return 0, err
+	}
+	projectID := projectIDOrActive(wc.ProjectID, s.ActiveProject()) // capture before locking
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if d.CreatedAt == "" {
 		d.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO vibe_drift_reports (artifact_id, spec_id, verdict, spec_diff_json, judge_reasoning, reconciled_at, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO vibe_drift_reports (artifact_id, spec_id, verdict, spec_diff_json, judge_reasoning, reconciled_at, created_at, project_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		d.ArtifactID, nullInt(d.SpecID), d.Verdict, nullStr(d.SpecDiff), nullStr(d.JudgeReasoning),
-		nullStr(d.ReconciledAt), d.CreatedAt)
+		nullStr(d.ReconciledAt), d.CreatedAt, projectID)
 	if err != nil {
 		return 0, err
 	}
@@ -1631,19 +1635,33 @@ func (s *Store) SaveDriftReport(ctx context.Context, wc store.WriteContext, d *v
 }
 
 func (s *Store) LatestDriftForArtifact(ctx context.Context, artifactID int64) (*vibeflow.DriftReport, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.ActiveProject() // capture before locking
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	row := s.db.QueryRowContext(ctx,
 		`SELECT id, artifact_id, spec_id, verdict, spec_diff_json, judge_reasoning, reconciled_at, created_at
-		 FROM vibe_drift_reports WHERE artifact_id = ? ORDER BY id DESC LIMIT 1`, artifactID)
+		 FROM vibe_drift_reports
+		 WHERE artifact_id = ? AND project_id = ?
+		 ORDER BY id DESC LIMIT 1`, artifactID, activeProject)
 	return scanDriftReport(row)
 }
 
 func (s *Store) ListDriftReports(ctx context.Context, artifactID int64, verdict string, limit int) ([]vibeflow.DriftReport, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.ActiveProject() // capture before locking
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if limit <= 0 {
 		limit = 50
 	}
 	q := `SELECT id, artifact_id, spec_id, verdict, spec_diff_json, judge_reasoning, reconciled_at, created_at
-	      FROM vibe_drift_reports WHERE 1=1`
-	args := []any{}
+	      FROM vibe_drift_reports WHERE project_id = ?`
+	args := []any{activeProject}
 	if artifactID > 0 {
 		q += ` AND artifact_id = ?`
 		args = append(args, artifactID)
@@ -1718,6 +1736,10 @@ func scanDriftReportRows(rows *sql.Rows) (*vibeflow.DriftReport, error) {
 // ----- sdd evaluations -----
 
 func (s *Store) SaveSDDEvaluation(ctx context.Context, wc store.WriteContext, e *ssd.SDDEvaluation) (int64, error) {
+	if err := s.requireProject(); err != nil {
+		return 0, err
+	}
+	projectID := projectIDOrActive(wc.ProjectID, s.ActiveProject()) // capture before locking
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if e.CreatedAt == "" {
@@ -1728,12 +1750,12 @@ func (s *Store) SaveSDDEvaluation(ctx context.Context, wc store.WriteContext, e 
 		 (eval_type, target_type, target_id, verdict_json, confidence,
 		  prompt_version, model, created_at,
 		  constitution_id, constitution_version, active_mods_json,
-		  refused_attempts, refusal_pattern)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		  refused_attempts, refusal_pattern, project_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.EvalType, e.TargetType, e.TargetID, e.VerdictJSON, e.Confidence,
 		nullStr(e.PromptVersion), nullStr(e.Model), e.CreatedAt,
 		nullStr(e.ConstitutionID), nullStr(e.ConstitutionVersion), nullStr(e.ActiveModsJSON),
-		e.RefusedAttempts, nullStr(e.RefusalPattern))
+		e.RefusedAttempts, nullStr(e.RefusalPattern), projectID)
 	if err != nil {
 		return 0, err
 	}
@@ -1752,18 +1774,30 @@ func (s *Store) SaveSDDEvaluation(ctx context.Context, wc store.WriteContext, e 
 }
 
 func (s *Store) LatestSDDEvaluation(ctx context.Context, evalType, targetType, targetID string) (*ssd.SDDEvaluation, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.ActiveProject() // capture before locking
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	row := s.db.QueryRowContext(ctx,
 		`SELECT id, eval_type, target_type, target_id, verdict_json, confidence,
 		        prompt_version, model, created_at,
 		        constitution_id, constitution_version, active_mods_json,
 		        refused_attempts, refusal_pattern
 		 FROM sdd_evaluations
-		 WHERE eval_type = ? AND target_type = ? AND target_id = ?
-		 ORDER BY id DESC LIMIT 1`, evalType, targetType, targetID)
+		 WHERE eval_type = ? AND target_type = ? AND target_id = ? AND project_id = ?
+		 ORDER BY id DESC LIMIT 1`, evalType, targetType, targetID, activeProject)
 	return scanSDDEval(row)
 }
 
 func (s *Store) ListSDDEvaluations(ctx context.Context, f ssd.ListFilters) ([]ssd.SDDEvaluation, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.ActiveProject() // capture before locking
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if f.Limit <= 0 {
 		f.Limit = 20
 	}
@@ -1771,8 +1805,8 @@ func (s *Store) ListSDDEvaluations(ctx context.Context, f ssd.ListFilters) ([]ss
 	             prompt_version, model, created_at,
 	             constitution_id, constitution_version, active_mods_json,
 	             refused_attempts, refusal_pattern
-	      FROM sdd_evaluations WHERE 1=1`
-	args := []any{}
+	      FROM sdd_evaluations WHERE project_id = ?`
+	args := []any{activeProject}
 	if f.EvalType != "" {
 		q += ` AND eval_type = ?`
 		args = append(args, f.EvalType)
