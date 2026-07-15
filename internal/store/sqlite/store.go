@@ -193,7 +193,15 @@ func projectIDOrActive(wcProjectID, activeProject string) string {
 	return activeProject
 }
 
-// ActiveConstitution returns the active constitution's id, version, sha256.
+// ActiveConstitution is GLOBAL by design (see spec 171 T4g).
+//
+// Returns the active constitution's id, version, sha256. Used by
+// runWatchdog (INV-4) to verify the constitution file has not drifted.
+// The active constitution is a SYSTEM-level property: it defines
+// the agent's posture, applies to every operation, and is shared
+// across all projects. See spec 171 T4f — the `constitutions`
+// table has no project_id column.
+//
 // Returns empty strings if no constitution is registered.
 func (s *Store) ActiveConstitution(ctx context.Context) (string, string, string) {
 	var id, ver, sha string
@@ -2263,6 +2271,22 @@ func (s *Store) Vacuum(ctx context.Context, policy store.VacuumPolicy) (store.Va
 	return stats, nil
 }
 
+// Stats is GLOBAL by design (see spec 171 T4g).
+//
+// It returns aggregate health counters across the entire dark.db: schema
+// version, table list, total rows per table, active sessions. It is the
+// operational observability entry point — used by health checks, dashboards,
+// and operator tooling to see "what's in this DB" without filtering.
+//
+// Stats is intentionally NOT scoped to the active project: an operator
+// inspecting the system needs to see totals, not just their project's
+// slice. The numbers are aggregate counts and risk only information
+// disclosure about database size, not about the contents of any
+// specific tenant's data.
+//
+// If multi-tenant observability is ever needed (per-project counters
+// without leaking totals), add a sister method `StatsForProject(ctx,
+// projectID)` that adds WHERE project_id = ? to each count.
 func (s *Store) Stats(ctx context.Context) (*store.Stats, error) {
 	out := &store.Stats{Driver: s.DriverName(), Open: true}
 	rows, err := s.db.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`)

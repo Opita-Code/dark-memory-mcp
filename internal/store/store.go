@@ -144,9 +144,12 @@ type Store interface {
 	// that contain the canary) and INV-4 (verify constitution SHA).
 	// Empty string clears.
 	SetCanary(token string)
-	// ActiveConstitution returns the (id, version, sha256) of the
-	// active constitution, as currently seen by the watchdog. Empty
-	// values if no constitution has been registered.
+	// ActiveConstitution is GLOBAL by design (spec 171 T4g).
+	// Returns the (id, version, sha256) of the active constitution,
+	// as currently seen by the watchdog. Empty values if no
+	// constitution has been registered. The active constitution is
+	// a system-level property used by runWatchdog (INV-4) — there is
+	// no per-project active constitution.
 	ActiveConstitution(ctx context.Context) (id, version, sha256 string)
 
 	// --- Project namespace (INV-7) ---
@@ -251,6 +254,11 @@ type Store interface {
 
 	// --- Admin ---
 	Vacuum(ctx context.Context, policy VacuumPolicy) (VacuumStats, error)
+	// Stats is GLOBAL by design (spec 171 T4g). Returns aggregate
+	// counters across the entire dark.db: schema version, table list,
+	// total rows per table. Operator observability entry point —
+	// does NOT filter by active project. If per-project stats are
+	// ever needed, add a sister method StatsForProject(ctx, projectID).
 	Stats(ctx context.Context) (*Stats, error)
 }
 
