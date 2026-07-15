@@ -1,0 +1,67 @@
+{
+  "vibe_case": "C1",
+  "constitution": "Wave 3 part 2: orchestrators",
+  "spec": {
+    "purpose": "Wave 3 part 2: build the Orchestrator layer — typed workflow API that wraps the Store with safety/audit/economy. These are the entry points the MCP server will eventually call. Spec 157+171 (W3-001..W3-005) made the Store trustworthy; this wave makes it usable.",
+    "exit_criteria": "5 orchestrators (O1-O5) shipped, each with tests, drift_log, and persistence. Orchestrator struct + types + LLM interface all landed. Spec 172 closes.",
+    "decisions": [
+      "LLMClient is an interface with a MockClient for tests; production client (dark-scrapper integration) deferred to Wave 4+",
+      "ResearchBackend is an interface; mock backend for tests; real backends plug in later",
+      "Each orchestrator method: validate input → apply safety (canary, hash) → call Store with WriteContext → emit write_audit → return typed output",
+      "Tests use the in-memory SQLite store via runtime.Open (same pattern as tests/context and tests/project)",
+      "All orchestrator methods take ctx context.Context as first param"
+    ],
+    "orchestrators": [
+      {
+        "id": "O1",
+        "name": "SessionStart",
+        "purpose": "Open a session for an operator; set the active project; return sessionID + meta",
+        "inputs": { "Operator": "string", "ProjectID": "string", "ConstitutionID": "string (optional)", "Notes": "string (optional)" },
+        "outputs": { "SessionID": "string", "ProjectID": "string", "StartedAt": "RFC3339Nano", "ConstitutionID": "string" },
+        "store_ops": ["SetActiveProject", "SaveSession", "RecordWrite"],
+        "tests": ["happy path", "missing project returns ErrInvalidArgument", "audit row emitted"]
+      },
+      {
+        "id": "O2",
+        "name": "SessionClose",
+        "purpose": "Close a session; return summary of activity (counts of writes, runs, items)",
+        "inputs": { "SessionID": "string" },
+        "outputs": { "SessionID": "string", "ClosedAt": "RFC3339Nano", "WritesTotal": "int", "RunsTotal": "int", "ItemsTotal": "int" },
+        "store_ops": ["requireProject", "CloseSession", "ListWrites (filtered by session_id)"],
+        "tests": ["happy path", "missing session returns ErrNotFound", "summary counts match"]
+      },
+      {
+        "id": "O3",
+        "name": "ResearchTopic",
+        "purpose": "Research pipeline: call backends, persist run + items, return ranked results",
+        "inputs": { "Query": "string", "Intent": "string", "SessionID": "string (optional)", "MaxItems": "int (default 20)" },
+        "outputs": { "RunID": "int64", "ItemsCount": "int", "Items": "[]research.Item (already-compressed)" },
+        "store_ops": ["SaveRun", "ListItems"],
+        "depends_on": "ResearchBackend interface (mock for tests)",
+        "tests": ["happy path with mock backend returning 3 items", "no active project returns ErrSessionRequired", "canary check rejects payload"]
+      },
+      {
+        "id": "O4",
+        "name": "RecallContext",
+        "purpose": "Wrap Store.Recall with economy compression; return ranked items within token budget",
+        "inputs": { "Query": "string", "Intent": "string (optional)", "MaxTokens": "int (default 2000)" },
+        "outputs": { "Items": "[]research.Item (compressed)", "TokensUsed": "int" },
+        "store_ops": ["requireProject", "Recall"],
+        "depends_on": "internal/economy (Atlan pipeline)",
+        "tests": ["happy path returns compressed items", "no active project returns ErrSessionRequired", "tokens_used under max"]
+      },
+      {
+        "id": "O5",
+        "name": "Judge",
+        "purpose": "LLM-as-judge wrapper; persist SDDEvaluation; return verdict + confidence",
+        "inputs": { "EvalType": "string", "TargetType": "string", "TargetID": "string", "Content": "string" },
+        "outputs": { "Verdict": "json-string", "Confidence": "float32", "EvaluationID": "int64" },
+        "store_ops": ["requireProject", "SaveSDDEvaluation"],
+        "depends_on": "LLMClient interface (MockClient for tests)",
+        "tests": ["happy path returns verdict + saves SDDEval", "no active project returns ErrSessionRequired", "canary check rejects content with canary token", "low confidence (<0.5) still saves the verdict (no auto-reject)"]
+      }
+    ],
+    "tasks_ordered": ["O1", "O2", "O3", "O4", "O5"]
+  },
+  "tasks_ordered": ["O1", "O2", "O3", "O4", "O5"]
+}
