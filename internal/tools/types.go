@@ -1,5 +1,5 @@
 // Package tools contains the type definitions, registry, error adapter,
-// and per-namespace tool handlers for the 25 dark_memory_* MCP tools.
+// and per-namespace tool handlers for the 26 dark_memory_* MCP tools.
 //
 // Layering:
 //
@@ -17,11 +17,13 @@
 //	    v
 //	Store / Safety
 //
-// Per RFC D-9, the MCP surface is exactly 25 intent-driven tools in 8
-// namespaces (SESSION / RESEARCH / VIBE / CONTEXT / JUDGE / POLICY /
-// OBSERVABILITY / ADMIN). Per BRIDGE_AND_COEXISTENCE.md §3 (spec 164,
-// bridge.4), the canonical tool order is fixed and emitted in
-// tools/list.
+// Per RFC D-9 + DMAP v1.1 spec 193, the MCP surface is exactly 26
+// intent-driven tools in 9 namespaces (SESSION / RESEARCH / VIBE /
+// CONTEXT / JUDGE / POLICY / OBSERVABILITY / ADMIN / L6-VLP). The
+// L6-VLP namespace (vlp_handle_event) was added in v1.1.0 to expose
+// the VLP state machine to MCP harnesses. Per
+// BRIDGE_AND_COEXISTENCE.md §3 (spec 164, bridge.4), the canonical tool
+// order is fixed and emitted in tools/list.
 package tools
 
 // ToolResponse is the canonical shape every tool returns. Matches

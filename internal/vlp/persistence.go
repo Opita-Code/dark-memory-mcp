@@ -61,13 +61,13 @@ func NewPersistence(s store.Store) (*Persistence, error) {
 //   - minset:     current minset mode (empty string if persona/minset not active)
 func (p *Persistence) Save(ctx context.Context, wc store.WriteContext, sessionID string, st State, lastEvent Event, lastVerdict Verdict, turn int, minset string) error {
 	if sessionID == "" {
-		return fmt.Errorf("vlp: persistence.Save: sessionID is required")
+		return fmt.Errorf("vlp: persistence.Save: sessionID is required: %w", store.ErrInvalidArgument)
 	}
 	if st == StateUnknown {
-		return fmt.Errorf("vlp: persistence.Save: refusing to persist StateUnknown")
+		return fmt.Errorf("vlp: persistence.Save: refusing to persist StateUnknown: %w", store.ErrInvalidArgument)
 	}
 	if turn < 0 {
-		return fmt.Errorf("vlp: persistence.Save: turn must be >= 0 (got %d)", turn)
+		return fmt.Errorf("vlp: persistence.Save: turn must be >= 0 (got %d): %w", turn, store.ErrInvalidArgument)
 	}
 	lastEventStr := ""
 	if lastEvent != EventUnknown {
@@ -98,7 +98,7 @@ func (p *Persistence) Save(ctx context.Context, wc store.WriteContext, sessionID
 type Snapshot struct {
 	State     State
 	TurnCount int
-	Exists    bool   // false if no row found
+	Exists    bool               // false if no row found
 	Row       *store.VLPStateRow // nil if Exists == false
 }
 
@@ -106,7 +106,7 @@ type Snapshot struct {
 // returns Snapshot{Exists: false} and no error.
 func (p *Persistence) Load(ctx context.Context, sessionID string) (Snapshot, error) {
 	if sessionID == "" {
-		return Snapshot{}, fmt.Errorf("vlp: persistence.Load: sessionID is required")
+		return Snapshot{}, fmt.Errorf("vlp: persistence.Load: sessionID is required: %w", store.ErrInvalidArgument)
 	}
 	row, err := p.store.GetVLPState(ctx, sessionID)
 	if err != nil {

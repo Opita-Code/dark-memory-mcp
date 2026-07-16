@@ -1,5 +1,5 @@
 // Package e2e — server_test.go: end-to-end stress test for the
-// dark-memory-mcp MCP server. Exercises the full 25-tool surface
+// dark-memory-mcp MCP server. Exercises the full 26-tool surface
 // under concurrent load; verifies no deadlock, no panic, audit rows
 // match writes (INV-1), and the canonical tool order is honored
 // (spec 164, bridge.4).
@@ -19,19 +19,19 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/tools"
 )
 
-// TestE2E_25ToolsRegistered is the canonical-order sanity check: all
-// 25 tools are present in the registry after RegisterAll.
-func TestE2E_25ToolsRegistered(t *testing.T) {
+// TestE2E_26ToolsRegistered is the canonical-order sanity check: all
+// 26 tools are present in the registry after RegisterAll.
+func TestE2E_26ToolsRegistered(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.close()
 
 	canonical := tools.CanonicalOrder()
-	if got := len(canonical); got != 25 {
-		t.Fatalf("canonical order length: want 25, got %d", got)
+	if got := len(canonical); got != 26 {
+		t.Fatalf("canonical order length: want 26, got %d", got)
 	}
 	registered := ts.srv.Registry().ListCanonical()
-	if len(registered) != 25 {
-		t.Fatalf("registered: want 25, got %d", len(registered))
+	if len(registered) != 26 {
+		t.Fatalf("registered: want 26, got %d", len(registered))
 	}
 	for i, name := range canonical {
 		if got := registered[i].Name; got != name {

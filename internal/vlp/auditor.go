@@ -99,7 +99,7 @@ func NewAuditor(s store.Store) (*Auditor, error) {
 //   - notes      = JSON-serialized transition (self-describing for ops queries)
 func (a *Auditor) RecordTransition(ctx context.Context, wc store.WriteContext, sessionID string, rec TransitionRecord) error {
 	if sessionID == "" {
-		return fmt.Errorf("vlp: auditor.RecordTransition: sessionID is required")
+		return fmt.Errorf("vlp: auditor.RecordTransition: sessionID is required: %w", store.ErrInvalidArgument)
 	}
 	notes := marshalTransitionNotes(sessionID, rec)
 	return a.store.RecordWrite(ctx, audit.WriteEvent{
@@ -123,7 +123,7 @@ func (a *Auditor) RecordTransition(ctx context.Context, wc store.WriteContext, s
 // "vlp.transition", SessionID: ...} — no client-side filtering needed.
 func (a *Auditor) ListTransitionsForSession(ctx context.Context, sessionID string, limit int) ([]audit.WriteEvent, error) {
 	if sessionID == "" {
-		return nil, fmt.Errorf("vlp: auditor.ListTransitionsForSession: sessionID is required")
+		return nil, fmt.Errorf("vlp: auditor.ListTransitionsForSession: sessionID is required: %w", store.ErrInvalidArgument)
 	}
 	if limit <= 0 {
 		limit = 50
@@ -143,12 +143,12 @@ func (a *Auditor) ListTransitionsForSession(ctx context.Context, sessionID strin
 // from write_audit where notes like '%vibe_publish%'"`).
 func marshalTransitionNotes(sessionID string, rec TransitionRecord) string {
 	payload := struct {
-		SessionID string   `json:"session_id"`
-		From      State    `json:"from"`
-		Event     Event    `json:"event"`
-		Verdict   Verdict  `json:"verdict,omitempty"`
-		To        State    `json:"to"`
-		Turn      int      `json:"turn"`
+		SessionID string  `json:"session_id"`
+		From      State   `json:"from"`
+		Event     Event   `json:"event"`
+		Verdict   Verdict `json:"verdict,omitempty"`
+		To        State   `json:"to"`
+		Turn      int     `json:"turn"`
 	}{
 		SessionID: sessionID,
 		From:      rec.From,
