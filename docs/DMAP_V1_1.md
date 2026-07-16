@@ -1,6 +1,6 @@
 # Spec 193: Dark Memory Agent Protocol (DMAP) v1.1
 
-> **Status:** Atomic spec 2.1 (SessionState) IMPLEMENTED + tests green. Other 25 atomic specs pending.
+> **Status:** Atomic specs 2.1 (SessionState) + 2.2 (VLPPackage) IMPLEMENTED + tests green. Other 24 atomic specs pending.
 > **Vibe case:** C5 (strategic planning / architecture)
 > **Constitution ref:** dark-agents/dark-memory-mcp@1.0.0
 > **Author:** Opita Code + dark-research-mcp build agent
@@ -106,7 +106,32 @@ DMAP v1.1 has 6 layers. Each layer has **one** responsibility:
 - **Interface:** `Coordinator.HandleEvent(sessionID, event, payload) → StateDelta` (spec 2.5)
 - **Research basis:** Anthropic multi-agent research + Claude Code subagents + LangGraph supervisor + A2A delegation semantics
 - **Atomic specs:** 2.1, 2.2, 2.3, 2.4, 2.5 (5 specs, ~1050 LoC total)
-- **FIRST IMPLEMENTED:** 2.1 SessionState (this iteration — see §4.2.1)
+- **IMPLEMENTED:** 2.1 SessionState + 2.2 VLPPackage (this iteration)
+
+#### §4.2.2 Normative: atomic spec 2.2 (VLPPackage)
+
+**Source of truth**: `internal/vlp/package.go` + `internal/vlp/package_test.go`.
+
+| Property | Value |
+|---|---|
+| Package | `internal/vlp` |
+| Acceptance test | `TestVLPPackage_PrimitivesReturnTyped` (interface conformance) |
+| Primitives | `Brief` · `Propose` · `Record` · `Complete` |
+| Interface assertion | `var _ vlpPrimitives = (*Package)(nil)` (compile-time) |
+| callMappings | 5 entries: session_start, vibe_publish, artifact_log, drift_log (verdict payload), session_abort |
+| Per-state context budget | 500-4000 tokens (T1+T2+T3 sum) |
+| Next-action mapping | `nextActionFor(state) → string` for LLM steering |
+
+**Inputs/outputs** (all JSON-tagged, all fields documented, no exported types without comments):
+- `BriefInput`, `BriefOutput`
+- `ProposeInput`, `ProposeOutput` (Approved/Rejected/Redirected)
+- `RecordInput`, `RecordOutput` (NextState + NextAction)
+- `CompleteInput`, `CompleteOutput` (FinalState + Summary + Handoff)
+- `ToolCall`, `Rejection`, `Redirect`
+
+**Trust boundary**: Package trusts caller-supplied CurrentState. Spec 2.3 (VLPPersistence) loads from Store and passes in. Spec 2.5 orchestrates the loop.
+
+**Out of scope for spec 2.2**: persistence (2.3), audit (2.4), dynamic context selection (Layer 1 + 2.5), persona/minset (Layer 4), mod execution (Layer 5). Spec 2.2 is pure logic on top of 2.1.
 
 #### §4.2.1 Normative: atomic spec 2.1 (SessionState)
 
@@ -251,8 +276,9 @@ See [§4 Layer decomposition](#4-layer-decomposition) above. Total: **26 atomic 
 | 1.3 | Retriever | 400 | 1.2 | pending |
 | 1.4 | TierCoordinator | 300 | 1.1, 1.3 | pending |
 | 1.5 | AtomicContextUseCase | 200 | 1.1-1.4 | pending |
-| **2.1** | **SessionState** | **~250** | **L0** | **✅ IMPLEMENTED (this iteration)** |
-| 2.2 | VLPPackage | 250 | 2.1 | pending |
+| **2.1** | **SessionState** | **~250** | **L0** | **✅ IMPLEMENTED** |
+| **2.2** | **VLPPackage** | **~300** | **2.1** | **✅ IMPLEMENTED** |
+| 2.3 | VLPPersistence | 200 | 2.1 | pending |
 | 2.3 | VLPPersistence | 200 | 2.1 | pending |
 | 2.4 | VLPAuditor | 150 | 2.3 | pending |
 | 2.5 | VLPLoopUseCase | 250 | 2.1-2.4 | pending |
