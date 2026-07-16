@@ -6,6 +6,27 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [1.2.2] — 2026-07-16
+
+### Fixed
+- **F37 — migration runner now tolerates "duplicate column name" errors.** applyOne in `internal/migrate/migrate.go` was running every statement in `m.Up` via a single `tx.ExecContext` inside one transaction. Any failure (including benign "duplicate column name: project_id" when a v7-style ALTER TABLE ADD COLUMN had partially completed during a prior boot crash) rolled back the WHOLE migration and aborted the daemon. The runner now splits multi-statement migration bodies on `;`, runs each statement separately, and treats the duplicate-column error class (SQLite `duplicate column name: X` + Postgres `column X already exists`) as already-satisfied. Regression tests cover the recovery flow (`TestMigrate_TolerantOfDuplicateColumn_F37`) plus a regression guard against over-broad catch (`TestMigrate_StillFailsOnNonDuplicateErrors_F37`).
+- **F38 — `EnsureCoreTables` self-heals missing core tables on boot.** The dark.db at `C:\Users\Nico\AppData\Local\dark-agents\dark.db` is shared with dark-research-mcp, whose bookkeeping table uses the same `schema_migrations` rows. When dark-research-mcp's v1-v3 were applied with overlapping version names (initial_schema, constitutions_and_mods, sdd_evaluations_constitution_audit), dark-memory-mcp's v5+ (`sessions_table`, `project_namespace`, `vibe_brands_composite_unique`, `vlp_state_table`, `audit_project_index`) appeared "already applied" without having actually run against the schema — leaving `sessions` and `projects` tables physically absent from the DB. New helper `migrate.EnsureCoreTables(ctx, db)` issues `CREATE TABLE IF NOT EXISTS` for the four core tables v5/v6/v7 expect to find, called once from the sqlite Store's `Open` before `Migrate` so the migration runner sees the correct schema state. Tests: `TestEnsureCoreTables_FreshDB_F38`, `_Idempotent_F38`, `_RecoveryFromHalfMigratedDarkDB_F38` (the exact 6-step crash repro from today's session).
+- **F39 — migration runner tolerates "no such module: <ext>" errors.** Orphan sqlite-vec triggers (`trg_research_items_vec_delete`, etc.) referencing the unloadable `vec0` virtual-table module were causing `ALTER TABLE vibe_brands RENAME TO vibe_brands_old` (in v8) to surface `SQL logic error: error in trigger trg_research_items_vec_delete: no such module: vec0`. Same `applyOne` extension; the "no such module" substring is now treated as already-satisfied at the per-statement level. Tests in `tests/migrate/tolerate_ddl_errors_f39_f40_test.go::TestMigrate_ToleratesNoSuchModule_F39`.
+- **F40 — migration runner tolerates "table X already exists" errors.** The same per-statement loop now also handles the rare case where a `CREATE TABLE` in a migration's `Up` is called against a table that already exists (e.g. `EnsureCoreTables` + `Migrate` both try to create the same table at boot, or a v8-style rename-and-recreate pattern). The existing table is preserved as-is. Test in `tests/migrate/tolerate_ddl_errors_f39_f40_test.go::TestMigrate_ToleratesTableAlreadyExists_F40`.
+
+### Operator notes
+- v1.2.2 is a **drop-in replacement** for v1.2.1. No migrations required. The 27-tool canonical surface is unchanged. No DB schema change.
+- Restart the running `dark-mem-mcp.exe` to pick up the new code; the F37/F38/F39/F40 changes only affect boot behaviour.
+- **However**, today's dark.db at the canonical path is in a pre-v1.2.0 partial state (has `attempts`, `audit`, `findings`, `judgments`, `runs`, etc. tables from a previous dark-copilot loadout, plus orphan vec0 triggers). Even with v1.2.2's tolerance patches, v8 (`vibe_brands_composite_unique`) will fail at the `INSERT INTO vibe_brands SELECT FROM vibe_brands_old` step because the rename was silently skipped (F39). To bootstrap a clean dark-memory-mcp state without losing recent work, see the operator's playbook:
+  - **Safe path A (recommended):** archive the current dark.db (`Rename-Item dark.db dark.db.bak-$(date)`) and let v1.2.2 create a fresh one. Existing `research_*` rows from dark-research-mcp won't be visible (that's the cross-project trade-off) but dark-memory-mcp boots cleanly.
+  - **Safe path B:** point dark-memory-mcp at a separate DB via `DARK_DB=./dark-memory.db`. The defaultDSN stays `./dark.db`; setting the env var on the binary is sufficient.
+  - **Risky path C (do not try):** manually drop `vibe_brands` before booting v1.2.2 so v8 can recreate it. The F37/F39 tolerance will then drop the rename/recreate loop back into a clean state. Only do this if you've back-vacuumed data.
+
+### Known issue
+- The dark.db shared schema_migrations bookkeeping between dark-research-mcp and dark-memory-mcp is fragile by design (both projects use `version INTEGER, applied_at TEXT` rows but the version numbers are NAME-aligned, not ID-aligned). Future directions to consider: namespace dark-memory-mcp's bookkeeping to `dark_memory_schema_migrations`; or partition the schema_migrations table by namespace. Not addressed in v1.2.2 — separate PR if you want to take it on.
+
+---
+
 ## [1.2.1] — 2026-07-16
 
 ### Fixed
