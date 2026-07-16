@@ -68,7 +68,7 @@ func LoadConfig() (*Config, error) {
 		DBDSN:            strings.TrimSpace(envOr("DARK_DB", defaultDSN())),
 		CacheDir:         strings.TrimSpace(envOr("DARK_CACHE_DIR", "")),
 		ServerName:       strings.TrimSpace(envOr("DARK_SERVER_NAME", "dark-memory-mcp")),
-		ServerVersion:    strings.TrimSpace(envOr("DARK_SERVER_VERSION", "0.1.0")),
+		ServerVersion:    strings.TrimSpace(envOr("DARK_SERVER_VERSION", "1.2.3")),
 		CoexistenceGroup: strings.TrimSpace(envOr("DARK_COEXISTENCE_GROUP", "dark-agents/memory")),
 	}
 
