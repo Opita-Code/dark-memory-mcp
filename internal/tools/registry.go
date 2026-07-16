@@ -124,7 +124,7 @@ func CanonicalOrder() []string {
 	return out
 }
 
-// canonicalToolOrder is the fixed 25-tool order (bare names, no
+// canonicalToolOrder is the fixed 26-tool order (bare names, no
 // "dark_memory_" prefix; the server prepends on wire).
 //
 // Per RFC D-9 + BRIDGE_AND_COEXISTENCE.md §3 (bridge.4):
@@ -137,8 +137,11 @@ func CanonicalOrder() []string {
 //	POLICY         (2)  → active_policy, load_constitution
 //	OBSERVABILITY  (3)  → memory_state, writes, anomalies
 //	ADMIN          (3)  → admin_migrate, admin_schema_status, admin_vacuum
+//	L6-VLP         (1)  → vlp_handle_event          (DMAP v1.1 spec 193)
 //
-// Total: 4+3+4+3+3+2+3+3 = 25.
+// Total: 4+3+4+3+3+2+3+3+1 = 26. The L6 namespace was added in DMAP
+// v1.1 to expose the VLP state machine to MCP harnesses (opencode,
+// claude code, etc.) as a first-class wire protocol.
 var canonicalToolOrder = []string{
 	// SESSION (4)
 	"session_start", "session_resume", "session_status", "session_close",
@@ -156,6 +159,8 @@ var canonicalToolOrder = []string{
 	"memory_state", "writes", "anomalies",
 	// ADMIN (3)
 	"admin_migrate", "admin_schema_status", "admin_vacuum",
+	// L6-VLP (1) — DMAP v1.1
+	"vlp_handle_event",
 }
 
 // WirePrefix is prepended to every bare tool name on the wire. Per

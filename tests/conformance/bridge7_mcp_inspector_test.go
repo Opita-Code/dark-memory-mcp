@@ -117,7 +117,7 @@ func TestBridge7_Initialize(t *testing.T) {
 }
 
 // TestBridge7_ListToolsCanonical asserts tools/list returns exactly
-// 25 tools in the canonical RFC D-9 namespace order (bridge.4).
+// 26 tools in the canonical RFC D-9 namespace order (bridge.4).
 //
 // This is the wire-format regression for the bug we caught during
 // the W4A polish: mcp-go's handleListTools sorts alphabetically;
@@ -142,8 +142,8 @@ func TestBridge7_ListToolsCanonical(t *testing.T) {
 		t.Fatalf("list tools: %v", err)
 	}
 
-	if len(result.Tools) != 25 {
-		t.Fatalf("tool count: want 25, got %d", len(result.Tools))
+	if len(result.Tools) != 26 {
+		t.Fatalf("tool count: want 26, got %d", len(result.Tools))
 	}
 
 	want := canonicalWireOrder()
@@ -260,7 +260,7 @@ func TestBridge7_CallToolErrorPath(t *testing.T) {
 }
 
 // canonicalWireOrder is the wire-format (dark_memory_*) version of
-// the 25-tool canonical order, mirrored from internal/tools/registry.go
+// the 26-tool canonical order, mirrored from internal/tools/registry.go
 // so this test doesn't depend on the library's internal package
 // (it tests the wire format, not the library shape).
 func canonicalWireOrder() []string {
@@ -281,6 +281,8 @@ func canonicalWireOrder() []string {
 		"memory_state", "writes", "anomalies",
 		// ADMIN (3)
 		"admin_migrate", "admin_schema_status", "admin_vacuum",
+		// L6-VLP (1) — DMAP v1.1
+		"vlp_handle_event",
 	}
 	out := make([]string, len(bare))
 	for i, b := range bare {
