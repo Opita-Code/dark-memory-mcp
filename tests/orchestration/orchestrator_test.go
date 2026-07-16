@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -2489,7 +2490,9 @@ func TestVibeSpec_StringifiedTasks_MalformedRejected(t *testing.T) {
 	if !errIs(err, store.ErrInvalidArgument) {
 		t.Fatalf("expected ErrInvalidArgument, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "stringified") {
-		t.Fatalf("error should mention 'stringified', got: %v", err)
+	// F35 wire-propagation: structured fieldError carries Field="tasks".
+	var fe *store.FieldError
+	if !errors.As(err, &fe) || fe.Field != "tasks" {
+		t.Fatalf("expected structured store.FieldError with Field=\"tasks\", got: %v", err)
 	}
 }

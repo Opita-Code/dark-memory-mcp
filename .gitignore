@@ -9,3 +9,9 @@ vibe-flow/*.tmp
 .dark-agents-cache/
 dev/
 
+
+# Build / dev artifacts (legacy operator WIP that are not part of this repo)
+*.exe~
+dev/
+mods/
+

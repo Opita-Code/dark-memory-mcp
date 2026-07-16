@@ -6,6 +6,77 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [1.2.5] — 2026-07-16
+
+### Added
+- **`tests/wire/` end-to-end JSON-RPC suite.** Wire-conformance tests
+  prove fixes actually work through the real MCP wire (binary
+  subprocess + JSON-RPC over stdio), not just at the Go orchestrator
+  level. Catch the bugs that Go-level tests cannot: harness encoding
+  (LLM dependent), schema-layer mismatches, error-envelope propagation.
+  **Rule (H-3 in CONTRIBUTING.md):** every fix MUST ship with at
+  least one wire test.
+- **`store.FieldError` structured type + F35 wire propagation.** Previously
+  orchestrator-level `ErrInvalidArgument` errors discarded the field
+  name; only `json.UnmarshalTypeError` paths set `ToolError.Field`.
+  This meant a `parseTasksField` rejection (e.g. LLM emits a number)
+  surfaced as the generic "One or more arguments failed validation"
+  message. `store.FieldError` carries the structured Field; ToToolError
+  extracts it via `errors.As` and propagates to `ToolError.Field`.
+  Tests: `tests/wire/f35_structured_error_test.go` (end-to-end via
+  binary), `tests/orchestration/orchestrator_test.go::TestVibeSpec_StringifiedTasks_MalformedRejected`.
+- **CONTRIBUTING.md** baking the four hard rules (H-1 each MCP owns its DB,
+  H-2 array/object string fallback, H-3 wire tests mandatory, H-4 no
+  private names in public artifacts) and seven conventions. Every
+  future dark-* server is built against this doc.
+- **`docs/PRODUCTION_CHECKLIST.md`** operator runbook: boot signal
+  matrix, recovery playbooks (R-1 vec0, R-2 dark.db corruption, R-3
+  tasks shape, R-4 LLM-prompt drift), dark-research vs dark-memory
+  isolation verification, performance baselines, one-page cheat
+  sheet.
+- **Wire test infrastructure.** `tests/wire/wire_session_test.go`
+  provides `wireSession` (binary subprocess + JSON-RPC framed
+  stdio), `startWireSession(t)` (per-test isolated DB under
+  `t.TempDir()`), `testsCall(name, args)` (strict per-id request).
+  Override `DARK_MEM_MCP_BIN` env var to test a specific binary.
+
+### Changed
+- **`parseTasksField` error propagation.** Errors now wrap via
+  `store.NewFieldError(store.ErrInvalidArgument, "tasks")` so the
+  field name reaches `ToolError.Field`. The orchestrator-level
+  `errMissingField` helper now also returns a `store.FieldError`
+  instead of a plain `fmt.Errorf`. **Wire test impact:**
+  `TestWire_F35_TypeMismatchSurfacesFieldPath` now passes (was
+  returning the generic error envelope pre-fix).
+- **`vibe_publish` shape regression test.** Tests now post the CORRECT
+  nested shape (spec as object, artifact as object, tasks as
+  JSON-encoded string). Pins the post-F33 contract.
+
+### Tested
+* 7 wire-conformance tests against the live binary:
+  - F33 (vibe_publish nested schema)
+  - INV-8 (defaultDSN isolation against cwd dark.db collision)
+  - F35 (structured field error via `tasks: 42.0`)
+  - F36 array form
+  - F36 stringified-array form
+  - F37-F40 (boot against half-migrated dark-memory.db)
+  - F37 (duplicate column tolerance via ApplyOne-by-statement split)
+* 15 of 15 package test suites pass (last suite run before this
+  commit). The conformance suite is occasionally flaky under heavy
+  concurrent load (full suite at once); reruns always pass.
+
+### Operator notes
+- Drop-in replacement for v1.2.4. No DB migration.
+- The new `tests/wire/` package requires `DARK_MEM_MCP_BIN=<path-to-binary>`
+  unless `./dark-mem-mcp.exe` is in the repo root (the default for
+  development). Production CI should set this env var explicitly.
+- The four wire-test failures (F35 fixed, F33 payload fixed,
+  F37-F40 seed fixed) were real production bugs caught by writing
+  wire tests FIRST in the regression suite. The "test the orchestrator
+  only" approach was missing harness-layer failures.
+
+---
+
 ## [1.2.3] — 2026-07-16
 
 ### Added

@@ -4,10 +4,15 @@
 # project name. Used by Windows CI runners and pre-commit hooks
 # when bash / git grep are not available.
 #
-# Run from the repo root:
+# Run from the repo root OR from anywhere (script auto-cd's to repo root):
 #   powershell -NoProfile -File scripts/lint-no-private-projects.ps1
 
 $ErrorActionPreference = 'Stop'
+
+# Resolve repo root from the script's own path so the script works
+# regardless of CWD (CI runners, pre-commit hooks, manual invocations).
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+Set-Location -LiteralPath (Split-Path -Parent $ScriptDir) | Out-Null
 
 $BLOCKLIST = @(
   'dark-harvest','dark-scrapper','dark-scraper','scrappingkeys',

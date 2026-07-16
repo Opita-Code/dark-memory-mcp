@@ -83,28 +83,26 @@ func parseTasksField(raw json.RawMessage) ([]VibeSpecTask, error) {
 	// Peek at the first non-whitespace byte to decide which path.
 	switch trimmed[0] {
 	case '[':
-		// Direct JSON array.
 		var out []VibeSpecTask
 		if err := json.Unmarshal(raw, &out); err != nil {
-			return nil, fmt.Errorf("%w: tasks is not a valid JSON array of task objects: %v", store.ErrInvalidArgument, err)
+			return nil, store.NewFieldError(store.ErrInvalidArgument, "tasks")
 		}
 		return out, nil
 	case '"':
-		// JSON-encoded string. Decode to string, then re-parse as array.
 		var s string
 		if err := json.Unmarshal(raw, &s); err != nil {
-			return nil, fmt.Errorf("%w: tasks is a JSON string but cannot be decoded: %v", store.ErrInvalidArgument, err)
+			return nil, store.NewFieldError(store.ErrInvalidArgument, "tasks")
 		}
 		if strings.TrimSpace(s) == "" {
 			return nil, errMissingField("tasks")
 		}
 		var out []VibeSpecTask
 		if err := json.Unmarshal([]byte(s), &out); err != nil {
-			return nil, fmt.Errorf("%w: tasks (stringified) is not a valid JSON array of task objects: %v", store.ErrInvalidArgument, err)
+			return nil, store.NewFieldError(store.ErrInvalidArgument, "tasks")
 		}
 		return out, nil
 	default:
-		return nil, fmt.Errorf("%w: tasks must be a JSON array or a JSON-encoded string of an array, got leading byte %q", store.ErrInvalidArgument, string(trimmed[0]))
+		return nil, store.NewFieldError(store.ErrInvalidArgument, "tasks")
 	}
 }
 
