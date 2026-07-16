@@ -21,8 +21,8 @@
 
 [![MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Go 1.25+](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go&logoColor=white)](go.mod)
-[![MCP tools](https://img.shields.io/badge/MCP-27%20tools-blueviolet)](#los-27-tools)
-[![Tests](https://img.shields.io/badge/tests-13%20suites%20passing-brightgreen)](#tests)
+[![MCP tools](https://img.shields.io/badge/MCP-28%20tools-blueviolet)](#los-28-tools)
+[![Tests](https://img.shields.io/badge/tests-15%20suites%20passing-brightgreen)](#tests)
 [![Backends](https://img.shields.io/badge/backends-sqlite%20%7C%20postgres-blue)](docs/MIGRATION.md)
 [![Conformant](https://img.shields.io/badge/MCP%20Inspector-passing-success)](tests/conformance/)
 
@@ -34,11 +34,13 @@
 
 ## ¿Qué hace?
 
-**dark-memory-mcp** es un servidor MCP escrito en Go que entrega a tu agente IA **27 herramientas canónicas** agrupadas en 10 oficios (incluido el namespace L6-VLP para el state machine del Vibe-Loop Protocol, y el namespace PROJECT para bootstrap multi-tenant sin acceso directo a la DB), persistidas en una base SQL dual-driver (SQLite para dev, Postgres para prod) y gobernadas por **7 invariantes operacionales** que se defienden a sí mismos en el boundary del Store.
+**dark-memory-mcp** es un servidor MCP escrito en Go que entrega a tu agente IA **28 herramientas canónicas** agrupadas en 10 oficios (incluido el namespace L6-VLP para el state machine del Vibe-Loop Protocol, y el namespace PROJECT para bootstrap multi-tenant sin acceso directo a la DB), persistidas en una base SQL dual-driver (SQLite para dev, Postgres para prod) y gobernadas por **8 invariantes operacionales** que se defienden a sí mismos en el boundary del Store.
 
 Una sola API. Tres binarios (`dark-mem-mcp` server MCP, `dark-mem-cli` admin, `dark-mem-inspect` read-only). Un solo `dark.db` compartido con `dark-research-mcp` (tablas distintas, propietarios distintos). **Sin magia: con código que puedes leer y modificar.**
 
-Cuando se opera en modo `armed` (`DARK_REDTEAM=armed`), el servidor emite además **3 herramientas L7-REDTEAM adicionales** (`dark_memory_redteam_list_mods`, `_get_prompts`, `_log_attempt` — research use only, ver [Modo Armed (L7-REDTEAM)](#modo-armed-l7-redteam)). Superficie total: **30**. Sin `armed`, la superficie canónica se mantiene en 27 (test defensivo en `TestE2E_27ToolsRegistered`).
+Cuando se opera en modo `armed` (`DARK_REDTEAM=armed`), el servidor emite además **3 herramientas L7-REDTEAM adicionales** (`dark_memory_redteam_list_mods`, `_get_prompts`, `_log_attempt` — research use only, ver [Modo Armed (L7-REDTEAM)](#modo-armed-l7-redteam)). Superficie total: **31**. Sin `armed`, la superficie canónica se mantiene en 28 (test defensivo en `TestE2E_28ToolsRegistered` + `TestWire_RuntimeToolEnumeration`).
+
+**Health probe (v1.3.0):** `dark_memory_health_ping` es un liveness probe de bajo costo (latencia objetivo <50ms en caliente, presupuesto <500ms) apto para K8s liveness/readiness. Devuelve un snapshot inmutable `{server, db, runtime, registry, latency_ms, checked_at}` sin tocar el audit bus ni avanzar el VLP state. Ver `docs/PRODUCTION_CHECKLIST.md` §Health Probe para el wiring.
 
 > 🇨🇴 *Construido en Colombia como parte del ecosistema [Opita Code](https://opitacode.com). Software práctico para investigación real, no para verse bonito en una presentación.*
 
@@ -100,7 +102,7 @@ El binario `dark-mem-cli` aplica migraciones explícitas cuando las quieras, y `
 
 ---
 
-## Los 27 tools
+## Los 28 tools
 
 Diez namespaces. El prefijo wire es `dark_memory_` (mandatory por BRIDGE_AND_COEXISTENCE §2.2). El orden canónico es **parte del contrato wire** — harnesses pueden indexar por posición.
 
@@ -131,7 +133,7 @@ Cuando se arranca con `DARK_REDTEAM=armed`, el servidor registra **3 herramienta
 
 Las herramientas cargan los mods instalados bajo `mods/redteam/` (configurable vía `DARK_REDTEAM_MODS_PATH`). Los mods son files de payloads de security research (prompt-injection-lab, jailbreak-taxonomy, etc.). **Solo para uso de investigación con autorización explícita.** No destinados a infraestructura de ataque en producción.
 
-La superficie armed es 27 + 3 = **30**. La superficie sin armar es 27, garantizada por `TestE2E_27ToolsRegistered`.
+La superficie armed es 28 + 3 = **31**. La superficie sin armar es 28, garantizada por `TestE2E_28ToolsRegistered` (Go level) y `TestWire_RuntimeToolEnumeration` (wire level).
 
 ---
 
@@ -284,7 +286,7 @@ ok  tests/cli                  70s   (13 tests: 11 + 2 canary_present regression
 ok  tests/conformance          51s   (4 bridge.7 tests via mcp-go real client)
 ok  tests/context              25s
 ok  tests/dual_driver          11s   (sqlite contract 7/7 sub-tests)
-ok  tests/e2e                  62s   (6 tests including 1000-mixed-no-deadlock + 27-tool register guard)
+ok  tests/e2e                  62s   (6 tests including 1000-mixed-no-deadlock + 28-tool register guard)
 ok  tests/economy               0s
 ok  tests/invariants            1s   (INV-5 + INV-6)
 ok  tests/orchestration        80s   (73+ tests across 9 orchestrators; F36 dual-form tasks)
@@ -293,7 +295,7 @@ ok  tests/tools                28s   (F33 project tool: 7 sub-tests, schema reje
 ```
 
 Highlights:
-- `TestE2E_27ToolsRegistered` — wire-format guard for v1.2.0 PROJECT namespace insertion
+- `TestE2E_28ToolsRegistered` — Go-level canonical-order guard (v1.3.0: 27 → 28 with health_ping)
 - `TestVibeSpec_AcceptsStringifiedTasks` — F36 dual-form compat with `dark_research_spec_create` (v1.2.1)
 - `TestVibeSpec_StringifiedTasks_MalformedRejected` — F36 precise error surfaces field hint
 - `TestE2E_1000MixedCallsNoDeadlock` — RFC §12 #4 (1000 mixed tool calls)
@@ -312,12 +314,14 @@ Highlights:
 - ✅ **v1.2.0** (F33 + F35, 2026-07-16) — `dark_memory_project_create` cierra el loop de bootstrap multi-tenant. `vibe_publish` JSON Schema corregido (nested spec+artifact en lugar de flat) + `vibeSpecTaskSchema` strict (additionalProperties:false) + `BindOrchestrator`'s `typeMismatchToolError` devuelve field path + expected/actual type. Tool count: 26 → 27.
 - ✅ **v1.2.1** (F36, 2026-07-16) — `dark_memory_vibe_spec.tasks` ahora acepta tanto JSON array como JSON-encoded string (compatibilidad con la gemela `dark_research_spec_create` que persiste el campo como string opaco). 2 tests nuevos. Drop-in replacement; sin migrations; sin cambio de surface. **Restart requerido del binario `dark-mem-mcp.exe`** para tomar el código nuevo.
 - ✅ **v1.2.2** (F37 + F38 + F39 + F40, 2026-07-16) — Migration runner self-healing: `applyOne` ahora split-on-`;` y tolera 4 clases de errores DDL idempotentes (`duplicate column name`, `no such module`, `table already exists`). `EnsureCoreTables` recrea tablas core faltantes al boot. Sin esto, dark-memory-mcp NO podía arrancar contra dark.dbs parcialmente migrados. 8 tests nuevos en `tests/migrate/`.
-- ✅ **v1.2.3** (INV-8, 2026-07-16) — `defaultDSN` retorna `dark-memory.db` (era `dark.db`). Principio constitucional: **cada MCP usa su propia DB**. Documenteado en `docs/INVARIANTS.md` INV-8. Default test en `tests/invariants/inv8_test.go`. Aplica a toda futura familia dark-* ([FUTURE-MCP-1] usará `harvest.db` por convención). **Migration-safe**: la oscura `dark.db` que el operador tenga de v1.2.x NO se modifica; sólo el path default para arranques nuevos cambia.
-- 🚧 **v1.3** — Vector recall via sqlite-vec; constitution mod registry v2; L7-REDTEAM integration formal (actualmente en operator-WIP)
+- ✅ **v1.3.0** (production-readiness, 2026-07-16) — `dark_memory_health_ping` (liveness probe enlatado, OBSERVABILITY 3→4), wire-conformance total (10/10 tests PASS contra el binario real), wait-for-boot-marker para eliminar race en startup, `.github/workflows/ci.yml` con receta de CI operator-reproducible, race-detector note en PRODUCTION_CHECKLIST, stale-binary gotcha documentada. **28 tools canónicos, 31 armed.**
+- 🚧 **v1.3.x** — Vector recall via sqlite-vec; constitution mod registry v2; L7-REDTEAM integration formal (actualmente en operator-WIP)
 
 Patches publicados:
 - `dark-memory-mcp-v1.2.0.patch` — superficie 27 tools, ~870 LOC adicionales
 - `dark-memory-mcp-v1.2.1.patch` — drop-in replacement, F36 fix
+- `dark-memory-mcp-v1.2.5.patch` — wire-conformance suite (tests/wire/) + F35 wire propagation + CONTRIBUTING + PRODUCTION_CHECKLIST
+- `dark-memory-mcp-v1.3.0.patch` — production-readiness: health_ping + wire-conformance bump + race-free boot + CI workflow
 
 Ver [`CHANGELOG.md`](CHANGELOG.md) para el detalle completo de cada release y [`docs/PR-v1.2.0.md`](docs/PR-v1.2.0.md) para el desglose técnico de F33+F35.
 

@@ -62,16 +62,27 @@ sees in its RecallContext.
 
 ## INV-3 — canary check on payload writes
 
-**Statement**: Payload-carrying `Save*` methods run
-`safety.ValidatePayload(payload)` against the active canary. Canary
-hit returns `ErrCanaryInPayload`; the transaction rolls back.
+**Statement**: `Store.SaveRun` (research items insert path) runs
+`safety.ValidatePayload(payload)` against the active canary before
+inserting. Canary hit returns `ErrCanaryInPayload`; the transaction
+rolls back.
+
+**Scope (v1.3.0 precision)**: INV-3 explicitly applies to the
+research_items ingest path. Other `Save*` methods (Spec, Artifact,
+BrandGuide, ComplianceRule, Constitution, etc.) write content that
+originates from the LLM in the same session as the operator, not
+from external untrusted sources; the canary tripwire is calibrated
+for the OSINT research path where prompt injection is the threat
+model. Spec / artifact content goes through other defensive layers
+(project isolation INV-7, write_audit INV-1, constitution validation
+INV-4).
 
 **Why**: A user prompt that includes the canary token (placed there
 defensively by upstream callers like the system prompt composer) is
 a signal that something is replaying untrusted content. The canary
 is a defensive tripwire, not user data.
 
-**Enforced at**: `Store.Save*` invokes the `safety.Holder` before
+**Enforced at**: `Store.SaveRun` invokes the `safety.Holder` before
 inserting. The canary is a 128-bit random token minted at server boot
 (installed via `safety.NewCanary()`).
 

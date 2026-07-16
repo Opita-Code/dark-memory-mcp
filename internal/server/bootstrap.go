@@ -9,7 +9,9 @@ package server
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 )
@@ -46,6 +48,11 @@ type Config struct {
 	// CoexistenceGroup is declared in serverInfo (BRIDGE_AND_COEXISTENCE.md
 	// §3 / spec 164 bridge.2). Default: "dark-agents/memory".
 	CoexistenceGroup string
+
+	// BootedAt is the wall-clock time the server began its boot
+	// sequence (set by LoadConfig from time.Now()). dark_memory_health_ping
+	// uses it to compute uptime_seconds. v1.3.0.
+	BootedAt time.Time
 }
 
 // StoreConfig converts Config to store.Config (the shape
@@ -68,8 +75,9 @@ func LoadConfig() (*Config, error) {
 		DBDSN:            strings.TrimSpace(envOr("DARK_DB", defaultDSN())),
 		CacheDir:         strings.TrimSpace(envOr("DARK_CACHE_DIR", "")),
 		ServerName:       strings.TrimSpace(envOr("DARK_SERVER_NAME", "dark-memory-mcp")),
-		ServerVersion:    strings.TrimSpace(envOr("DARK_SERVER_VERSION", "1.2.3")),
+		ServerVersion:    strings.TrimSpace(envOr("DARK_SERVER_VERSION", DefaultServerVersion)),
 		CoexistenceGroup: strings.TrimSpace(envOr("DARK_COEXISTENCE_GROUP", "dark-agents/memory")),
+		BootedAt:         time.Now().UTC(),
 	}
 
 	whitelist := strings.TrimSpace(os.Getenv("DARK_MOD_WHITELIST"))
@@ -82,14 +90,62 @@ func LoadConfig() (*Config, error) {
 		}
 	}
 
-	switch cfg.DBDriver {
+switch cfg.DBDriver {
 	case "sqlite", "postgres":
 		// ok
 	default:
 		return nil, fmt.Errorf("server: invalid DARK_DB_DRIVER=%q (must be 'sqlite' or 'postgres')", cfg.DBDriver)
 	}
 
+	// v1.3.0 (bug-hunt polish): pre-flight check for sqlite driver.
+	// If the operator's DARK_DB path points to a directory that
+	// does not exist or is not writable, fail fast with a clear
+	// message at step1 rather than crashing deep inside the
+	// modernc/sqlite driver at step2 with a stack trace operators
+	// can't decode. Postgres is skipped (the driver fails later
+	// with a connection-level error that's already clear).
+	if cfg.DBDriver == "sqlite" && cfg.DBDSN != ":memory:" {
+		if err := preflightSQLiteDSN(cfg.DBDSN); err != nil {
+			return nil, fmt.Errorf("server: preflight DARK_DB=%q: %w", cfg.DBDSN, err)
+		}
+	}
+
 	return cfg, nil
+}
+
+// preflightSQLiteDSN verifies that the directory holding the sqlite
+// DSN exists and is writable. The file itself does not need to
+// exist (sqlite creates it on first open); the operator may pass
+// DARK_DB=./new/path/dark.db and expect the daemon to create the
+// file. We only check the directory.
+func preflightSQLiteDSN(dsn string) error {
+	dir := filepath.Dir(dsn)
+	// filepath.Dir on a bare filename returns "." which always
+	// exists; skip the check in that case.
+	if dir == "" || dir == "." {
+		return nil
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("directory %q does not exist; create it or set DARK_DB to an existing path", dir)
+		}
+		return fmt.Errorf("stat directory: %w", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("%q exists but is not a directory", dir)
+	}
+	// Probe writability with a temp file create+remove. Avoids
+	// the false negative of os.Access on Windows where ACLs are
+	// not always respected by access(2).
+	probe := filepath.Join(dir, ".dark-mem-mcp-preflight")
+	if f, err := os.Create(probe); err != nil {
+		return fmt.Errorf("directory not writable: %w", err)
+	} else {
+		_ = f.Close()
+		_ = os.Remove(probe)
+	}
+	return nil
 }
 
 func envOr(key, def string) string {
@@ -116,3 +172,9 @@ func defaultDSN() string {
 
 // DefaultDSN exposes defaultDSN for tests/invariants. See docs/INVARIANTS.md INV-8.
 func DefaultDSN() string { return defaultDSN() }
+
+// DefaultServerVersion is the canonical server version baked at build
+// time. Operators can override it via DARK_SERVER_VERSION in env,
+// which LoadConfig resolves into Config.ServerVersion. Bumped to
+// 1.3.0 in the v1.3.0 release (health_ping tool added).
+const DefaultServerVersion = "1.3.0"

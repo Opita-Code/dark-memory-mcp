@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -112,7 +113,13 @@ func startWireSessionAt(t *testing.T, dbPath string) *wireSession {
 		stdout: newLineReader(stdoutR),
 		stderr: *stderrBuf,
 	}
-	s.skipBootBanner()
+	// v1.3.0: wait for boot marker (helper from wire_session_test.go)
+	// before sending initialize. The dirty-DB tests boot a binary
+	// whose step2/3 may take longer due to migration self-healing;
+	// 30s ceiling covers the worst case seen on this host.
+	if err := waitForBootMarker(t, stderrBuf, 30*time.Second, "serving stdio"); err != nil {
+		t.Fatalf("wire f37/40: boot wait: %v", err)
+	}
 	_ = s.request("initialize", map[string]any{
 		"protocolVersion": "2024-11-05",
 		"capabilities":    map[string]any{},

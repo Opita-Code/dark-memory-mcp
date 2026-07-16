@@ -117,10 +117,12 @@ func TestBridge7_Initialize(t *testing.T) {
 }
 
 // TestBridge7_ListToolsCanonical asserts tools/list returns exactly
-// 27 tools in the canonical RFC D-9 namespace order (bridge.4).
+// 28 tools in the canonical RFC D-9 namespace order (bridge.4).
 //
 // v1.2.0: PROJECT namespace (1 tool: project_create) inserted at
-// index 0, before SESSION. The wire order is otherwise unchanged.
+// index 0, before SESSION.
+// v1.3.0: OBSERVABILITY namespace grew 3 → 4 with health_ping; the
+// canonical count is now 28 (was 27 in v1.2.x, 26 in v1.1.x).
 //
 // This is the wire-format regression for the bug we caught during
 // the W4A polish: mcp-go's handleListTools sorts alphabetically;
@@ -145,8 +147,8 @@ func TestBridge7_ListToolsCanonical(t *testing.T) {
 		t.Fatalf("list tools: %v", err)
 	}
 
-	if len(result.Tools) != 27 {
-		t.Fatalf("tool count: want 27, got %d", len(result.Tools))
+	if len(result.Tools) != 28 {
+		t.Fatalf("tool count: want 28 (v1.3.0), got %d", len(result.Tools))
 	}
 
 	want := canonicalWireOrder()
@@ -263,10 +265,10 @@ func TestBridge7_CallToolErrorPath(t *testing.T) {
 }
 
 // canonicalWireOrder is the wire-format (dark_memory_*) version of
-// the 27-tool canonical order (v1.2.0), mirrored from
-// internal/tools/registry.go so this test doesn't depend on the
-// library's internal package (it tests the wire format, not the
-// library shape).
+// the 28-tool canonical order (v1.3.0; was 27 in v1.2.x and 26 in
+// v1.1.x), mirrored from internal/tools/registry.go so this test
+// doesn't depend on the library's internal package (it tests the
+// wire format, not the library shape).
 func canonicalWireOrder() []string {
 	bare := []string{
 		// PROJECT (1) — v1.2.0
@@ -283,8 +285,8 @@ func canonicalWireOrder() []string {
 		"judge", "consensus", "judgment_history",
 		// POLICY (2)
 		"active_policy", "load_constitution",
-		// OBSERVABILITY (3)
-		"memory_state", "writes", "anomalies",
+		// OBSERVABILITY (4) — v1.3.0 grew from 3 to 4 with health_ping
+		"memory_state", "writes", "anomalies", "health_ping",
 		// ADMIN (3)
 		"admin_migrate", "admin_schema_status", "admin_vacuum",
 		// L6-VLP (1) — DMAP v1.1

@@ -49,32 +49,42 @@ func TestWire_F35_TypeMismatchSurfacesFieldPath(t *testing.T) {
 		t.Fatalf("F35: nil response from server")
 	}
 
-	// Extract the content text from the error envelope.
-	var env struct {
-		Result struct {
-			IsError bool `json:"isError"`
-			Content []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			} `json:"content"`
-		} `json:"result"`
-		Error json.RawMessage `json:"error"`
+	// Extract the content text from the error envelope. We need BOTH
+	// envelopes:
+//
+//   - OUTER (mcp-go CallToolResult): {result:{content:[...],isError:true}}
+//     The harness sees isError; setting it to true is mcp-go's
+//     contract for "tool returned an error".
+//   - INNER (our ToolResponse): {"error":{...}}. The structured
+//     ToolError with field=code/message/hint/field lives here.
+//
+//	v1.3.0: shared envelope parser from envelope.go handles the
+//	outer; the inner is parsed inline because F35 is the canonical
+//	test that defines the structured-error contract.
+	var outer toolResponseEnvelope
+	if err := json.Unmarshal(resp, &outer); err != nil {
+		t.Fatalf("F35: malformed outer response: %v raw=%s", err, respStr(resp))
 	}
-	if err := json.Unmarshal(resp, &env); err != nil {
-		t.Fatalf("F35: malformed response: %v raw=%s", err, respStr(resp))
+	if !outer.Result.IsError {
+		t.Fatalf("F35: expected outer isError=true (mcp-go error marker); got content=%+v", outer.Result.Content)
 	}
-	if env.Error != nil {
-		t.Fatalf("F35: top-level RPC error (expected tool error envelope): %s", env.Error)
+	inner, err := unwrapToolResponse(t, resp)
+	if err != nil {
+		t.Fatalf("F35: unwrap inner: %v", err)
 	}
-	if !env.Result.IsError {
-		t.Fatalf("F35: expected isError=true, got content=%+v", env.Result.Content)
+	var trEnvelope struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+			Field   string `json:"field"`
+		} `json:"error"`
 	}
-	if len(env.Result.Content) == 0 || env.Result.Content[0].Text == "" {
-		t.Fatalf("F35: error envelope has empty text; content=%+v", env.Result.Content)
+	if err := json.Unmarshal(inner, &trEnvelope); err != nil {
+		t.Fatalf("F35: inner ToolResponse unmarshal: %v inner=%s", err, inner)
 	}
-	txt := env.Result.Content[0].Text
+	txt := trEnvelope.Error.Message
 	if !strings.Contains(strings.ToLower(txt), "tasks") {
 		t.Fatalf("F35: error text should mention 'tasks'; got %q", txt)
 	}
-	t.Logf("F35 surfaced structured error mentioning 'tasks': %q", txt[:min(140, len(txt))])
+	t.Logf("F35 surfaced structured error mentioning 'tasks': code=%s field=%q msg=%q", trEnvelope.Error.Code, trEnvelope.Error.Field, txt[:min(140, len(txt))])
 }

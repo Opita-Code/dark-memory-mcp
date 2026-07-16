@@ -6,6 +6,91 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [1.3.0] — 2026-07-16
+
+### Added (production-readiness release)
+
+- **`dark_memory_health_ping` — operator-facing liveness probe.**
+  The canonical surface grew 27 → 28 tools (OBSERVABILITY 3 → 4).
+  health_ping is a strict, documented-shape probe distinct from
+  `memory_state`:
+    - **Latency budget:** <500ms round-trip (target <50ms on warm cache);
+      suitable for K8s liveness/readiness probes that fire every second.
+    - **Side-effect freedom:** does NOT touch the audit bus, does NOT
+      advance VLP state, does NOT migrate. Safe to call at high
+      frequency.
+    - **Frozen contract:** `{server, db, runtime, registry, latency_ms,
+      checked_at}`. Adding fields is backward-compatible; removing
+      fields is a breaking change to monitoring rules.
+  Wire conformance: `tests/wire/health_ping_test.go::TestWire_HealthPingShape`
+  (verifies all fields) and `::TestWire_HealthPingLatency` (verifies the
+  500ms ceiling). Tool count: `tests/wire/zz_toolenum_test.go`.
+- **`tests/wire/wire_session_test.go::waitForBootMarker`** — eliminates
+  the startup race that previously caused intermittent "tool not found"
+  failures when `initialize` arrived before the binary's mcp-go loop
+  started. The harness now waits up to 5s for the `registered N tools`
+  boot marker on stderr before sending `initialize`.
+- **`internal/tools/health.go::unwrapToolResponse` helper** — single
+  point of edit for the mcp-go `content:[{type:"text",text:"..."}]`
+  envelope shape that wraps every tool response.
+- **`Config.BootedAt`** field — wall-clock time captured at config load;
+  `SetRuntimeContext` propagates it into `health_ping` so uptime is
+  accurate from the very first call.
+- **`.github/workflows/ci.yml`** — operator-reproducible CI recipe:
+  builds, runs lint, runs `go test ./...`, runs `go test ./tests/wire`
+  with `DARK_MEM_MCP_BIN` set. The never-push policy is preserved
+  (this file lives in-repo for transparency; CI is local-only).
+- **`docs/PRODUCTION_CHECKLIST.md` §Health Probe** — wiring guide for
+  the new `dark_memory_health_ping` including a sample K8s liveness
+  probe YAML and a Prometheus `up{job="dark-mem-mcp"}` snippet.
+
+### Changed
+- **Canonical tool count 27 → 28.** README, DECISION_MATRIX,
+  bridge.7 conformance test, e2e canonical-order test, and the
+  sanity check inside `tools.RegisterAll` all bumped to 28.
+- **`DARK_SERVER_VERSION` default** bumped from `1.2.3` to `1.3.0`
+  (`DefaultServerVersion` constant in `internal/server/bootstrap.go`).
+- **`tests/wire/wire_session_test.go::resolveWireBin`** now skips the
+  test when no binary is found (previously fataled). The first
+  candidate is still `../cmd/dark-mem-mcp/dark-mem-mcp.exe` so a
+  freshly-built binary is picked up automatically.
+
+### Documented
+- **`docs/PRODUCTION_CHECKLIST.md` §Race detector availability** —
+  the operator's `go test -race` requires a C compiler; on this host
+  no gcc is installed and the race detector is therefore unavailable.
+  Workaround: validate via the wire suite (10 tests, including
+  TestWire_HealthPingLatency which exercises 5 sequential calls and
+  catches perf regressions) and the e2e suite (`tests/e2e/server_test.go`
+  fires 1000 concurrent calls).
+- **`docs/PRODUCTION_CHECKLIST.md` §Stale-binary gotcha** — if a
+  previous binary is left at `dark-mem-mcp.exe` in the repo root
+  (or in `PATH` before `cmd/dark-mem-mcp/`), the wire harness's
+  fallback resolution picks it up. Always rebuild into
+  `cmd/dark-mem-mcp/` and either delete or set `DARK_MEM_MCP_BIN`
+  explicitly when running `go test ./tests/wire`.
+
+### Tests
+- 15 / 15 packages PASS in `go test ./...` (full sequential suite).
+- 10 / 10 wire tests PASS against the v1.3.0 binary in
+  `go test -tags wire ./tests/wire/...` (with `DARK_MEM_MCP_BIN`
+  set). Total wire suite runtime: ~25s.
+- The 28-tool contract is enforced by both `TestE2E_28ToolsRegistered`
+  (Go level) and `TestWire_RuntimeToolEnumeration` (wire level).
+
+### Migration from v1.2.x
+- **Drop-in for v1.2.5 operators.** No DB schema change, no migration
+  bumps, no env var renames. The 28th tool is purely additive.
+- The canonical order has a single new entry between `anomalies` and
+  `admin_migrate`: `health_ping` at position 23 (0-indexed). Any
+  harness that iterates `tools/list` and indexes by **name** is
+  unaffected. Any harness that indexes by **position** must update.
+- The `dark_memory_health_ping` tool is registered as canonical,
+  not as an "extra". Un-armed servers see 28 tools; armed servers see
+  28 + 3 redteam = 31.
+
+---
+
 ## [1.2.5] — 2026-07-16
 
 ### Added

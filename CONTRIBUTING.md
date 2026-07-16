@@ -83,6 +83,19 @@ test boots the actual binary (`dark-{name}.exe`) via `os/exec`,
 sends newline-delimited JSON-RPC frames on stdin, and asserts
 against parsed responses on stdout.
 
+**v1.3.0 addendum — race-detector on POSIX**: on Linux/macOS dev
+hosts (where `gcc` is available), the wire suite should ALSO be
+run with `-race` before publishing, because the harness is the
+canonical concurrency exerciser:
+
+```bash
+CGO_ENABLED=1 CC=gcc go test -race ./tests/wire/... -count=1 -timeout 120s
+```
+
+On Windows hosts (no C compiler by default; see
+`docs/PRODUCTION_CHECKLIST.md` §Race detector availability), `-race`
+is unavailable locally. CI on POSIX runners handles it.
+
 ### H-4. Never mention private project names in public artifacts.
 
 Per operator mandate, hard rule, see

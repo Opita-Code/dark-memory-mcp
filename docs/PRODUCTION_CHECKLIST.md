@@ -1,4 +1,4 @@
-# Production Checklist — dark-memory-mcp v1.2.5+
+# Production Checklist — dark-memory-mcp v1.3.0+
 
 This is the operator's runbook for what to check, what to do, and
 when to panic. Every entry came from a real production incident.
@@ -16,7 +16,7 @@ dark-mem-mcp: boot step1 ok driver=sqlite dsn=<path>
 dark-mem-mcp: boot step2 ok driver=sqlite
 dark-mem-mcp: boot step3 ok migrations + constitution watchdog (driver=sqlite)
 dark-mem-mcp: boot step4 ok canary installed (present=true)
-dark-mem-mcp: registered 27 tools (canonical order)
+dark-mem-mcp: registered 28 tools (canonical order)
 dark-mem-mcp: serving stdio (server=dark-memory-mcp vX.Y.Z coexistence_group=dark-agents/memory)
 ```
 
@@ -26,7 +26,7 @@ dark-mem-mcp: serving stdio (server=dark-memory-mcp vX.Y.Z coexistence_group=dar
 | step2 | SQLite Store opened | Either file missing+locked, or v1.2.0+ DB schema corruption |
 | step3 | Migrations applied + constitution watchdog OK | See "Migration recovery" below |
 | step4 | Canary installed | Drifted constitution file (INV-4) — see INV-4 in docs/INVARIANTS.md |
-| `registered 27 tools` | Tool registry sanity | If < 27, a new tool wasn't added to `CanonicalOrder()` in `internal/tools/registry.go` |
+| `registered 28 tools` | Tool registry sanity | If < 28, a new tool wasn't added to `CanonicalOrder()` in `internal/tools/registry.go`. v1.3.0 grew OBSERVABILITY 3→4 with health_ping. |
 | `serving stdio (...)` | Ready for JSON-RPC | If absent, boot completed but stdio MCP transport didn't bind |
 
 ## Health probe (operator script)
@@ -41,6 +41,120 @@ echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":
 
 If the daemon responds with `{"id":2, "result":{"tools":[...]}}`,
 it's healthy. If it responds with `error` or no response at all, jump to "Recovery".
+
+## Health probe (`dark_memory_health_ping`) — v1.3.0
+
+The canonical surface grew 27 → 28 with the addition of
+`dark_memory_health_ping`. This is a **strict liveness probe**,
+distinct from `dark_memory_memory_state`:
+
+| Property | `health_ping` | `memory_state` |
+|---|---|---|
+| Latency budget | <500ms (target <50ms warm) | unbounded (does COUNT(*) on all tables) |
+| Side effects | none | reads the audit bus indirectly |
+| Audit-bus touch | NO | YES (memory state queries count writes) |
+| Output shape | frozen `{server,db,runtime,registry,latency_ms,checked_at}` | per-table counters, debug-friendly |
+| K8s liveness probe? | YES | NO |
+
+Wire conformance is enforced by `tests/wire/health_ping_test.go`
+(`TestWire_HealthPingShape` + `TestWire_HealthPingLatency`).
+
+### Wiring into K8s liveness probe
+
+```yaml
+livenessProbe:
+  exec:
+    command:
+      - /bin/sh
+      - -c
+      - >-
+        printf '%s\n%s\n%s\n' \
+          '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"k8s","version":"1"}}}' \
+          '{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}' \
+          '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"dark_memory_health_ping","arguments":{}}}' \
+          | /usr/local/bin/dark-mem-mcp
+        # Check the response contains "live":true
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 2
+  failureThreshold: 3
+```
+
+### Wiring into Prometheus blackbox exporter
+
+```yaml
+modules:
+  mcp_health:
+    prober: tcp
+    timeout: 5s
+    tcp:
+      # The mcp exporter wraps stdio in HTTP; see the operator's
+      # mcp-sidecar repo for the sidecar. health_ping is invoked
+      # every scrape, latency_ms becomes a `mcp_health_latency_seconds`
+      # metric, `db.live` becomes `up`.
+```
+
+### Failure modes
+
+| Symptom | Likely cause | Recovery |
+|---|---|---|
+| `db.live=false` AND `ToolError.code=ErrDBUnreachable` | DB file missing/locked/corrupt | See R-2 below |
+| `runtime.uptime_seconds < 0` or `0.000` | boot marker never printed (binary hanging at startup) | Check stderr for the boot signal matrix; binary hasn't reached `serving stdio` yet |
+| `registry.canonical_tools != 28` | binary is a v1.2.x build (26) or v1.3.0 with a tool removed | Rebuild from main; check `$DARK_MEM_MCP_BIN` points at the fresh binary |
+| `latency_ms > 500` | blocking call added to the hot path | file a bug with the wire trace; `tests/wire/TestWire_HealthPingLatency` should fire on regression |
+
+## Race detector availability
+
+The Go race detector (`go test -race`) requires a C compiler. On
+this dev host **no gcc is installed**, so `-race` is not runnable
+here. The race detector's coverage is therefore substituted by:
+
+1. **`tests/wire/TestWire_HealthPingLatency`** — fires 5 sequential
+   calls back-to-back and asserts the worst-of-5 roundtrip stays
+   under 500ms. Detects accidental perf regressions / blocking I/O
+   that would slow the hot path.
+2. **`tests/e2e/server_test.go`** — fires 1000 concurrent
+   calls under the SQLite WAL regime. Detects "database is locked"
+   storms and deadlocks under load.
+3. **`tests/orchestration/`** — high-volume parallel orchestrator
+   calls exercising the WriteContext + audit path.
+
+If your environment HAS gcc (Linux, macOS, MinGW on Windows), run
+the full race-detector sweep before publishing:
+
+```bash
+CGO_ENABLED=1 CC=gcc go test -race ./... -count=1 -timeout 240s
+```
+
+The `-race` results are CI's responsibility on environments with a
+C compiler. The never-push policy means CI is local-only — see
+`.github/workflows/ci.yml` for the operator-reproducible recipe.
+
+## Stale-binary gotcha (wire-test resolution)
+
+The wire tests (`tests/wire/`) need a binary. The harness's
+`resolveWireBin` resolution order:
+
+1. `$env:DARK_MEM_MCP_BIN` (always preferred; set this in CI)
+2. `../cmd/dark-mem-mcp/dark-mem-mcp.exe` (the canonical build)
+3. `dark-mem-mcp.exe` on PATH or in cwd (fallback)
+
+**Gotcha:** a leftover stale binary at the repo root
+(`dark-mem-mcp.exe` from a previous build) will be picked up by
+the cwd-fallback path. Symptom: `TestWire_HealthPingShape` reports
+empty fields because the stale binary doesn't have `SetRuntimeContext`.
+
+Mitigation:
+
+- **Always rebuild into `cmd/dark-mem-mcp/`** — never the repo root.
+- **Always set `DARK_MEM_MCP_BIN`** when running wire tests:
+  ```powershell
+  $env:DARK_MEM_MCP_BIN = "$PWD/cmd/dark-mem-mcp/dark-mem-mcp.exe"
+  ```
+- If a stale binary exists at the repo root, **delete it before
+  running wire tests**. The `go build` command never writes here
+  by default; the file is operator-side residue from a previous
+  layout (pre-INV-8 default was the repo root).
 
 ## Recovery playbooks
 
@@ -203,7 +317,7 @@ dark-mem-mcp 2>&1 1>/dev/null | grep -iE 'failed|warn|error'
 The daemon uses structured log lines (`key=value` pairs) where
 possible. A future release will switch fully to slog JSON.
 
-## Performance baseline (v1.2.5+ on this hardware)
+## Performance baseline (v1.3.0+ on this hardware)
 
 If the operator notices degradation, compare against these:
 

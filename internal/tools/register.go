@@ -1,5 +1,5 @@
 // Package tools — register.go: the single entry point that wires all
-// 26 tools into the Registry. Called from internal/server/server.go's
+// 28 tools into the Registry. Called from internal/server/server.go's
 // RegisterAll path, and from tests that want a pre-populated registry.
 package tools
 
@@ -12,17 +12,17 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/vlp"
 )
 
-// RegisterAll wires all 27 dark_memory_* tools into the registry, in
+// RegisterAll wires all 28 dark_memory_* tools into the registry, in
 // the canonical order (spec 164, bridge.4 + spec 193 Layer 6). Safe
 // to call once per Registry; subsequent calls are no-ops if the tools
 // are already registered.
 //
 // The split into per-namespace Register* functions lets tests pull
 // in a subset (e.g. only the JUDGE tools for an eval-pipeline test).
-// The canonical 27-tool surface (v1.2.0; was 26 in v1.1.x) is the
-// union of all namespaces + the armed-mode extras (L7-REDTEAM, +3
-// tools when DARK_REDTEAM=armed — registered as "extras" below and
-// emitted after the canonical 27 in tools/list).
+// The canonical 28-tool surface (v1.3.0; was 27 in v1.2.x and 26 in
+// v1.1.x) is the union of all namespaces + the armed-mode extras
+// (L7-REDTEAM, +3 tools when DARK_REDTEAM=armed — registered as
+// "extras" below and emitted after the canonical 28 in tools/list).
 func RegisterAll(reg *Registry, orch *orchestration.Orchestrator, st store.Store) error {
 	if reg == nil {
 		return fmt.Errorf("tools: RegisterAll: nil registry")
@@ -51,7 +51,7 @@ func RegisterAll(reg *Registry, orch *orchestration.Orchestrator, st store.Store
 	RegisterJudge(reg, orch, st)
 	// POLICY (2)
 	RegisterPolicy(reg, orch, st)
-	// OBSERVABILITY (3)
+	// OBSERVABILITY (4) — v1.3.0 grew from 3 to 4 with health_ping.
 	RegisterObservability(reg, orch, st)
 	// ADMIN (3) — read-only or schema-only, no orchestrator needed.
 	RegisterAdmin(reg, nil, st)
@@ -77,23 +77,38 @@ func RegisterAll(reg *Registry, orch *orchestration.Orchestrator, st store.Store
 
 	// L7-REDTEAM (3) — armed-mode optional. RegisterRedTeam panics
 	// / errors if DARK_REDTEAM != "armed", so the un-armed server
-	// gets exactly the canonical 27 tools (v1.2.0; no surface change
+	// gets exactly the canonical 28 tools (v1.3.0; no surface change
 	// relative to the count expectation below) and the armed server
-	// gets 27 + 3 = 30. The redteam tools are NOT in the canonical
+	// gets 28 + 3 = 31. The redteam tools are NOT in the canonical
 	// order — they are namespace extras that tools/list emits after
-	// the canonical 27.
+	// the canonical 28.
+	redteamArmed := false
 	if err := RegisterRedTeam(reg, st); err != nil {
 		// ErrArmedRequired is the EXPECTED return when the operator
 		// has not flipped DARK_REDTEAM=armed. Log it as info, not
 		// as an error, so the un-armed boot is silent.
 		if errors.Is(err, store.ErrArmedRequired) {
-			// not armed — that's fine, surface stays at 27.
+			// not armed — that's fine, surface stays at 28.
 		} else {
 			return fmt.Errorf("tools: RegisterAll: RegisterRedTeam: %w", err)
 		}
+	} else {
+		redteamArmed = true
 	}
 
-	// Sanity check: registry must contain all 27 canonical tools
+	// v1.3.0: feed the runtime context that dark_memory_health_ping
+	// reads into the package globals. The server config (name,
+	// version, coexistence group, driver label, DSN path) is installed
+	// by main.go via SetRuntimeContext() before RegisterAll runs.
+	// Here we only compute the registry counts so health_ping can
+	// report "how many tools am I advertising right now".
+	SetRegistryCounts(
+		len(reg.ListCanonical()),
+		reg.CountExtras(),
+		redteamArmed,
+	)
+
+	// Sanity check: registry must contain all 28 canonical tools
 	// after Register*. If a tool was forgotten, fail loudly at boot
 	// rather than at request time.
 	canonical := CanonicalOrder()
@@ -102,8 +117,8 @@ func RegisterAll(reg *Registry, orch *orchestration.Orchestrator, st store.Store
 			return fmt.Errorf("tools: RegisterAll: missing tool %q (canonical order violation)", name)
 		}
 	}
-	if got := len(reg.ListCanonical()); got != 27 {
-		return fmt.Errorf("tools: RegisterAll: expected 27 tools, got %d", got)
+	if got := len(reg.ListCanonical()); got != 28 {
+		return fmt.Errorf("tools: RegisterAll: expected 28 tools, got %d", got)
 	}
 	return nil
 }

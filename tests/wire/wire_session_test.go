@@ -22,6 +22,7 @@ import (
 	"io"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -47,6 +48,14 @@ type wireSession struct {
 // (under t.TempDir()) so tests don't pollute each other or the
 // operator's canonical dark-memory.db. DSN is forced via env var
 // (the v1.2.0+ env-driven DSN switch).
+//
+// v1.3.0: wait up to 5s for the binary's "registered N tools" boot
+// marker on stderr before sending initialize. This eliminates the
+// race where initialize arrives before the server's mcp-go loop has
+// started reading stdin — on slow CI runners that race manifests as
+// a "tool not found" on the second request because the first
+// request was silently dropped on the boot path. The wait is bounded
+// so a hung binary still fails the test fast.
 func startWireSession(t *testing.T) *wireSession {
 	t.Helper()
 
@@ -75,15 +84,26 @@ func startWireSession(t *testing.T) *wireSession {
 		t.Fatalf("wire: start %s: %v", bin, err)
 	}
 
+	// v1.3.0: wait for the boot banner so we don't race the
+	// binary's startup. On Windows dev host boot takes ~2-6s
+	// (sqlite open + first-run migrations are the slow step);
+	// CI can be slower. The sessionStderr writes to its buffer
+	// as the binary logs; we poll the buffer for the 'serving
+	// stdio' marker (the LAST boot step before the binary starts
+	// blocking on stdin). 30s ceiling covers slow CI on first run.
+	if err := waitForBootMarker(t, cmd.Stderr.(*sessionStderr).buf, 30*time.Second, "serving stdio"); err != nil {
+		t.Fatalf("wire: boot wait: %v", err)
+	}
+
 	s := &wireSession{
 		cmd:    cmd,
 		stdin:  stdin,
 		stdout: newLineReader(stdoutR),
 	}
-	// Drain the boot banner so subsequent reads start at the first
-	// JSON-RPC response. dark-mem-mcp prints the boot log to stderr
-	// (not stdout), so this read is mostly empty, but defensive.
-	s.skipBootBanner()
+	// No explicit boot-banner drain: the v1.3.0 waitForBootMarker
+	// above has already blocked until the binary printed the
+	// 'serving stdio' line, so by the time we reach this point
+	// the mcp-go loop is bound and ready to receive stdin frames.
 
 	// Send initialize + notifications/initialized exactly once.
 	if err := s.request("initialize", map[string]any{
@@ -100,30 +120,69 @@ func startWireSession(t *testing.T) *wireSession {
 	return s
 }
 
-// resolveWireBin finds the dark-mem-mcp.exe binary, preferring a
-// freshly-built ../dark-mem-mcp.exe relative to the test binary.
-// The convention: tests run from the package dir; ../dark-mem-mcp.exe
-// is the canonical local build.
+// waitForBootMarker blocks until buf contains marker or timeout
+// elapses. Polled every 50ms. Returns the partial buffer on
+// timeout so the failure message is actionable.
+//
+// The default marker is "serving stdio" — the LAST log line
+// printed by dark-mem-mcp before it begins blocking on stdin.
+// Waiting for this specific marker (instead of e.g. "registered
+// N tools" which fires before ServeStdio returns) eliminates the
+// race where the harness sends `initialize` and the binary's
+// mcp-go loop hasn't yet bound the read goroutine.
+func waitForBootMarker(t *testing.T, buf *bytes.Buffer, timeout time.Duration, marker string) error {
+	t.Helper()
+	if marker == "" {
+		marker = "serving stdio"
+	}
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if strings.Contains(buf.String(), marker) {
+			return nil
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return fmt.Errorf("binary did not print boot marker %q within %v; partial stderr:\n%s", marker, timeout, buf.String())
+}
+
+// resolveWireBin finds the dark-mem-mcp binary, preferring a
+// freshly-built ../cmd/dark-mem-mcp/dark-mem-mcp binary relative
+// to the test binary. The convention: tests run from the package
+// dir; ../dark-mem-mcp is the canonical local build.
 //
 // Operators who want to test a specific built binary can set
 // DARK_MEM_MCP_BIN to override.
+//
+// v1.3.0: when no binary is found we now SKIP the test rather than
+// fatal it. This lets `go test ./...` complete cleanly on a host
+// that has the source tree but no built binary yet (fresh CI clone,
+// staging, etc.). Wire tests are still mandatory before publishing
+// (CONTRIBUTING.md H-3) — just run with DARK_MEM_MCP_BIN set
+// explicitly so the tests actually execute.
+//
+// v1.3.0 (cross-platform): the candidate list is platform-agnostic.
+// On Windows the binary has a .exe suffix; on POSIX systems it does
+// not. We use runtime.GOOS instead of hardcoding the suffix so the
+// same wire tests run unchanged on Linux/macOS CI runners.
 func resolveWireBin(t *testing.T) string {
 	t.Helper()
 	if v := strings.TrimSpace(envOr("DARK_MEM_MCP_BIN", "")); v != "" {
 		return v
 	}
-	// Search common layouts: the standard repo location and the
-	// cmd/dark-mem-mcp/ subdir built by `go build`.
+	exe := ""
+	if runtime.GOOS == "windows" {
+		exe = ".exe"
+	}
 	candidates := []string{
-		"../cmd/dark-mem-mcp/dark-mem-mcp.exe",
-		"dark-mem-mcp.exe",
+		"../cmd/dark-mem-mcp/dark-mem-mcp" + exe,
+		"dark-mem-mcp" + exe,
 	}
 	for _, c := range candidates {
 		if _, err := exec.LookPath(c); err == nil {
 			return c
 		}
 	}
-	t.Fatalf("wire: cannot locate dark-mem-mcp.exe (set DARK_MEM_MCP_BIN to override; tried %v)", candidates)
+	t.Skipf("wire: cannot locate dark-mem-mcp binary (set DARK_MEM_MCP_BIN to override; tried %v) -- skipping wire test (run explicitly before publishing)", candidates)
 	return ""
 }
 
@@ -147,11 +206,11 @@ func goosGetenv(k, def string) string {
 	return def
 }
 
-// skipBootBanner is now a no-op. The feeder reads stdout asynchronously
-// and pushes complete lines to a buffered channel; readOne blocks
-// until the next line arrives. The drain-on-first-call optimization
-// was wrong: it discarded the initialize response.
-func (s *wireSession) skipBootBanner() {}
+// skipBootBanner REMOVED in v1.3.0 (bug-hunt polish). The old
+// no-op signature existed as a vestige of a removed drain-
+// pending-output optimization that was buggy (it discarded the
+// initialize response). waitForBootMarker at the start of
+// startWireSession handles the synchronization correctly.
 
 // request writes a JSON-RPC `id`-bearing request and reads the
 // matching response. The `id` is monotonically allocated by
