@@ -6,7 +6,7 @@ conforming to MCP 2025-06-18 with the `dark-agents/memory` coexistence group.
 
 ## Highlights
 
-- **25 tools in 8 namespaces**, wired and verified via the official MCP
+- **26 tools in 9 namespaces** (v1.1 added `vlp_handle_event` for L6-VLP namespace; 8 namespaces in v1.0), wired and verified via the official MCP
   Inspector conformance test (`tests/conformance/`). The canonical order is
   part of the wire contract — harnesses can index by position.
 

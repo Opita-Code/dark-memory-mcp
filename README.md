@@ -21,7 +21,7 @@
 
 [![MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Go 1.25+](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go&logoColor=white)](go.mod)
-[![MCP tools](https://img.shields.io/badge/MCP-25%20tools-blueviolet)](#los-25-tools)
+[![MCP tools](https://img.shields.io/badge/MCP-26%20tools-blueviolet)](#los-26-tools)
 [![Tests](https://img.shields.io/badge/tests-9%20suites%20passing-brightgreen)](#tests)
 [![Backends](https://img.shields.io/badge/backends-sqlite%20%7C%20postgres-blue)](docs/MIGRATION.md)
 [![Conformant](https://img.shields.io/badge/MCP%20Inspector-passing-success)](tests/conformance/)
@@ -34,7 +34,7 @@
 
 ## ¿Qué hace?
 
-**dark-memory-mcp** es un servidor MCP escrito en Go que entrega a tu agente IA **25 herramientas especializadas** agrupadas en 8 oficios, persistidas en una base SQL dual-driver (SQLite para dev, Postgres para prod) y gobernadas por **7 invariantes operacionales** que se defienden a sí mismos en el boundary del Store.
+**dark-memory-mcp** es un servidor MCP escrito en Go que entrega a tu agente IA **26 herramientas especializadas** agrupadas en 9 oficios (incluido el namespace L6-VLP para el state machine del Vibe-Loop Protocol), persistidas en una base SQL dual-driver (SQLite para dev, Postgres para prod) y gobernadas por **7 invariantes operacionales** que se defienden a sí mismos en el boundary del Store.
 
 Una sola API. Tres binarios (`dark-mem-mcp` server MCP, `dark-mem-cli` admin, `dark-mem-inspect` read-only). Un solo `dark.db` compartido con `dark-research-mcp` (tablas distintas, propietarios distintos). **Sin magia: con código que puedes leer y modificar.**
 
@@ -98,7 +98,7 @@ El binario `dark-mem-cli` aplica migraciones explícitas cuando las quieras, y `
 
 ---
 
-## Los 25 tools
+## Los 26 tools
 
 Ocho namespaces. El prefijo wire es `dark_memory_` (mandatory por BRIDGE_AND_COEXISTENCE §2.2). El orden canónico es **parte del contrato wire** — harnesses pueden indexar por posición.
 
@@ -112,8 +112,9 @@ Ocho namespaces. El prefijo wire es `dark_memory_` (mandatory por BRIDGE_AND_COE
 | **POLICY** | 2 | `dark_memory_active_policy`, `_load_constitution` |
 | **OBSERVABILITY** | 3 | `dark_memory_memory_state`, `_writes`, `_anomalies` |
 | **ADMIN** | 3 | `dark_memory_admin_migrate`, `_schema_status`, `_vacuum` |
+| **L6-VLP** (DMAP v1.1) | 1 | `dark_memory_vlp_handle_event` |
 
-Total: **4+3+4+3+3+2+3+3 = 25** ✓ (RFC §D-9)
+Total: **4+3+4+3+3+2+3+3+1 = 26** ✓ (RFC §D-9 + DMAP v1.1 spec 193 Layer 6)
 
 Cada tool expone un JSON Schema de input. Cada respuesta lleva `data + audit + next` para que el LLM sepa qué hacer después.
 
@@ -167,15 +168,16 @@ Cada `dark_ssd_drift_judge` (sub-spec 180) persiste su verdict en `sdd_evaluatio
         │   dark-mem-mcp.exe                 │
         │                                    │
         │   ┌──────────────────────────┐     │
-        │   │  25 MCP tools            │     │
+        │   │  26 MCP tools            │     │
         │   │  ├ SESSION (4)           │     │
         │   │  ├ RESEARCH (3)          │     │
         │   │  ├ VIBE (4)              │     │
         │   │  ├ CONTEXT (3)           │     │
         │   │  ├ JUDGE (3)             │     │
         │   │  ├ POLICY (2)            │     │
-        │   │  ├ OBSERVABILITY (3)     │     │
-        │   │  └ ADMIN (3)             │     │
+│   │  ├ OBSERVABILITY (3)     │     │
+│   │  ├ ADMIN (3)             │     │
+│   │  └ L6-VLP (1)            │     │
         │   └──────────────────────────┘     │
         │                                    │
         │   ┌──────────────────────────┐     │

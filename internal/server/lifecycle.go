@@ -7,7 +7,7 @@
 //	  2. open Store via runtime.Open
 //	  3. Store.Open runs migrations + constitution watchdog (INV-4)
 //	  4. safety.NewCanary → install on Store (INV-3)
-//	  5. mcp.NewServer → register all 25 tools
+//	  5. mcp.NewServer → register all 26 tools
 //	  6. stdio transport
 //
 //	shutdown:
@@ -40,7 +40,7 @@ type BootState struct {
 }
 
 // Boot runs the 6-step boot sequence. Steps 1-4 happen here; step 5
-// (register 25 tools) is the caller's responsibility because the
+// (register 26 tools) is the caller's responsibility because the
 // registry is populated by the per-namespace tool files at package
 // init time (or via explicit Register* calls in tests). Step 6 is
 // ServeStdio (separate, called after Boot returns).

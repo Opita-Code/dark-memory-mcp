@@ -104,8 +104,8 @@ func TestVLPHandleEventTool_BootToComplete(t *testing.T) {
 
 	// Sequence: idle → drafting_spec → spec_active → drift_judging → complete
 	steps := []struct {
-		name     string
-		args     map[string]any
+		name      string
+		args      map[string]any
 		wantState string
 		wantNext  string
 		wantTerm  bool
@@ -267,6 +267,118 @@ func TestVLPHandleEventTool_RejectsUnknownVerdict(t *testing.T) {
 	}
 	if terr.Code != "ErrInvalidArgument" {
 		t.Errorf("error code: want ErrInvalidArgument, got %q", terr.Code)
+	}
+}
+
+// TestVLPHandleEventTool_RejectsVerdictOnNonDriftLog verifies that
+// passing verdict with a non-drift_log event surfaces as ErrInvalidArgument
+// (HIGH #1 bug-hunt fix — vlp.Transition now wraps store.ErrInvalidArgument).
+func TestVLPHandleEventTool_RejectsVerdictOnNonDriftLog(t *testing.T) {
+	reg, _, _, cleanup := newVLPTestSetup(t)
+	defer cleanup()
+
+	// Drift verdict on session_start (non-drift_log event) — must reject.
+	_, terr := callVLP(t, reg, map[string]any{
+		"session_id": "verdict-on-non-drift",
+		"event":      "session_start",
+		"verdict":    "aligned",
+	})
+	if terr == nil {
+		t.Fatalf("expected error for verdict on non-drift_log event, got nil")
+	}
+	if terr.Code != "ErrInvalidArgument" {
+		t.Errorf("code: want ErrInvalidArgument, got %q", terr.Code)
+	}
+}
+
+// TestVLPHandleEventTool_NextActionIncludesSessionID verifies HIGH #2 fix:
+// Next.Args must include session_id so the harness can use the hint literally.
+func TestVLPHandleEventTool_NextActionIncludesSessionID(t *testing.T) {
+	reg, _, _, cleanup := newVLPTestSetup(t)
+	defer cleanup()
+
+	sid := "next-action-test"
+	tool := reg.Get("vlp_handle_event")
+	raw, _ := json.Marshal(map[string]any{"session_id": sid, "event": "session_start"})
+	resp, err := tool.Handler(context.Background(), raw)
+	if err != nil {
+		t.Fatalf("handler: %v", err)
+	}
+	if resp.Next == nil {
+		t.Fatalf("expected Next action hint after session_start")
+	}
+	if got := resp.Next.Args["session_id"]; got != sid {
+		t.Errorf("Next.Args.session_id: want %q, got %v", sid, got)
+	}
+	if got := resp.Next.Args["event"]; got != "vibe_publish" {
+		t.Errorf("Next.Args.event: want vibe_publish, got %v", got)
+	}
+	if resp.Next.Tool != "vlp_handle_event" {
+		t.Errorf("Next.Tool: want vlp_handle_event, got %q", resp.Next.Tool)
+	}
+}
+
+// TestVLPHandleEventTool_NeedsHumanTerminal verifies the needs_human
+// terminal path (regression for MEDIUM #2a — only complete was tested).
+func TestVLPHandleEventTool_NeedsHumanTerminal(t *testing.T) {
+	reg, _, _, cleanup := newVLPTestSetup(t)
+	defer cleanup()
+
+	sid := "needs-human-terminal"
+	steps := []map[string]any{
+		{"session_id": sid, "event": "session_start"},
+		{"session_id": sid, "event": "vibe_publish"},
+		{"session_id": sid, "event": "artifact_log"},
+		{"session_id": sid, "event": "drift_log", "verdict": "needs_human"},
+	}
+	expectedStates := []string{"drafting_spec", "spec_active", "drift_judging", "needs_human"}
+	for i, s := range steps {
+		res, terr := callVLP(t, reg, s)
+		if terr != nil {
+			t.Fatalf("step %d: %v", i, terr)
+		}
+		if res.NewState != expectedStates[i] {
+			t.Errorf("step %d: want %q, got %q", i, expectedStates[i], res.NewState)
+		}
+		if i == 3 {
+			if !res.IsTerminal {
+				t.Errorf("needs_human: want IsTerminal=true, got false")
+			}
+			if res.NextAction != "" {
+				t.Errorf("needs_human: want NextAction=\"\", got %q", res.NextAction)
+			}
+		}
+	}
+}
+
+// TestVLPHandleEventTool_AbortedTerminal verifies the aborted terminal path.
+func TestVLPHandleEventTool_AbortedTerminal(t *testing.T) {
+	reg, _, _, cleanup := newVLPTestSetup(t)
+	defer cleanup()
+
+	sid := "aborted-terminal"
+	// abort from drafting_spec (mid-loop abort path)
+	steps := []map[string]any{
+		{"session_id": sid, "event": "session_start"},
+		{"session_id": sid, "event": "abort"},
+	}
+	expectedStates := []string{"drafting_spec", "aborted"}
+	for i, s := range steps {
+		res, terr := callVLP(t, reg, s)
+		if terr != nil {
+			t.Fatalf("step %d: %v", i, terr)
+		}
+		if res.NewState != expectedStates[i] {
+			t.Errorf("step %d: want %q, got %q", i, expectedStates[i], res.NewState)
+		}
+		if i == 1 {
+			if !res.IsTerminal {
+				t.Errorf("aborted: want IsTerminal=true, got false")
+			}
+			if res.NextAction != "" {
+				t.Errorf("aborted: want NextAction=\"\", got %q", res.NextAction)
+			}
+		}
 	}
 }
 

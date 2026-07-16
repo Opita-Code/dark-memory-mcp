@@ -30,7 +30,7 @@ How would this fit into the existing architecture?
 
 ### Wire-format impact
 
-Does this change the canonical 25-tool order? If yes, this is a breaking change
+Does this change the canonical 26-tool order? If yes, this is a breaking change
 for harnesses that index by position — needs a major version bump.
 
 - [ ] No wire change (additive)

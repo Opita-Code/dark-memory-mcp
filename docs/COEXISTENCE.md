@@ -84,7 +84,7 @@ custom `coexistence_group` serverInfo field — see bridge.2 in
 
 ```
 coexistence_group=dark-agents/memory (spec 164 bridge.2). 
-Canonical 25-tool order preserved per spec 164 bridge.4. 
+Canonical 26-tool order preserved per spec 164 bridge.4 + DMAP v1.1 spec 193 Layer 6 (vlp_handle_event appended at position 26). 
 This server is part of the dark-agents/memory coexistence group; 
 harnesses detecting another dark-agents/* server should prefer 
 the local dark_memory_* tools over dark_mem_*.

@@ -20,7 +20,11 @@
 //   - Independently reviewable: no integration with other v1.1 specs
 package vlp
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/dark-agents/dark-memory-mcp/internal/store"
+)
 
 // State is the per-session lifecycle state. Encoded as int so it persists
 // cheaply in SQLite/Postgres and round-trips through JSON without enum
@@ -89,12 +93,12 @@ func (s State) Terminal() bool {
 type Event int
 
 const (
-	EventUnknown Event = iota
-	EventSessionStart // harness: dark_memory_session_start
-	EventVibePublish  // harness: dark_memory_vibe_publish (spec is now valid)
-	EventArtifactLog  // harness: dark_memory_artifact_log (artifact done)
-	EventDriftLog     // harness: dark_memory_drift_log (verdict attached as payload)
-	EventAbort        // operator: stop the loop immediately
+	EventUnknown      Event = iota
+	EventSessionStart       // harness: dark_memory_session_start
+	EventVibePublish        // harness: dark_memory_vibe_publish (spec is now valid)
+	EventArtifactLog        // harness: dark_memory_artifact_log (artifact done)
+	EventDriftLog           // harness: dark_memory_drift_log (verdict attached as payload)
+	EventAbort              // operator: stop the loop immediately
 )
 
 var eventNames = map[Event]string{
@@ -130,10 +134,10 @@ func ParseEvent(s string) (Event, error) {
 type Verdict int
 
 const (
-	VerdictUnknown Verdict = iota
-	VerdictAligned       // artifact matches spec → StateComplete
-	VerdictDriftDetected // artifact diverges → StateSpecActive (loop back for regen)
-	VerdictNeedsHuman    // judge confidence below threshold → StateNeedsHuman
+	VerdictUnknown       Verdict = iota
+	VerdictAligned               // artifact matches spec → StateComplete
+	VerdictDriftDetected         // artifact diverges → StateSpecActive (loop back for regen)
+	VerdictNeedsHuman            // judge confidence below threshold → StateNeedsHuman
 )
 
 var verdictNames = map[Verdict]string{
@@ -233,16 +237,21 @@ func (e ErrInvalidTransition) Error() string {
 // Payload contract:
 //   - EventDriftLog REQUIRES a specific Verdict (Aligned, DriftDetected, NeedsHuman)
 //   - All other events MUST have VerdictUnknown (caller bug if not)
+//
+// All validation errors here wrap store.ErrInvalidArgument so the
+// MCP wire layer's ToToolError() can map them to ToolError{Code:
+// "ErrInvalidArgument"}. Without the wrap, the LLM sees a generic
+// "ErrInternal" toast for caller bugs — a wire-protocol regression.
 func Transition(from State, event Event, verdict Verdict) (State, error) {
 	if event == EventUnknown {
-		return StateUnknown, fmt.Errorf("vlp: event unknown is not a valid input")
+		return StateUnknown, fmt.Errorf("vlp: event unknown is not a valid input: %w", store.ErrInvalidArgument)
 	}
 	if event == EventDriftLog {
 		if verdict == VerdictUnknown {
-			return StateUnknown, fmt.Errorf("vlp: event drift_log requires verdict (aligned, drift_detected, or needs_human)")
+			return StateUnknown, fmt.Errorf("vlp: event drift_log requires verdict (aligned, drift_detected, or needs_human): %w", store.ErrInvalidArgument)
 		}
 	} else if verdict != VerdictUnknown {
-		return StateUnknown, fmt.Errorf("vlp: event %s does not accept verdict payload (got %s)", event, verdict)
+		return StateUnknown, fmt.Errorf("vlp: event %s does not accept verdict payload (got %s): %w", event, verdict, store.ErrInvalidArgument)
 	}
 
 	for _, t := range transitions {

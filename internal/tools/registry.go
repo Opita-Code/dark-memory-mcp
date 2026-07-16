@@ -1,10 +1,11 @@
 // Package tools — registry.go: the Tool type and the canonical Registry.
 //
-// Per BRIDGE_AND_COEXISTENCE.md §3 (spec 164, bridge.4), the 25 tools
+// Per BRIDGE_AND_COEXISTENCE.md §3 (spec 164, bridge.4), the 26 tools
 // are emitted in tools/list in a fixed canonical order. The order is
-// NOT alphabetical — it follows the RFC D-9 namespace grouping:
-// SESSION (4) → RESEARCH (3) → VIBE (4) → CONTEXT (3) → JUDGE (3) →
-// POLICY (2) → OBSERVABILITY (3) → ADMIN (3). The order is part of
+// NOT alphabetical — it follows the RFC D-9 namespace grouping plus
+// the L6-VLP namespace (DMAP v1.1 spec 193): SESSION (4) →
+// RESEARCH (3) → VIBE (4) → CONTEXT (3) → JUDGE (3) → POLICY (2) →
+// OBSERVABILITY (3) → ADMIN (3) → L6-VLP (1). The order is part of
 // the public contract: changing it is a breaking change for any
 // harness that indexes by position.
 package tools
@@ -48,12 +49,12 @@ type Tool struct {
 // boot only). ListCanonical returns the tools in the fixed canonical
 // order (spec 164, bridge.4) — this is what tools/list returns.
 type Registry struct {
-	mu      sync.RWMutex
-	byName  map[string]*Tool
-	order   []string // canonical order, fixed at construction
+	mu     sync.RWMutex
+	byName map[string]*Tool
+	order  []string // canonical order, fixed at construction
 }
 
-// NewRegistry constructs an empty Registry with the canonical 25-tool
+// NewRegistry constructs an empty Registry with the canonical 26-tool
 // order pre-registered (tools may not exist yet; ListCanonical will
 // return placeholders that the server filters out at startup).
 func NewRegistry() *Registry {
@@ -174,7 +175,7 @@ func WireName(bare string) string {
 }
 
 // CanonicalPosition returns the index of wireName in the canonical
-// 25-tool order, or -1 if not found. Used by tools/list filters that
+// 26-tool order, or -1 if not found. Used by tools/list filters that
 // need to re-sort the alphabetically-sorted output of mcp-go's
 // handleListTools back to the RFC D-9 namespace-grouped order.
 func CanonicalPosition(wireName string) int {

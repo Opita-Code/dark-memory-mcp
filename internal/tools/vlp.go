@@ -174,12 +174,24 @@ func vlpHandleEventHandler(uc *vlp.UseCase) HandlerFunc {
 		// Suggest the same tool as the next step (harness drives the
 		// loop by calling vlp_handle_event repeatedly). When terminal,
 		// omit Next so the harness knows the loop has converged.
+		//
+		// CRITICAL: Next.Args MUST include session_id (the schema's
+		// required field) so the harness can use the hint literally.
+		// Also forward minset if it was non-empty on the way in, so
+		// the persona/minset context survives across the loop.
 		var next *NextAction
 		if !res.IsTerminal && res.NextAction != "" {
+			args := map[string]any{
+				"session_id": in.SessionID,
+				"event":      res.NextAction,
+			}
+			if in.Minset != "" {
+				args["minset"] = in.Minset
+			}
 			next = &NextAction{
-				Tool: "vlp_handle_event",
-				Args: map[string]any{"event": res.NextAction},
-				When: NextActionAlways,
+				Tool:   "vlp_handle_event",
+				Args:   args,
+				When:   NextActionAlways,
 				Reason: "next VLP event in the canonical sequence for state " + res.NewState.String(),
 			}
 		}

@@ -10,11 +10,11 @@
 // The harness (spec 6.x adapters) calls HandleEvent for every event in
 // the loop. The UseCase is the SINGLE point that drives the loop:
 //
-//   1. Load current state from Persistence
-//   2. Compute transition (from, event, verdict) → to
-//   3. Persist + audit in ONE atomic tx via Store.SaveVLPStateWithTransition
-//      (closes the 2.5 atomicity gap from spec 2.4)
-//   4. Return new state + next-action hint
+//  1. Load current state from Persistence
+//  2. Compute transition (from, event, verdict) → to
+//  3. Persist + audit in ONE atomic tx via Store.SaveVLPStateWithTransition
+//     (closes the 2.5 atomicity gap from spec 2.4)
+//  4. Return new state + next-action hint
 //
 // Bootstrap semantics: the DB never persists StateIdle (it is a virtual
 // anchor only). The first event for a session_id must be EventSessionStart;
@@ -109,10 +109,10 @@ func NewUseCase(p *Persistence, a *Auditor) (*UseCase, error) {
 // returns an error.
 func (uc *UseCase) HandleEvent(ctx context.Context, wc store.WriteContext, sessionID string, event Event, verdict Verdict, minset string) (HandleEventResult, error) {
 	if sessionID == "" {
-		return HandleEventResult{}, fmt.Errorf("vlp: HandleEvent: sessionID is required")
+		return HandleEventResult{}, fmt.Errorf("vlp: HandleEvent: sessionID is required: %w", store.ErrInvalidArgument)
 	}
 	if event == EventUnknown {
-		return HandleEventResult{}, fmt.Errorf("vlp: HandleEvent: event must not be EventUnknown")
+		return HandleEventResult{}, fmt.Errorf("vlp: HandleEvent: event must not be EventUnknown: %w", store.ErrInvalidArgument)
 	}
 
 	// 1. Load current state
@@ -130,7 +130,7 @@ func (uc *UseCase) HandleEvent(ctx context.Context, wc store.WriteContext, sessi
 	} else {
 		// Bootstrap: virtual StateIdle, turn 0. Only EventSessionStart allowed.
 		if event != EventSessionStart {
-			return HandleEventResult{}, fmt.Errorf("vlp: HandleEvent: first event for session %q must be EventSessionStart, got %s", sessionID, event)
+			return HandleEventResult{}, fmt.Errorf("vlp: HandleEvent: first event for session %q must be EventSessionStart, got %s: %w", sessionID, event, store.ErrInvalidArgument)
 		}
 		from = StateIdle
 		startTurn = 0

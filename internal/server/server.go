@@ -3,7 +3,7 @@
 // binary uses (see ../../cmd/dark-mem-mcp/main.go).
 //
 // Per RFC §6 step 5, after Boot returns the caller is expected to
-// (a) register all 25 tools (this is where per-namespace tool files
+// (a) register all 26 tools (this is where per-namespace tool files
 // come in — see internal/tools/*.go), then (b) call ServeStdio to
 // block on the stdio MCP transport.
 //
@@ -96,7 +96,7 @@ func New(ctx context.Context) (*Server, error) {
 		// to all MCP-native harnesses that read initialize response).
 		// The exact string is documented in BRIDGE_AND_COEXISTENCE.md §3.
 		server.WithInstructions(fmt.Sprintf(
-			"dark-memory-mcp server. coexistence_group=%s (spec 164 bridge.2). Canonical 25-tool order preserved per spec 164 bridge.4. This server is part of the dark-agents/memory coexistence group; harnesses detecting another dark-agents/* server should prefer the local dark_memory_* tools over dark_mem_*.",
+			"dark-memory-mcp server. coexistence_group=%s (spec 164 bridge.2). Canonical 26-tool order preserved per spec 164 bridge.4 + DMAP v1.1 spec 193 Layer 6. This server is part of the dark-agents/memory coexistence group; harnesses detecting another dark-agents/* server should prefer the local dark_memory_* tools over dark_mem_*.",
 			boot.Config.CoexistenceGroup,
 		)),
 	)
@@ -107,7 +107,7 @@ func New(ctx context.Context) (*Server, error) {
 	}, nil
 }
 
-// RegisterAll iterates the canonical 25-tool list and registers each
+// RegisterAll iterates the canonical 26-tool list and registers each
 // tool present in the Registry with the mcp-go server. Tools not yet
 // added are silently skipped (the canonical order is the contract;
 // the actual set is the intersection of canonical ∩ registered).

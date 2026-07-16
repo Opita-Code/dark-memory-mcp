@@ -206,7 +206,9 @@ What they don't do (and the plugin adds) is **cross-MCP prefill**: automatically
 
 ## 5. The dark-memory-mcp `tools/list` contract (canonical)
 
-When a harness connects to dark-memory-mcp and calls `tools/list`, it MUST see exactly the 25 orchestrators from RFC §D-9, in the canonical order:
+When a harness connects to dark-memory-mcp and calls `tools/list`, it
+MUST see exactly the 26 orchestrators from RFC §D-9 + DMAP v1.1 spec 193
+Layer 6 (vlp_handle_event appended at position 26), in the canonical order:
 
 ```
 SESSION         (4)  dark_memory_session_start, _resume, _status, _close
@@ -257,7 +259,8 @@ A new sub-spec is added: **sub-spec 12 — bridge conformance verification** (se
 Goal: prove that dark-memory-mcp + dark-research-mcp + dark-recall v2.3 conform to this document. Tasks:
 
 1. Run [MCP Inspector](https://github.com/modelcontextprotocol/inspector) against dark-memory-mcp; verify `initialize` returns the conformance profile from §2.1
-2. Verify `tools/list` returns exactly the 25 orchestrators in the canonical order
+2. Verify `tools/list` returns exactly the 26 orchestrators in the
+   canonical order
 3. Verify `listChanged` notification fires when armed-mode is toggled (planned v1.1)
 4. Run the inspector against dark-research-mcp; verify its `coexistence_group = dark-agents/memory`
 5. End-to-end test: harness with both servers installed, LLM completes a vibe-publish workflow in 2 tool calls

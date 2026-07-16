@@ -87,7 +87,7 @@ dark-memory-mcp/
 │   ├── session/          # Session lifecycle types
 │   ├── ssd/              # LLM-as-judge verdict types
 │   ├── store/            # Store interface + sqlite/postgres impls
-│   ├── tools/            # 25 tool handlers + canonical registry
+│   ├── tools/            # 26 tool handlers + canonical registry
 │   └── vibeflow/         # Spec/artifact/drift types
 ├── tests/                # 9 test suites (cli, conformance, context, dual_driver, e2e, ...)
 ├── docs/                 # 6 operator-facing runbooks

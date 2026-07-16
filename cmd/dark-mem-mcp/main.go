@@ -1,5 +1,5 @@
 // Package main is the dark-mem-mcp binary — the MCP server that exposes
-// 25 dark_memory_* tools backed by the dark-memory-mcp library's
+// 26 dark_memory_* tools backed by the dark-memory-mcp library's
 // orchestrators. See ../internal/server/server.go for boot + lifecycle
 // logic; ../internal/tools/*.go for the per-namespace tool handlers.
 package main
@@ -40,9 +40,10 @@ func main() {
 	}
 	defer srv.Close()
 
-	// Register all 25 tools in canonical order (BRIDGE_AND_COEXISTENCE.md
-	// §3 / spec 164 bridge.4). RegisterAll returns an error if any of
-	// the 25 expected tools is missing from the registry — fail fast.
+	// Register all 26 tools in canonical order (BRIDGE_AND_COEXISTENCE.md
+	// §3 / spec 164 bridge.4 + DMAP v1.1 spec 193 Layer 6). RegisterAll
+	// returns an error if any of the 26 expected tools is missing from
+	// the registry — fail fast.
 	if err := tools.RegisterAll(srv.Registry(), srv.BootState().Orchestrator, srv.BootState().Store); err != nil {
 		fmt.Fprintf(os.Stderr, "dark-mem-mcp: tools.RegisterAll failed: %v\n", err)
 		os.Exit(1)

@@ -228,14 +228,15 @@ OBSERVABILITY (3)  dark_memory_memory_state | _writes | _anomalies
 ADMIN (3)          dark_memory_admin_migrate | _schema_status | _vacuum
 ```
 
-Total: **25 tools**. Each maps to one intent. Each returns a Context object or an action result. Each response includes `next` when applicable.
+Total: **26 tools** (25 in v1.0; v1.1 added `vlp_handle_event` at position 26). Each maps to one intent. Each returns a Context object or an action result. Each response includes `next` when applicable.
 
 **Why 25?** Three constraints:
 - Each tool = one user/LLM intent, fully resolved in one call
 - The total is small enough that the LLM can read the whole surface into context
 - It covers every primary use case without overlap
 
-A 52-tool surface requires the LLM to disambiguate between near-duplicates. A 25-tool surface has clear boundaries. The principle: tools are nouns and verbs the LLM can think about, not a vocabulary it must memorize.
+A 52-tool surface requires the LLM to disambiguate between near-duplicates.
+A 26-tool surface (per DMAP v1.1) has clear boundaries. The principle: tools are nouns and verbs the LLM can think about, not a vocabulary it must memorize.
 
 ### D-10: dark-recall plugin v2.3 prefers `dark_memory_*` when both servers present
 
@@ -312,7 +313,7 @@ boot:
   2. open Store via factory.Open(ctx, cfg)
   3. Store.Open runs migrations + constitution watchdog (INV-4)
   4. safety.NewCanary() → install on Store (INV-3)
-  5. mcp.NewServer → register all 25 tools
+  5. mcp.NewServer → register all 26 tools
   6. stdio transport
 
 shutdown:
@@ -407,7 +408,8 @@ This RFC is the source of truth. The following sub-specs will be created in dark
 - **sub-spec 2 (safety + audit + sessions)** — implementations of the six invariants at the boundary. Tasks: canary, markers, safety holder; write_audit infrastructure; session table CRUD; watchdog; tests/invariants/inv{1..6}_*.go.
 - **sub-spec 3 (context + economy)** — composed views + Atlan pipeline. Tasks: internal/context/ types; economy/compress.go; orchestrator hooks.
 - **sub-spec 4 (orchestrators)** — high-level workflows. Tasks: PublishVibe, ResearchTopic, RecallContext, ActivePolicy, MemoryState, ResolveDrift. Tests for each.
-- **sub-spec 5 (MCP server)** — `cmd/dark-memory-mcp` + `internal/server` + tool registry. Wires orchestrators to MCP tools. 25 tools final.
+- **sub-spec 5 (MCP server)** — `cmd/dark-memory-mcp` + `internal/server` + tool registry. Wires orchestrators to MCP tools. 26 tools as of v1.1.0
+  (vlp_handle_event added per DMAP v1.1 spec 193 Layer 6).
 - **sub-spec 6 (CLI)** — `cmd/dark-memory-cli` + `cmd/dark-memory-inspect`. Subcommands: migrate, vacuum, schema-status, set-driver, inspect.
 - **sub-spec 7 (dark-recall plugin v2.3)** — update `~/.opencode/plugins/dark-recall.ts` to prefer dark-memory-mcp, scan prefill for canary, use `dark_memory_research_topic` instead of `_recall_research`.
 - **sub-spec 8 (dark-research-mcp deprecation shim)** — emit `{deprecated: true, successor: 'dark-memory-mcp'}` from `internal/tools/dark_mem.go`. README coexistence section.
