@@ -273,6 +273,40 @@ type Store interface {
 	// does NOT filter by active project. If per-project stats are
 	// ever needed, add a sister method StatsForProject(ctx, projectID).
 	Stats(ctx context.Context) (*Stats, error)
+
+	// --- VLP state (atomic spec 2.3 VLPPersistence) ---
+	// SaveVLPState upserts a per-session VLP state row. One row per
+	// session_id (UNIQUE). Returns the row ID. Writes a write_audit
+	// row in the same transaction (INV-1).
+	SaveVLPState(ctx context.Context, wc WriteContext, row *VLPStateRow) (int64, error)
+	// GetVLPState returns the row for sessionID, or nil if not found.
+	GetVLPState(ctx context.Context, sessionID string) (*VLPStateRow, error)
+	// ListVLPStates returns rows filtered by stateFilter (canonical
+	// state name; empty = all states), newest first. Limit <= 0 means
+	// no limit (caller is responsible for result-set size).
+	ListVLPStates(ctx context.Context, stateFilter string, limit int) ([]VLPStateRow, error)
+}
+
+// VLPStateRow is the flat row type persisted in vlp_state. State is the
+// integer value of internal/vlp.State (kept as int to avoid an import
+// cycle between internal/store and internal/vlp). Conversion is done by
+// internal/vlp.Persistence wrapper. LastEvent and LastVerdict are the
+// canonical string forms for human-readable audit.
+//
+// Migration: v9. tenant-scoped via project_id (INV-7).
+type VLPStateRow struct {
+	ID              int64
+	SessionID       string
+	State           int
+	LastEvent       string
+	LastVerdict     string
+	TurnCount       int
+	MinsetCurrent   string
+	ConstitutionID  string
+	ConstitutionVer string
+	CreatedAt       string
+	UpdatedAt       string
+	ProjectID       string
 }
 
 // WriteContext is the provenance header passed to every Save* method.

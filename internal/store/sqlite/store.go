@@ -2508,3 +2508,150 @@ func parseIntString(s string) int64 {
 	}
 	return n
 }
+
+// ----- VLP state (atomic spec 2.3 VLPPersistence) -----
+
+// SaveVLPState upserts a per-session VLP state row. INSERT ... ON CONFLICT
+// DO UPDATE so repeated saves update the existing row instead of inserting
+// duplicates. Writes write_audit in the same lock (INV-1).
+func (s *Store) SaveVLPState(ctx context.Context, wc store.WriteContext, row *store.VLPStateRow) (int64, error) {
+	if err := s.requireProject(); err != nil {
+		return 0, err
+	}
+	projectID := projectIDOrActive(wc.ProjectID, s.ActiveProject())
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if row.CreatedAt == "" {
+		row.CreatedAt = now
+	}
+	row.UpdatedAt = now
+	res, err := s.db.ExecContext(ctx, `
+		INSERT INTO vlp_state (session_id, state, last_event, last_verdict, turn_count,
+		                      minset_current, constitution_id, constitution_ver,
+		                      created_at, updated_at, project_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(session_id) DO UPDATE SET
+			state             = excluded.state,
+			last_event        = excluded.last_event,
+			last_verdict      = excluded.last_verdict,
+			turn_count        = excluded.turn_count,
+			minset_current    = excluded.minset_current,
+			constitution_id   = excluded.constitution_id,
+			constitution_ver  = excluded.constitution_ver,
+			updated_at        = excluded.updated_at
+	`, row.SessionID, row.State, row.LastEvent, row.LastVerdict, row.TurnCount,
+		row.MinsetCurrent, row.ConstitutionID, row.ConstitutionVer,
+		row.CreatedAt, row.UpdatedAt, projectID)
+	if err != nil {
+		return 0, err
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	row.ID = id
+	row.ProjectID = projectID
+	return id, s.recordWriteLocked(ctx, audit.WriteEvent{
+		TableName:       "vlp_state",
+		RowID:           id,
+		Actor:           wc.Actor,
+		SessionID:       row.SessionID,
+		WritePath:       wc.WritePath,
+		ConstitutionID:  wc.ConstitutionID,
+		ConstitutionVer: wc.ConstitutionVer,
+		CreatedAt:       now,
+	}, "")
+}
+
+// GetVLPState returns the row for sessionID, or nil if not found.
+// Filtered by active project (INV-7): cross-project reads are denied.
+func (s *Store) GetVLPState(ctx context.Context, sessionID string) (*store.VLPStateRow, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.ActiveProject()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, session_id, state, last_event, last_verdict, turn_count,
+		       minset_current, constitution_id, constitution_ver,
+		       created_at, updated_at, project_id
+		FROM vlp_state WHERE session_id = ? AND project_id = ?`, sessionID, activeProject)
+	var r store.VLPStateRow
+	var le, lv, mc, ci, cv, pid sql.NullString
+	if err := row.Scan(&r.ID, &r.SessionID, &r.State, &le, &lv, &r.TurnCount,
+		&mc, &ci, &cv, &r.CreatedAt, &r.UpdatedAt, &pid); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	r.LastEvent = le.String
+	r.LastVerdict = lv.String
+	r.MinsetCurrent = mc.String
+	r.ConstitutionID = ci.String
+	r.ConstitutionVer = cv.String
+	r.ProjectID = pid.String
+	return &r, nil
+}
+
+// ListVLPStates returns rows filtered by stateFilter (canonical name; empty
+// = all), newest-first. Limit <= 0 means no limit.
+func (s *Store) ListVLPStates(ctx context.Context, stateFilter string, limit int) ([]store.VLPStateRow, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.ActiveProject()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if stateFilter == "" {
+		rows, err = s.db.QueryContext(ctx, `
+			SELECT id, session_id, state, last_event, last_verdict, turn_count,
+			       minset_current, constitution_id, constitution_ver,
+			       created_at, updated_at, project_id
+			FROM vlp_state WHERE project_id = ?
+			ORDER BY updated_at DESC`, activeProject)
+	} else {
+		// stateFilter is canonical string; we accept either name or numeric.
+		// Look up by string match against any canonical name in vlp package
+		// would create a cycle; instead filter by numeric via package-local
+		// resolution. For now callers pass numeric strings; named filtering
+		// is exposed via internal/vlp.Persistence.List.
+		rows, err = s.db.QueryContext(ctx, `
+			SELECT id, session_id, state, last_event, last_verdict, turn_count,
+			       minset_current, constitution_id, constitution_ver,
+			       created_at, updated_at, project_id
+			FROM vlp_state WHERE project_id = ? AND state = ?
+			ORDER BY updated_at DESC`, activeProject, stateFilter)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []store.VLPStateRow
+	for rows.Next() {
+		var r store.VLPStateRow
+		var le, lv, mc, ci, cv, pid sql.NullString
+		if err := rows.Scan(&r.ID, &r.SessionID, &r.State, &le, &lv, &r.TurnCount,
+			&mc, &ci, &cv, &r.CreatedAt, &r.UpdatedAt, &pid); err != nil {
+			return nil, err
+		}
+		r.LastEvent = le.String
+		r.LastVerdict = lv.String
+		r.MinsetCurrent = mc.String
+		r.ConstitutionID = ci.String
+		r.ConstitutionVer = cv.String
+		r.ProjectID = pid.String
+		out = append(out, r)
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+	return out, rows.Err()
+}

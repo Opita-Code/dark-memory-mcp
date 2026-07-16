@@ -136,6 +136,88 @@ func runContract(t *testing.T, ctx context.Context, s store.Store, label string)
 		}
 	})
 
+	t.Run(label+"/vlp_state_roundtrip", func(t *testing.T) {
+		// Atomic spec 2.3 — exercises vlp_state CRUD end-to-end across
+		// both drivers. The int ↔ string round-trip is what matters:
+		// save a typed state, load it back, verify State enum value
+		// survives the int column.
+		sid := "vlp-rt-" + label
+		wc := store.WriteContext{Actor: "dual_driver", SessionID: sid, WritePath: "TestVLPState"}
+
+		// Initial save: drafting_spec
+		row := &store.VLPStateRow{
+			SessionID: sid,
+			State:     2, // StateDraftingSpec = 2 (after StateUnknown=0, StateIdle=1)
+			LastEvent: "session_start",
+			TurnCount: 0,
+		}
+		id, err := s.SaveVLPState(ctx, wc, row)
+		if err != nil {
+			t.Fatalf("%s: SaveVLPState: %v", label, err)
+		}
+		if id == 0 {
+			t.Fatalf("%s: SaveVLPState returned id=0", label)
+		}
+
+		// Load → state should round-trip as the integer 2
+		got, err := s.GetVLPState(ctx, sid)
+		if err != nil {
+			t.Fatalf("%s: GetVLPState: %v", label, err)
+		}
+		if got == nil {
+			t.Fatalf("%s: GetVLPState returned nil", label)
+		}
+		if got.State != 2 {
+			t.Errorf("%s: State round-trip = %d, want 2", label, got.State)
+		}
+		if got.SessionID != sid {
+			t.Errorf("%s: session_id mismatch", label)
+		}
+		if got.LastEvent != "session_start" {
+			t.Errorf("%s: last_event = %q, want session_start", label, got.LastEvent)
+		}
+
+		// Upsert: update existing row with new state
+		row.State = 3 // StateSpecActive
+		row.TurnCount = 1
+		_, err = s.SaveVLPState(ctx, wc, row)
+		if err != nil {
+			t.Fatalf("%s: SaveVLPState upsert: %v", label, err)
+		}
+		got, _ = s.GetVLPState(ctx, sid)
+		if got.State != 3 {
+			t.Errorf("%s: upsert State = %d, want 3", label, got.State)
+		}
+		if got.TurnCount != 1 {
+			t.Errorf("%s: upsert TurnCount = %d, want 1", label, got.TurnCount)
+		}
+
+		// List filter (empty = all)
+		rows, err := s.ListVLPStates(ctx, "", 0)
+		if err != nil {
+			t.Fatalf("%s: ListVLPStates: %v", label, err)
+		}
+		found := false
+		for _, r := range rows {
+			if r.SessionID == sid {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("%s: ListVLPStates did not include %s", label, sid)
+		}
+
+		// List with limit
+		limited, err := s.ListVLPStates(ctx, "", 1)
+		if err != nil {
+			t.Fatalf("%s: ListVLPStates limited: %v", label, err)
+		}
+		if len(limited) != 1 {
+			t.Errorf("%s: ListVLPStates(limit=1) = %d, want 1", label, len(limited))
+		}
+	})
+
 	t.Run(label+"/research_saverun_with_canary_check", func(t *testing.T) {
 		sid := "test-research-" + label
 		wc := store.WriteContext{Actor: "test", SessionID: sid, WritePath: "TestSaveRun"}

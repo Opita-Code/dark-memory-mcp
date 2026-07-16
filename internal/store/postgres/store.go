@@ -1218,6 +1218,203 @@ func jsonUnmarshal(data []byte, v any) error {
 
 func intToStr(n int) string { return strconv.Itoa(n) }
 
+// ----- VLP state (atomic spec 2.3 VLPPersistence) -----
+
+// SaveVLPState upserts a per-session VLP state row using ON CONFLICT
+// DO UPDATE (Postgres UPSERT syntax). Same semantics as the sqlite impl.
+func (s *Store) SaveVLPState(ctx context.Context, wc store.WriteContext, row *store.VLPStateRow) (int64, error) {
+	if err := s.requireProject(); err != nil {
+		return 0, err
+	}
+	projectID := projectIDOrActive(wc.ProjectID, s.ActiveProject())
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if row.CreatedAt == "" {
+		row.CreatedAt = now
+	}
+	row.UpdatedAt = now
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO vlp_state (session_id, state, last_event, last_verdict, turn_count,
+		                      minset_current, constitution_id, constitution_ver,
+		                      created_at, updated_at, project_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		ON CONFLICT (session_id) DO UPDATE SET
+			state             = EXCLUDED.state,
+			last_event        = EXCLUDED.last_event,
+			last_verdict      = EXCLUDED.last_verdict,
+			turn_count        = EXCLUDED.turn_count,
+			minset_current    = EXCLUDED.minset_current,
+			constitution_id   = EXCLUDED.constitution_id,
+			constitution_ver  = EXCLUDED.constitution_ver,
+			updated_at        = EXCLUDED.updated_at
+	`, row.SessionID, row.State, row.LastEvent, row.LastVerdict, row.TurnCount,
+		row.MinsetCurrent, row.ConstitutionID, row.ConstitutionVer,
+		row.CreatedAt, row.UpdatedAt, projectID)
+	if err != nil {
+		return 0, err
+	}
+	// ON CONFLICT DO UPDATE doesn't return the row id reliably on conflict,
+	// so we look it up. Single SELECT after UPSERT is fine (the row exists).
+	var id int64
+	if err := s.pool.QueryRow(ctx,
+		`SELECT id FROM vlp_state WHERE session_id = $1 AND project_id = $2`,
+		row.SessionID, projectID).Scan(&id); err != nil {
+		return 0, err
+	}
+	row.ID = id
+	row.ProjectID = projectID
+	return id, s.recordWrite(ctx, audit.WriteEvent{
+		TableName:       "vlp_state",
+		RowID:           id,
+		Actor:           wc.Actor,
+		SessionID:       row.SessionID,
+		WritePath:       wc.WritePath,
+		ConstitutionID:  wc.ConstitutionID,
+		ConstitutionVer: wc.ConstitutionVer,
+		CreatedAt:       now,
+	}, "")
+}
+
+// GetVLPState returns the row for sessionID, or nil if not found.
+// Filtered by active project (INV-7).
+func (s *Store) GetVLPState(ctx context.Context, sessionID string) (*store.VLPStateRow, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.ActiveProject()
+	var (
+		id          int64
+		sid         string
+		state       int
+		lastEvent   *string
+		lastVerdict *string
+		turnCount   int
+		minset      *string
+		consID      *string
+		consVer     *string
+		createdAt   string
+		updatedAt   string
+		projectID   string
+	)
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, session_id, state, last_event, last_verdict, turn_count,
+		       minset_current, constitution_id, constitution_ver,
+		       created_at, updated_at, project_id
+		FROM vlp_state WHERE session_id = $1 AND project_id = $2`,
+		sessionID, activeProject).Scan(&id, &sid, &state, &lastEvent, &lastVerdict,
+		&turnCount, &minset, &consID, &consVer, &createdAt, &updatedAt, &projectID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	r := &store.VLPStateRow{
+		ID:        id,
+		SessionID: sid,
+		State:     state,
+		TurnCount: turnCount,
+		CreatedAt: createdAt,
+		UpdatedAt: updatedAt,
+		ProjectID: projectID,
+	}
+	if lastEvent != nil {
+		r.LastEvent = *lastEvent
+	}
+	if lastVerdict != nil {
+		r.LastVerdict = *lastVerdict
+	}
+	if minset != nil {
+		r.MinsetCurrent = *minset
+	}
+	if consID != nil {
+		r.ConstitutionID = *consID
+	}
+	if consVer != nil {
+		r.ConstitutionVer = *consVer
+	}
+	return r, nil
+}
+
+// ListVLPStates returns rows filtered by stateFilter (numeric string;
+// empty = all), newest-first. Limit <= 0 means no limit.
+func (s *Store) ListVLPStates(ctx context.Context, stateFilter string, limit int) ([]store.VLPStateRow, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.ActiveProject()
+
+	var rows pgx.Rows
+	var err error
+	if stateFilter == "" {
+		rows, err = s.pool.Query(ctx, `
+			SELECT id, session_id, state, last_event, last_verdict, turn_count,
+			       minset_current, constitution_id, constitution_ver,
+			       created_at, updated_at, project_id
+			FROM vlp_state WHERE project_id = $1 ORDER BY updated_at DESC`, activeProject)
+	} else {
+		rows, err = s.pool.Query(ctx, `
+			SELECT id, session_id, state, last_event, last_verdict, turn_count,
+			       minset_current, constitution_id, constitution_ver,
+			       created_at, updated_at, project_id
+			FROM vlp_state WHERE project_id = $1 AND state = $2
+			ORDER BY updated_at DESC`, activeProject, stateFilter)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []store.VLPStateRow
+	for rows.Next() {
+		var (
+			id          int64
+			sid         string
+			state       int
+			lastEvent   *string
+			lastVerdict *string
+			turnCount   int
+			minset      *string
+			consID      *string
+			consVer     *string
+			createdAt   string
+			updatedAt   string
+			projectID   string
+		)
+		if err := rows.Scan(&id, &sid, &state, &lastEvent, &lastVerdict,
+			&turnCount, &minset, &consID, &consVer, &createdAt, &updatedAt, &projectID); err != nil {
+			return nil, err
+		}
+		r := store.VLPStateRow{
+			ID:        id,
+			SessionID: sid,
+			State:     state,
+			TurnCount: turnCount,
+			CreatedAt: createdAt,
+			UpdatedAt: updatedAt,
+			ProjectID: projectID,
+		}
+		if lastEvent != nil {
+			r.LastEvent = *lastEvent
+		}
+		if lastVerdict != nil {
+			r.LastVerdict = *lastVerdict
+		}
+		if minset != nil {
+			r.MinsetCurrent = *minset
+		}
+		if consID != nil {
+			r.ConstitutionID = *consID
+		}
+		if consVer != nil {
+			r.ConstitutionVer = *consVer
+		}
+		out = append(out, r)
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
+	return out, rows.Err()
+}
+
 func notImpl(name string) error {
 	return fmt.Errorf("%w: %s", store.ErrNotConfigured, name)
 }

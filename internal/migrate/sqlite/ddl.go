@@ -364,4 +364,38 @@ DROP TABLE vibe_brands_old;
 CREATE INDEX IF NOT EXISTS idx_vibe_brands_project ON vibe_brands(project_id, brand_id);
 `,
 	},
+	{
+		// v9 — vlp_state table (atomic spec 2.3 VLPPersistence)
+		// Per-session state machine state. One row per session_id (UNIQUE).
+		// UPSERT pattern: SaveVLPState uses INSERT ... ON CONFLICT(session_id)
+		// DO UPDATE so repeated saves update the existing row instead of
+		// inserting duplicates. State column is INT (corresponds to
+		// internal/vlp.State enum); LastEvent and LastVerdict are TEXT
+		// (canonical string forms) for human-readable audit.
+		//
+		// tenant-scoped: project_id column (INV-7) with DEFAULT 'default'
+		// keeps existing 164 specs working. The Store impl filters reads
+		// by active project; writes use wc.ProjectID || s.ActiveProject().
+		Version: 9,
+		Name:    "vlp_state_table",
+		Up: `
+CREATE TABLE IF NOT EXISTS vlp_state (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id        TEXT NOT NULL UNIQUE,
+    state             INTEGER NOT NULL,
+    last_event        TEXT,
+    last_verdict      TEXT,
+    turn_count        INTEGER NOT NULL DEFAULT 0,
+    minset_current    TEXT,
+    constitution_id   TEXT,
+    constitution_ver  TEXT,
+    created_at        TEXT NOT NULL,
+    updated_at        TEXT NOT NULL,
+    project_id        TEXT NOT NULL DEFAULT 'default'
+);
+CREATE INDEX IF NOT EXISTS idx_vlp_state_session ON vlp_state(session_id);
+CREATE INDEX IF NOT EXISTS idx_vlp_state_state   ON vlp_state(state);
+CREATE INDEX IF NOT EXISTS idx_vlp_state_project ON vlp_state(project_id, id);
+`,
+	},
 }
