@@ -53,11 +53,14 @@ require (
 // prefers Dark Memory MCP calls when its server is configured.
 //
 // NOTE on dependency policy:
-//   - This go.mod is the LIBRARY root. The library MUST NOT depend on
-//     github.com/mark3labs/mcp-go. Anything MCP-specific lives in
-//     cmd/dark-memory-mcp/ with its own go.mod that requires this
-//     library plus mcp-go.
-//   - This split lets other tools (e.g. dark-research-mcp, custom
-//     agents) import the library in-process without dragging in MCP
-//     machinery, AND lets the standalone MCP server talk to clients
-//     that prefer stdio-based integration.
+//   - This go.mod is the LIBRARY root. The library DOES depend on
+//     github.com/mark3labs/mcp-go (the orchestrators + Tool struct
+//     shape use mcp types for bridge.4 wire-format conformance).
+//     The intent was to keep MCP-specific transport wiring (stdio,
+//     recovery, filter, instructions) in cmd/dark-mem-mcp/ where
+//     the binary lives — that part IS separated via the cmd
+//     subdir's own go.mod.
+//   - Review-w4-b02 / gate.2: the original "MUST NOT" comment was
+//     aspirational. The library legitimately needs mcp types for
+//     the orchestrators; only the stdio transport + middlewares
+//     stay binary-local. Comment fixed to reflect reality.
