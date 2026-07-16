@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dark-agents/dark-memory-mcp/internal/audit"
 	"github.com/dark-agents/dark-memory-mcp/internal/project"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 	"github.com/dark-agents/dark-memory-mcp/internal/store/runtime"
@@ -391,6 +392,72 @@ func TestVLP_E2E_NeedsHuman(t *testing.T) {
 	}
 }
 
+// TestVLP_E2E_AtomicSaveEmitsTwoAuditRows verifies the bonus atomic
+// refactor: every HandleEvent now writes BOTH a row-level audit row
+// (SaveVLPState) AND a transition-level audit row (vlp.transition) in
+// the SAME DB transaction. After the acceptance test runs 4 events,
+// we expect 4 row-level + 4 transition-level = 8 audit rows total,
+// all with the same row_id (the upserted vlp_state row).
+func TestVLP_E2E_AtomicSaveEmitsTwoAuditRows(t *testing.T) {
+	uc, _, _, cleanup := newTestUseCase(t)
+	defer cleanup()
+	ctx := context.Background()
+	wc := store.WriteContext{Actor: "atomic", SessionID: "atomic-test", WritePath: "T"}
+
+	seq := []struct {
+		event   Event
+		verdict Verdict
+	}{
+		{EventSessionStart, VerdictUnknown},
+		{EventVibePublish, VerdictUnknown},
+		{EventArtifactLog, VerdictUnknown},
+		{EventDriftLog, VerdictAligned},
+	}
+	for _, s := range seq {
+		if _, err := uc.HandleEvent(ctx, wc, "atomic-test", s.event, s.verdict, ""); err != nil {
+			t.Fatalf("HandleEvent %s: %v", s.event, err)
+		}
+	}
+
+	// Use the Auditor's ListTransitionsForSession to verify transition-level rows.
+	transitions, err := uc.auditor.ListTransitionsForSession(ctx, "atomic-test", 0)
+	if err != nil {
+		t.Fatalf("ListTransitions: %v", err)
+	}
+	if len(transitions) != 4 {
+		t.Errorf("transition-level audit rows = %d, want 4 (one per HandleEvent)", len(transitions))
+	}
+	for _, r := range transitions {
+		if r.WritePath != "vlp.transition" {
+			t.Errorf("unexpected WritePath %q in transitions list", r.WritePath)
+		}
+		if r.SessionID != "atomic-test" {
+			t.Errorf("unexpected SessionID %q", r.SessionID)
+		}
+		if r.ProjectID == "" {
+			t.Errorf("F33 fix: ProjectID should be populated, got empty")
+		}
+	}
+
+	// Also verify row-level audit rows exist (one per HandleEvent via SaveVLPState).
+	allWrites, err := uc.store.ListWrites(ctx, audit.ListFilters{SessionID: "atomic-test", Limit: 100})
+	if err != nil {
+		t.Fatalf("ListWrites: %v", err)
+	}
+	rowLevel := 0
+	for _, r := range allWrites {
+		if r.WritePath != "vlp.transition" {
+			rowLevel++
+		}
+	}
+	if rowLevel != 4 {
+		t.Errorf("row-level audit rows = %d, want 4 (one per HandleEvent)", rowLevel)
+	}
+	if len(allWrites) != 8 {
+		t.Errorf("total audit rows = %d, want 8 (4 row-level + 4 transition-level)", len(allWrites))
+	}
+}
+
 // TestNewUseCase_NilChecks verifies the constructor rejects nil inputs.
 func TestNewUseCase_NilChecks(t *testing.T) {
 	_, err := NewUseCase(nil, nil)
@@ -398,7 +465,6 @@ func TestNewUseCase_NilChecks(t *testing.T) {
 		t.Error("nil persistence: expected error, got nil")
 	}
 
-	// Build a valid Persistence to test nil auditor
 	a, s, cleanup := newTestAuditor(t)
 	defer cleanup()
 	_ = a

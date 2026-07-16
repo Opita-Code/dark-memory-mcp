@@ -5,16 +5,16 @@
 //
 //   - vlp.Transition  (2.1)  — pure state-machine logic
 //   - vlp.Persistence (2.3)  — Store-backed state
-//   - vlp.Auditor     (2.4)  — write_audit row per transition
+//   - vlp.Auditor     (2.4)  — transition-level audit (also written via Store)
 //
 // The harness (spec 6.x adapters) calls HandleEvent for every event in
 // the loop. The UseCase is the SINGLE point that drives the loop:
 //
 //   1. Load current state from Persistence
 //   2. Compute transition (from, event, verdict) → to
-//   3. Persist new state via Persistence.Save (row-level audit emitted)
-//   4. Audit the transition via Auditor.RecordTransition (transition-level)
-//   5. Return new state + next-action hint
+//   3. Persist + audit in ONE atomic tx via Store.SaveVLPStateWithTransition
+//      (closes the 2.5 atomicity gap from spec 2.4)
+//   4. Return new state + next-action hint
 //
 // Bootstrap semantics: the DB never persists StateIdle (it is a virtual
 // anchor only). The first event for a session_id must be EventSessionStart;
@@ -22,27 +22,29 @@
 // StateDraftingSpec, and persists StateDraftingSpec directly. The audit
 // row records the virtual from=StateIdle for forensic reconstruction.
 //
-// Atomicity caveat: Persistence.Save and Auditor.RecordTransition are
-// two separate operations, NOT in a single DB transaction. If Save
-// succeeds but RecordTransition fails, the state has been persisted but
-// the transition-level audit row is missing. INV-1 is satisfied at the
-// row level (every Save emits a write_audit row); the transition-level
-// audit row is best-effort. A future TxContext spec can close this gap.
+// Atomicity (debt-elimination commit): UseCase delegates to
+// Store.SaveVLPStateWithTransition which writes the vlp_state row,
+// the row-level audit, AND the transition-level audit in a single
+// DB transaction. INV-1 is satisfied atomically: either all three
+// rows land or none does. The Auditor.RecordTransition path is kept
+// for callers that want explicit per-call control, but the UseCase
+// no longer uses it (deprecated for VLP).
 //
-// Trust boundary: UseCase trusts Persistence + Auditor to fail-fast on
-// their respective error surfaces. UseCase itself does not validate
-// transition validity (vlp.Transition does that in 2.1).
+// Trust boundary: UseCase trusts Persistence + Auditor + Store to
+// fail-fast on their respective error surfaces. UseCase itself does
+// not validate transition validity (vlp.Transition does that in 2.1).
 //
 // Atomicity contract:
 //   - ONE entry point: UseCase.HandleEvent
 //   - ONE acceptance test: TestVLP_E2E_DraftToComplete (in usecase_test.go)
-//   - ONE PR worth of work (~200 LoC impl + ~400 LoC tests)
-//   - Direct deps: 2.1 (Transition) + 2.3 (Persistence) + 2.4 (Auditor)
+//   - ONE PR worth of work
+//   - Direct deps: 2.1 (Transition) + 2.3 (Persistence) + 2.4 (Auditor) + Store
 //   - Independently reviewable: no other v1.1 spec touched
 package vlp
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
@@ -59,9 +61,16 @@ type HandleEventResult struct {
 
 // UseCase is the end-to-end VLP loop driver. Composes Persistence (2.3)
 // + Auditor (2.4). Construct with NewUseCase.
+//
+// Debt-elimination note: UseCase.HandleEvent now goes through
+// Persistence's underlying Store directly (via reflection-free accessor)
+// to call SaveVLPStateWithTransition, achieving single-tx atomicity.
+// The Persistence.Save + Auditor.RecordTransition two-call pattern
+// remains for callers that need finer control.
 type UseCase struct {
 	persistence *Persistence
 	auditor     *Auditor
+	store       store.Store // captured at construction for atomic SaveVLPStateWithTransition
 }
 
 // NewUseCase returns a UseCase composing the given Persistence and
@@ -74,14 +83,14 @@ func NewUseCase(p *Persistence, a *Auditor) (*UseCase, error) {
 	if a == nil {
 		return nil, fmt.Errorf("vlp: NewUseCase: auditor must not be nil")
 	}
-	return &UseCase{persistence: p, auditor: a}, nil
+	return &UseCase{persistence: p, auditor: a, store: a.store}, nil
 }
 
 // HandleEvent is the SINGLE entry point for advancing the VLP loop.
 //
 // Parameters:
 //   - ctx:        context for cancellation
-//   - wc:         WriteContext shared by Persistence.Save + Auditor.RecordTransition
+//   - wc:         WriteContext shared by Store.SaveVLPStateWithTransition
 //   - sessionID:  stable identifier for the loop
 //   - event:      the event being applied (must NOT be EventUnknown)
 //   - verdict:    payload for EventDriftLog (VerdictUnknown for other events)
@@ -89,8 +98,9 @@ func NewUseCase(p *Persistence, a *Auditor) (*UseCase, error) {
 //
 // Returns HandleEventResult with new state, turn count, next-action hint,
 // and IsTerminal flag. Returns error on:
-//   - persistence Load/Save failure (I/O error from Store)
-//   - audit RecordTransition failure (I/O error from Store)
+//   - persistence Load failure (I/O error from Store)
+//   - Store.SaveVLPStateWithTransition failure (any of: upsert, row-level
+//     audit, transition-level audit — all rolled back on failure)
 //   - vlp.Transition returning ErrInvalidTransition (caller bug — wrong event for current state)
 //
 // Bootstrap: if no row exists for sessionID, the first event MUST be
@@ -132,21 +142,27 @@ func (uc *UseCase) HandleEvent(ctx context.Context, wc store.WriteContext, sessi
 		return HandleEventResult{}, fmt.Errorf("vlp: HandleEvent: transition: %w", err)
 	}
 
-	// 4. Persist new state — emits row-level audit in same DB tx (2.3 C4)
+	// 4. Build the row to persist + the transition-level audit payload.
 	newTurn := startTurn + 1
-	if err := uc.persistence.Save(ctx, wc, sessionID, to, event, verdict, newTurn, minset); err != nil {
-		return HandleEventResult{}, fmt.Errorf("vlp: HandleEvent: save: %w", err)
+	row := &store.VLPStateRow{
+		SessionID:       sessionID,
+		State:           int(to),
+		LastEvent:       eventToCanonicalString(event),
+		LastVerdict:     verdictToCanonicalString(verdict),
+		TurnCount:       newTurn,
+		MinsetCurrent:   minset,
+		ConstitutionID:  wc.ConstitutionID,
+		ConstitutionVer: wc.ConstitutionVer,
 	}
+	transitionPayload := usecaseTransitionNotes(sessionID, TransitionRecord{
+		From: from, Event: event, Verdict: verdict, To: to, Turn: newTurn,
+	})
 
-	// 5. Audit the transition — best-effort, separate DB call (atomicity caveat)
-	if err := uc.auditor.RecordTransition(ctx, wc, sessionID, TransitionRecord{
-		From:    from,
-		Event:   event,
-		Verdict: verdict,
-		To:      to,
-		Turn:    newTurn,
-	}); err != nil {
-		return HandleEventResult{}, fmt.Errorf("vlp: HandleEvent: audit: %w", err)
+	// 5. Persist + emit BOTH audit rows in a single DB transaction.
+	// Closes the 2.5 atomicity gap from spec 2.4 (was: 2 separate calls,
+	// could fail between them and leave state without transition audit).
+	if _, err := uc.store.SaveVLPStateWithTransition(ctx, wc, row, transitionPayload); err != nil {
+		return HandleEventResult{}, fmt.Errorf("vlp: HandleEvent: save+audit: %w", err)
 	}
 
 	// 6. Return result with next-action hint
@@ -164,6 +180,24 @@ func (uc *UseCase) HandleEvent(ctx context.Context, wc store.WriteContext, sessi
 // loop from any non-terminal state.
 func (uc *UseCase) HandleAbort(ctx context.Context, wc store.WriteContext, sessionID string, minset string) (HandleEventResult, error) {
 	return uc.HandleEvent(ctx, wc, sessionID, EventAbort, VerdictUnknown, minset)
+}
+
+// eventToCanonicalString returns the canonical event name for persistence.
+// EventUnknown → "" (don't store "unknown(0)" sentinel).
+func eventToCanonicalString(e Event) string {
+	if e == EventUnknown {
+		return ""
+	}
+	return e.String()
+}
+
+// verdictToCanonicalString returns the canonical verdict name for persistence.
+// VerdictUnknown → "".
+func verdictToCanonicalString(v Verdict) string {
+	if v == VerdictUnknown {
+		return ""
+	}
+	return v.String()
 }
 
 // nextEventNameFor maps the post-transition state to the canonical
@@ -199,4 +233,33 @@ func nextEventNameFor(s State) string {
 	default:
 		return ""
 	}
+}
+
+// usecaseTransitionNotes is the UseCase-specific JSON serializer for
+// the transition-level audit row. Kept private (lowercase) to avoid
+// name collision with auditor.go's exported marshalTransitionNotes.
+//
+// In v2, refactor both to a shared internal helper. For now, the two
+// implementations produce byte-identical JSON for the same input.
+func usecaseTransitionNotes(sessionID string, rec TransitionRecord) string {
+	type jsonShape struct {
+		SessionID string `json:"session_id"`
+		From      int    `json:"from"`
+		Event     int    `json:"event"`
+		Verdict   int    `json:"verdict,omitempty"`
+		To        int    `json:"to"`
+		Turn      int    `json:"turn"`
+	}
+	s := jsonShape{
+		SessionID: sessionID,
+		From:      int(rec.From),
+		Event:     int(rec.Event),
+		To:        int(rec.To),
+		Turn:      rec.Turn,
+	}
+	if rec.Verdict != VerdictUnknown {
+		s.Verdict = int(rec.Verdict)
+	}
+	b, _ := json.Marshal(s)
+	return string(b)
 }

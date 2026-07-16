@@ -281,6 +281,16 @@ type Store interface {
 	// write_audit row in the SAME transaction as the UPSERT (INV-1:
 	// atomic audit — either both rows land or neither does).
 	SaveVLPState(ctx context.Context, wc WriteContext, row *VLPStateRow) (int64, error)
+	// SaveVLPStateWithTransition is the atomic combo used by spec 2.5
+	// VLPLoopUseCase. In a single DB transaction:
+	//   1. UPSERT vlp_state row (returns row id)
+	//   2. INSERT write_audit row for the data change (row-level audit)
+	//   3. INSERT write_audit row for the transition (transition-level
+	//      audit, with notes=transitionJSON — typically a TransitionRecord
+	//      serialized to JSON)
+	// Closes the 2.5 atomicity gap from spec 2.4 (where Save + Audit
+	// were 2 separate calls). Returns the vlp_state row id.
+	SaveVLPStateWithTransition(ctx context.Context, wc WriteContext, row *VLPStateRow, transitionNotes string) (int64, error)
 	// GetVLPState returns the row for sessionID under the active project,
 	// or nil if not found. Cross-project reads are denied (INV-7).
 	GetVLPState(ctx context.Context, sessionID string) (*VLPStateRow, error)

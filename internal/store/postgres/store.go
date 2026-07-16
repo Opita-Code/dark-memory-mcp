@@ -1296,61 +1296,90 @@ func (s *Store) SaveVLPState(ctx context.Context, wc store.WriteContext, row *st
 	if err := s.requireProject(); err != nil {
 		return 0, err
 	}
-	projectID := projectIDOrActive(wc.ProjectID, s.ActiveProject())
+	return s.saveVLPStateTx(ctx, wc, row, "")
+}
+
+// SaveVLPStateWithTransition is the atomic combo (mirror of sqlite).
+// See sqlite.SaveVLPStateWithTransition for full semantics.
+func (s *Store) SaveVLPStateWithTransition(ctx context.Context, wc store.WriteContext, row *store.VLPStateRow, transitionNotes string) (int64, error) {
+	if err := s.requireProject(); err != nil {
+		return 0, err
+	}
+	return s.saveVLPStateTx(ctx, wc, row, transitionNotes)
+}
+
+// saveVLPStateTx is the shared implementation for SaveVLPState and
+// SaveVLPStateWithTransition. transitionNotes empty = skip transition-level
+// audit. Postgres impl uses pgx.Tx via s.runInTx.
+func (s *Store) saveVLPStateTx(ctx context.Context, wc store.WriteContext, row *store.VLPStateRow, transitionNotes string) (int64, error) {
+	projectID := projectIDOrActive(wc.ProjectID, s.activeProject)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if row.CreatedAt == "" {
 		row.CreatedAt = now
 	}
 	row.UpdatedAt = now
 
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("vlp_state: begin tx: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
 	var id int64
-	err = tx.QueryRow(ctx, `
-		INSERT INTO vlp_state (session_id, state, last_event, last_verdict, turn_count,
-		                      minset_current, constitution_id, constitution_ver,
-		                      created_at, updated_at, project_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-		ON CONFLICT (project_id, session_id) DO UPDATE SET
-			state             = EXCLUDED.state,
-			last_event        = EXCLUDED.last_event,
-			last_verdict      = EXCLUDED.last_verdict,
-			turn_count        = EXCLUDED.turn_count,
-			minset_current    = EXCLUDED.minset_current,
-			constitution_id   = EXCLUDED.constitution_id,
-			constitution_ver  = EXCLUDED.constitution_ver,
-			updated_at        = EXCLUDED.updated_at
-		RETURNING id`,
-		row.SessionID, row.State, row.LastEvent, row.LastVerdict, row.TurnCount,
-		row.MinsetCurrent, row.ConstitutionID, row.ConstitutionVer,
-		row.CreatedAt, row.UpdatedAt, projectID,
-	).Scan(&id)
-	if err != nil {
-		return 0, fmt.Errorf("vlp_state: upsert: %w", err)
-	}
+	err := s.runInTx(ctx, func(tx pgx.Tx) error {
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO vlp_state (session_id, state, last_event, last_verdict, turn_count,
+			                      minset_current, constitution_id, constitution_ver,
+			                      created_at, updated_at, project_id)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+			ON CONFLICT (project_id, session_id) DO UPDATE SET
+				state             = EXCLUDED.state,
+				last_event        = EXCLUDED.last_event,
+				last_verdict      = EXCLUDED.last_verdict,
+				turn_count        = EXCLUDED.turn_count,
+				minset_current    = EXCLUDED.minset_current,
+				constitution_id   = EXCLUDED.constitution_id,
+				constitution_ver  = EXCLUDED.constitution_ver,
+				updated_at        = EXCLUDED.updated_at
+			RETURNING id`,
+			row.SessionID, row.State, row.LastEvent, row.LastVerdict, row.TurnCount,
+			row.MinsetCurrent, row.ConstitutionID, row.ConstitutionVer,
+			row.CreatedAt, row.UpdatedAt, projectID,
+		).Scan(&id); err != nil {
+			return fmt.Errorf("vlp_state: upsert: %w", err)
+		}
 
-	// vlp_state has no user-controlled payload to canary-check (session_id
-	// is the lookup key, state/event/verdict are enums). The write_audit
-	// row records actor + write_path for INV-1 forensics.
-	if wc.WritePath == "" {
-		wc.WritePath = "SaveVLPState"
-	}
-	_, err = tx.Exec(ctx,
-		`INSERT INTO write_audit (table_name, row_id, actor, session_id, write_path,
-		                           constitution_id, constitution_ver, created_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		"vlp_state", id, wc.Actor, row.SessionID, wc.WritePath,
-		wc.ConstitutionID, wc.ConstitutionVer, now)
-	if err != nil {
-		return 0, fmt.Errorf("vlp_state: audit: %w", err)
-	}
+		// Row-level audit row in the same tx (INV-1).
+		if wc.WritePath == "" {
+			wc.WritePath = "SaveVLPState"
+		}
+		if err := s.recordWriteTx(ctx, tx, audit.WriteEvent{
+			TableName:       "vlp_state",
+			RowID:           id,
+			Actor:           wc.Actor,
+			SessionID:       row.SessionID,
+			WritePath:       wc.WritePath,
+			ConstitutionID:  wc.ConstitutionID,
+			ConstitutionVer: wc.ConstitutionVer,
+			CreatedAt:       now,
+		}, ""); err != nil {
+			return fmt.Errorf("vlp_state: audit (row-level): %w", err)
+		}
 
-	if err := tx.Commit(ctx); err != nil {
-		return 0, fmt.Errorf("vlp_state: commit: %w", err)
+		// Transition-level audit (spec 2.4).
+		if transitionNotes != "" {
+			if err := s.recordWriteTx(ctx, tx, audit.WriteEvent{
+				TableName:       "vlp_state",
+				RowID:           id,
+				Actor:           wc.Actor,
+				SessionID:       row.SessionID,
+				WritePath:       "vlp.transition",
+				ConstitutionID:  wc.ConstitutionID,
+				ConstitutionVer: wc.ConstitutionVer,
+				Notes:           transitionNotes,
+				CreatedAt:       now,
+			}, ""); err != nil {
+				return fmt.Errorf("vlp_state: audit (transition-level): %w", err)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
 	}
 	row.ID = id
 	row.ProjectID = projectID
