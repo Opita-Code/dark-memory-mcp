@@ -1,6 +1,6 @@
 # Spec 193: Dark Memory Agent Protocol (DMAP) v1.1
 
-> **Status:** Atomic specs 2.1 (SessionState) + 2.2 (VLPPackage) + 2.3 (VLPPersistence) + 2.4 (VLPAuditor) IMPLEMENTED + tests green. Other 22 atomic specs pending.
+> **Status:** **LAYER 2 (loop coordinator) COMPLETE** — atomic specs 2.1 (SessionState) + 2.2 (VLPPackage) + 2.3 (VLPPersistence) + 2.4 (VLPAuditor) + 2.5 (VLPLoopUseCase) IMPLEMENTED + tests green. Other 21 atomic specs pending.
 > **Vibe case:** C5 (strategic planning / architecture)
 > **Constitution ref:** dark-agents/dark-memory-mcp@1.0.0
 > **Author:** Opita Code + dark-research-mcp build agent
@@ -280,7 +280,7 @@ See [§4 Layer decomposition](#4-layer-decomposition) above. Total: **26 atomic 
 | **2.2** | **VLPPackage** | **~300** | **2.1** | **✅ IMPLEMENTED** |
 | **2.3** | **VLPPersistence** | **~360** | **2.1** | **✅ IMPLEMENTED** |
 | **2.4** | **VLPAuditor** | **~150** | **2.1+2.3** | **✅ IMPLEMENTED** |
-| 2.5 | VLPLoopUseCase | 250 | 2.1-2.4 | pending |
+| **2.5** | **VLPLoopUseCase** | **~200** | **2.1-2.4** | **✅ IMPLEMENTED** |
 | 3.1 | TaskHandle | 250 | 2.5 | pending |
 | 3.2 | HandoffContract | 200 | L0 | pending |
 | 3.3 | Blackboard | 200 | L0 | pending |
