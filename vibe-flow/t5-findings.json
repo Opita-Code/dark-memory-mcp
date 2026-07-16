@@ -1,0 +1,16 @@
+[
+  {
+    "task": "T5",
+    "finding": "W3-003 (Postgres option b)",
+    "status": "resolved",
+    "design_decision": "drop RLS, mirror SQLite explicit WHERE project_id=$1",
+    "impl": [
+      "migration v7 postgres: removed RLS DO block (kept ADD COLUMN project_id + indexes)",
+      "withProjectTx and quotePGString removed (dead code after RLS gone)",
+      "SaveSession/GetSession/CloseSession/ListSessions project-filtered",
+      "SaveRun/GetRun/ListRuns/Recall/ListItems/LinkResearch project-filtered",
+      "ResearchStatus documented global-by-design (same as Stats)",
+      "package-level doc explains Postgres is partial-impl + SQLite is production"
+    ]
+  }
+]

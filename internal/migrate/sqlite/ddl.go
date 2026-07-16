@@ -316,4 +316,52 @@ CREATE INDEX IF NOT EXISTS idx_sessions_project        ON sessions(project_id, i
 -- impl seeds a 'default' project row on first Open.
 `,
 	},
+	{
+		// v8 — multi-tenant brand_id: change vibe_brands.brand_id from
+		// PRIMARY KEY (globally unique) to UNIQUE(project_id, brand_id)
+		// (per-project unique). Required for the multi-tenant pattern
+		// where the same brand_id (e.g. "acme-base") lives in many
+		// sub-projects with different voice/visual.
+		//
+		// Also fixes an oversight in v7: vibe_brands was not in the
+		// ALTER TABLE list that added project_id to tenant-scoped
+		// tables. This migration adds the column first (existing rows
+		// backfill to 'default' via DEFAULT), then performs the
+		// rename-recreate pattern required because SQLite cannot DROP
+		// a PRIMARY KEY in place. Existing rows are preserved verbatim.
+		//
+		// vibe_compliance is intentionally left untouched: jurisdiction
+		// is a property of law (GDPR is GDPR), not of project. Global by
+		// design — see spec 171 T4c finding W3-002 / decision rationale.
+		Version: 8,
+		Name:    "vibe_brands_composite_unique",
+		Up: `
+-- Step 1: ensure project_id exists on vibe_brands (oversight fix).
+ALTER TABLE vibe_brands ADD COLUMN project_id TEXT NOT NULL DEFAULT 'default';
+
+-- Step 2: rename-recreate to swap the PRIMARY KEY for a composite UNIQUE.
+ALTER TABLE vibe_brands RENAME TO vibe_brands_old;
+
+CREATE TABLE vibe_brands (
+    brand_id        TEXT NOT NULL,
+    voice_json      TEXT,
+    visual_json     TEXT,
+    narrative_json  TEXT,
+    compliance_json TEXT,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT,
+    project_id      TEXT NOT NULL DEFAULT 'default',
+    UNIQUE(project_id, brand_id)
+);
+
+INSERT INTO vibe_brands
+    (brand_id, voice_json, visual_json, narrative_json, compliance_json, created_at, updated_at, project_id)
+SELECT brand_id, voice_json, visual_json, narrative_json, compliance_json, created_at, updated_at, project_id
+    FROM vibe_brands_old;
+
+DROP TABLE vibe_brands_old;
+
+CREATE INDEX IF NOT EXISTS idx_vibe_brands_project ON vibe_brands(project_id, brand_id);
+`,
+	},
 }

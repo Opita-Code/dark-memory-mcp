@@ -118,6 +118,11 @@ var (
 	ErrAlreadyExists      = errors.New("store: row already exists")
 	ErrNotFound           = errors.New("store: row not found")
 	ErrInvalidArgument    = errors.New("store: invalid argument")
+	// ErrInvalidState: state transition is invalid given the row's
+	// current state (e.g. resolving a drift that was already
+	// reconciled). Distinct from ErrAlreadyExists (which is about
+	// row creation) and ErrNotFound (which is about row absence).
+	ErrInvalidState       = errors.New("store: invalid state for requested operation")
 )
 
 // Store is the abstraction over the persistent backend. Two implementations:
@@ -144,9 +149,20 @@ type Store interface {
 	// that contain the canary) and INV-4 (verify constitution SHA).
 	// Empty string clears.
 	SetCanary(token string)
-	// ActiveConstitution returns the (id, version, sha256) of the
-	// active constitution, as currently seen by the watchdog. Empty
-	// values if no constitution has been registered.
+	// CanaryPresent reports whether a canary is currently installed.
+	// Used by dark-mem-inspect to verify INV-3 status without exposing
+	// the token value (an unprivileged read). Takes no ctx because the
+	// canary lives in-process in a sync-protected Holder; no DB hop.
+	// Review-w4-001: prior to this, dark-mem-inspect reported a fresh
+	// empty Holder and always printed canary_present=false — operators
+	// were being lied to. See drift_log 206.
+	CanaryPresent() bool
+	// ActiveConstitution is GLOBAL by design (spec 171 T4g).
+	// Returns the (id, version, sha256) of the active constitution,
+	// as currently seen by the watchdog. Empty values if no
+	// constitution has been registered. The active constitution is
+	// a system-level property used by runWatchdog (INV-4) — there is
+	// no per-project active constitution.
 	ActiveConstitution(ctx context.Context) (id, version, sha256 string)
 
 	// --- Project namespace (INV-7) ---
@@ -154,7 +170,14 @@ type Store interface {
 	// to filter every read and tag every write. Empty string clears
 	// (denies all reads until a project is set). Project isolation is
 	// the default; pass CrossProject=true to opt-out for a single read.
-	SetActiveProject(projectID string)
+	//
+	// Returns ErrInvalidArgument if projectID is non-empty and does not
+	// exist in the projects table (catches typos at set-time). The
+	// special id "default" is always allowed even if no row exists yet
+	// (legacy compat; the auto-seed in T3 makes the row materialise
+	// before any production caller runs). On rejection the previous
+	// active project is preserved.
+	SetActiveProject(ctx context.Context, projectID string) error
 	// ActiveProject returns the currently installed project_id.
 	ActiveProject() string
 	// CreateProject inserts a new project. Idempotent on (project_id).
@@ -200,6 +223,12 @@ type Store interface {
 	ListBrandGuides(ctx context.Context, limit int) ([]vibeflow.BrandGuide, error)
 
 	// --- Vibeflow: compliance rules ---
+	// vibe_compliance is GLOBAL by jurisdiction. A rule for "EU" is
+	// visible from any project. See spec 171 T4c decision rationale:
+	// jurisdiction is a property of law (GDPR is GDPR), not of
+	// project. Save/Get/List ignore project_id on purpose. If
+	// per-project compliance ever becomes a requirement, swap the
+	// PK to (project_id, jurisdiction) in a follow-up migration.
 	SaveComplianceRule(ctx context.Context, wc WriteContext, r *vibeflow.ComplianceRule) error
 	GetComplianceRule(ctx context.Context, jurisdiction string) (*vibeflow.ComplianceRule, error)
 	ListComplianceRules(ctx context.Context, limit int) ([]vibeflow.ComplianceRule, error)
@@ -238,6 +267,11 @@ type Store interface {
 
 	// --- Admin ---
 	Vacuum(ctx context.Context, policy VacuumPolicy) (VacuumStats, error)
+	// Stats is GLOBAL by design (spec 171 T4g). Returns aggregate
+	// counters across the entire dark.db: schema version, table list,
+	// total rows per table. Operator observability entry point —
+	// does NOT filter by active project. If per-project stats are
+	// ever needed, add a sister method StatsForProject(ctx, projectID).
 	Stats(ctx context.Context) (*Stats, error)
 }
 

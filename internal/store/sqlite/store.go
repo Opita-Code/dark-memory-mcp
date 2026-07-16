@@ -88,11 +88,42 @@ func openSQLite(ctx context.Context, cfg store.Config) (store.Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	// W3-004 (T3): After migration v7, ensure the 'default' project row
+	// exists. Backward compat — existing data (164+ specs) sits in
+	// project_id='default' via the column DEFAULT, and SetActiveProject
+	// special-cases 'default' so legacy callers work. Auto-seeding makes
+	// the row materialise so ListProjects / GetProject('default') return
+	// non-empty on first open. Idempotent via INSERT OR IGNORE.
+	if err := s.ensureDefaultProject(ctx); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("sqlite: ensure default project: %w", err)
+	}
 	if err := s.runWatchdog(ctx); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
 	return s, nil
+}
+
+// ensureDefaultProject is called from openSQLite after migrations.
+// Idempotent: if a 'default' row already exists (e.g. second open of
+// the same DB file), this is a no-op. Safe to call repeatedly.
+func (s *Store) ensureDefaultProject(ctx context.Context) error {
+	var n int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM projects WHERE project_id = 'default'`).Scan(&n); err != nil {
+		return fmt.Errorf("count default: %w", err)
+	}
+	if n > 0 {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT OR IGNORE INTO projects (project_id, display_name, created_at) VALUES ('default', 'Default Project', ?)`,
+		time.Now().UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return fmt.Errorf("insert default: %w", err)
+	}
+	return nil
 }
 
 // buildSafetyHolder prefers cfg.Safety (test-injected) over a fresh
@@ -109,13 +140,35 @@ func (s *Store) SetCanary(token string) {
 	s.canary.Set(safety.CanaryToken(token))
 }
 
+// CanaryPresent reports whether a canary token is currently installed
+// (INV-3). Cheap, lock-free-ish (RLock). Review-w4-001: previously
+// dark-mem-inspect printed false even when the Store had a canary.
+func (s *Store) CanaryPresent() bool {
+	return !s.canary.Active().IsZero()
+}
+
 // SetActiveProject installs the project_id (INV-7) that the store.Store uses
 // to filter every read and tag every write. Empty string clears and
 // causes subsequent reads to return store.ErrSessionRequired.
-func (s *Store) SetActiveProject(projectID string) {
+//
+// W3-005: non-empty projectID is validated against the projects table;
+// unknown ids return ErrInvalidArgument and leave the previous active
+// project unchanged. The special id "default" is always allowed
+// (legacy compat — see interface docs).
+func (s *Store) SetActiveProject(ctx context.Context, projectID string) error {
+	if projectID != "" && projectID != "default" {
+		p, err := s.GetProject(ctx, projectID)
+		if err != nil {
+			return err
+		}
+		if p == nil {
+			return fmt.Errorf("%w: project_id %q does not exist; create it first", store.ErrInvalidArgument, projectID)
+		}
+	}
 	s.mu.Lock()
 	s.activeProject = projectID
 	s.mu.Unlock()
+	return nil
 }
 
 // ActiveProject returns the currently installed project_id. Empty if
@@ -147,7 +200,15 @@ func projectIDOrActive(wcProjectID, activeProject string) string {
 	return activeProject
 }
 
-// ActiveConstitution returns the active constitution's id, version, sha256.
+// ActiveConstitution is GLOBAL by design (see spec 171 T4g).
+//
+// Returns the active constitution's id, version, sha256. Used by
+// runWatchdog (INV-4) to verify the constitution file has not drifted.
+// The active constitution is a SYSTEM-level property: it defines
+// the agent's posture, applies to every operation, and is shared
+// across all projects. See spec 171 T4f — the `constitutions`
+// table has no project_id column.
+//
 // Returns empty strings if no constitution is registered.
 func (s *Store) ActiveConstitution(ctx context.Context) (string, string, string) {
 	var id, ver, sha string
@@ -342,6 +403,10 @@ func (s *Store) ListWrites(ctx context.Context, f audit.ListFilters) ([]audit.Wr
 // ----- sessions -----
 
 func (s *Store) SaveSession(ctx context.Context, wc store.WriteContext, sess *session.Session) (int64, error) {
+	if err := s.requireProject(); err != nil {
+		return 0, err
+	}
+	projectID := projectIDOrActive(wc.ProjectID, s.ActiveProject()) // capture before locking
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if sess.StartedAt == "" {
@@ -352,10 +417,10 @@ func (s *Store) SaveSession(ctx context.Context, wc store.WriteContext, sess *se
 	}
 	res, err := s.db.ExecContext(ctx,
 		`INSERT INTO sessions (session_id, status, constitution_id, constitution_ver, active_mods,
-		                     started_at, closed_at, notes, parent_session_id, operator)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		                     started_at, closed_at, notes, parent_session_id, operator, project_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		sess.SessionID, sess.Status, sess.ConstitutionID, sess.ConstitutionVer, sess.ActiveMods,
-		sess.StartedAt, sess.ClosedAt, sess.Notes, sess.ParentSessionID, sess.Operator)
+		sess.StartedAt, sess.ClosedAt, sess.Notes, sess.ParentSessionID, sess.Operator, projectID)
 	if err != nil {
 		return 0, err
 	}
@@ -377,10 +442,16 @@ func (s *Store) SaveSession(ctx context.Context, wc store.WriteContext, sess *se
 }
 
 func (s *Store) GetSession(ctx context.Context, sessionID string) (*session.Session, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.ActiveProject() // capture before locking
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	row := s.db.QueryRowContext(ctx,
 		`SELECT id, session_id, status, constitution_id, constitution_ver, active_mods,
 		        started_at, closed_at, notes, parent_session_id, operator
-		 FROM sessions WHERE session_id = ?`, sessionID)
+		 FROM sessions WHERE session_id = ? AND project_id = ?`, sessionID, activeProject)
 	var sess session.Session
 	var notes, closedAt sql.NullString
 	if err := row.Scan(&sess.ID, &sess.SessionID, &sess.Status, &sess.ConstitutionID, &sess.ConstitutionVer, &sess.ActiveMods,
@@ -400,12 +471,16 @@ func (s *Store) GetSession(ctx context.Context, sessionID string) (*session.Sess
 }
 
 func (s *Store) CloseSession(ctx context.Context, wc store.WriteContext, sessionID string) error {
+	if err := s.requireProject(); err != nil {
+		return err
+	}
+	activeProject := s.ActiveProject() // capture before locking
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE sessions SET status = ?, closed_at = ? WHERE session_id = ? AND status = ?`,
-		string(session.StatusClosed), now, sessionID, string(session.StatusActive))
+		`UPDATE sessions SET status = ?, closed_at = ? WHERE session_id = ? AND project_id = ? AND status = ?`,
+		string(session.StatusClosed), now, sessionID, activeProject, string(session.StatusActive))
 	if err != nil {
 		return err
 	}
@@ -425,13 +500,19 @@ func (s *Store) CloseSession(ctx context.Context, wc store.WriteContext, session
 }
 
 func (s *Store) ListSessions(ctx context.Context, limit int) ([]session.Session, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.ActiveProject() // capture before locking
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if limit <= 0 {
 		limit = 50
 	}
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, session_id, status, constitution_id, constitution_ver, active_mods,
 		        started_at, closed_at, notes, parent_session_id, operator
-		 FROM sessions ORDER BY id DESC LIMIT ?`, limit)
+		 FROM sessions WHERE project_id = ? ORDER BY id DESC LIMIT ?`, activeProject, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -544,10 +625,16 @@ func (s *Store) SaveRun(ctx context.Context, wc store.WriteContext, run *researc
 }
 
 func (s *Store) GetRun(ctx context.Context, id int64) (*research.ResearchRun, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.ActiveProject() // capture before locking
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	row := s.db.QueryRowContext(ctx,
 		`SELECT id, session_id, query, intent, backend_used, backends_tried,
 		        took_ms, confidence_avg, errors, created_at
-		 FROM research_runs WHERE id = ?`, id)
+		 FROM research_runs WHERE id = ? AND project_id = ?`, id, activeProject)
 	var run research.ResearchRun
 	var btJSON, errsJSON, sessionID, backendUsed sql.NullString
 	if err := row.Scan(&run.ID, &sessionID, &run.Query, &run.Intent, &backendUsed, &btJSON,
@@ -701,13 +788,19 @@ func (s *Store) Recall(ctx context.Context, opts research.RecallOptions) ([]rese
 }
 
 func (s *Store) ListItems(ctx context.Context, runID int64, source string, limit int) ([]research.Item, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.ActiveProject() // capture before locking
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if limit <= 0 {
 		limit = 50
 	}
 	q := `SELECT id, run_id, title, url, snippet, source, confidence,
 	             freshness_at, lang, raw, created_at
-	      FROM research_items WHERE 1=1`
-	args := []any{}
+	      FROM research_items WHERE project_id = ?`
+	args := []any{activeProject}
 	if runID > 0 {
 		q += ` AND run_id = ?`
 		args = append(args, runID)
@@ -810,6 +903,10 @@ func (s *Store) ResearchStatus(ctx context.Context) (*research.Status, error) {
 // ----- specs -----
 
 func (s *Store) SaveSpec(ctx context.Context, wc store.WriteContext, sp *vibeflow.Spec) (int64, error) {
+	if err := s.requireProject(); err != nil {
+		return 0, err
+	}
+	projectID := projectIDOrActive(wc.ProjectID, s.ActiveProject()) // capture before locking
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if sp.CreatedAt == "" {
@@ -819,10 +916,10 @@ func (s *Store) SaveSpec(ctx context.Context, wc store.WriteContext, sp *vibeflo
 		sp.UpdatedAt = sp.CreatedAt
 	}
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO vibe_specs (vibe_case, session_id, constitution_json, spec_json, tasks_json, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO vibe_specs (vibe_case, session_id, constitution_json, spec_json, tasks_json, created_at, updated_at, project_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		sp.VibeCase, nullStr(sp.SessionID), nullStr(sp.Constitution), nullStr(sp.Spec), nullStr(sp.Tasks),
-		sp.CreatedAt, sp.UpdatedAt)
+		sp.CreatedAt, sp.UpdatedAt, projectID)
 	if err != nil {
 		return 0, err
 	}
@@ -841,9 +938,15 @@ func (s *Store) SaveSpec(ctx context.Context, wc store.WriteContext, sp *vibeflo
 }
 
 func (s *Store) GetSpec(ctx context.Context, id int64) (*vibeflow.Spec, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.ActiveProject() // capture before locking
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	row := s.db.QueryRowContext(ctx,
 		`SELECT id, vibe_case, session_id, constitution_json, spec_json, tasks_json, created_at, updated_at
-		 FROM vibe_specs WHERE id = ?`, id)
+		 FROM vibe_specs WHERE id = ? AND project_id = ?`, id, activeProject)
 	var sp vibeflow.Spec
 	var sessionID, constitution, specJSON, tasks, updatedAt sql.NullString
 	if err := row.Scan(&sp.ID, &sp.VibeCase, &sessionID, &constitution, &specJSON, &tasks, &sp.CreatedAt, &updatedAt); err != nil {
@@ -871,6 +974,10 @@ func (s *Store) GetSpec(ctx context.Context, id int64) (*vibeflow.Spec, error) {
 }
 
 func (s *Store) UpdateSpec(ctx context.Context, wc store.WriteContext, id int64, sp *vibeflow.Spec) error {
+	if err := s.requireProject(); err != nil {
+		return err
+	}
+	activeProject := s.ActiveProject() // capture before locking
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now().UTC().Format(time.RFC3339Nano)
@@ -882,8 +989,8 @@ func (s *Store) UpdateSpec(ctx context.Context, wc store.WriteContext, id int64,
 			spec_json         = COALESCE(NULLIF(?, ''), spec_json),
 			tasks_json        = COALESCE(NULLIF(?, ''), tasks_json),
 			updated_at        = ?
-		 WHERE id = ?`,
-		sp.VibeCase, sp.SessionID, sp.Constitution, sp.Spec, sp.Tasks, now, id)
+		 WHERE id = ? AND project_id = ?`,
+		sp.VibeCase, sp.SessionID, sp.Constitution, sp.Spec, sp.Tasks, now, id, activeProject)
 	if err != nil {
 		return err
 	}
@@ -904,9 +1011,13 @@ func (s *Store) UpdateSpec(ctx context.Context, wc store.WriteContext, id int64,
 }
 
 func (s *Store) DeleteSpec(ctx context.Context, wc store.WriteContext, id int64) error {
+	if err := s.requireProject(); err != nil {
+		return err
+	}
+	activeProject := s.ActiveProject() // capture before locking
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	res, err := s.db.ExecContext(ctx, `DELETE FROM vibe_specs WHERE id = ?`, id)
+	res, err := s.db.ExecContext(ctx, `DELETE FROM vibe_specs WHERE id = ? AND project_id = ?`, id, activeProject)
 	if err != nil {
 		return err
 	}
@@ -927,12 +1038,18 @@ func (s *Store) DeleteSpec(ctx context.Context, wc store.WriteContext, id int64)
 }
 
 func (s *Store) ListSpecs(ctx context.Context, f vibeflow.SpecListFilters) ([]vibeflow.Spec, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.ActiveProject() // capture before locking
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if f.Limit <= 0 {
 		f.Limit = 50
 	}
 	q := `SELECT id, vibe_case, session_id, constitution_json, spec_json, tasks_json, created_at, updated_at
-	      FROM vibe_specs WHERE 1=1`
-	args := []any{}
+	      FROM vibe_specs WHERE project_id = ?`
+	args := []any{activeProject}
 	if f.VibeCase != "" {
 		q += ` AND vibe_case = ?`
 		args = append(args, f.VibeCase)
@@ -978,6 +1095,10 @@ func (s *Store) ListSpecs(ctx context.Context, f vibeflow.SpecListFilters) ([]vi
 // ----- brand guides -----
 
 func (s *Store) SaveBrandGuide(ctx context.Context, wc store.WriteContext, b *vibeflow.BrandGuide) error {
+	if err := s.requireProject(); err != nil {
+		return err
+	}
+	projectID := projectIDOrActive(wc.ProjectID, s.ActiveProject()) // capture before locking
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if b.CreatedAt == "" {
@@ -985,16 +1106,16 @@ func (s *Store) SaveBrandGuide(ctx context.Context, wc store.WriteContext, b *vi
 	}
 	b.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO vibe_brands (brand_id, voice_json, visual_json, narrative_json, compliance_json, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)
-		 ON CONFLICT(brand_id) DO UPDATE SET
+		`INSERT INTO vibe_brands (brand_id, voice_json, visual_json, narrative_json, compliance_json, created_at, updated_at, project_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(project_id, brand_id) DO UPDATE SET
 		   voice_json = excluded.voice_json,
 		   visual_json = excluded.visual_json,
 		   narrative_json = excluded.narrative_json,
 		   compliance_json = excluded.compliance_json,
 		   updated_at = excluded.updated_at`,
 		b.BrandID, nullStr(b.Voice), nullStr(b.Visual), nullStr(b.Narrative), nullStr(b.Compliance),
-		b.CreatedAt, b.UpdatedAt)
+		b.CreatedAt, b.UpdatedAt, projectID)
 	if err != nil {
 		return err
 	}
@@ -1007,14 +1128,20 @@ func (s *Store) SaveBrandGuide(ctx context.Context, wc store.WriteContext, b *vi
 		ConstitutionID:  wc.ConstitutionID,
 		ConstitutionVer: wc.ConstitutionVer,
 		CreatedAt:       b.UpdatedAt,
-		Notes:           "brand_id=" + b.BrandID,
+		Notes:           "brand_id=" + b.BrandID + " project_id=" + projectID,
 	}, "")
 }
 
 func (s *Store) GetBrandGuide(ctx context.Context, brandID string) (*vibeflow.BrandGuide, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.ActiveProject() // capture before locking
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	row := s.db.QueryRowContext(ctx,
 		`SELECT brand_id, voice_json, visual_json, narrative_json, compliance_json, created_at, updated_at
-		 FROM vibe_brands WHERE brand_id = ?`, brandID)
+		 FROM vibe_brands WHERE brand_id = ? AND project_id = ?`, brandID, activeProject)
 	var b vibeflow.BrandGuide
 	var voice, visual, narrative, compliance, updatedAt sql.NullString
 	if err := row.Scan(&b.BrandID, &voice, &visual, &narrative, &compliance, &b.CreatedAt, &updatedAt); err != nil {
@@ -1042,13 +1169,18 @@ func (s *Store) GetBrandGuide(ctx context.Context, brandID string) (*vibeflow.Br
 }
 
 func (s *Store) DeleteBrandGuide(ctx context.Context, wc store.WriteContext, brandID string) error {
+	if err := s.requireProject(); err != nil {
+		return err
+	}
+	activeProject := s.ActiveProject() // capture before locking
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	// Path-safety: prevent slashes / NUL / whitespace in brand_id.
 	if strings.ContainsAny(brandID, "/\\\x00\n\r") {
 		return fmt.Errorf("%w: brand_id contains invalid characters", store.ErrInvalidArgument)
 	}
-	res, err := s.db.ExecContext(ctx, `DELETE FROM vibe_brands WHERE brand_id = ?`, brandID)
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM vibe_brands WHERE brand_id = ? AND project_id = ?`, brandID, activeProject)
 	if err != nil {
 		return err
 	}
@@ -1065,17 +1197,23 @@ func (s *Store) DeleteBrandGuide(ctx context.Context, wc store.WriteContext, bra
 		ConstitutionID:  wc.ConstitutionID,
 		ConstitutionVer: wc.ConstitutionVer,
 		CreatedAt:       time.Now().UTC().Format(time.RFC3339Nano),
-		Notes:           "brand_id=" + brandID,
+		Notes:           "brand_id=" + brandID + " project_id=" + activeProject,
 	}, "")
 }
 
 func (s *Store) ListBrandGuides(ctx context.Context, limit int) ([]vibeflow.BrandGuide, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.ActiveProject() // capture before locking
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if limit <= 0 {
 		limit = 100
 	}
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT brand_id, voice_json, visual_json, narrative_json, compliance_json, created_at, updated_at
-		 FROM vibe_brands ORDER BY updated_at DESC, brand_id ASC LIMIT ?`, limit)
+		 FROM vibe_brands WHERE project_id = ? ORDER BY updated_at DESC, brand_id ASC LIMIT ?`, activeProject, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1108,6 +1246,13 @@ func (s *Store) ListBrandGuides(ctx context.Context, limit int) ([]vibeflow.Bran
 }
 
 // ----- compliance rules -----
+// IMPORTANT (spec 171 T4c): vibe_compliance is GLOBAL by jurisdiction.
+// A rule for "EU" is visible from any project — jurisdiction is a
+// property of law (GDPR is GDPR), not of project. Save / Get / List
+// ignore project_id on purpose. If multi-jurisdiction-per-project
+// isolation ever becomes a requirement, swap PK to (project_id,
+// jurisdiction) via a follow-up migration; current behaviour is
+// preserved here on purpose.
 
 func (s *Store) SaveComplianceRule(ctx context.Context, wc store.WriteContext, r *vibeflow.ComplianceRule) error {
 	s.mu.Lock()
@@ -1138,11 +1283,12 @@ func (s *Store) SaveComplianceRule(ctx context.Context, wc store.WriteContext, r
 		ConstitutionID:  wc.ConstitutionID,
 		ConstitutionVer: wc.ConstitutionVer,
 		CreatedAt:       r.CreatedAt,
-		Notes:           "jurisdiction=" + r.Jurisdiction,
+		Notes:           "jurisdiction=" + r.Jurisdiction + " (global)",
 	}, "")
 }
 
 func (s *Store) GetComplianceRule(ctx context.Context, jurisdiction string) (*vibeflow.ComplianceRule, error) {
+	// Global by design — see T4c decision.
 	row := s.db.QueryRowContext(ctx,
 		`SELECT jurisdiction, rules_json, effective_at, source_url, created_at
 		 FROM vibe_compliance WHERE jurisdiction = ?`, jurisdiction)
@@ -1167,6 +1313,7 @@ func (s *Store) GetComplianceRule(ctx context.Context, jurisdiction string) (*vi
 }
 
 func (s *Store) ListComplianceRules(ctx context.Context, limit int) ([]vibeflow.ComplianceRule, error) {
+	// Global by design — see T4c decision.
 	if limit <= 0 {
 		limit = 50
 	}
@@ -1201,6 +1348,10 @@ func (s *Store) ListComplianceRules(ctx context.Context, limit int) ([]vibeflow.
 // ----- artifacts -----
 
 func (s *Store) SaveArtifact(ctx context.Context, wc store.WriteContext, a *vibeflow.Artifact) (int64, error) {
+	if err := s.requireProject(); err != nil {
+		return 0, err
+	}
+	projectID := projectIDOrActive(wc.ProjectID, s.ActiveProject()) // capture before locking
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if a.CreatedAt == "" {
@@ -1215,10 +1366,10 @@ func (s *Store) SaveArtifact(ctx context.Context, wc store.WriteContext, a *vibe
 	}
 	res, err := s.db.ExecContext(ctx,
 		`INSERT INTO vibe_artifacts (session_id, vibe_case, spec_id, artifact_url, artifact_type,
-		                           brand_id, jurisdiction, has_disclosure, validation_status, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		                           brand_id, jurisdiction, has_disclosure, validation_status, created_at, project_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		nullStr(a.SessionID), a.VibeCase, nullInt(a.SpecID), nullStr(a.ArtifactURL), a.ArtifactType,
-		nullStr(a.BrandID), nullStr(a.Jurisdiction), hasDisclosure, a.ValidationStatus, a.CreatedAt)
+		nullStr(a.BrandID), nullStr(a.Jurisdiction), hasDisclosure, a.ValidationStatus, a.CreatedAt, projectID)
 	if err != nil {
 		return 0, err
 	}
@@ -1237,14 +1388,24 @@ func (s *Store) SaveArtifact(ctx context.Context, wc store.WriteContext, a *vibe
 }
 
 func (s *Store) GetArtifact(ctx context.Context, id int64) (*vibeflow.Artifact, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.ActiveProject() // capture before locking
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	row := s.db.QueryRowContext(ctx,
 		`SELECT id, session_id, vibe_case, spec_id, artifact_url, artifact_type,
 		        brand_id, jurisdiction, has_disclosure, validation_status, created_at
-		 FROM vibe_artifacts WHERE id = ?`, id)
+		 FROM vibe_artifacts WHERE id = ? AND project_id = ?`, id, activeProject)
 	return scanArtifact(row)
 }
 
 func (s *Store) UpdateArtifact(ctx context.Context, wc store.WriteContext, id int64, u *vibeflow.ArtifactUpdate) error {
+	if err := s.requireProject(); err != nil {
+		return err
+	}
+	activeProject := s.ActiveProject() // capture before locking
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var hasDisclosure *int
@@ -1264,8 +1425,8 @@ func (s *Store) UpdateArtifact(ctx context.Context, wc store.WriteContext, id in
 			jurisdiction      = COALESCE(?, jurisdiction),
 			has_disclosure    = COALESCE(?, has_disclosure),
 			validation_status = COALESCE(?, validation_status)
-		 WHERE id = ?`,
-		u.SessionID, u.SpecID, u.ArtifactURL, u.BrandID, u.Jurisdiction, hasDisclosure, u.ValidationStatus, id)
+		 WHERE id = ? AND project_id = ?`,
+		u.SessionID, u.SpecID, u.ArtifactURL, u.BrandID, u.Jurisdiction, hasDisclosure, u.ValidationStatus, id, activeProject)
 	if err != nil {
 		return err
 	}
@@ -1286,9 +1447,13 @@ func (s *Store) UpdateArtifact(ctx context.Context, wc store.WriteContext, id in
 }
 
 func (s *Store) DeleteArtifact(ctx context.Context, wc store.WriteContext, id int64) error {
+	if err := s.requireProject(); err != nil {
+		return err
+	}
+	activeProject := s.ActiveProject() // capture before locking
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	res, err := s.db.ExecContext(ctx, `DELETE FROM vibe_artifacts WHERE id = ?`, id)
+	res, err := s.db.ExecContext(ctx, `DELETE FROM vibe_artifacts WHERE id = ? AND project_id = ?`, id, activeProject)
 	if err != nil {
 		return err
 	}
@@ -1309,13 +1474,19 @@ func (s *Store) DeleteArtifact(ctx context.Context, wc store.WriteContext, id in
 }
 
 func (s *Store) ListArtifacts(ctx context.Context, f vibeflow.ArtifactListFilters) ([]vibeflow.Artifact, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.ActiveProject() // capture before locking
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if f.Limit <= 0 {
 		f.Limit = 50
 	}
 	q := `SELECT id, session_id, vibe_case, spec_id, artifact_url, artifact_type,
 	             brand_id, jurisdiction, has_disclosure, validation_status, created_at
-	      FROM vibe_artifacts WHERE 1=1`
-	args := []any{}
+	      FROM vibe_artifacts WHERE project_id = ?`
+	args := []any{activeProject}
 	if f.VibeCase != "" {
 		q += ` AND vibe_case = ?`
 		args = append(args, f.VibeCase)
@@ -1379,10 +1550,15 @@ func (s *Store) ListArtifacts(ctx context.Context, f vibeflow.ArtifactListFilter
 }
 
 func (s *Store) SetArtifactValidation(ctx context.Context, wc store.WriteContext, id int64, status string) error {
+	if err := s.requireProject(); err != nil {
+		return err
+	}
+	activeProject := s.ActiveProject() // capture before locking
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE vibe_artifacts SET validation_status = ? WHERE id = ?`, status, id)
+		`UPDATE vibe_artifacts SET validation_status = ? WHERE id = ? AND project_id = ?`,
+		status, id, activeProject)
 	if err != nil {
 		return err
 	}
@@ -1442,16 +1618,20 @@ func scanArtifact(row *sql.Row) (*vibeflow.Artifact, error) {
 // ----- drift reports -----
 
 func (s *Store) SaveDriftReport(ctx context.Context, wc store.WriteContext, d *vibeflow.DriftReport) (int64, error) {
+	if err := s.requireProject(); err != nil {
+		return 0, err
+	}
+	projectID := projectIDOrActive(wc.ProjectID, s.ActiveProject()) // capture before locking
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if d.CreatedAt == "" {
 		d.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
 	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO vibe_drift_reports (artifact_id, spec_id, verdict, spec_diff_json, judge_reasoning, reconciled_at, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO vibe_drift_reports (artifact_id, spec_id, verdict, spec_diff_json, judge_reasoning, reconciled_at, created_at, project_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		d.ArtifactID, nullInt(d.SpecID), d.Verdict, nullStr(d.SpecDiff), nullStr(d.JudgeReasoning),
-		nullStr(d.ReconciledAt), d.CreatedAt)
+		nullStr(d.ReconciledAt), d.CreatedAt, projectID)
 	if err != nil {
 		return 0, err
 	}
@@ -1470,19 +1650,33 @@ func (s *Store) SaveDriftReport(ctx context.Context, wc store.WriteContext, d *v
 }
 
 func (s *Store) LatestDriftForArtifact(ctx context.Context, artifactID int64) (*vibeflow.DriftReport, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.ActiveProject() // capture before locking
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	row := s.db.QueryRowContext(ctx,
 		`SELECT id, artifact_id, spec_id, verdict, spec_diff_json, judge_reasoning, reconciled_at, created_at
-		 FROM vibe_drift_reports WHERE artifact_id = ? ORDER BY id DESC LIMIT 1`, artifactID)
+		 FROM vibe_drift_reports
+		 WHERE artifact_id = ? AND project_id = ?
+		 ORDER BY id DESC LIMIT 1`, artifactID, activeProject)
 	return scanDriftReport(row)
 }
 
 func (s *Store) ListDriftReports(ctx context.Context, artifactID int64, verdict string, limit int) ([]vibeflow.DriftReport, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.ActiveProject() // capture before locking
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if limit <= 0 {
 		limit = 50
 	}
 	q := `SELECT id, artifact_id, spec_id, verdict, spec_diff_json, judge_reasoning, reconciled_at, created_at
-	      FROM vibe_drift_reports WHERE 1=1`
-	args := []any{}
+	      FROM vibe_drift_reports WHERE project_id = ?`
+	args := []any{activeProject}
 	if artifactID > 0 {
 		q += ` AND artifact_id = ?`
 		args = append(args, artifactID)
@@ -1557,6 +1751,10 @@ func scanDriftReportRows(rows *sql.Rows) (*vibeflow.DriftReport, error) {
 // ----- sdd evaluations -----
 
 func (s *Store) SaveSDDEvaluation(ctx context.Context, wc store.WriteContext, e *ssd.SDDEvaluation) (int64, error) {
+	if err := s.requireProject(); err != nil {
+		return 0, err
+	}
+	projectID := projectIDOrActive(wc.ProjectID, s.ActiveProject()) // capture before locking
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if e.CreatedAt == "" {
@@ -1567,12 +1765,12 @@ func (s *Store) SaveSDDEvaluation(ctx context.Context, wc store.WriteContext, e 
 		 (eval_type, target_type, target_id, verdict_json, confidence,
 		  prompt_version, model, created_at,
 		  constitution_id, constitution_version, active_mods_json,
-		  refused_attempts, refusal_pattern)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		  refused_attempts, refusal_pattern, project_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.EvalType, e.TargetType, e.TargetID, e.VerdictJSON, e.Confidence,
 		nullStr(e.PromptVersion), nullStr(e.Model), e.CreatedAt,
 		nullStr(e.ConstitutionID), nullStr(e.ConstitutionVersion), nullStr(e.ActiveModsJSON),
-		e.RefusedAttempts, nullStr(e.RefusalPattern))
+		e.RefusedAttempts, nullStr(e.RefusalPattern), projectID)
 	if err != nil {
 		return 0, err
 	}
@@ -1591,18 +1789,30 @@ func (s *Store) SaveSDDEvaluation(ctx context.Context, wc store.WriteContext, e 
 }
 
 func (s *Store) LatestSDDEvaluation(ctx context.Context, evalType, targetType, targetID string) (*ssd.SDDEvaluation, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.ActiveProject() // capture before locking
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	row := s.db.QueryRowContext(ctx,
 		`SELECT id, eval_type, target_type, target_id, verdict_json, confidence,
 		        prompt_version, model, created_at,
 		        constitution_id, constitution_version, active_mods_json,
 		        refused_attempts, refusal_pattern
 		 FROM sdd_evaluations
-		 WHERE eval_type = ? AND target_type = ? AND target_id = ?
-		 ORDER BY id DESC LIMIT 1`, evalType, targetType, targetID)
+		 WHERE eval_type = ? AND target_type = ? AND target_id = ? AND project_id = ?
+		 ORDER BY id DESC LIMIT 1`, evalType, targetType, targetID, activeProject)
 	return scanSDDEval(row)
 }
 
 func (s *Store) ListSDDEvaluations(ctx context.Context, f ssd.ListFilters) ([]ssd.SDDEvaluation, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.ActiveProject() // capture before locking
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if f.Limit <= 0 {
 		f.Limit = 20
 	}
@@ -1610,8 +1820,8 @@ func (s *Store) ListSDDEvaluations(ctx context.Context, f ssd.ListFilters) ([]ss
 	             prompt_version, model, created_at,
 	             constitution_id, constitution_version, active_mods_json,
 	             refused_attempts, refusal_pattern
-	      FROM sdd_evaluations WHERE 1=1`
-	args := []any{}
+	      FROM sdd_evaluations WHERE project_id = ?`
+	args := []any{activeProject}
 	if f.EvalType != "" {
 		q += ` AND eval_type = ?`
 		args = append(args, f.EvalType)
@@ -1700,6 +1910,18 @@ func scanSDDEvalRows(rows *sql.Rows) (*ssd.SDDEvaluation, error) {
 }
 
 // ----- constitution -----
+// IMPORTANT (spec 171 T4f): constitutions are GLOBAL by design.
+// Constitutions define the agent's posture at system level (INV-4
+// watchdog verifies the active constitution). They are NOT
+// project-scoped: every project sees the same constitution catalog.
+// The `constitutions` table has no `project_id` column — there is
+// nothing to filter by. Same rationale as `vibe_compliance`
+// (jurisdiction = property of law) — see spec 171 T4c decision.
+//
+// To move constitutions to project scope, migration v9 must add
+// `project_id` to the table and refactor `runWatchdog` (INV-4) to
+// pick one per active project. That is intentionally out of scope
+// today.
 
 func (s *Store) SaveConstitution(ctx context.Context, wc store.WriteContext, c *constitution.Constitution) error {
 	s.mu.Lock()
@@ -1741,11 +1963,12 @@ func (s *Store) SaveConstitution(ctx context.Context, wc store.WriteContext, c *
 		ConstitutionID:  c.ConstitutionID,
 		ConstitutionVer: c.Version,
 		CreatedAt:       c.CreatedAt,
-		Notes:           "constitution_id=" + c.ConstitutionID + "@" + c.Version,
+		Notes:           "constitution_id=" + c.ConstitutionID + "@" + c.Version + " (global)",
 	}, "")
 }
 
 func (s *Store) GetConstitution(ctx context.Context, constitutionID, version string) (*constitution.Constitution, error) {
+	// Global by design — see T4f decision.
 	row := s.db.QueryRowContext(ctx,
 		`SELECT id, constitution_id, version, label, source, file_path, parsed_json, sha256,
 		        enabled, created_at, activated_at
@@ -1755,6 +1978,7 @@ func (s *Store) GetConstitution(ctx context.Context, constitutionID, version str
 }
 
 func (s *Store) ListConstitutions(ctx context.Context, limit int) ([]constitution.Constitution, error) {
+	// Global by design — see T4f decision.
 	if limit <= 0 {
 		limit = 50
 	}
@@ -1831,6 +2055,18 @@ func (s *Store) VerifyConstitutionHash(ctx context.Context, constitutionID, sha2
 }
 
 // ----- mods -----
+// IMPORTANT (spec 171 T4f): mods CATALOG is GLOBAL by design.
+// The `mods` table has UNIQUE(mod_id) — mod_id identifies a mod once
+// across all projects. Each project can use any mod, but the catalog
+// itself is a single shared registry. Per-project isolation is
+// recorded in `mod_loads` (the audit trail of who loaded what) —
+// that table has `project_id` and IS project-scoped. See
+// RecordModLoad / ListModLoads below.
+//
+// Splitting the catalog per project would require migration v9
+// (composite UNIQUE(project_id, mod_id) on mods) and disabling the
+// cross-project mod-share pattern. That is intentionally out of
+// scope today.
 
 func (s *Store) SaveMod(ctx context.Context, wc store.WriteContext, m *mods.Mod) error {
 	s.mu.Lock()
@@ -1871,11 +2107,12 @@ func (s *Store) SaveMod(ctx context.Context, wc store.WriteContext, m *mods.Mod)
 		ConstitutionID:  wc.ConstitutionID,
 		ConstitutionVer: wc.ConstitutionVer,
 		CreatedAt:       m.UpdatedAt,
-		Notes:           "mod_id=" + m.ModID,
+		Notes:           "mod_id=" + m.ModID + " (global catalog)",
 	}, "")
 }
 
 func (s *Store) GetMod(ctx context.Context, modID string) (*mods.Mod, error) {
+	// Global catalog — see T4f decision.
 	row := s.db.QueryRowContext(ctx,
 		`SELECT id, mod_id, name, version, source, manifest_json, sha256, risk_class,
 		        target_scope, requires_tor, created_at, updated_at
@@ -1884,6 +2121,7 @@ func (s *Store) GetMod(ctx context.Context, modID string) (*mods.Mod, error) {
 }
 
 func (s *Store) ListMods(ctx context.Context, limit int) ([]mods.Mod, error) {
+	// Global catalog — see T4f decision.
 	if limit <= 0 {
 		limit = 50
 	}
@@ -1952,6 +2190,10 @@ func scanModRows(rows *sql.Rows) (*mods.Mod, error) {
 }
 
 func (s *Store) RecordModLoad(ctx context.Context, wc store.WriteContext, load *mods.ModLoad) (int64, error) {
+	if err := s.requireProject(); err != nil {
+		return 0, err
+	}
+	projectID := projectIDOrActive(wc.ProjectID, s.ActiveProject()) // capture before locking
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if load.LoadedAt == "" {
@@ -1959,10 +2201,10 @@ func (s *Store) RecordModLoad(ctx context.Context, wc store.WriteContext, load *
 	}
 	res, err := s.db.ExecContext(ctx,
 		`INSERT INTO mod_loads (mod_id, session_id, loaded_at, duration_ms,
-		                       capabilities_count, error, constitution_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		                       capabilities_count, error, constitution_id, project_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		load.ModID, nullStr(load.SessionID), load.LoadedAt, load.DurationMs,
-		load.CapabilitiesCount, nullStr(load.Error), nullStr(load.ConstitutionID))
+		load.CapabilitiesCount, nullStr(load.Error), nullStr(load.ConstitutionID), projectID)
 	if err != nil {
 		return 0, err
 	}
@@ -1976,17 +2218,23 @@ func (s *Store) RecordModLoad(ctx context.Context, wc store.WriteContext, load *
 		ConstitutionID:  load.ConstitutionID,
 		ConstitutionVer: wc.ConstitutionVer,
 		CreatedAt:       load.LoadedAt,
-		Notes:           "mod_id=" + load.ModID,
+		Notes:           "mod_id=" + load.ModID + " project_id=" + projectID,
 	}, "")
 }
 
 func (s *Store) ListModLoads(ctx context.Context, modID string, limit int) ([]mods.ModLoad, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.ActiveProject() // capture before locking
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if limit <= 0 {
 		limit = 50
 	}
 	q := `SELECT id, mod_id, session_id, loaded_at, duration_ms, capabilities_count, error, constitution_id
-	      FROM mod_loads WHERE 1=1`
-	args := []any{}
+	      FROM mod_loads WHERE project_id = ?`
+	args := []any{activeProject}
 	if modID != "" {
 		q += ` AND mod_id = ?`
 		args = append(args, modID)
@@ -2030,6 +2278,22 @@ func (s *Store) Vacuum(ctx context.Context, policy store.VacuumPolicy) (store.Va
 	return stats, nil
 }
 
+// Stats is GLOBAL by design (see spec 171 T4g).
+//
+// It returns aggregate health counters across the entire dark.db: schema
+// version, table list, total rows per table, active sessions. It is the
+// operational observability entry point — used by health checks, dashboards,
+// and operator tooling to see "what's in this DB" without filtering.
+//
+// Stats is intentionally NOT scoped to the active project: an operator
+// inspecting the system needs to see totals, not just their project's
+// slice. The numbers are aggregate counts and risk only information
+// disclosure about database size, not about the contents of any
+// specific tenant's data.
+//
+// If multi-tenant observability is ever needed (per-project counters
+// without leaking totals), add a sister method `StatsForProject(ctx,
+// projectID)` that adds WHERE project_id = ? to each count.
 func (s *Store) Stats(ctx context.Context) (*store.Stats, error) {
 	out := &store.Stats{Driver: s.DriverName(), Open: true}
 	rows, err := s.db.QueryContext(ctx, `SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'`)

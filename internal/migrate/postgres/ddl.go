@@ -264,9 +264,24 @@ CREATE INDEX IF NOT EXISTS idx_constitutions_verified ON constitutions(last_veri
 `,
 	},
 	{
-		// v7 — project namespace (multi-tenancy) + RLS
+		// v7 — project namespace (multi-tenancy) on Postgres.
+		//
+		// Spec 171 T5 (option b): RLS removed. The earlier version of this
+		// migration created ENABLE + FORCE ROW LEVEL SECURITY + policy
+		// dark_mem_project_isolation on every tenant-scoped table, but
+		// the Store never wrapped transactions in `withProjectTx` to set
+		// the dark_mem.project_id GUC — every read returned 0 rows
+		// (RLS evaluated `project_id = NULL` = FALSE). The Store now
+		// mirrors SQLite's pattern: explicit `WHERE project_id = $1` on
+		// every read and tag on every write. No RLS needed.
+		//
+		// If you want RLS back, see option (a) in spec 171 T5: wire
+		// `withProjectTx` around every read and write transaction, then
+		// re-introduce this migration's RLS block in a follow-up
+		// version. Until that is done AND tested with a live Postgres
+		// test (DARK_TEST_POSTGRES_DSN), keep RLS off.
 		Version: 7,
-		Name:    "project_namespace_rls",
+		Name:    "project_namespace",
 		Up: `
 CREATE TABLE IF NOT EXISTS projects (
     id                BIGSERIAL PRIMARY KEY,
@@ -305,31 +320,6 @@ CREATE INDEX IF NOT EXISTS idx_sdd_eval_project         ON sdd_evaluations(proje
 CREATE INDEX IF NOT EXISTS idx_write_audit_project     ON write_audit(project_id, id);
 CREATE INDEX IF NOT EXISTS idx_mod_loads_project       ON mod_loads(project_id, id);
 CREATE INDEX IF NOT EXISTS idx_sessions_project        ON sessions(project_id, id);
-
--- Row Level Security: each table is locked down. The app sets
--- dark_mem.project_id per transaction; queries that fail to set it
--- return zero rows (defense in depth: even if app code has a bug and
--- forgets the filter, the DB refuses).
-DO $$
-DECLARE t TEXT;
-BEGIN
-    FOR t IN
-        SELECT unnest(ARRAY[
-            'research_runs','research_items','research_links',
-            'vibe_specs','vibe_artifacts','vibe_drift_reports',
-            'sdd_evaluations','write_audit','mod_loads',
-            'sessions','constitutions','mods'
-        ])
-    LOOP
-        EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
-        EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);
-        EXECUTE format(
-            'CREATE POLICY dark_mem_project_isolation ON %I
-             USING (project_id = current_setting(''dark_mem.project_id'', TRUE))
-             WITH CHECK (project_id = current_setting(''dark_mem.project_id'', TRUE))',
-            t);
-    END LOOP;
-END$$;
 `,
 	},
 }

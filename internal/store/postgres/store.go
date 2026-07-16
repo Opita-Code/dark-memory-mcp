@@ -1,4 +1,4 @@
-// Package postgres is the Postgres implementation of 
+// Package postgres is the Postgres implementation of store.Store.
 // Backed by jackc/pgx/v5/pgxpool (pure-Go, native protocol).
 //
 // Concurrency: Postgres handles concurrent writes natively via MVCC +
@@ -10,11 +10,28 @@
 // INV-1 invariant is enforced the same way as the SQLite impl:
 // every Save* emits a write_audit row in the SAME tx as the data write.
 //
-// This file is intentionally a SKELETON for v1.0: lifecycle +
-// migrations + audit + sessions + research.Run/save + VerifyConstitutionHash
-// are fully implemented; the rest are stubs (returning store.ErrNotConfigured).
-// Full methods land in subsequent passes — the contract test in
-// tests/dual_driver/store_test.go exercises each one.
+// Scope (spec 171 T5): this file is a PARTIAL impl for v1.0. Lifecycle,
+// migrations, audit, sessions, research (SaveRun/GetRun/ListRuns/Recall/ListItems/LinkResearch),
+// ResearchStatus, project CRUD (CreateProject/GetProject/ListProjects/ArchiveProject),
+// SetActiveProject, Stats, ActiveConstitution, runWatchdog are
+// implemented and project-filtered where applicable. The rest of the
+// Store interface (~25 methods: SaveSpec, GetSpec, SaveBrandGuide,
+// SaveArtifact, etc.) are stubs that return store.ErrNotConfigured.
+//
+// Production runs SQLite today (see dark.db at
+// C:\Users\Nico\AppData\Local\dark-agents\dark.db). The Postgres path
+// is research-only until the missing methods are implemented and
+// tests are run live with DARK_TEST_POSTGRES_DSN set.
+//
+// INV-7 (project isolation) strategy: SPEC 171 T5 OPTION (b). The
+// migration v7 no longer enables RLS (RLS was created in an earlier
+// version of v7 but the Store never wrapped transactions in
+// `withProjectTx` to set the GUC — every read returned 0 rows). RLS
+// is removed. The Store now filters by explicit `WHERE project_id = $1`
+// on every read and tags every write with the active project_id, same
+// as SQLite. If you want RLS back, see option (a) in spec 171 T5 —
+// wire `withProjectTx` around every read and write transaction AND
+// run live Postgres tests.
 package postgres
 
 import (
@@ -108,15 +125,37 @@ func (s *Store) SetCanary(token string) {
 	s.canary.Set(safety.CanaryToken(token))
 }
 
-// SetActiveProject installs the project_id (INV-7) for the 
-// On Postgres, the migration v7 RLS policies use the
+// CanaryPresent reports whether a canary token is currently installed
+// (INV-3). Mirrors the sqlite impl; the in-memory Holder is the source
+// of truth (Review-w4-001: dark-mem-inspect now queries Store instead
+// of creating a fresh empty Holder that always returned false).
+func (s *Store) CanaryPresent() bool {
+	return !s.canary.Active().IsZero()
+}
+
+// SetActiveProject installs the project_id (INV-7) for the
 // `dark_mem.project_id` session GUC; the store.Store writes it via SET LOCAL
 // at the start of every transaction so the DB rejects cross-project
 // reads even if app code has a bug.
-func (s *Store) SetActiveProject(projectID string) {
+//
+// W3-005: non-empty projectID is validated against the projects table;
+// unknown ids return ErrInvalidArgument and leave the previous active
+// project unchanged. The special id "default" is always allowed
+// (legacy compat — see interface docs).
+func (s *Store) SetActiveProject(ctx context.Context, projectID string) error {
+	if projectID != "" && projectID != "default" {
+		p, err := s.GetProject(ctx, projectID)
+		if err != nil {
+			return err
+		}
+		if p == nil {
+			return fmt.Errorf("%w: project_id %q does not exist; create it first", store.ErrInvalidArgument, projectID)
+		}
+	}
 	s.mu.Lock()
 	s.activeProject = projectID
 	s.mu.Unlock()
+	return nil
 }
 
 // ActiveProject returns the currently installed project_id.
@@ -134,45 +173,31 @@ func (s *Store) requireProject() error {
 	return nil
 }
 
-// withProjectTx wraps a function in a transaction with the project_id
-// GUC set. RLS policies filter rows by `current_setting('dark_mem.project_id', TRUE)`.
-func (s *Store) withProjectTx(ctx context.Context, fn func(pgx.Tx) error) error {
-	if err := s.requireProject(); err != nil {
-		return err
+// projectIDOrActive returns wcProjectID if non-empty, otherwise the
+// store.Store's active project. The Store refuses to write with no
+// project at all (requireProject runs at the top of every Save*). Mirror
+// of the same helper in the SQLite impl.
+func projectIDOrActive(wcProjectID, activeProject string) string {
+	if wcProjectID != "" {
+		return wcProjectID
 	}
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	// SET LOCAL ... TRUE = missing_ok (returns NULL instead of error
-	// when not set). Useful for legacy code paths that pre-date v7.
-	if _, err := tx.Exec(ctx, fmt.Sprintf("SET LOCAL dark_mem.project_id = %s", quotePGString(s.activeProject))); err != nil {
-		return err
-	}
-	return fn(tx)
+	return activeProject
 }
 
-// quotePGString quotes a string for safe injection into a SQL literal.
-func quotePGString(s string) string {
-	// Replace backslash and single-quote; nulls become NULL.
-	if s == "" {
-		return "''"
-	}
-	out := make([]byte, 0, len(s)+2)
-	out = append(out, '\'')
-	for i := 0; i < len(s); i++ {
-		if s[i] == '\'' {
-			out = append(out, '\'', '\'')
-		} else if s[i] == '\\' {
-			out = append(out, '\\', '\\')
-		} else {
-			out = append(out, s[i])
-		}
-	}
-	out = append(out, '\'')
-	return string(out)
-}
+// withProjectTx was REMOVED in spec 171 T5 (option b).
+//
+// The earlier version wrapped every operation in a tx that SET LOCAL
+// dark_mem.project_id so the migration v7 RLS policies would filter
+// rows by current_setting('dark_mem.project_id'). The migration has
+// since dropped RLS (option b). The Store now filters by explicit
+// `WHERE project_id = $1` like SQLite — no GUC magic, no transaction
+// wrapping needed. withProjectTx is gone; if you re-introduce RLS in
+// a future migration, wire this back around every read and write
+// transaction. Don't forget live Postgres tests (DARK_TEST_POSTGRES_DSN).
+//
+// Removed helpers (quotePGString was only used by withProjectTx):
+//   - withProjectTx: see comment above
+//   - quotePGString: removed, no longer referenced
 
 // ActiveConstitution returns the active constitution (id, version, sha256).
 func (s *Store) ActiveConstitution(ctx context.Context) (string, string, string) {
@@ -430,6 +455,10 @@ func (s *Store) ListWrites(ctx context.Context, f audit.ListFilters) ([]audit.Wr
 // ----- sessions -----
 
 func (s *Store) SaveSession(ctx context.Context, wc store.WriteContext, sess *session.Session) (int64, error) {
+	if err := s.requireProject(); err != nil {
+		return 0, err
+	}
+	projectID := projectIDOrActive(wc.ProjectID, s.activeProject) // capture before locking
 	if sess.StartedAt == "" {
 		sess.StartedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
@@ -439,11 +468,11 @@ func (s *Store) SaveSession(ctx context.Context, wc store.WriteContext, sess *se
 	var id int64
 	err := s.pool.QueryRow(ctx,
 		`INSERT INTO sessions (session_id, status, constitution_id, constitution_ver, active_mods,
-		                     started_at, closed_at, notes, parent_session_id, operator)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		                     started_at, closed_at, notes, parent_session_id, operator, project_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		 RETURNING id`,
 		sess.SessionID, sess.Status, sess.ConstitutionID, sess.ConstitutionVer, sess.ActiveMods,
-		sess.StartedAt, sess.ClosedAt, sess.Notes, sess.ParentSessionID, sess.Operator).Scan(&id)
+		sess.StartedAt, sess.ClosedAt, sess.Notes, sess.ParentSessionID, sess.Operator, projectID).Scan(&id)
 	if err != nil {
 		return 0, err
 	}
@@ -464,12 +493,16 @@ func (s *Store) SaveSession(ctx context.Context, wc store.WriteContext, sess *se
 }
 
 func (s *Store) GetSession(ctx context.Context, sessionID string) (*session.Session, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.activeProject // capture before locking
 	var sess session.Session
 	var notes, closedAt *string
 	err := s.pool.QueryRow(ctx,
 		`SELECT id, session_id, status, constitution_id, constitution_ver, active_mods,
 		        started_at, closed_at, notes, parent_session_id, operator
-		 FROM sessions WHERE session_id = $1`, sessionID).Scan(
+		 FROM sessions WHERE session_id = $1 AND project_id = $2`, sessionID, activeProject).Scan(
 		&sess.ID, &sess.SessionID, &sess.Status, &sess.ConstitutionID, &sess.ConstitutionVer, &sess.ActiveMods,
 		&sess.StartedAt, &closedAt, &notes, &sess.ParentSessionID, &sess.Operator)
 	if err != nil {
@@ -488,10 +521,15 @@ func (s *Store) GetSession(ctx context.Context, sessionID string) (*session.Sess
 }
 
 func (s *Store) CloseSession(ctx context.Context, wc store.WriteContext, sessionID string) error {
+	if err := s.requireProject(); err != nil {
+		return err
+	}
+	activeProject := s.activeProject // capture before locking
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	tag, err := s.pool.Exec(ctx,
-		`UPDATE sessions SET status = $1, closed_at = $2 WHERE session_id = $3 AND status = $4`,
-		string(session.StatusClosed), now, sessionID, string(session.StatusActive))
+		`UPDATE sessions SET status = $1, closed_at = $2
+		 WHERE session_id = $3 AND project_id = $4 AND status = $5`,
+		string(session.StatusClosed), now, sessionID, activeProject, string(session.StatusActive))
 	if err != nil {
 		return err
 	}
@@ -510,13 +548,17 @@ func (s *Store) CloseSession(ctx context.Context, wc store.WriteContext, session
 }
 
 func (s *Store) ListSessions(ctx context.Context, limit int) ([]session.Session, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.activeProject // capture before locking
 	if limit <= 0 {
 		limit = 50
 	}
 	rows, err := s.pool.Query(ctx,
 		`SELECT id, session_id, status, constitution_id, constitution_ver, active_mods,
 		        started_at, closed_at, notes, parent_session_id, operator
-		 FROM sessions ORDER BY id DESC LIMIT $1`, limit)
+		 FROM sessions WHERE project_id = $1 ORDER BY id DESC LIMIT $2`, activeProject, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -543,6 +585,10 @@ func (s *Store) ListSessions(ctx context.Context, limit int) ([]session.Session,
 // ----- research (SaveRun + Recall + research status) -----
 
 func (s *Store) SaveRun(ctx context.Context, wc store.WriteContext, run *research.ResearchRun) (int64, error) {
+	if err := s.requireProject(); err != nil {
+		return 0, err
+	}
+	projectID := projectIDOrActive(wc.ProjectID, s.activeProject) // capture before locking
 	if run.CreatedAt == "" {
 		run.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
@@ -554,11 +600,11 @@ func (s *Store) SaveRun(ctx context.Context, wc store.WriteContext, run *researc
 	var runID int64
 	err = tx.QueryRow(ctx,
 		`INSERT INTO research_runs (session_id, query, intent, backend_used, backends_tried,
-		                           took_ms, confidence_avg, items_count, errors, created_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		                           took_ms, confidence_avg, items_count, errors, created_at, project_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		 RETURNING id`,
 		nullStr(run.SessionID), run.Query, run.Intent, nullStr(run.BackendUsed), jsonMarshal(run.BackendsTried),
-		run.TookMs, run.ConfidenceAvg, len(run.Items), jsonMarshal(run.Errors), run.CreatedAt).Scan(&runID)
+		run.TookMs, run.ConfidenceAvg, len(run.Items), jsonMarshal(run.Errors), run.CreatedAt, projectID).Scan(&runID)
 	if err != nil {
 		return 0, err
 	}
@@ -578,28 +624,28 @@ func (s *Store) SaveRun(ctx context.Context, wc store.WriteContext, run *researc
 		var itemID int64
 		err := tx.QueryRow(ctx,
 			`INSERT INTO research_items (run_id, title, url, snippet, source, confidence,
-			                            freshness_at, lang, raw, actor, write_path, content_sha256, created_at)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+			                            freshness_at, lang, raw, actor, write_path, content_sha256, created_at, project_id)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 			 RETURNING id`,
 			runID, item.Title, nullStr(item.URL), nullStr(item.Snippet), item.Source, item.Confidence,
-			nullStr(item.FreshnessAt), nullStr(item.Lang), nullStr(item.Raw), wc.Actor, wc.WritePath, hash, item.CreatedAt).Scan(&itemID)
+			nullStr(item.FreshnessAt), nullStr(item.Lang), nullStr(item.Raw), wc.Actor, wc.WritePath, hash, item.CreatedAt, projectID).Scan(&itemID)
 		if err != nil {
 			return 0, err
 		}
 		item.ID = itemID
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO write_audit (table_name, row_id, actor, session_id, write_path,
-			                           content_sha256, canary_present, constitution_id, constitution_ver, created_at)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-			"research_items", itemID, wc.Actor, run.SessionID, wc.WritePath, hash, canaryPresent, wc.ConstitutionID, wc.ConstitutionVer, item.CreatedAt); err != nil {
+			                           content_sha256, canary_present, constitution_id, constitution_ver, created_at, project_id)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+			"research_items", itemID, wc.Actor, run.SessionID, wc.WritePath, hash, canaryPresent, wc.ConstitutionID, wc.ConstitutionVer, item.CreatedAt, projectID); err != nil {
 			return 0, err
 		}
 	}
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO write_audit (table_name, row_id, actor, session_id, write_path,
-		                           constitution_id, constitution_ver, created_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		"research_runs", runID, wc.Actor, run.SessionID, wc.WritePath, wc.ConstitutionID, wc.ConstitutionVer, run.CreatedAt); err != nil {
+		                           constitution_id, constitution_ver, created_at, project_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		"research_runs", runID, wc.Actor, run.SessionID, wc.WritePath, wc.ConstitutionID, wc.ConstitutionVer, run.CreatedAt, projectID); err != nil {
 		return 0, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -609,12 +655,16 @@ func (s *Store) SaveRun(ctx context.Context, wc store.WriteContext, run *researc
 }
 
 func (s *Store) GetRun(ctx context.Context, id int64) (*research.ResearchRun, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.activeProject // capture before locking
 	var run research.ResearchRun
 	var btJSON, errsJSON, sessionID, backendUsed *string
 	err := s.pool.QueryRow(ctx,
 		`SELECT id, session_id, query, intent, backend_used, backends_tried,
 		        took_ms, confidence_avg, errors, created_at
-		 FROM research_runs WHERE id = $1`, id).Scan(
+		 FROM research_runs WHERE id = $1 AND project_id = $2`, id, activeProject).Scan(
 		&run.ID, &sessionID, &run.Query, &run.Intent, &backendUsed, &btJSON,
 		&run.TookMs, &run.ConfidenceAvg, &errsJSON, &run.CreatedAt)
 	if err != nil {
@@ -639,15 +689,19 @@ func (s *Store) GetRun(ctx context.Context, id int64) (*research.ResearchRun, er
 }
 
 func (s *Store) ListRuns(ctx context.Context, intent string, limit int) ([]research.ResearchRun, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.activeProject // capture before locking
 	if limit <= 0 {
 		limit = 50
 	}
 	q := `SELECT id, session_id, query, intent, backend_used, backends_tried,
 	             took_ms, confidence_avg, errors, created_at
-	      FROM research_runs WHERE 1=1`
-	args := []any{}
+	      FROM research_runs WHERE project_id = $1`
+	args := []any{activeProject}
 	if intent != "" {
-		q += ` AND intent = $1`
+		q += ` AND intent = $` + intToStr(len(args)+1)
 		args = append(args, intent)
 	}
 	q += ` ORDER BY id DESC LIMIT $` + intToStr(len(args)+1)
@@ -683,6 +737,10 @@ func (s *Store) ListRuns(ctx context.Context, intent string, limit int) ([]resea
 }
 
 func (s *Store) Recall(ctx context.Context, opts research.RecallOptions) ([]research.Item, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.activeProject // capture before locking
 	if opts.Limit <= 0 {
 		opts.Limit = 20
 	}
@@ -695,8 +753,9 @@ func (s *Store) Recall(ctx context.Context, opts research.RecallOptions) ([]rese
 	                  i.confidence, i.freshness_at, i.lang, i.raw, i.created_at
 	           FROM research_items i
 	           JOIN research_runs r ON r.id = i.run_id
-	           WHERE (LOWER(i.title) LIKE $1 OR LOWER(i.snippet) LIKE $1 OR LOWER(i.source) LIKE $1)`
-	args := []any{like}
+	           WHERE i.project_id = $1 AND r.project_id = $1
+	             AND (LOWER(i.title) LIKE $2 OR LOWER(i.snippet) LIKE $2 OR LOWER(i.source) LIKE $2)`
+	args := []any{activeProject, like}
 	if opts.Intent != "" {
 		args = append(args, opts.Intent)
 		sqlStr += ` AND r.intent = $` + intToStr(len(args))
@@ -752,13 +811,17 @@ func (s *Store) Recall(ctx context.Context, opts research.RecallOptions) ([]rese
 }
 
 func (s *Store) ListItems(ctx context.Context, runID int64, source string, limit int) ([]research.Item, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.activeProject // capture before locking
 	if limit <= 0 {
 		limit = 50
 	}
 	q := `SELECT id, run_id, title, url, snippet, source, confidence,
 	             freshness_at, lang, raw, created_at
-	      FROM research_items WHERE 1=1`
-	args := []any{}
+	      FROM research_items WHERE project_id = $1`
+	args := []any{activeProject}
 	if runID > 0 {
 		args = append(args, runID)
 		q += ` AND run_id = $` + intToStr(len(args))
@@ -807,15 +870,19 @@ func (s *Store) ListItems(ctx context.Context, runID int64, source string, limit
 }
 
 func (s *Store) LinkResearch(ctx context.Context, wc store.WriteContext, link *research.Link) error {
+	if err := s.requireProject(); err != nil {
+		return err
+	}
+	projectID := projectIDOrActive(wc.ProjectID, s.activeProject) // capture before locking
 	if link.CreatedAt == "" {
 		link.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
 	var id int64
 	err := s.pool.QueryRow(ctx,
-		`INSERT INTO research_links (research_item_id, target_type, target_id, note, source, confidence, created_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+		`INSERT INTO research_links (research_item_id, target_type, target_id, note, source, confidence, created_at, project_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		 RETURNING id`,
-		link.ResearchItemID, link.TargetType, link.TargetID, nullStr(link.Note), nullStr(link.Source), link.Confidence, link.CreatedAt).Scan(&id)
+		link.ResearchItemID, link.TargetType, link.TargetID, nullStr(link.Note), nullStr(link.Source), link.Confidence, link.CreatedAt, projectID).Scan(&id)
 	if err != nil {
 		return err
 	}
@@ -832,6 +899,9 @@ func (s *Store) LinkResearch(ctx context.Context, wc store.WriteContext, link *r
 	})
 }
 
+// ResearchStatus is GLOBAL by design — same rationale as Store.Stats
+// (operator observability; aggregate counts; no project filter). See
+// spec 171 T4g / T5.
 func (s *Store) ResearchStatus(ctx context.Context) (*research.Status, error) {
 	st := &research.Status{IntentHistogram: map[string]int{}, SourceHistogram: map[string]int{}}
 	if err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM research_runs`).Scan(&st.RunsTotal); err != nil {

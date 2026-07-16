@@ -1,8 +1,8 @@
-// Package dual_driver_test runs the same assertions against both the
+﻿// Package dual_driver_test runs the same assertions against both the
 // SQLite and Postgres implementations of store.Store.
 //
 // In CI / dev environments without a live Postgres instance, the Postgres
-// tests are skipped automatically — set DARK_TEST_POSTGRES_DSN to a
+// tests are skipped automatically â€” set DARK_TEST_POSTGRES_DSN to a
 // reachable DSN to enable them.
 package dual_driver_test
 
@@ -43,7 +43,7 @@ func TestSQLiteStoreContract(t *testing.T) {
 	if err := s.CreateProject(ctx, &project.Project{ProjectID: "default", DisplayName: "Default"}); err != nil {
 		t.Fatalf("create default: %v", err)
 	}
-	s.SetActiveProject("default")
+	s.SetActiveProject(ctx, "default")
 	runContract(t, ctx, s, "sqlite")
 }
 
@@ -196,7 +196,7 @@ func runContract(t *testing.T, ctx context.Context, s store.Store, label string)
 			t.Fatalf("%s: expected cross-session recall to find at least one", label)
 		}
 
-		// Scoped to session B — the item was saved under session B, but
+		// Scoped to session B â€” the item was saved under session B, but
 		// the query matches sessionA-title which is in session A. With
 		// SessionScope=self + SessionID=B, this should return 0 items.
 		scoped, err := s.Recall(ctx, research.RecallOptions{
