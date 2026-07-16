@@ -276,14 +276,20 @@ type Store interface {
 
 	// --- VLP state (atomic spec 2.3 VLPPersistence) ---
 	// SaveVLPState upserts a per-session VLP state row. One row per
-	// session_id (UNIQUE). Returns the row ID. Writes a write_audit
-	// row in the same transaction (INV-1).
+	// (project_id, session_id) composite — see migration v9's UNIQUE INDEX
+	// idx_vlp_state_project_session. Returns the row ID. Writes a
+	// write_audit row in the SAME transaction as the UPSERT (INV-1:
+	// atomic audit — either both rows land or neither does).
 	SaveVLPState(ctx context.Context, wc WriteContext, row *VLPStateRow) (int64, error)
-	// GetVLPState returns the row for sessionID, or nil if not found.
+	// GetVLPState returns the row for sessionID under the active project,
+	// or nil if not found. Cross-project reads are denied (INV-7).
 	GetVLPState(ctx context.Context, sessionID string) (*VLPStateRow, error)
-	// ListVLPStates returns rows filtered by stateFilter (canonical
-	// state name; empty = all states), newest first. Limit <= 0 means
-	// no limit (caller is responsible for result-set size).
+	// ListVLPStates returns rows filtered by stateFilter (NUMERIC — int
+	// value of internal/vlp.State as a string; empty = all states),
+	// newest-first. Limit <= 0 means no limit (caller is responsible
+	// for result-set size). stateFilter names like "drafting_spec" are
+	// NOT resolved; the internal/vlp.Persistence wrapper handles
+	// State enum → numeric conversion.
 	ListVLPStates(ctx context.Context, stateFilter string, limit int) ([]VLPStateRow, error)
 }
 

@@ -2512,8 +2512,19 @@ func parseIntString(s string) int64 {
 // ----- VLP state (atomic spec 2.3 VLPPersistence) -----
 
 // SaveVLPState upserts a per-session VLP state row. INSERT ... ON CONFLICT
-// DO UPDATE so repeated saves update the existing row instead of inserting
-// duplicates. Writes write_audit in the same lock (INV-1).
+// (project_id, session_id) DO UPDATE so repeated saves update the existing
+// row instead of inserting duplicates. The composite ON CONFLICT target
+// matches the UNIQUE INDEX idx_vlp_state_project_session (INV-7: per-project
+// uniqueness — see migration v9 in ddl.go).
+//
+// Uses RETURNING id + QueryRowContext so the row id is reliable on both
+// INSERT and UPDATE branches (database/sql's LastInsertId() is undefined
+// for UPSERT-UPDATE in modernc/sqlite).
+//
+// Wraps UPSERT + write_audit in a single transaction so INV-1 is enforced
+// atomically: either both rows land or neither does. Tx commit failure
+// surfaces as an error to the caller; tx rollback on error ensures no
+// orphan vlp_state rows.
 func (s *Store) SaveVLPState(ctx context.Context, wc store.WriteContext, row *store.VLPStateRow) (int64, error) {
 	if err := s.requireProject(); err != nil {
 		return 0, err
@@ -2526,12 +2537,20 @@ func (s *Store) SaveVLPState(ctx context.Context, wc store.WriteContext, row *st
 		row.CreatedAt = now
 	}
 	row.UpdatedAt = now
-	res, err := s.db.ExecContext(ctx, `
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("vlp_state: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }() // no-op if Commit succeeded
+
+	var id int64
+	err = tx.QueryRowContext(ctx, `
 		INSERT INTO vlp_state (session_id, state, last_event, last_verdict, turn_count,
 		                      minset_current, constitution_id, constitution_ver,
 		                      created_at, updated_at, project_id)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(session_id) DO UPDATE SET
+		ON CONFLICT(project_id, session_id) DO UPDATE SET
 			state             = excluded.state,
 			last_event        = excluded.last_event,
 			last_verdict      = excluded.last_verdict,
@@ -2540,28 +2559,39 @@ func (s *Store) SaveVLPState(ctx context.Context, wc store.WriteContext, row *st
 			constitution_id   = excluded.constitution_id,
 			constitution_ver  = excluded.constitution_ver,
 			updated_at        = excluded.updated_at
-	`, row.SessionID, row.State, row.LastEvent, row.LastVerdict, row.TurnCount,
+		RETURNING id`,
+		row.SessionID, row.State, row.LastEvent, row.LastVerdict, row.TurnCount,
 		row.MinsetCurrent, row.ConstitutionID, row.ConstitutionVer,
-		row.CreatedAt, row.UpdatedAt, projectID)
+		row.CreatedAt, row.UpdatedAt, projectID,
+	).Scan(&id)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("vlp_state: upsert: %w", err)
 	}
-	id, err := res.LastInsertId()
+
+	// Audit row in the same tx — INV-1 atomicity. vlp_state has no
+	// user-controlled payload to canary-check (session_id is the key,
+	// state/event/verdict are enums); the audit row records actor +
+	// write_path for INV-1 forensics.
+	if wc.WritePath == "" {
+		// defensive: never silent-empty WritePath in audit
+		wc.WritePath = "SaveVLPState"
+	}
+	_, err = tx.ExecContext(ctx,
+		`INSERT INTO write_audit (table_name, row_id, actor, session_id, write_path,
+		                           constitution_id, constitution_ver, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		"vlp_state", id, wc.Actor, row.SessionID, wc.WritePath,
+		wc.ConstitutionID, wc.ConstitutionVer, now)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("vlp_state: audit: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("vlp_state: commit: %w", err)
 	}
 	row.ID = id
 	row.ProjectID = projectID
-	return id, s.recordWriteLocked(ctx, audit.WriteEvent{
-		TableName:       "vlp_state",
-		RowID:           id,
-		Actor:           wc.Actor,
-		SessionID:       row.SessionID,
-		WritePath:       wc.WritePath,
-		ConstitutionID:  wc.ConstitutionID,
-		ConstitutionVer: wc.ConstitutionVer,
-		CreatedAt:       now,
-	}, "")
+	return id, nil
 }
 
 // GetVLPState returns the row for sessionID, or nil if not found.
@@ -2596,8 +2626,15 @@ func (s *Store) GetVLPState(ctx context.Context, sessionID string) (*store.VLPSt
 	return &r, nil
 }
 
-// ListVLPStates returns rows filtered by stateFilter (canonical name; empty
-// = all), newest-first. Limit <= 0 means no limit.
+// ListVLPStates returns rows filtered by stateFilter (NUMERIC — the int
+// value of internal/vlp.State; empty = all states), newest-first. Limit
+// <= 0 means no limit.
+//
+// Callers should pass the numeric form ("2", "3", etc.) — name strings
+// like "drafting_spec" are NOT resolved here (resolving would require
+// importing internal/vlp, which is forbidden to break a cycle). The
+// internal/vlp.Persistence wrapper accepts the State enum and converts
+// to numeric before calling this method.
 func (s *Store) ListVLPStates(ctx context.Context, stateFilter string, limit int) ([]store.VLPStateRow, error) {
 	if err := s.requireProject(); err != nil {
 		return nil, err
@@ -2606,35 +2643,55 @@ func (s *Store) ListVLPStates(ctx context.Context, stateFilter string, limit int
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Effective limit for SQL push-down. 0 → no LIMIT clause (caller owns
+	// result-set size; same as the public contract).
+	effectiveLimit := 0
+	if limit > 0 {
+		effectiveLimit = limit
+	}
+
 	var (
 		rows *sql.Rows
 		err  error
 	)
 	if stateFilter == "" {
-		rows, err = s.db.QueryContext(ctx, `
-			SELECT id, session_id, state, last_event, last_verdict, turn_count,
-			       minset_current, constitution_id, constitution_ver,
-			       created_at, updated_at, project_id
-			FROM vlp_state WHERE project_id = ?
-			ORDER BY updated_at DESC`, activeProject)
+		if effectiveLimit > 0 {
+			rows, err = s.db.QueryContext(ctx, `
+				SELECT id, session_id, state, last_event, last_verdict, turn_count,
+				       minset_current, constitution_id, constitution_ver,
+				       created_at, updated_at, project_id
+				FROM vlp_state WHERE project_id = ?
+				ORDER BY updated_at DESC LIMIT ?`, activeProject, effectiveLimit)
+		} else {
+			rows, err = s.db.QueryContext(ctx, `
+				SELECT id, session_id, state, last_event, last_verdict, turn_count,
+				       minset_current, constitution_id, constitution_ver,
+				       created_at, updated_at, project_id
+				FROM vlp_state WHERE project_id = ?
+				ORDER BY updated_at DESC`, activeProject)
+		}
 	} else {
-		// stateFilter is canonical string; we accept either name or numeric.
-		// Look up by string match against any canonical name in vlp package
-		// would create a cycle; instead filter by numeric via package-local
-		// resolution. For now callers pass numeric strings; named filtering
-		// is exposed via internal/vlp.Persistence.List.
-		rows, err = s.db.QueryContext(ctx, `
-			SELECT id, session_id, state, last_event, last_verdict, turn_count,
-			       minset_current, constitution_id, constitution_ver,
-			       created_at, updated_at, project_id
-			FROM vlp_state WHERE project_id = ? AND state = ?
-			ORDER BY updated_at DESC`, activeProject, stateFilter)
+		if effectiveLimit > 0 {
+			rows, err = s.db.QueryContext(ctx, `
+				SELECT id, session_id, state, last_event, last_verdict, turn_count,
+				       minset_current, constitution_id, constitution_ver,
+				       created_at, updated_at, project_id
+				FROM vlp_state WHERE project_id = ? AND state = ?
+				ORDER BY updated_at DESC LIMIT ?`, activeProject, stateFilter, effectiveLimit)
+		} else {
+			rows, err = s.db.QueryContext(ctx, `
+				SELECT id, session_id, state, last_event, last_verdict, turn_count,
+				       minset_current, constitution_id, constitution_ver,
+				       created_at, updated_at, project_id
+				FROM vlp_state WHERE project_id = ? AND state = ?
+				ORDER BY updated_at DESC`, activeProject, stateFilter)
+		}
 	}
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []store.VLPStateRow
+	out := make([]store.VLPStateRow, 0, effectiveLimit)
 	for rows.Next() {
 		var r store.VLPStateRow
 		var le, lv, mc, ci, cv, pid sql.NullString
@@ -2649,9 +2706,6 @@ func (s *Store) ListVLPStates(ctx context.Context, stateFilter string, limit int
 		r.ConstitutionVer = cv.String
 		r.ProjectID = pid.String
 		out = append(out, r)
-		if limit > 0 && len(out) >= limit {
-			break
-		}
 	}
 	return out, rows.Err()
 }

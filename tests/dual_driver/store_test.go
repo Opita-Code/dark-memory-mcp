@@ -10,6 +10,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/session"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 	"github.com/dark-agents/dark-memory-mcp/internal/store/runtime"
+	"github.com/dark-agents/dark-memory-mcp/internal/vlp"
 )
 
 // TestSQLiteStoreContract exercises every implemented method of store.Store
@@ -140,14 +142,15 @@ func runContract(t *testing.T, ctx context.Context, s store.Store, label string)
 		// Atomic spec 2.3 — exercises vlp_state CRUD end-to-end across
 		// both drivers. The int ↔ string round-trip is what matters:
 		// save a typed state, load it back, verify State enum value
-		// survives the int column.
+		// survives the int column. Uses vlp.State enum (no hardcoded
+		// numeric values) so adding a new State value won't break this test.
 		sid := "vlp-rt-" + label
 		wc := store.WriteContext{Actor: "dual_driver", SessionID: sid, WritePath: "TestVLPState"}
 
 		// Initial save: drafting_spec
 		row := &store.VLPStateRow{
 			SessionID: sid,
-			State:     2, // StateDraftingSpec = 2 (after StateUnknown=0, StateIdle=1)
+			State:     int(vlp.StateDraftingSpec),
 			LastEvent: "session_start",
 			TurnCount: 0,
 		}
@@ -159,7 +162,7 @@ func runContract(t *testing.T, ctx context.Context, s store.Store, label string)
 			t.Fatalf("%s: SaveVLPState returned id=0", label)
 		}
 
-		// Load → state should round-trip as the integer 2
+		// Load → state should round-trip via the typed enum.
 		got, err := s.GetVLPState(ctx, sid)
 		if err != nil {
 			t.Fatalf("%s: GetVLPState: %v", label, err)
@@ -167,8 +170,8 @@ func runContract(t *testing.T, ctx context.Context, s store.Store, label string)
 		if got == nil {
 			t.Fatalf("%s: GetVLPState returned nil", label)
 		}
-		if got.State != 2 {
-			t.Errorf("%s: State round-trip = %d, want 2", label, got.State)
+		if got.State != int(vlp.StateDraftingSpec) {
+			t.Errorf("%s: State round-trip = %d, want %d (%s)", label, got.State, int(vlp.StateDraftingSpec), vlp.StateDraftingSpec)
 		}
 		if got.SessionID != sid {
 			t.Errorf("%s: session_id mismatch", label)
@@ -177,16 +180,20 @@ func runContract(t *testing.T, ctx context.Context, s store.Store, label string)
 			t.Errorf("%s: last_event = %q, want session_start", label, got.LastEvent)
 		}
 
-		// Upsert: update existing row with new state
-		row.State = 3 // StateSpecActive
+		// Upsert: update existing row with new state. The returned id
+		// must equal the first id (UPDATE branch of UPSERT, not INSERT).
+		row.State = int(vlp.StateSpecActive)
 		row.TurnCount = 1
-		_, err = s.SaveVLPState(ctx, wc, row)
+		id2, err := s.SaveVLPState(ctx, wc, row)
 		if err != nil {
 			t.Fatalf("%s: SaveVLPState upsert: %v", label, err)
 		}
+		if id2 != id {
+			t.Errorf("%s: upsert id = %d, want %d (UPDATE branch should return existing row id, not new)", label, id2, id)
+		}
 		got, _ = s.GetVLPState(ctx, sid)
-		if got.State != 3 {
-			t.Errorf("%s: upsert State = %d, want 3", label, got.State)
+		if got.State != int(vlp.StateSpecActive) {
+			t.Errorf("%s: upsert State = %d, want %d (%s)", label, got.State, int(vlp.StateSpecActive), vlp.StateSpecActive)
 		}
 		if got.TurnCount != 1 {
 			t.Errorf("%s: upsert TurnCount = %d, want 1", label, got.TurnCount)
@@ -208,13 +215,139 @@ func runContract(t *testing.T, ctx context.Context, s store.Store, label string)
 			t.Errorf("%s: ListVLPStates did not include %s", label, sid)
 		}
 
-		// List with limit
+		// List with limit (M1: limit must be pushed to SQL, not loop-broken)
 		limited, err := s.ListVLPStates(ctx, "", 1)
 		if err != nil {
 			t.Fatalf("%s: ListVLPStates limited: %v", label, err)
 		}
 		if len(limited) != 1 {
 			t.Errorf("%s: ListVLPStates(limit=1) = %d, want 1", label, len(limited))
+		}
+
+		// List with state filter (numeric form per the new contract).
+		rowsActive, err := s.ListVLPStates(ctx, strconv.Itoa(int(vlp.StateSpecActive)), 0)
+		if err != nil {
+			t.Fatalf("%s: ListVLPStates(state=spec_active): %v", label, err)
+		}
+		if len(rowsActive) != 1 {
+			t.Errorf("%s: ListVLPStates(state=spec_active) = %d, want 1", label, len(rowsActive))
+		}
+	})
+
+	t.Run(label+"/vlp_state_audit_emitted", func(t *testing.T) {
+		// Bug-hunt M3: every SaveVLPState must emit a write_audit row.
+		sid := "vlp-audit-" + label
+		wc := store.WriteContext{
+			Actor:     "dual_driver",
+			SessionID: sid,
+			WritePath: "TestVLPAudit",
+		}
+		writesBefore, err := s.ListWrites(ctx, audit.ListFilters{SessionID: sid, Limit: 100})
+		if err != nil {
+			t.Fatalf("%s: ListWrites before: %v", label, err)
+		}
+
+		if _, err := s.SaveVLPState(ctx, wc, &store.VLPStateRow{
+			SessionID: sid,
+			State:     int(vlp.StateIdle),
+			LastEvent: "session_start",
+			TurnCount: 0,
+		}); err != nil {
+			t.Fatalf("%s: SaveVLPState: %v", label, err)
+		}
+
+		writesAfter, err := s.ListWrites(ctx, audit.ListFilters{SessionID: sid, Limit: 100})
+		if err != nil {
+			t.Fatalf("%s: ListWrites after: %v", label, err)
+		}
+		if got := len(writesAfter) - len(writesBefore); got != 1 {
+			t.Errorf("%s: expected 1 new audit row, got %d", label, got)
+		}
+
+		// Verify the audit row points at vlp_state and references the row id.
+		found := false
+		for _, w := range writesAfter {
+			if w.TableName == "vlp_state" && w.SessionID == sid {
+				found = true
+				if w.RowID == 0 {
+					t.Errorf("%s: audit RowID = 0 (must be the upserted row id)", label)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("%s: no audit row found for table=vlp_state session=%s", label, sid)
+		}
+	})
+
+	t.Run(label+"/vlp_state_cross_project_isolation", func(t *testing.T) {
+		// Bug-hunt M2/C1: INV-7. Two projects using the same session_id
+		// must not collide on UNIQUE, and reads from one project must not
+		// see rows from another.
+		sid := "vlp-shared-" + label
+
+		// Save under project "default".
+		wcA := store.WriteContext{
+			Actor:     "a",
+			SessionID: sid,
+			WritePath: "TestVLPCrossProject",
+			ProjectID: "default",
+		}
+		if _, err := s.SaveVLPState(ctx, wcA, &store.VLPStateRow{
+			SessionID: sid,
+			State:     int(vlp.StateIdle),
+			LastEvent: "session_start",
+			TurnCount: 0,
+		}); err != nil {
+			t.Fatalf("%s: SaveVLPState A: %v", label, err)
+		}
+
+		// Create + activate a second project, save with same session_id.
+		if err := s.CreateProject(ctx, &project.Project{ProjectID: "tenant-b-" + label, DisplayName: "B"}); err != nil {
+			t.Fatalf("%s: CreateProject B: %v", label, err)
+		}
+		if err := s.SetActiveProject(ctx, "tenant-b-"+label); err != nil {
+			t.Fatalf("%s: SetActiveProject B: %v", label, err)
+		}
+		wcB := store.WriteContext{
+			Actor:     "b",
+			SessionID: sid,
+			WritePath: "TestVLPCrossProject",
+			ProjectID: "tenant-b-" + label,
+		}
+		if _, err := s.SaveVLPState(ctx, wcB, &store.VLPStateRow{
+			SessionID: sid,
+			State:     int(vlp.StateDraftingSpec),
+			LastEvent: "vibe_publish",
+			TurnCount: 5,
+		}); err != nil {
+			t.Fatalf("%s: SaveVLPState B (same session_id, different project): %v", label, err)
+		}
+
+		// Read from B → must see drafting_spec (B's row), NOT idle (A's row).
+		gotB, err := s.GetVLPState(ctx, sid)
+		if err != nil {
+			t.Fatalf("%s: GetVLPState B: %v", label, err)
+		}
+		if gotB == nil {
+			t.Fatalf("%s: B row missing", label)
+		}
+		if gotB.State != int(vlp.StateDraftingSpec) {
+			t.Errorf("%s: B.State = %d, want %d (cross-project leak: B sees A's idle)", label, gotB.State, int(vlp.StateDraftingSpec))
+		}
+		if gotB.ProjectID != "tenant-b-"+label {
+			t.Errorf("%s: B.ProjectID = %q, want tenant-b-%s", label, gotB.ProjectID, label)
+		}
+
+		// Switch back to A → must see idle (A's row).
+		if err := s.SetActiveProject(ctx, "default"); err != nil {
+			t.Fatalf("%s: SetActiveProject A: %v", label, err)
+		}
+		gotA, err := s.GetVLPState(ctx, sid)
+		if err != nil {
+			t.Fatalf("%s: GetVLPState A: %v", label, err)
+		}
+		if gotA.State != int(vlp.StateIdle) {
+			t.Errorf("%s: A.State = %d, want %d (cross-project leak: A sees B's drafting_spec)", label, gotA.State, int(vlp.StateIdle))
 		}
 	})
 

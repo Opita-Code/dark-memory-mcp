@@ -324,18 +324,24 @@ CREATE INDEX IF NOT EXISTS idx_sessions_project        ON sessions(project_id, i
 	},
 	{
 		// v9 — vlp_state table (atomic spec 2.3 VLPPersistence)
-		// Per-session state machine state. One row per session_id (UNIQUE).
-		// UPSERT pattern: SaveVLPState uses INSERT ... ON CONFLICT(session_id)
-		// DO UPDATE so repeated saves update the existing row instead of
-		// inserting duplicates. State column is BIGINT (corresponds to
-		// internal/vlp.State enum); LastEvent and LastVerdict are TEXT
-		// (canonical string forms) for human-readable audit.
+		// Per-session state machine state. UPSERT pattern: SaveVLPState uses
+		// INSERT ... ON CONFLICT (project_id, session_id) DO UPDATE so
+		// repeated saves update the existing row instead of inserting
+		// duplicates. State column is BIGINT (corresponds to internal/vlp
+		// .State enum); LastEvent and LastVerdict are TEXT (canonical string
+		// forms) for human-readable audit.
+		//
+		// INV-7 multi-tenancy: uniqueness is per-project via the composite
+		// UNIQUE INDEX (project_id, session_id). A row under project A with
+		// session_id="s1" can coexist with project B + session_id="s1".
+		// Without this composite, two tenants using overlapping session IDs
+		// would collide on the table-level UNIQUE(session_id) constraint.
 		Version: 9,
 		Name:    "vlp_state_table",
 		Up: `
 CREATE TABLE IF NOT EXISTS vlp_state (
     id                BIGSERIAL PRIMARY KEY,
-    session_id        TEXT NOT NULL UNIQUE,
+    session_id        TEXT NOT NULL,
     state             BIGINT NOT NULL,
     last_event        TEXT,
     last_verdict      TEXT,
@@ -350,6 +356,8 @@ CREATE TABLE IF NOT EXISTS vlp_state (
 CREATE INDEX IF NOT EXISTS idx_vlp_state_session ON vlp_state(session_id);
 CREATE INDEX IF NOT EXISTS idx_vlp_state_state   ON vlp_state(state);
 CREATE INDEX IF NOT EXISTS idx_vlp_state_project ON vlp_state(project_id, id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_vlp_state_project_session
+    ON vlp_state(project_id, session_id);
 `,
 	},
 }

@@ -1221,7 +1221,15 @@ func intToStr(n int) string { return strconv.Itoa(n) }
 // ----- VLP state (atomic spec 2.3 VLPPersistence) -----
 
 // SaveVLPState upserts a per-session VLP state row using ON CONFLICT
-// DO UPDATE (Postgres UPSERT syntax). Same semantics as the sqlite impl.
+// DO UPDATE (Postgres UPSERT syntax). The composite ON CONFLICT target
+// (project_id, session_id) matches the UNIQUE INDEX idx_vlp_state_project_session
+// (INV-7: per-project uniqueness — see migration v9 in postgres/ddl.go).
+//
+// Uses RETURNING id (Postgres-native) to get a reliable row id on both
+// INSERT and UPDATE branches without a follow-up SELECT.
+//
+// Wraps UPSERT + write_audit in a single pgx transaction so INV-1 is
+// enforced atomically: either both rows land or neither does.
 func (s *Store) SaveVLPState(ctx context.Context, wc store.WriteContext, row *store.VLPStateRow) (int64, error) {
 	if err := s.requireProject(); err != nil {
 		return 0, err
@@ -1232,12 +1240,20 @@ func (s *Store) SaveVLPState(ctx context.Context, wc store.WriteContext, row *st
 		row.CreatedAt = now
 	}
 	row.UpdatedAt = now
-	_, err := s.pool.Exec(ctx, `
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("vlp_state: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	var id int64
+	err = tx.QueryRow(ctx, `
 		INSERT INTO vlp_state (session_id, state, last_event, last_verdict, turn_count,
 		                      minset_current, constitution_id, constitution_ver,
 		                      created_at, updated_at, project_id)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-		ON CONFLICT (session_id) DO UPDATE SET
+		ON CONFLICT (project_id, session_id) DO UPDATE SET
 			state             = EXCLUDED.state,
 			last_event        = EXCLUDED.last_event,
 			last_verdict      = EXCLUDED.last_verdict,
@@ -1246,32 +1262,37 @@ func (s *Store) SaveVLPState(ctx context.Context, wc store.WriteContext, row *st
 			constitution_id   = EXCLUDED.constitution_id,
 			constitution_ver  = EXCLUDED.constitution_ver,
 			updated_at        = EXCLUDED.updated_at
-	`, row.SessionID, row.State, row.LastEvent, row.LastVerdict, row.TurnCount,
+		RETURNING id`,
+		row.SessionID, row.State, row.LastEvent, row.LastVerdict, row.TurnCount,
 		row.MinsetCurrent, row.ConstitutionID, row.ConstitutionVer,
-		row.CreatedAt, row.UpdatedAt, projectID)
+		row.CreatedAt, row.UpdatedAt, projectID,
+	).Scan(&id)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("vlp_state: upsert: %w", err)
 	}
-	// ON CONFLICT DO UPDATE doesn't return the row id reliably on conflict,
-	// so we look it up. Single SELECT after UPSERT is fine (the row exists).
-	var id int64
-	if err := s.pool.QueryRow(ctx,
-		`SELECT id FROM vlp_state WHERE session_id = $1 AND project_id = $2`,
-		row.SessionID, projectID).Scan(&id); err != nil {
-		return 0, err
+
+	// vlp_state has no user-controlled payload to canary-check (session_id
+	// is the lookup key, state/event/verdict are enums). The write_audit
+	// row records actor + write_path for INV-1 forensics.
+	if wc.WritePath == "" {
+		wc.WritePath = "SaveVLPState"
+	}
+	_, err = tx.Exec(ctx,
+		`INSERT INTO write_audit (table_name, row_id, actor, session_id, write_path,
+		                           constitution_id, constitution_ver, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		"vlp_state", id, wc.Actor, row.SessionID, wc.WritePath,
+		wc.ConstitutionID, wc.ConstitutionVer, now)
+	if err != nil {
+		return 0, fmt.Errorf("vlp_state: audit: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("vlp_state: commit: %w", err)
 	}
 	row.ID = id
 	row.ProjectID = projectID
-	return id, s.recordWrite(ctx, audit.WriteEvent{
-		TableName:       "vlp_state",
-		RowID:           id,
-		Actor:           wc.Actor,
-		SessionID:       row.SessionID,
-		WritePath:       wc.WritePath,
-		ConstitutionID:  wc.ConstitutionID,
-		ConstitutionVer: wc.ConstitutionVer,
-		CreatedAt:       now,
-	}, "")
+	return id, nil
 }
 
 // GetVLPState returns the row for sessionID, or nil if not found.
@@ -1335,35 +1356,68 @@ func (s *Store) GetVLPState(ctx context.Context, sessionID string) (*store.VLPSt
 	return r, nil
 }
 
-// ListVLPStates returns rows filtered by stateFilter (numeric string;
-// empty = all), newest-first. Limit <= 0 means no limit.
+// ListVLPStates returns rows filtered by stateFilter (NUMERIC — the int
+// value of internal/vlp.State; empty = all states), newest-first. Limit
+// <= 0 means no limit.
+//
+// Callers should pass the numeric form ("2", "3", etc.) — name strings
+// like "drafting_spec" are NOT resolved here (resolving would require
+// importing internal/vlp, which is forbidden to break a cycle). The
+// internal/vlp.Persistence wrapper accepts the State enum and converts
+// to numeric before calling this method.
 func (s *Store) ListVLPStates(ctx context.Context, stateFilter string, limit int) ([]store.VLPStateRow, error) {
 	if err := s.requireProject(); err != nil {
 		return nil, err
 	}
 	activeProject := s.ActiveProject()
 
+	// Effective limit for SQL push-down. 0 → no LIMIT clause (caller owns
+	// result-set size; same as the public contract).
+	effectiveLimit := 0
+	if limit > 0 {
+		effectiveLimit = limit
+	}
+
 	var rows pgx.Rows
 	var err error
 	if stateFilter == "" {
-		rows, err = s.pool.Query(ctx, `
-			SELECT id, session_id, state, last_event, last_verdict, turn_count,
-			       minset_current, constitution_id, constitution_ver,
-			       created_at, updated_at, project_id
-			FROM vlp_state WHERE project_id = $1 ORDER BY updated_at DESC`, activeProject)
+		if effectiveLimit > 0 {
+			rows, err = s.pool.Query(ctx, `
+				SELECT id, session_id, state, last_event, last_verdict, turn_count,
+				       minset_current, constitution_id, constitution_ver,
+				       created_at, updated_at, project_id
+				FROM vlp_state WHERE project_id = $1
+				ORDER BY updated_at DESC LIMIT $2`, activeProject, effectiveLimit)
+		} else {
+			rows, err = s.pool.Query(ctx, `
+				SELECT id, session_id, state, last_event, last_verdict, turn_count,
+				       minset_current, constitution_id, constitution_ver,
+				       created_at, updated_at, project_id
+				FROM vlp_state WHERE project_id = $1
+				ORDER BY updated_at DESC`, activeProject)
+		}
 	} else {
-		rows, err = s.pool.Query(ctx, `
-			SELECT id, session_id, state, last_event, last_verdict, turn_count,
-			       minset_current, constitution_id, constitution_ver,
-			       created_at, updated_at, project_id
-			FROM vlp_state WHERE project_id = $1 AND state = $2
-			ORDER BY updated_at DESC`, activeProject, stateFilter)
+		if effectiveLimit > 0 {
+			rows, err = s.pool.Query(ctx, `
+				SELECT id, session_id, state, last_event, last_verdict, turn_count,
+				       minset_current, constitution_id, constitution_ver,
+				       created_at, updated_at, project_id
+				FROM vlp_state WHERE project_id = $1 AND state = $2
+				ORDER BY updated_at DESC LIMIT $3`, activeProject, stateFilter, effectiveLimit)
+		} else {
+			rows, err = s.pool.Query(ctx, `
+				SELECT id, session_id, state, last_event, last_verdict, turn_count,
+				       minset_current, constitution_id, constitution_ver,
+				       created_at, updated_at, project_id
+				FROM vlp_state WHERE project_id = $1 AND state = $2
+				ORDER BY updated_at DESC`, activeProject, stateFilter)
+		}
 	}
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []store.VLPStateRow
+	out := make([]store.VLPStateRow, 0, effectiveLimit)
 	for rows.Next() {
 		var (
 			id          int64
@@ -1408,9 +1462,6 @@ func (s *Store) ListVLPStates(ctx context.Context, stateFilter string, limit int
 			r.ConstitutionVer = *consVer
 		}
 		out = append(out, r)
-		if limit > 0 && len(out) >= limit {
-			break
-		}
 	}
 	return out, rows.Err()
 }
