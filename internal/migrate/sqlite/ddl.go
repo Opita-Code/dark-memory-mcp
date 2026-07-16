@@ -405,4 +405,21 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_vlp_state_project_session
     ON vlp_state(project_id, session_id);
 `,
 	},
+{
+		// v10 — audit project composite index (debt-elimination, F33).
+		// Note: the write_audit.project_id column was already added by
+		// migration v7 ("project_namespace") when the rest of the
+		// tenant-scoped tables got it. This migration only adds the
+		// composite (project_id, session_id) index for ListWrites
+		// filtering efficiency.
+		//
+		// The Store impl now (a) populates WriteEvent.ProjectID from
+		// wc.ProjectID or s.ActiveProject() at write time, and (b)
+		// filters ListWrites by ProjectID at read time (when set).
+		Version: 10,
+		Name:    "audit_project_index",
+		Up: `
+CREATE INDEX IF NOT EXISTS idx_write_audit_project_session ON write_audit(project_id, session_id);
+`,
+	},
 }

@@ -360,4 +360,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_vlp_state_project_session
     ON vlp_state(project_id, session_id);
 `,
 	},
+	{
+		// v10 — audit project composite index (debt-elimination, F33).
+		// Mirror of the sqlite migration. The write_audit.project_id
+		// column was already added by migration v7; this migration only
+		// adds the composite (project_id, session_id) index.
+		Version: 10,
+		Name:    "audit_project_index",
+		Up: `
+CREATE INDEX IF NOT EXISTS idx_write_audit_project_session ON write_audit(project_id, session_id);
+`,
+	},
 }

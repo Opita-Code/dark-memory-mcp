@@ -453,4 +453,83 @@ func runContract(t *testing.T, ctx context.Context, s store.Store, label string)
 			t.Fatalf("%s: Stats.SchemaVersion < 6", label)
 		}
 	})
+
+	t.Run(label+"/write_audit_project_isolation", func(t *testing.T) {
+		// Bug-hunt F33 fix: every audit row is tagged with the active
+		// project (INV-7). ListWrites filters by ProjectID when set.
+		// Two projects writing rows with the same session_id must NOT
+		// leak across the project boundary in the audit log.
+		sid := "audit-iso-" + label
+
+		// Save a row under project "default".
+		wcA := store.WriteContext{
+			Actor:     "a",
+			SessionID: sid,
+			WritePath: "TestAuditIsolation",
+		}
+		if _, err := s.SaveVLPState(ctx, wcA, &store.VLPStateRow{
+			SessionID: sid,
+			State:     int(vlp.StateDraftingSpec),
+			LastEvent: "session_start",
+			TurnCount: 0,
+		}); err != nil {
+			t.Fatalf("%s: SaveVLPState A: %v", label, err)
+		}
+
+		// Create + activate a second project.
+		if err := s.CreateProject(ctx, &project.Project{ProjectID: "tenant-c-" + label, DisplayName: "C"}); err != nil {
+			t.Fatalf("%s: CreateProject C: %v", label, err)
+		}
+		if err := s.SetActiveProject(ctx, "tenant-c-"+label); err != nil {
+			t.Fatalf("%s: SetActiveProject C: %v", label, err)
+		}
+		wcB := store.WriteContext{
+			Actor:     "b",
+			SessionID: sid,
+			WritePath: "TestAuditIsolation",
+			ProjectID: "tenant-c-" + label,
+		}
+		if _, err := s.SaveVLPState(ctx, wcB, &store.VLPStateRow{
+			SessionID: sid,
+			State:     int(vlp.StateIdle),
+			LastEvent: "session_start",
+			TurnCount: 0,
+		}); err != nil {
+			t.Fatalf("%s: SaveVLPState B: %v", label, err)
+		}
+
+		// ListWrites with no ProjectID filter returns BOTH rows (cross-project).
+		all, err := s.ListWrites(ctx, audit.ListFilters{SessionID: sid, Limit: 100})
+		if err != nil {
+			t.Fatalf("%s: ListWrites all: %v", label, err)
+		}
+		if len(all) < 2 {
+			t.Errorf("%s: expected >= 2 audit rows for shared session, got %d", label, len(all))
+		}
+
+		// ListWrites with ProjectID filter returns only that project's rows.
+		rowsA, err := s.ListWrites(ctx, audit.ListFilters{SessionID: sid, ProjectID: "default", Limit: 100})
+		if err != nil {
+			t.Fatalf("%s: ListWrites A: %v", label, err)
+		}
+		for _, r := range rowsA {
+			if r.ProjectID != "default" {
+				t.Errorf("%s: rowsA leak: ProjectID=%q", label, r.ProjectID)
+			}
+		}
+		rowsB, err := s.ListWrites(ctx, audit.ListFilters{SessionID: sid, ProjectID: "tenant-c-" + label, Limit: 100})
+		if err != nil {
+			t.Fatalf("%s: ListWrites B: %v", label, err)
+		}
+		for _, r := range rowsB {
+			if r.ProjectID != "tenant-c-"+label {
+				t.Errorf("%s: rowsB leak: ProjectID=%q", label, r.ProjectID)
+			}
+		}
+
+		// Switch back to default; subsequent writes use "default".
+		if err := s.SetActiveProject(ctx, "default"); err != nil {
+			t.Fatalf("%s: SetActiveProject default: %v", label, err)
+		}
+	})
 }
