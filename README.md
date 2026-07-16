@@ -126,27 +126,27 @@ El problema #1 sin resolver en 2026 AI-assisted development es el **spec-drift**
 **dark-memory-mcp** cierra ese loop con persistencia + LLM-as-judge:
 
 ```
-                    ┌──────────────────────────────────────────┐
+                    ┌───────────────────────────────────────────┐
                     │  1. Crear spec (vibe_publish / vibe_spec) │
                     │     Persiste intent + tasks + constitution│
-                    │                                          │
-                    │  2. Generar el artifact                  │
-                    │     (tu modelo / servicio preferido)     │
-                    │                                          │
-                    │  3. Loggear artifact                     │
-                    │     artifact_log → write_audit row       │
-                    │                                          │
-                    │  4. LLM-as-judge: drift                  │
-                    │     drift_judge(artifact_id)             │
-                    │     verdict ∈ {aligned, drift_detected,  │
-                    │                  needs_human}            │
-                    │                                          │
-                    │  5. Loggear verdict                     │
-                    │     drift_log(verdict, judge_reasoning)  │
-                    │                                          │
-                    │  6. Human gate si algo falló             │
-                    │     resolve_drift(accept | reject)       │
-                    └──────────────────────────────────────────┘
+                    │                                           │
+                    │  2. Generar el artifact                   │
+                    │     (tu modelo / servicio preferido)      │
+                    │                                           │
+                    │  3. Loggear artifact                      │
+                    │     artifact_log → write_audit row        │
+                    │                                           │
+                    │  4. LLM-as-judge: drift                   │
+                    │     drift_judge(artifact_id)              │
+                    │     verdict ∈ {aligned, drift_detected,   │
+                    │                  needs_human}             │
+                    │                                           │
+                    │  5. Loggear verdict                       │
+                    │     drift_log(verdict, judge_reasoning)   │
+                    │                                           │
+                    │  6. Human gate si algo falló              │
+                    │     resolve_drift(accept | reject)        │
+                    └───────────────────────────────────────────┘
 ```
 
 Cada `dark_ssd_drift_judge` (sub-spec 180) persiste su verdict en `sdd_evaluations` con `prompt_version` + `model`. **Reproducible, auditable, mejorable con el tiempo** (calibration loop).
@@ -157,7 +157,7 @@ Cada `dark_ssd_drift_judge` (sub-spec 180) persiste su verdict en `sdd_evaluatio
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  Tu agente (opencode, Claude Code, Cursor, lo que sea)         │
+│  Tu agente (opencode, Claude Code, Cursor, lo que sea)          │
 │                                                                 │
 │  stdio MCP                                                      │
 └────────────────────────────┬────────────────────────────────────┘
@@ -195,7 +195,7 @@ Cada `dark_ssd_drift_judge` (sub-spec 180) persiste su verdict en `sdd_evaluatio
                          │
               ┌──────────┴──────────┐
               ▼                     ▼
-   ┌──────────────────┐  ┌──────────────────┐
+   ┌───────────────────┐  ┌──────────────────┐
    │  dark.db (SQLite) │  │ Postgres         │
    │                   │  │ (jackc/pgx/v5)   │
    │  projects         │  │                  │
@@ -206,7 +206,7 @@ Cada `dark_ssd_drift_judge` (sub-spec 180) persiste su verdict en `sdd_evaluatio
    │  sdd_evaluations  │  │                  │
    │  constitutions    │  │                  │
    │  mods             │  │                  │
-   └──────────────────┘  └──────────────────┘
+   └───────────────────┘  └──────────────────┘
 ```
 
 Detalles en [`docs/`](docs/) y [`vibe-flow/main/DARK_MEMORY_MCP_RFC.md`](vibe-flow/main/DARK_MEMORY_MCP_RFC.md).
