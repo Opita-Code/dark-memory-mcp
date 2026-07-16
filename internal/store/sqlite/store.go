@@ -335,6 +335,72 @@ func (s *Store) RecordWrite(ctx context.Context, ev audit.WriteEvent) error {
 	return s.recordWriteLocked(ctx, ev, "")
 }
 
+// recordWriteLockedTx writes a write_audit row using the given *sql.Tx.
+// Used by every Save* method to ensure the audit row commits atomically
+// with the data row (INV-1 hardening, debt-elimination commit). Same
+// semantics as recordWriteLocked but participates in the caller's tx.
+//
+// INV-7: project_id is auto-filled from s.activeProject (read without
+// locking — caller already holds s.mu). Empty string is only allowed
+// for the 3 global tables (vibe_compliance, constitutions, mods) per
+// spec 171 T4c/T4f.
+func (s *Store) recordWriteLockedTx(ctx context.Context, tx *sql.Tx, ev audit.WriteEvent, contentHash string) error {
+	if ev.CreatedAt == "" {
+		ev.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+	if contentHash != "" && ev.ContentSHA256 == "" {
+		ev.ContentSHA256 = contentHash
+	}
+	if ev.ProjectID == "" {
+		// Read s.activeProject WITHOUT locking — caller holds s.mu already
+		// and ActiveProject() would deadlock on the re-entrant Lock().
+		ev.ProjectID = s.activeProject
+	}
+	canary := 0
+	if ev.CanaryPresent {
+		canary = 1
+	}
+	_, err := tx.ExecContext(ctx,
+		`INSERT INTO write_audit (table_name, row_id, project_id, actor, session_id, write_path,
+		                           content_sha256, canary_present, constitution_id, constitution_ver, notes, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		ev.TableName, ev.RowID, ev.ProjectID, ev.Actor, ev.SessionID, ev.WritePath,
+		ev.ContentSHA256, canary, ev.ConstitutionID, ev.ConstitutionVer, ev.Notes, ev.CreatedAt)
+	return err
+}
+
+// runInTx acquires a *sql.Tx and runs fn inside it. On error from fn
+// the tx is rolled back; on success it is committed. Caller MUST use
+// the *sql.Tx for all SQL operations and MUST call recordWriteLockedTx
+// for audit row emission (not recordWriteLocked). Used by every Save*
+// method for INV-1 atomicity: data row + audit row land together or
+// neither lands.
+//
+// Pattern (caller):
+//
+//	var id int64
+//	err := s.runInTx(ctx, func(tx *sql.Tx) error {
+//	    res, err := tx.ExecContext(ctx, `INSERT INTO x ...`)
+//	    if err != nil { return err }
+//	    id, _ = res.LastInsertId()
+//	    return s.recordWriteLockedTx(ctx, tx, audit.WriteEvent{...}, "")
+//	})
+//	return id, err
+func (s *Store) runInTx(ctx context.Context, fn func(*sql.Tx) error) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("sqlite: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }() // no-op if Commit succeeded
+	if err := fn(tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("sqlite: commit tx: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) recordWriteLocked(ctx context.Context, ev audit.WriteEvent, contentHash string) error {
 	if ev.CreatedAt == "" {
 		ev.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
@@ -342,24 +408,32 @@ func (s *Store) recordWriteLocked(ctx context.Context, ev audit.WriteEvent, cont
 	if contentHash != "" && ev.ContentSHA256 == "" {
 		ev.ContentSHA256 = contentHash
 	}
+	if ev.ProjectID == "" {
+		// Read s.activeProject WITHOUT locking — caller already holds s.mu.
+		ev.ProjectID = s.activeProject
+	}
 	canary := 0
 	if ev.CanaryPresent {
 		canary = 1
 	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO write_audit (table_name, row_id, actor, session_id, write_path,
+		`INSERT INTO write_audit (table_name, row_id, project_id, actor, session_id, write_path,
 		                           content_sha256, canary_present, constitution_id, constitution_ver, notes, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		ev.TableName, ev.RowID, ev.Actor, ev.SessionID, ev.WritePath,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		ev.TableName, ev.RowID, ev.ProjectID, ev.Actor, ev.SessionID, ev.WritePath,
 		ev.ContentSHA256, canary, ev.ConstitutionID, ev.ConstitutionVer, ev.Notes, ev.CreatedAt)
 	return err
 }
 
 func (s *Store) ListWrites(ctx context.Context, f audit.ListFilters) ([]audit.WriteEvent, error) {
-	q := `SELECT id, table_name, row_id, actor, session_id, write_path,
+	q := `SELECT id, table_name, row_id, COALESCE(project_id, ''), actor, session_id, write_path,
 	             COALESCE(content_sha256, ''), canary_present, COALESCE(constitution_id, ''), COALESCE(constitution_ver, ''), COALESCE(notes, ''), created_at
 	      FROM write_audit WHERE 1=1`
 	args := []any{}
+	if f.ProjectID != "" {
+		q += ` AND project_id = ?`
+		args = append(args, f.ProjectID)
+	}
 	if f.Since != "" {
 		q += ` AND created_at >= ?`
 		args = append(args, f.Since)
@@ -390,7 +464,7 @@ func (s *Store) ListWrites(ctx context.Context, f audit.ListFilters) ([]audit.Wr
 	for rows.Next() {
 		var ev audit.WriteEvent
 		var canary int
-		if err := rows.Scan(&ev.ID, &ev.TableName, &ev.RowID, &ev.Actor, &ev.SessionID, &ev.WritePath,
+		if err := rows.Scan(&ev.ID, &ev.TableName, &ev.RowID, &ev.ProjectID, &ev.Actor, &ev.SessionID, &ev.WritePath,
 			&ev.ContentSHA256, &canary, &ev.ConstitutionID, &ev.ConstitutionVer, &ev.Notes, &ev.CreatedAt); err != nil {
 			return nil, err
 		}
@@ -415,30 +489,35 @@ func (s *Store) SaveSession(ctx context.Context, wc store.WriteContext, sess *se
 	if sess.Status == "" {
 		sess.Status = string(session.StatusActive)
 	}
-	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO sessions (session_id, status, constitution_id, constitution_ver, active_mods,
-		                     started_at, closed_at, notes, parent_session_id, operator, project_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		sess.SessionID, sess.Status, sess.ConstitutionID, sess.ConstitutionVer, sess.ActiveMods,
-		sess.StartedAt, sess.ClosedAt, sess.Notes, sess.ParentSessionID, sess.Operator, projectID)
-	if err != nil {
-		return 0, err
-	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		return 0, err
-	}
-	sess.ID = id
-	return id, s.recordWriteLocked(ctx, audit.WriteEvent{
-		TableName:       "sessions",
-		RowID:           id,
-		Actor:           wc.Actor,
-		SessionID:       sess.SessionID,
-		WritePath:       wc.WritePath,
-		ConstitutionID:  wc.ConstitutionID,
-		ConstitutionVer: wc.ConstitutionVer,
-		CreatedAt:       sess.StartedAt,
-	}, "")
+	var id int64
+	err := s.runInTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx,
+			`INSERT INTO sessions (session_id, status, constitution_id, constitution_ver, active_mods,
+			                     started_at, closed_at, notes, parent_session_id, operator, project_id)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			sess.SessionID, sess.Status, sess.ConstitutionID, sess.ConstitutionVer, sess.ActiveMods,
+			sess.StartedAt, sess.ClosedAt, sess.Notes, sess.ParentSessionID, sess.Operator, projectID)
+		if err != nil {
+			return err
+		}
+		newID, err := res.LastInsertId()
+		if err != nil {
+			return err
+		}
+		id = newID
+		sess.ID = newID
+		return s.recordWriteLockedTx(ctx, tx, audit.WriteEvent{
+			TableName:       "sessions",
+			RowID:           newID,
+			Actor:           wc.Actor,
+			SessionID:       sess.SessionID,
+			WritePath:       wc.WritePath,
+			ConstitutionID:  wc.ConstitutionID,
+			ConstitutionVer: wc.ConstitutionVer,
+			CreatedAt:       sess.StartedAt,
+		}, "")
+	})
+	return id, err
 }
 
 func (s *Store) GetSession(ctx context.Context, sessionID string) (*session.Session, error) {
@@ -478,25 +557,27 @@ func (s *Store) CloseSession(ctx context.Context, wc store.WriteContext, session
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	res, err := s.db.ExecContext(ctx,
-		`UPDATE sessions SET status = ?, closed_at = ? WHERE session_id = ? AND project_id = ? AND status = ?`,
-		string(session.StatusClosed), now, sessionID, activeProject, string(session.StatusActive))
-	if err != nil {
-		return err
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return store.ErrNotFound
-	}
-	return s.recordWriteLocked(ctx, audit.WriteEvent{
-		TableName:       "sessions",
-		Actor:           wc.Actor,
-		SessionID:       sessionID,
-		WritePath:       wc.WritePath,
-		ConstitutionID:  wc.ConstitutionID,
-		ConstitutionVer: wc.ConstitutionVer,
-		CreatedAt:       now,
-	}, "")
+	return s.runInTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx,
+			`UPDATE sessions SET status = ?, closed_at = ? WHERE session_id = ? AND project_id = ? AND status = ?`,
+			string(session.StatusClosed), now, sessionID, activeProject, string(session.StatusActive))
+		if err != nil {
+			return err
+		}
+		n, _ := res.RowsAffected()
+		if n == 0 {
+			return store.ErrNotFound
+		}
+		return s.recordWriteLockedTx(ctx, tx, audit.WriteEvent{
+			TableName:       "sessions",
+			Actor:           wc.Actor,
+			SessionID:       sessionID,
+			WritePath:       wc.WritePath,
+			ConstitutionID:  wc.ConstitutionID,
+			ConstitutionVer: wc.ConstitutionVer,
+			CreatedAt:       now,
+		}, "")
+	})
 }
 
 func (s *Store) ListSessions(ctx context.Context, limit int) ([]session.Session, error) {
@@ -854,28 +935,30 @@ func (s *Store) LinkResearch(ctx context.Context, wc store.WriteContext, link *r
 	if link.CreatedAt == "" {
 		link.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
-	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO research_links (research_item_id, target_type, target_id, note, source, confidence, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		link.ResearchItemID, link.TargetType, link.TargetID, nullStr(link.Note), nullStr(link.Source), link.Confidence, link.CreatedAt)
-	if err != nil {
-		return err
-	}
-	id, err := res.LastInsertId()
-	if err != nil {
-		return err
-	}
-	link.ID = id
-	return s.recordWriteLocked(ctx, audit.WriteEvent{
-		TableName:       "research_links",
-		RowID:           id,
-		Actor:           wc.Actor,
-		SessionID:       wc.SessionID,
-		WritePath:       wc.WritePath,
-		ConstitutionID:  wc.ConstitutionID,
-		ConstitutionVer: wc.ConstitutionVer,
-		CreatedAt:       link.CreatedAt,
-	}, "")
+	return s.runInTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx,
+			`INSERT INTO research_links (research_item_id, target_type, target_id, note, source, confidence, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			link.ResearchItemID, link.TargetType, link.TargetID, nullStr(link.Note), nullStr(link.Source), link.Confidence, link.CreatedAt)
+		if err != nil {
+			return err
+		}
+		id, err := res.LastInsertId()
+		if err != nil {
+			return err
+		}
+		link.ID = id
+		return s.recordWriteLockedTx(ctx, tx, audit.WriteEvent{
+			TableName:       "research_links",
+			RowID:           id,
+			Actor:           wc.Actor,
+			SessionID:       wc.SessionID,
+			WritePath:       wc.WritePath,
+			ConstitutionID:  wc.ConstitutionID,
+			ConstitutionVer: wc.ConstitutionVer,
+			CreatedAt:       link.CreatedAt,
+		}, "")
+	})
 }
 
 func (s *Store) ResearchStatus(ctx context.Context) (*research.Status, error) {
@@ -915,26 +998,31 @@ func (s *Store) SaveSpec(ctx context.Context, wc store.WriteContext, sp *vibeflo
 	if sp.UpdatedAt == "" {
 		sp.UpdatedAt = sp.CreatedAt
 	}
-	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO vibe_specs (vibe_case, session_id, constitution_json, spec_json, tasks_json, created_at, updated_at, project_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		sp.VibeCase, nullStr(sp.SessionID), nullStr(sp.Constitution), nullStr(sp.Spec), nullStr(sp.Tasks),
-		sp.CreatedAt, sp.UpdatedAt, projectID)
-	if err != nil {
-		return 0, err
-	}
-	id, _ := res.LastInsertId()
-	sp.ID = id
-	return id, s.recordWriteLocked(ctx, audit.WriteEvent{
-		TableName:       "vibe_specs",
-		RowID:           id,
-		Actor:           wc.Actor,
-		SessionID:       nullStrOr(sp.SessionID, wc.SessionID),
-		WritePath:       wc.WritePath,
-		ConstitutionID:  wc.ConstitutionID,
-		ConstitutionVer: wc.ConstitutionVer,
-		CreatedAt:       sp.CreatedAt,
-	}, "")
+	var id int64
+	err := s.runInTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx,
+			`INSERT INTO vibe_specs (vibe_case, session_id, constitution_json, spec_json, tasks_json, created_at, updated_at, project_id)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			sp.VibeCase, nullStr(sp.SessionID), nullStr(sp.Constitution), nullStr(sp.Spec), nullStr(sp.Tasks),
+			sp.CreatedAt, sp.UpdatedAt, projectID)
+		if err != nil {
+			return err
+		}
+		newID, _ := res.LastInsertId()
+		id = newID
+		sp.ID = newID
+		return s.recordWriteLockedTx(ctx, tx, audit.WriteEvent{
+			TableName:       "vibe_specs",
+			RowID:           newID,
+			Actor:           wc.Actor,
+			SessionID:       nullStrOr(sp.SessionID, wc.SessionID),
+			WritePath:       wc.WritePath,
+			ConstitutionID:  wc.ConstitutionID,
+			ConstitutionVer: wc.ConstitutionVer,
+			CreatedAt:       sp.CreatedAt,
+		}, "")
+	})
+	return id, err
 }
 
 func (s *Store) GetSpec(ctx context.Context, id int64) (*vibeflow.Spec, error) {
@@ -981,33 +1069,35 @@ func (s *Store) UpdateSpec(ctx context.Context, wc store.WriteContext, id int64,
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	res, err := s.db.ExecContext(ctx,
-		`UPDATE vibe_specs SET
-			vibe_case         = COALESCE(NULLIF(?, ''), vibe_case),
-			session_id        = COALESCE(NULLIF(?, ''), session_id),
-			constitution_json = COALESCE(NULLIF(?, ''), constitution_json),
-			spec_json         = COALESCE(NULLIF(?, ''), spec_json),
-			tasks_json        = COALESCE(NULLIF(?, ''), tasks_json),
-			updated_at        = ?
-		 WHERE id = ? AND project_id = ?`,
-		sp.VibeCase, sp.SessionID, sp.Constitution, sp.Spec, sp.Tasks, now, id, activeProject)
-	if err != nil {
-		return err
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return sql.ErrNoRows
-	}
-	return s.recordWriteLocked(ctx, audit.WriteEvent{
-		TableName:       "vibe_specs",
-		RowID:           id,
-		Actor:           wc.Actor,
-		SessionID:       wc.SessionID,
-		WritePath:       wc.WritePath,
-		ConstitutionID:  wc.ConstitutionID,
-		ConstitutionVer: wc.ConstitutionVer,
-		CreatedAt:       now,
-	}, "")
+	return s.runInTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx,
+			`UPDATE vibe_specs SET
+				vibe_case         = COALESCE(NULLIF(?, ''), vibe_case),
+				session_id        = COALESCE(NULLIF(?, ''), session_id),
+				constitution_json = COALESCE(NULLIF(?, ''), constitution_json),
+				spec_json         = COALESCE(NULLIF(?, ''), spec_json),
+				tasks_json        = COALESCE(NULLIF(?, ''), tasks_json),
+				updated_at        = ?
+			 WHERE id = ? AND project_id = ?`,
+			sp.VibeCase, sp.SessionID, sp.Constitution, sp.Spec, sp.Tasks, now, id, activeProject)
+		if err != nil {
+			return err
+		}
+		n, _ := res.RowsAffected()
+		if n == 0 {
+			return sql.ErrNoRows
+		}
+		return s.recordWriteLockedTx(ctx, tx, audit.WriteEvent{
+			TableName:       "vibe_specs",
+			RowID:           id,
+			Actor:           wc.Actor,
+			SessionID:       wc.SessionID,
+			WritePath:       wc.WritePath,
+			ConstitutionID:  wc.ConstitutionID,
+			ConstitutionVer: wc.ConstitutionVer,
+			CreatedAt:       now,
+		}, "")
+	})
 }
 
 func (s *Store) DeleteSpec(ctx context.Context, wc store.WriteContext, id int64) error {
@@ -1017,24 +1107,26 @@ func (s *Store) DeleteSpec(ctx context.Context, wc store.WriteContext, id int64)
 	activeProject := s.ActiveProject() // capture before locking
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	res, err := s.db.ExecContext(ctx, `DELETE FROM vibe_specs WHERE id = ? AND project_id = ?`, id, activeProject)
-	if err != nil {
-		return err
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return sql.ErrNoRows
-	}
-	return s.recordWriteLocked(ctx, audit.WriteEvent{
-		TableName:       "vibe_specs",
-		RowID:           id,
-		Actor:           wc.Actor,
-		SessionID:       wc.SessionID,
-		WritePath:       wc.WritePath,
-		ConstitutionID:  wc.ConstitutionID,
-		ConstitutionVer: wc.ConstitutionVer,
-		CreatedAt:       time.Now().UTC().Format(time.RFC3339Nano),
-	}, "")
+	return s.runInTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, `DELETE FROM vibe_specs WHERE id = ? AND project_id = ?`, id, activeProject)
+		if err != nil {
+			return err
+		}
+		n, _ := res.RowsAffected()
+		if n == 0 {
+			return sql.ErrNoRows
+		}
+		return s.recordWriteLockedTx(ctx, tx, audit.WriteEvent{
+			TableName:       "vibe_specs",
+			RowID:           id,
+			Actor:           wc.Actor,
+			SessionID:       wc.SessionID,
+			WritePath:       wc.WritePath,
+			ConstitutionID:  wc.ConstitutionID,
+			ConstitutionVer: wc.ConstitutionVer,
+			CreatedAt:       time.Now().UTC().Format(time.RFC3339Nano),
+		}, "")
+	})
 }
 
 func (s *Store) ListSpecs(ctx context.Context, f vibeflow.SpecListFilters) ([]vibeflow.Spec, error) {
@@ -1105,31 +1197,33 @@ func (s *Store) SaveBrandGuide(ctx context.Context, wc store.WriteContext, b *vi
 		b.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
 	b.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO vibe_brands (brand_id, voice_json, visual_json, narrative_json, compliance_json, created_at, updated_at, project_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		 ON CONFLICT(project_id, brand_id) DO UPDATE SET
-		   voice_json = excluded.voice_json,
-		   visual_json = excluded.visual_json,
-		   narrative_json = excluded.narrative_json,
-		   compliance_json = excluded.compliance_json,
-		   updated_at = excluded.updated_at`,
-		b.BrandID, nullStr(b.Voice), nullStr(b.Visual), nullStr(b.Narrative), nullStr(b.Compliance),
-		b.CreatedAt, b.UpdatedAt, projectID)
-	if err != nil {
-		return err
-	}
-	return s.recordWriteLocked(ctx, audit.WriteEvent{
-		TableName:       "vibe_brands",
-		RowID:           0,
-		Actor:           wc.Actor,
-		SessionID:       wc.SessionID,
-		WritePath:       wc.WritePath,
-		ConstitutionID:  wc.ConstitutionID,
-		ConstitutionVer: wc.ConstitutionVer,
-		CreatedAt:       b.UpdatedAt,
-		Notes:           "brand_id=" + b.BrandID + " project_id=" + projectID,
-	}, "")
+	return s.runInTx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx,
+			`INSERT INTO vibe_brands (brand_id, voice_json, visual_json, narrative_json, compliance_json, created_at, updated_at, project_id)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			 ON CONFLICT(project_id, brand_id) DO UPDATE SET
+			   voice_json = excluded.voice_json,
+			   visual_json = excluded.visual_json,
+			   narrative_json = excluded.narrative_json,
+			   compliance_json = excluded.compliance_json,
+			   updated_at = excluded.updated_at`,
+			b.BrandID, nullStr(b.Voice), nullStr(b.Visual), nullStr(b.Narrative), nullStr(b.Compliance),
+			b.CreatedAt, b.UpdatedAt, projectID)
+		if err != nil {
+			return err
+		}
+		return s.recordWriteLockedTx(ctx, tx, audit.WriteEvent{
+			TableName:       "vibe_brands",
+			RowID:           0,
+			Actor:           wc.Actor,
+			SessionID:       wc.SessionID,
+			WritePath:       wc.WritePath,
+			ConstitutionID:  wc.ConstitutionID,
+			ConstitutionVer: wc.ConstitutionVer,
+			CreatedAt:       b.UpdatedAt,
+			Notes:           "brand_id=" + b.BrandID + " project_id=" + projectID,
+		}, "")
+	})
 }
 
 func (s *Store) GetBrandGuide(ctx context.Context, brandID string) (*vibeflow.BrandGuide, error) {
@@ -1179,26 +1273,28 @@ func (s *Store) DeleteBrandGuide(ctx context.Context, wc store.WriteContext, bra
 	if strings.ContainsAny(brandID, "/\\\x00\n\r") {
 		return fmt.Errorf("%w: brand_id contains invalid characters", store.ErrInvalidArgument)
 	}
-	res, err := s.db.ExecContext(ctx,
-		`DELETE FROM vibe_brands WHERE brand_id = ? AND project_id = ?`, brandID, activeProject)
-	if err != nil {
-		return err
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return store.ErrNotFound
-	}
-	return s.recordWriteLocked(ctx, audit.WriteEvent{
-		TableName:       "vibe_brands",
-		RowID:           0,
-		Actor:           wc.Actor,
-		SessionID:       wc.SessionID,
-		WritePath:       wc.WritePath,
-		ConstitutionID:  wc.ConstitutionID,
-		ConstitutionVer: wc.ConstitutionVer,
-		CreatedAt:       time.Now().UTC().Format(time.RFC3339Nano),
-		Notes:           "brand_id=" + brandID + " project_id=" + activeProject,
-	}, "")
+	return s.runInTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx,
+			`DELETE FROM vibe_brands WHERE brand_id = ? AND project_id = ?`, brandID, activeProject)
+		if err != nil {
+			return err
+		}
+		n, _ := res.RowsAffected()
+		if n == 0 {
+			return store.ErrNotFound
+		}
+		return s.recordWriteLockedTx(ctx, tx, audit.WriteEvent{
+			TableName:       "vibe_brands",
+			RowID:           0,
+			Actor:           wc.Actor,
+			SessionID:       wc.SessionID,
+			WritePath:       wc.WritePath,
+			ConstitutionID:  wc.ConstitutionID,
+			ConstitutionVer: wc.ConstitutionVer,
+			CreatedAt:       time.Now().UTC().Format(time.RFC3339Nano),
+			Notes:           "brand_id=" + brandID + " project_id=" + activeProject,
+		}, "")
+	})
 }
 
 func (s *Store) ListBrandGuides(ctx context.Context, limit int) ([]vibeflow.BrandGuide, error) {
@@ -1263,28 +1359,30 @@ func (s *Store) SaveComplianceRule(ctx context.Context, wc store.WriteContext, r
 	if r.CreatedAt == "" {
 		r.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO vibe_compliance (jurisdiction, rules_json, effective_at, source_url, created_at)
-		 VALUES (?, ?, ?, ?, ?)
-		 ON CONFLICT(jurisdiction) DO UPDATE SET
-		   rules_json = excluded.rules_json,
-		   effective_at = excluded.effective_at,
-		   source_url = excluded.source_url`,
-		r.Jurisdiction, r.Rules, nullStr(r.EffectiveAt), nullStr(r.SourceURL), r.CreatedAt)
-	if err != nil {
-		return err
-	}
-	return s.recordWriteLocked(ctx, audit.WriteEvent{
-		TableName:       "vibe_compliance",
-		RowID:           0,
-		Actor:           wc.Actor,
-		SessionID:       wc.SessionID,
-		WritePath:       wc.WritePath,
-		ConstitutionID:  wc.ConstitutionID,
-		ConstitutionVer: wc.ConstitutionVer,
-		CreatedAt:       r.CreatedAt,
-		Notes:           "jurisdiction=" + r.Jurisdiction + " (global)",
-	}, "")
+	return s.runInTx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx,
+			`INSERT INTO vibe_compliance (jurisdiction, rules_json, effective_at, source_url, created_at)
+			 VALUES (?, ?, ?, ?, ?)
+			 ON CONFLICT(jurisdiction) DO UPDATE SET
+			   rules_json = excluded.rules_json,
+			   effective_at = excluded.effective_at,
+			   source_url = excluded.source_url`,
+			r.Jurisdiction, r.Rules, nullStr(r.EffectiveAt), nullStr(r.SourceURL), r.CreatedAt)
+		if err != nil {
+			return err
+		}
+		return s.recordWriteLockedTx(ctx, tx, audit.WriteEvent{
+			TableName:       "vibe_compliance",
+			RowID:           0,
+			Actor:           wc.Actor,
+			SessionID:       wc.SessionID,
+			WritePath:       wc.WritePath,
+			ConstitutionID:  wc.ConstitutionID,
+			ConstitutionVer: wc.ConstitutionVer,
+			CreatedAt:       r.CreatedAt,
+			Notes:           "jurisdiction=" + r.Jurisdiction + " (global)",
+		}, "")
+	})
 }
 
 func (s *Store) GetComplianceRule(ctx context.Context, jurisdiction string) (*vibeflow.ComplianceRule, error) {
@@ -1364,27 +1462,32 @@ func (s *Store) SaveArtifact(ctx context.Context, wc store.WriteContext, a *vibe
 	if a.HasDisclosure {
 		hasDisclosure = 1
 	}
-	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO vibe_artifacts (session_id, vibe_case, spec_id, artifact_url, artifact_type,
-		                           brand_id, jurisdiction, has_disclosure, validation_status, created_at, project_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		nullStr(a.SessionID), a.VibeCase, nullInt(a.SpecID), nullStr(a.ArtifactURL), a.ArtifactType,
-		nullStr(a.BrandID), nullStr(a.Jurisdiction), hasDisclosure, a.ValidationStatus, a.CreatedAt, projectID)
-	if err != nil {
-		return 0, err
-	}
-	id, _ := res.LastInsertId()
-	a.ID = id
-	return id, s.recordWriteLocked(ctx, audit.WriteEvent{
-		TableName:       "vibe_artifacts",
-		RowID:           id,
-		Actor:           wc.Actor,
-		SessionID:       nullStrOr(a.SessionID, wc.SessionID),
-		WritePath:       wc.WritePath,
-		ConstitutionID:  wc.ConstitutionID,
-		ConstitutionVer: wc.ConstitutionVer,
-		CreatedAt:       a.CreatedAt,
-	}, "")
+	var id int64
+	err := s.runInTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx,
+			`INSERT INTO vibe_artifacts (session_id, vibe_case, spec_id, artifact_url, artifact_type,
+			                           brand_id, jurisdiction, has_disclosure, validation_status, created_at, project_id)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			nullStr(a.SessionID), a.VibeCase, nullInt(a.SpecID), nullStr(a.ArtifactURL), a.ArtifactType,
+			nullStr(a.BrandID), nullStr(a.Jurisdiction), hasDisclosure, a.ValidationStatus, a.CreatedAt, projectID)
+		if err != nil {
+			return err
+		}
+		newID, _ := res.LastInsertId()
+		id = newID
+		a.ID = newID
+		return s.recordWriteLockedTx(ctx, tx, audit.WriteEvent{
+			TableName:       "vibe_artifacts",
+			RowID:           newID,
+			Actor:           wc.Actor,
+			SessionID:       nullStrOr(a.SessionID, wc.SessionID),
+			WritePath:       wc.WritePath,
+			ConstitutionID:  wc.ConstitutionID,
+			ConstitutionVer: wc.ConstitutionVer,
+			CreatedAt:       a.CreatedAt,
+		}, "")
+	})
+	return id, err
 }
 
 func (s *Store) GetArtifact(ctx context.Context, id int64) (*vibeflow.Artifact, error) {
@@ -1416,34 +1519,36 @@ func (s *Store) UpdateArtifact(ctx context.Context, wc store.WriteContext, id in
 		}
 		hasDisclosure = &v
 	}
-	res, err := s.db.ExecContext(ctx,
-		`UPDATE vibe_artifacts SET
-			session_id        = COALESCE(?, session_id),
-			spec_id           = COALESCE(?, spec_id),
-			artifact_url      = COALESCE(?, artifact_url),
-			brand_id          = COALESCE(?, brand_id),
-			jurisdiction      = COALESCE(?, jurisdiction),
-			has_disclosure    = COALESCE(?, has_disclosure),
-			validation_status = COALESCE(?, validation_status)
-		 WHERE id = ? AND project_id = ?`,
-		u.SessionID, u.SpecID, u.ArtifactURL, u.BrandID, u.Jurisdiction, hasDisclosure, u.ValidationStatus, id, activeProject)
-	if err != nil {
-		return err
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return sql.ErrNoRows
-	}
-	return s.recordWriteLocked(ctx, audit.WriteEvent{
-		TableName:       "vibe_artifacts",
-		RowID:           id,
-		Actor:           wc.Actor,
-		SessionID:       wc.SessionID,
-		WritePath:       wc.WritePath,
-		ConstitutionID:  wc.ConstitutionID,
-		ConstitutionVer: wc.ConstitutionVer,
-		CreatedAt:       time.Now().UTC().Format(time.RFC3339Nano),
-	}, "")
+	return s.runInTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx,
+			`UPDATE vibe_artifacts SET
+				session_id        = COALESCE(?, session_id),
+				spec_id           = COALESCE(?, spec_id),
+				artifact_url      = COALESCE(?, artifact_url),
+				brand_id          = COALESCE(?, brand_id),
+				jurisdiction      = COALESCE(?, jurisdiction),
+				has_disclosure    = COALESCE(?, has_disclosure),
+				validation_status = COALESCE(?, validation_status)
+			 WHERE id = ? AND project_id = ?`,
+			u.SessionID, u.SpecID, u.ArtifactURL, u.BrandID, u.Jurisdiction, hasDisclosure, u.ValidationStatus, id, activeProject)
+		if err != nil {
+			return err
+		}
+		n, _ := res.RowsAffected()
+		if n == 0 {
+			return sql.ErrNoRows
+		}
+		return s.recordWriteLockedTx(ctx, tx, audit.WriteEvent{
+			TableName:       "vibe_artifacts",
+			RowID:           id,
+			Actor:           wc.Actor,
+			SessionID:       wc.SessionID,
+			WritePath:       wc.WritePath,
+			ConstitutionID:  wc.ConstitutionID,
+			ConstitutionVer: wc.ConstitutionVer,
+			CreatedAt:       time.Now().UTC().Format(time.RFC3339Nano),
+		}, "")
+	})
 }
 
 func (s *Store) DeleteArtifact(ctx context.Context, wc store.WriteContext, id int64) error {
@@ -1453,24 +1558,26 @@ func (s *Store) DeleteArtifact(ctx context.Context, wc store.WriteContext, id in
 	activeProject := s.ActiveProject() // capture before locking
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	res, err := s.db.ExecContext(ctx, `DELETE FROM vibe_artifacts WHERE id = ? AND project_id = ?`, id, activeProject)
-	if err != nil {
-		return err
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return sql.ErrNoRows
-	}
-	return s.recordWriteLocked(ctx, audit.WriteEvent{
-		TableName:       "vibe_artifacts",
-		RowID:           id,
-		Actor:           wc.Actor,
-		SessionID:       wc.SessionID,
-		WritePath:       wc.WritePath,
-		ConstitutionID:  wc.ConstitutionID,
-		ConstitutionVer: wc.ConstitutionVer,
-		CreatedAt:       time.Now().UTC().Format(time.RFC3339Nano),
-	}, "")
+	return s.runInTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, `DELETE FROM vibe_artifacts WHERE id = ? AND project_id = ?`, id, activeProject)
+		if err != nil {
+			return err
+		}
+		n, _ := res.RowsAffected()
+		if n == 0 {
+			return sql.ErrNoRows
+		}
+		return s.recordWriteLockedTx(ctx, tx, audit.WriteEvent{
+			TableName:       "vibe_artifacts",
+			RowID:           id,
+			Actor:           wc.Actor,
+			SessionID:       wc.SessionID,
+			WritePath:       wc.WritePath,
+			ConstitutionID:  wc.ConstitutionID,
+			ConstitutionVer: wc.ConstitutionVer,
+			CreatedAt:       time.Now().UTC().Format(time.RFC3339Nano),
+		}, "")
+	})
 }
 
 func (s *Store) ListArtifacts(ctx context.Context, f vibeflow.ArtifactListFilters) ([]vibeflow.Artifact, error) {
@@ -1556,27 +1663,29 @@ func (s *Store) SetArtifactValidation(ctx context.Context, wc store.WriteContext
 	activeProject := s.ActiveProject() // capture before locking
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	res, err := s.db.ExecContext(ctx,
-		`UPDATE vibe_artifacts SET validation_status = ? WHERE id = ? AND project_id = ?`,
-		status, id, activeProject)
-	if err != nil {
-		return err
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return sql.ErrNoRows
-	}
-	return s.recordWriteLocked(ctx, audit.WriteEvent{
-		TableName:       "vibe_artifacts",
-		RowID:           id,
-		Actor:           wc.Actor,
-		SessionID:       wc.SessionID,
-		WritePath:       wc.WritePath,
-		ConstitutionID:  wc.ConstitutionID,
-		ConstitutionVer: wc.ConstitutionVer,
-		CreatedAt:       time.Now().UTC().Format(time.RFC3339Nano),
-		Notes:           "validation_status=" + status,
-	}, "")
+	return s.runInTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx,
+			`UPDATE vibe_artifacts SET validation_status = ? WHERE id = ? AND project_id = ?`,
+			status, id, activeProject)
+		if err != nil {
+			return err
+		}
+		n, _ := res.RowsAffected()
+		if n == 0 {
+			return sql.ErrNoRows
+		}
+		return s.recordWriteLockedTx(ctx, tx, audit.WriteEvent{
+			TableName:       "vibe_artifacts",
+			RowID:           id,
+			Actor:           wc.Actor,
+			SessionID:       wc.SessionID,
+			WritePath:       wc.WritePath,
+			ConstitutionID:  wc.ConstitutionID,
+			ConstitutionVer: wc.ConstitutionVer,
+			CreatedAt:       time.Now().UTC().Format(time.RFC3339Nano),
+			Notes:           "validation_status=" + status,
+		}, "")
+	})
 }
 
 // scanArtifact scans a single row into an Artifact.
@@ -1627,26 +1736,31 @@ func (s *Store) SaveDriftReport(ctx context.Context, wc store.WriteContext, d *v
 	if d.CreatedAt == "" {
 		d.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
-	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO vibe_drift_reports (artifact_id, spec_id, verdict, spec_diff_json, judge_reasoning, reconciled_at, created_at, project_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		d.ArtifactID, nullInt(d.SpecID), d.Verdict, nullStr(d.SpecDiff), nullStr(d.JudgeReasoning),
-		nullStr(d.ReconciledAt), d.CreatedAt, projectID)
-	if err != nil {
-		return 0, err
-	}
-	id, _ := res.LastInsertId()
-	d.ID = id
-	return id, s.recordWriteLocked(ctx, audit.WriteEvent{
-		TableName:       "vibe_drift_reports",
-		RowID:           id,
-		Actor:           wc.Actor,
-		SessionID:       wc.SessionID,
-		WritePath:       wc.WritePath,
-		ConstitutionID:  wc.ConstitutionID,
-		ConstitutionVer: wc.ConstitutionVer,
-		CreatedAt:       d.CreatedAt,
-	}, "")
+	var id int64
+	err := s.runInTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx,
+			`INSERT INTO vibe_drift_reports (artifact_id, spec_id, verdict, spec_diff_json, judge_reasoning, reconciled_at, created_at, project_id)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			d.ArtifactID, nullInt(d.SpecID), d.Verdict, nullStr(d.SpecDiff), nullStr(d.JudgeReasoning),
+			nullStr(d.ReconciledAt), d.CreatedAt, projectID)
+		if err != nil {
+			return err
+		}
+		newID, _ := res.LastInsertId()
+		id = newID
+		d.ID = newID
+		return s.recordWriteLockedTx(ctx, tx, audit.WriteEvent{
+			TableName:       "vibe_drift_reports",
+			RowID:           newID,
+			Actor:           wc.Actor,
+			SessionID:       wc.SessionID,
+			WritePath:       wc.WritePath,
+			ConstitutionID:  wc.ConstitutionID,
+			ConstitutionVer: wc.ConstitutionVer,
+			CreatedAt:       d.CreatedAt,
+		}, "")
+	})
+	return id, err
 }
 
 func (s *Store) LatestDriftForArtifact(ctx context.Context, artifactID int64) (*vibeflow.DriftReport, error) {
@@ -1760,32 +1874,37 @@ func (s *Store) SaveSDDEvaluation(ctx context.Context, wc store.WriteContext, e 
 	if e.CreatedAt == "" {
 		e.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
-	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO sdd_evaluations
-		 (eval_type, target_type, target_id, verdict_json, confidence,
-		  prompt_version, model, created_at,
-		  constitution_id, constitution_version, active_mods_json,
-		  refused_attempts, refusal_pattern, project_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		e.EvalType, e.TargetType, e.TargetID, e.VerdictJSON, e.Confidence,
-		nullStr(e.PromptVersion), nullStr(e.Model), e.CreatedAt,
-		nullStr(e.ConstitutionID), nullStr(e.ConstitutionVersion), nullStr(e.ActiveModsJSON),
-		e.RefusedAttempts, nullStr(e.RefusalPattern), projectID)
-	if err != nil {
-		return 0, err
-	}
-	id, _ := res.LastInsertId()
-	e.ID = id
-	return id, s.recordWriteLocked(ctx, audit.WriteEvent{
-		TableName:       "sdd_evaluations",
-		RowID:           id,
-		Actor:           wc.Actor,
-		SessionID:       wc.SessionID,
-		WritePath:       wc.WritePath,
-		ConstitutionID:  wc.ConstitutionID,
-		ConstitutionVer: wc.ConstitutionVer,
-		CreatedAt:       e.CreatedAt,
-	}, "")
+	var id int64
+	err := s.runInTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx,
+			`INSERT INTO sdd_evaluations
+			 (eval_type, target_type, target_id, verdict_json, confidence,
+			  prompt_version, model, created_at,
+			  constitution_id, constitution_version, active_mods_json,
+			  refused_attempts, refusal_pattern, project_id)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			e.EvalType, e.TargetType, e.TargetID, e.VerdictJSON, e.Confidence,
+			nullStr(e.PromptVersion), nullStr(e.Model), e.CreatedAt,
+			nullStr(e.ConstitutionID), nullStr(e.ConstitutionVersion), nullStr(e.ActiveModsJSON),
+			e.RefusedAttempts, nullStr(e.RefusalPattern), projectID)
+		if err != nil {
+			return err
+		}
+		newID, _ := res.LastInsertId()
+		id = newID
+		e.ID = newID
+		return s.recordWriteLockedTx(ctx, tx, audit.WriteEvent{
+			TableName:       "sdd_evaluations",
+			RowID:           newID,
+			Actor:           wc.Actor,
+			SessionID:       wc.SessionID,
+			WritePath:       wc.WritePath,
+			ConstitutionID:  wc.ConstitutionID,
+			ConstitutionVer: wc.ConstitutionVer,
+			CreatedAt:       e.CreatedAt,
+		}, "")
+	})
+	return id, err
 }
 
 func (s *Store) LatestSDDEvaluation(ctx context.Context, evalType, targetType, targetID string) (*ssd.SDDEvaluation, error) {
@@ -1936,35 +2055,37 @@ func (s *Store) SaveConstitution(ctx context.Context, wc store.WriteContext, c *
 	if c.Enabled {
 		enabled = 1
 	}
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO constitutions (constitution_id, version, label, source, file_path,
-		                           parsed_json, sha256, enabled, created_at, activated_at,
-		                           last_verified_at, last_verified_sha256)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
-		 ON CONFLICT(constitution_id, version) DO UPDATE SET
-		   label = excluded.label,
-		   source = excluded.source,
-		   file_path = excluded.file_path,
-		   parsed_json = excluded.parsed_json,
-		   sha256 = excluded.sha256,
-		   enabled = excluded.enabled,
-		   activated_at = excluded.activated_at`,
-		c.ConstitutionID, c.Version, nullStr(c.Label), c.Source, c.FilePath,
-		c.ParsedJSON, c.SHA256, enabled, c.CreatedAt, c.ActivatedAt)
-	if err != nil {
-		return err
-	}
-	return s.recordWriteLocked(ctx, audit.WriteEvent{
-		TableName:       "constitutions",
-		RowID:           0,
-		Actor:           wc.Actor,
-		SessionID:       wc.SessionID,
-		WritePath:       wc.WritePath,
-		ConstitutionID:  c.ConstitutionID,
-		ConstitutionVer: c.Version,
-		CreatedAt:       c.CreatedAt,
-		Notes:           "constitution_id=" + c.ConstitutionID + "@" + c.Version + " (global)",
-	}, "")
+	return s.runInTx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx,
+			`INSERT INTO constitutions (constitution_id, version, label, source, file_path,
+			                           parsed_json, sha256, enabled, created_at, activated_at,
+			                           last_verified_at, last_verified_sha256)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
+			 ON CONFLICT(constitution_id, version) DO UPDATE SET
+			   label = excluded.label,
+			   source = excluded.source,
+			   file_path = excluded.file_path,
+			   parsed_json = excluded.parsed_json,
+			   sha256 = excluded.sha256,
+			   enabled = excluded.enabled,
+			   activated_at = excluded.activated_at`,
+			c.ConstitutionID, c.Version, nullStr(c.Label), c.Source, c.FilePath,
+			c.ParsedJSON, c.SHA256, enabled, c.CreatedAt, c.ActivatedAt)
+		if err != nil {
+			return err
+		}
+		return s.recordWriteLockedTx(ctx, tx, audit.WriteEvent{
+			TableName:       "constitutions",
+			RowID:           0,
+			Actor:           wc.Actor,
+			SessionID:       wc.SessionID,
+			WritePath:       wc.WritePath,
+			ConstitutionID:  c.ConstitutionID,
+			ConstitutionVer: c.Version,
+			CreatedAt:       c.CreatedAt,
+			Notes:           "constitution_id=" + c.ConstitutionID + "@" + c.Version + " (global)",
+		}, "")
+	})
 }
 
 func (s *Store) GetConstitution(ctx context.Context, constitutionID, version string) (*constitution.Constitution, error) {
@@ -2079,36 +2200,38 @@ func (s *Store) SaveMod(ctx context.Context, wc store.WriteContext, m *mods.Mod)
 	if m.RequiresTor {
 		requiresTor = 1
 	}
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO mods (mod_id, name, version, source, manifest_json, sha256,
-		                 risk_class, target_scope, requires_tor, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 ON CONFLICT(mod_id) DO UPDATE SET
-		   name = excluded.name,
-		   version = excluded.version,
-		   source = excluded.source,
-		   manifest_json = excluded.manifest_json,
-		   sha256 = excluded.sha256,
-		   risk_class = excluded.risk_class,
-		   target_scope = excluded.target_scope,
-		   requires_tor = excluded.requires_tor,
-		   updated_at = excluded.updated_at`,
-		m.ModID, m.Name, m.Version, m.Source, m.ManifestJSON, m.SHA256,
-		nullStr(m.RiskClass), nullStr(m.TargetScope), requiresTor, m.CreatedAt, m.UpdatedAt)
-	if err != nil {
-		return err
-	}
-	return s.recordWriteLocked(ctx, audit.WriteEvent{
-		TableName:       "mods",
-		RowID:           0,
-		Actor:           wc.Actor,
-		SessionID:       wc.SessionID,
-		WritePath:       wc.WritePath,
-		ConstitutionID:  wc.ConstitutionID,
-		ConstitutionVer: wc.ConstitutionVer,
-		CreatedAt:       m.UpdatedAt,
-		Notes:           "mod_id=" + m.ModID + " (global catalog)",
-	}, "")
+	return s.runInTx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx,
+			`INSERT INTO mods (mod_id, name, version, source, manifest_json, sha256,
+			                 risk_class, target_scope, requires_tor, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 ON CONFLICT(mod_id) DO UPDATE SET
+			   name = excluded.name,
+			   version = excluded.version,
+			   source = excluded.source,
+			   manifest_json = excluded.manifest_json,
+			   sha256 = excluded.sha256,
+			   risk_class = excluded.risk_class,
+			   target_scope = excluded.target_scope,
+			   requires_tor = excluded.requires_tor,
+			   updated_at = excluded.updated_at`,
+			m.ModID, m.Name, m.Version, m.Source, m.ManifestJSON, m.SHA256,
+			nullStr(m.RiskClass), nullStr(m.TargetScope), requiresTor, m.CreatedAt, m.UpdatedAt)
+		if err != nil {
+			return err
+		}
+		return s.recordWriteLockedTx(ctx, tx, audit.WriteEvent{
+			TableName:       "mods",
+			RowID:           0,
+			Actor:           wc.Actor,
+			SessionID:       wc.SessionID,
+			WritePath:       wc.WritePath,
+			ConstitutionID:  wc.ConstitutionID,
+			ConstitutionVer: wc.ConstitutionVer,
+			CreatedAt:       m.UpdatedAt,
+			Notes:           "mod_id=" + m.ModID + " (global catalog)",
+		}, "")
+	})
 }
 
 func (s *Store) GetMod(ctx context.Context, modID string) (*mods.Mod, error) {
@@ -2199,27 +2322,32 @@ func (s *Store) RecordModLoad(ctx context.Context, wc store.WriteContext, load *
 	if load.LoadedAt == "" {
 		load.LoadedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
-	res, err := s.db.ExecContext(ctx,
-		`INSERT INTO mod_loads (mod_id, session_id, loaded_at, duration_ms,
-		                       capabilities_count, error, constitution_id, project_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		load.ModID, nullStr(load.SessionID), load.LoadedAt, load.DurationMs,
-		load.CapabilitiesCount, nullStr(load.Error), nullStr(load.ConstitutionID), projectID)
-	if err != nil {
-		return 0, err
-	}
-	id, _ := res.LastInsertId()
-	return id, s.recordWriteLocked(ctx, audit.WriteEvent{
-		TableName:       "mod_loads",
-		RowID:           id,
-		Actor:           wc.Actor,
-		SessionID:       nullStrOr(load.SessionID, wc.SessionID),
-		WritePath:       wc.WritePath,
-		ConstitutionID:  load.ConstitutionID,
-		ConstitutionVer: wc.ConstitutionVer,
-		CreatedAt:       load.LoadedAt,
-		Notes:           "mod_id=" + load.ModID + " project_id=" + projectID,
-	}, "")
+	var id int64
+	err := s.runInTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx,
+			`INSERT INTO mod_loads (mod_id, session_id, loaded_at, duration_ms,
+			                       capabilities_count, error, constitution_id, project_id)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			load.ModID, nullStr(load.SessionID), load.LoadedAt, load.DurationMs,
+			load.CapabilitiesCount, nullStr(load.Error), nullStr(load.ConstitutionID), projectID)
+		if err != nil {
+			return err
+		}
+		newID, _ := res.LastInsertId()
+		id = newID
+		return s.recordWriteLockedTx(ctx, tx, audit.WriteEvent{
+			TableName:       "mod_loads",
+			RowID:           newID,
+			Actor:           wc.Actor,
+			SessionID:       nullStrOr(load.SessionID, wc.SessionID),
+			WritePath:       wc.WritePath,
+			ConstitutionID:  load.ConstitutionID,
+			ConstitutionVer: wc.ConstitutionVer,
+			CreatedAt:       load.LoadedAt,
+			Notes:           "mod_id=" + load.ModID + " project_id=" + projectID,
+		}, "")
+	})
+	return id, err
 }
 
 func (s *Store) ListModLoads(ctx context.Context, modID string, limit int) ([]mods.ModLoad, error) {
@@ -2507,4 +2635,240 @@ func parseIntString(s string) int64 {
 		n = n*10 + int64(c-'0')
 	}
 	return n
+}
+
+// ----- VLP state (atomic spec 2.3 VLPPersistence) -----
+
+// SaveVLPState upserts a per-session VLP state row. INSERT ... ON CONFLICT
+// (project_id, session_id) DO UPDATE so repeated saves update the existing
+// row instead of inserting duplicates. The composite ON CONFLICT target
+// matches the UNIQUE INDEX idx_vlp_state_project_session (INV-7: per-project
+// uniqueness — see migration v9 in ddl.go).
+//
+// Uses RETURNING id + QueryRowContext so the row id is reliable on both
+// INSERT and UPDATE branches (database/sql's LastInsertId() is undefined
+// for UPSERT-UPDATE in modernc/sqlite).
+//
+// Wraps UPSERT + write_audit in a single transaction so INV-1 is enforced
+// atomically: either both rows land or neither does. Tx commit failure
+// surfaces as an error to the caller; tx rollback on error ensures no
+// orphan vlp_state rows.
+func (s *Store) SaveVLPState(ctx context.Context, wc store.WriteContext, row *store.VLPStateRow) (int64, error) {
+	if err := s.requireProject(); err != nil {
+		return 0, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.saveVLPStateTx(ctx, wc, row, "")
+}
+
+// SaveVLPStateWithTransition is the atomic combo: UPSERT vlp_state +
+// row-level audit + transition-level audit, all in one tx. Closes the
+// 2.5 atomicity gap (Save + Audit in separate calls). transitionNotes
+// is the JSON payload for the transition-level audit row (typically a
+// TransitionRecord serialized to JSON). Empty string means no
+// transition-level audit row is emitted (pure Save semantics).
+func (s *Store) SaveVLPStateWithTransition(ctx context.Context, wc store.WriteContext, row *store.VLPStateRow, transitionNotes string) (int64, error) {
+	if err := s.requireProject(); err != nil {
+		return 0, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.saveVLPStateTx(ctx, wc, row, transitionNotes)
+}
+
+// saveVLPStateTx is the shared implementation for SaveVLPState and
+// SaveVLPStateWithTransition. Caller MUST hold s.mu. transitionNotes
+// empty = skip transition-level audit.
+func (s *Store) saveVLPStateTx(ctx context.Context, wc store.WriteContext, row *store.VLPStateRow, transitionNotes string) (int64, error) {
+	projectID := projectIDOrActive(wc.ProjectID, s.activeProject)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if row.CreatedAt == "" {
+		row.CreatedAt = now
+	}
+	row.UpdatedAt = now
+
+	var id int64
+	err := s.runInTx(ctx, func(tx *sql.Tx) error {
+		if err := tx.QueryRowContext(ctx, `
+			INSERT INTO vlp_state (session_id, state, last_event, last_verdict, turn_count,
+			                      minset_current, constitution_id, constitution_ver,
+			                      created_at, updated_at, project_id)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(project_id, session_id) DO UPDATE SET
+				state             = excluded.state,
+				last_event        = excluded.last_event,
+				last_verdict      = excluded.last_verdict,
+				turn_count        = excluded.turn_count,
+				minset_current    = excluded.minset_current,
+				constitution_id   = excluded.constitution_id,
+				constitution_ver  = excluded.constitution_ver,
+				updated_at        = excluded.updated_at
+			RETURNING id`,
+			row.SessionID, row.State, row.LastEvent, row.LastVerdict, row.TurnCount,
+			row.MinsetCurrent, row.ConstitutionID, row.ConstitutionVer,
+			row.CreatedAt, row.UpdatedAt, projectID,
+		).Scan(&id); err != nil {
+			return fmt.Errorf("vlp_state: upsert: %w", err)
+		}
+
+		// Row-level audit row in the same tx (INV-1).
+		if wc.WritePath == "" {
+			wc.WritePath = "SaveVLPState"
+		}
+		if err := s.recordWriteLockedTx(ctx, tx, audit.WriteEvent{
+			TableName:       "vlp_state",
+			RowID:           id,
+			Actor:           wc.Actor,
+			SessionID:       row.SessionID,
+			WritePath:       wc.WritePath,
+			ConstitutionID:  wc.ConstitutionID,
+			ConstitutionVer: wc.ConstitutionVer,
+			CreatedAt:       now,
+		}, ""); err != nil {
+			return fmt.Errorf("vlp_state: audit (row-level): %w", err)
+		}
+
+		// Transition-level audit (spec 2.4). Distinct write_path so
+		// Auditor.ListTransitionsForSession can filter by it. JSON
+		// payload in notes (typically a TransitionRecord serialized).
+		if transitionNotes != "" {
+			if err := s.recordWriteLockedTx(ctx, tx, audit.WriteEvent{
+				TableName:       "vlp_state",
+				RowID:           id,
+				Actor:           wc.Actor,
+				SessionID:       row.SessionID,
+				WritePath:       "vlp.transition",
+				ConstitutionID:  wc.ConstitutionID,
+				ConstitutionVer: wc.ConstitutionVer,
+				Notes:           transitionNotes,
+				CreatedAt:       now,
+			}, ""); err != nil {
+				return fmt.Errorf("vlp_state: audit (transition-level): %w", err)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	row.ID = id
+	row.ProjectID = projectID
+	return id, nil
+}
+
+// GetVLPState returns the row for sessionID, or nil if not found.
+// Filtered by active project (INV-7): cross-project reads are denied.
+func (s *Store) GetVLPState(ctx context.Context, sessionID string) (*store.VLPStateRow, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.ActiveProject()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, session_id, state, last_event, last_verdict, turn_count,
+		       minset_current, constitution_id, constitution_ver,
+		       created_at, updated_at, project_id
+		FROM vlp_state WHERE session_id = ? AND project_id = ?`, sessionID, activeProject)
+	var r store.VLPStateRow
+	var le, lv, mc, ci, cv, pid sql.NullString
+	if err := row.Scan(&r.ID, &r.SessionID, &r.State, &le, &lv, &r.TurnCount,
+		&mc, &ci, &cv, &r.CreatedAt, &r.UpdatedAt, &pid); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	r.LastEvent = le.String
+	r.LastVerdict = lv.String
+	r.MinsetCurrent = mc.String
+	r.ConstitutionID = ci.String
+	r.ConstitutionVer = cv.String
+	r.ProjectID = pid.String
+	return &r, nil
+}
+
+// ListVLPStates returns rows filtered by stateFilter (NUMERIC — the int
+// value of internal/vlp.State; empty = all states), newest-first. Limit
+// <= 0 means no limit.
+//
+// Callers should pass the numeric form ("2", "3", etc.) — name strings
+// like "drafting_spec" are NOT resolved here (resolving would require
+// importing internal/vlp, which is forbidden to break a cycle). The
+// internal/vlp.Persistence wrapper accepts the State enum and converts
+// to numeric before calling this method.
+func (s *Store) ListVLPStates(ctx context.Context, stateFilter string, limit int) ([]store.VLPStateRow, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.ActiveProject()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Effective limit for SQL push-down. 0 → no LIMIT clause (caller owns
+	// result-set size; same as the public contract).
+	effectiveLimit := 0
+	if limit > 0 {
+		effectiveLimit = limit
+	}
+
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if stateFilter == "" {
+		if effectiveLimit > 0 {
+			rows, err = s.db.QueryContext(ctx, `
+				SELECT id, session_id, state, last_event, last_verdict, turn_count,
+				       minset_current, constitution_id, constitution_ver,
+				       created_at, updated_at, project_id
+				FROM vlp_state WHERE project_id = ?
+				ORDER BY updated_at DESC LIMIT ?`, activeProject, effectiveLimit)
+		} else {
+			rows, err = s.db.QueryContext(ctx, `
+				SELECT id, session_id, state, last_event, last_verdict, turn_count,
+				       minset_current, constitution_id, constitution_ver,
+				       created_at, updated_at, project_id
+				FROM vlp_state WHERE project_id = ?
+				ORDER BY updated_at DESC`, activeProject)
+		}
+	} else {
+		if effectiveLimit > 0 {
+			rows, err = s.db.QueryContext(ctx, `
+				SELECT id, session_id, state, last_event, last_verdict, turn_count,
+				       minset_current, constitution_id, constitution_ver,
+				       created_at, updated_at, project_id
+				FROM vlp_state WHERE project_id = ? AND state = ?
+				ORDER BY updated_at DESC LIMIT ?`, activeProject, stateFilter, effectiveLimit)
+		} else {
+			rows, err = s.db.QueryContext(ctx, `
+				SELECT id, session_id, state, last_event, last_verdict, turn_count,
+				       minset_current, constitution_id, constitution_ver,
+				       created_at, updated_at, project_id
+				FROM vlp_state WHERE project_id = ? AND state = ?
+				ORDER BY updated_at DESC`, activeProject, stateFilter)
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]store.VLPStateRow, 0, effectiveLimit)
+	for rows.Next() {
+		var r store.VLPStateRow
+		var le, lv, mc, ci, cv, pid sql.NullString
+		if err := rows.Scan(&r.ID, &r.SessionID, &r.State, &le, &lv, &r.TurnCount,
+			&mc, &ci, &cv, &r.CreatedAt, &r.UpdatedAt, &pid); err != nil {
+			return nil, err
+		}
+		r.LastEvent = le.String
+		r.LastVerdict = lv.String
+		r.MinsetCurrent = mc.String
+		r.ConstitutionID = ci.String
+		r.ConstitutionVer = cv.String
+		r.ProjectID = pid.String
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }

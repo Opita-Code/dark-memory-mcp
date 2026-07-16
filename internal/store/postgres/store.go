@@ -383,6 +383,57 @@ func (s *Store) RecordWrite(ctx context.Context, ev audit.WriteEvent) error {
 	return s.recordWrite(ctx, ev, "")
 }
 
+// recordWriteTx writes a write_audit row using the given pgx.Tx.
+// Used by every Save* method to ensure the audit row commits atomically
+// with the data row (INV-1 hardening, debt-elimination commit). Same
+// semantics as recordWrite but participates in the caller's tx.
+//
+// INV-7: project_id auto-filled from s.activeProject (postgres impl has
+// no s.mu so no deadlock risk; reads the field directly). Empty is
+// allowed for the 3 global tables per spec 171 T4c/T4f.
+func (s *Store) recordWriteTx(ctx context.Context, tx pgx.Tx, ev audit.WriteEvent, contentHash string) error {
+	if ev.CreatedAt == "" {
+		ev.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+	if contentHash != "" && ev.ContentSHA256 == "" {
+		ev.ContentSHA256 = contentHash
+	}
+	if ev.ProjectID == "" {
+		ev.ProjectID = s.activeProject
+	}
+	canary := false
+	if ev.CanaryPresent {
+		canary = true
+	}
+	_, err := tx.Exec(ctx,
+		`INSERT INTO write_audit (table_name, row_id, project_id, actor, session_id, write_path,
+		                           content_sha256, canary_present, constitution_id, constitution_ver, notes, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+		ev.TableName, ev.RowID, ev.ProjectID, ev.Actor, ev.SessionID, ev.WritePath,
+		ev.ContentSHA256, canary, ev.ConstitutionID, ev.ConstitutionVer, ev.Notes, ev.CreatedAt)
+	return err
+}
+
+// runInTx acquires a pgx.Tx and runs fn inside it. On error from fn
+// the tx is rolled back; on success it is committed. Caller MUST use
+// the pgx.Tx for all SQL operations and MUST call recordWriteTx for
+// audit row emission. Used by every Save* method for INV-1 atomicity.
+// Mirror of sqlite.runInTx for the postgres driver.
+func (s *Store) runInTx(ctx context.Context, fn func(pgx.Tx) error) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("postgres: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := fn(tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("postgres: commit tx: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) recordWrite(ctx context.Context, ev audit.WriteEvent, contentHash string) error {
 	if ev.CreatedAt == "" {
 		ev.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
@@ -390,24 +441,31 @@ func (s *Store) recordWrite(ctx context.Context, ev audit.WriteEvent, contentHas
 	if contentHash != "" && ev.ContentSHA256 == "" {
 		ev.ContentSHA256 = contentHash
 	}
+	if ev.ProjectID == "" {
+		ev.ProjectID = s.activeProject
+	}
 	canary := false
 	if ev.CanaryPresent {
 		canary = true
 	}
 	_, err := s.pool.Exec(ctx,
-		`INSERT INTO write_audit (table_name, row_id, actor, session_id, write_path,
+		`INSERT INTO write_audit (table_name, row_id, project_id, actor, session_id, write_path,
 		                           content_sha256, canary_present, constitution_id, constitution_ver, notes, created_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-		ev.TableName, ev.RowID, ev.Actor, ev.SessionID, ev.WritePath,
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+		ev.TableName, ev.RowID, ev.ProjectID, ev.Actor, ev.SessionID, ev.WritePath,
 		ev.ContentSHA256, canary, ev.ConstitutionID, ev.ConstitutionVer, ev.Notes, ev.CreatedAt)
 	return err
 }
 
 func (s *Store) ListWrites(ctx context.Context, f audit.ListFilters) ([]audit.WriteEvent, error) {
-	q := `SELECT id, table_name, row_id, actor, session_id, write_path,
+	q := `SELECT id, table_name, row_id, COALESCE(project_id, ''), actor, session_id, write_path,
 	             content_sha256, canary_present, constitution_id, constitution_ver, notes, created_at
 	      FROM write_audit WHERE 1=1`
 	args := []any{}
+	if f.ProjectID != "" {
+		q += ` AND project_id = $` + intToStr(len(args)+1)
+		args = append(args, f.ProjectID)
+	}
 	if f.Since != "" {
 		q += ` AND created_at >= $` + intToStr(len(args)+1)
 		args = append(args, f.Since)
@@ -439,7 +497,7 @@ func (s *Store) ListWrites(ctx context.Context, f audit.ListFilters) ([]audit.Wr
 		var ev audit.WriteEvent
 		var notes *string
 		var canary bool
-		if err := rows.Scan(&ev.ID, &ev.TableName, &ev.RowID, &ev.Actor, &ev.SessionID, &ev.WritePath,
+		if err := rows.Scan(&ev.ID, &ev.TableName, &ev.RowID, &ev.ProjectID, &ev.Actor, &ev.SessionID, &ev.WritePath,
 			&ev.ContentSHA256, &canary, &ev.ConstitutionID, &ev.ConstitutionVer, &notes, &ev.CreatedAt); err != nil {
 			return nil, err
 		}
@@ -466,30 +524,30 @@ func (s *Store) SaveSession(ctx context.Context, wc store.WriteContext, sess *se
 		sess.Status = string(session.StatusActive)
 	}
 	var id int64
-	err := s.pool.QueryRow(ctx,
-		`INSERT INTO sessions (session_id, status, constitution_id, constitution_ver, active_mods,
-		                     started_at, closed_at, notes, parent_session_id, operator, project_id)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-		 RETURNING id`,
-		sess.SessionID, sess.Status, sess.ConstitutionID, sess.ConstitutionVer, sess.ActiveMods,
-		sess.StartedAt, sess.ClosedAt, sess.Notes, sess.ParentSessionID, sess.Operator, projectID).Scan(&id)
-	if err != nil {
-		return 0, err
-	}
-	sess.ID = id
-	if err := s.RecordWrite(ctx, audit.WriteEvent{
-		TableName:       "sessions",
-		RowID:           id,
-		Actor:           wc.Actor,
-		SessionID:       sess.SessionID,
-		WritePath:       wc.WritePath,
-		ConstitutionID:  wc.ConstitutionID,
-		ConstitutionVer: wc.ConstitutionVer,
-		CreatedAt:       sess.StartedAt,
-	}); err != nil {
-		return id, err
-	}
-	return id, nil
+	err := s.runInTx(ctx, func(tx pgx.Tx) error {
+		if err := tx.QueryRow(ctx,
+			`INSERT INTO sessions (session_id, status, constitution_id, constitution_ver, active_mods,
+			                     started_at, closed_at, notes, parent_session_id, operator, project_id)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+			 RETURNING id`,
+			sess.SessionID, sess.Status, sess.ConstitutionID, sess.ConstitutionVer, sess.ActiveMods,
+			sess.StartedAt, sess.ClosedAt, sess.Notes, sess.ParentSessionID, sess.Operator, projectID,
+		).Scan(&id); err != nil {
+			return err
+		}
+		sess.ID = id
+		return s.recordWriteTx(ctx, tx, audit.WriteEvent{
+			TableName:       "sessions",
+			RowID:           id,
+			Actor:           wc.Actor,
+			SessionID:       sess.SessionID,
+			WritePath:       wc.WritePath,
+			ConstitutionID:  wc.ConstitutionID,
+			ConstitutionVer: wc.ConstitutionVer,
+			CreatedAt:       sess.StartedAt,
+		}, "")
+	})
+	return id, err
 }
 
 func (s *Store) GetSession(ctx context.Context, sessionID string) (*session.Session, error) {
@@ -526,24 +584,26 @@ func (s *Store) CloseSession(ctx context.Context, wc store.WriteContext, session
 	}
 	activeProject := s.activeProject // capture before locking
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	tag, err := s.pool.Exec(ctx,
-		`UPDATE sessions SET status = $1, closed_at = $2
-		 WHERE session_id = $3 AND project_id = $4 AND status = $5`,
-		string(session.StatusClosed), now, sessionID, activeProject, string(session.StatusActive))
-	if err != nil {
-		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return store.ErrNotFound
-	}
-	return s.RecordWrite(ctx, audit.WriteEvent{
-		TableName:       "sessions",
-		Actor:           wc.Actor,
-		SessionID:       sessionID,
-		WritePath:       wc.WritePath,
-		ConstitutionID:  wc.ConstitutionID,
-		ConstitutionVer: wc.ConstitutionVer,
-		CreatedAt:       now,
+	return s.runInTx(ctx, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx,
+			`UPDATE sessions SET status = $1, closed_at = $2
+			 WHERE session_id = $3 AND project_id = $4 AND status = $5`,
+			string(session.StatusClosed), now, sessionID, activeProject, string(session.StatusActive))
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return store.ErrNotFound
+		}
+		return s.recordWriteTx(ctx, tx, audit.WriteEvent{
+			TableName:       "sessions",
+			Actor:           wc.Actor,
+			SessionID:       sessionID,
+			WritePath:       wc.WritePath,
+			ConstitutionID:  wc.ConstitutionID,
+			ConstitutionVer: wc.ConstitutionVer,
+			CreatedAt:       now,
+		}, "")
 	})
 }
 
@@ -877,25 +937,27 @@ func (s *Store) LinkResearch(ctx context.Context, wc store.WriteContext, link *r
 	if link.CreatedAt == "" {
 		link.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
-	var id int64
-	err := s.pool.QueryRow(ctx,
-		`INSERT INTO research_links (research_item_id, target_type, target_id, note, source, confidence, created_at, project_id)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		 RETURNING id`,
-		link.ResearchItemID, link.TargetType, link.TargetID, nullStr(link.Note), nullStr(link.Source), link.Confidence, link.CreatedAt, projectID).Scan(&id)
-	if err != nil {
-		return err
-	}
-	link.ID = id
-	return s.RecordWrite(ctx, audit.WriteEvent{
-		TableName:       "research_links",
-		RowID:           id,
-		Actor:           wc.Actor,
-		SessionID:       wc.SessionID,
-		WritePath:       wc.WritePath,
-		ConstitutionID:  wc.ConstitutionID,
-		ConstitutionVer: wc.ConstitutionVer,
-		CreatedAt:       link.CreatedAt,
+	return s.runInTx(ctx, func(tx pgx.Tx) error {
+		var id int64
+		if err := tx.QueryRow(ctx,
+			`INSERT INTO research_links (research_item_id, target_type, target_id, note, source, confidence, created_at, project_id)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			 RETURNING id`,
+			link.ResearchItemID, link.TargetType, link.TargetID, nullStr(link.Note), nullStr(link.Source), link.Confidence, link.CreatedAt, projectID,
+		).Scan(&id); err != nil {
+			return err
+		}
+		link.ID = id
+		return s.recordWriteTx(ctx, tx, audit.WriteEvent{
+			TableName:       "research_links",
+			RowID:           id,
+			Actor:           wc.Actor,
+			SessionID:       wc.SessionID,
+			WritePath:       wc.WritePath,
+			ConstitutionID:  wc.ConstitutionID,
+			ConstitutionVer: wc.ConstitutionVer,
+			CreatedAt:       link.CreatedAt,
+		}, "")
 	})
 }
 
@@ -1217,6 +1279,283 @@ func jsonUnmarshal(data []byte, v any) error {
 }
 
 func intToStr(n int) string { return strconv.Itoa(n) }
+
+// ----- VLP state (atomic spec 2.3 VLPPersistence) -----
+
+// SaveVLPState upserts a per-session VLP state row using ON CONFLICT
+// DO UPDATE (Postgres UPSERT syntax). The composite ON CONFLICT target
+// (project_id, session_id) matches the UNIQUE INDEX idx_vlp_state_project_session
+// (INV-7: per-project uniqueness — see migration v9 in postgres/ddl.go).
+//
+// Uses RETURNING id (Postgres-native) to get a reliable row id on both
+// INSERT and UPDATE branches without a follow-up SELECT.
+//
+// Wraps UPSERT + write_audit in a single pgx transaction so INV-1 is
+// enforced atomically: either both rows land or neither does.
+func (s *Store) SaveVLPState(ctx context.Context, wc store.WriteContext, row *store.VLPStateRow) (int64, error) {
+	if err := s.requireProject(); err != nil {
+		return 0, err
+	}
+	return s.saveVLPStateTx(ctx, wc, row, "")
+}
+
+// SaveVLPStateWithTransition is the atomic combo (mirror of sqlite).
+// See sqlite.SaveVLPStateWithTransition for full semantics.
+func (s *Store) SaveVLPStateWithTransition(ctx context.Context, wc store.WriteContext, row *store.VLPStateRow, transitionNotes string) (int64, error) {
+	if err := s.requireProject(); err != nil {
+		return 0, err
+	}
+	return s.saveVLPStateTx(ctx, wc, row, transitionNotes)
+}
+
+// saveVLPStateTx is the shared implementation for SaveVLPState and
+// SaveVLPStateWithTransition. transitionNotes empty = skip transition-level
+// audit. Postgres impl uses pgx.Tx via s.runInTx.
+func (s *Store) saveVLPStateTx(ctx context.Context, wc store.WriteContext, row *store.VLPStateRow, transitionNotes string) (int64, error) {
+	projectID := projectIDOrActive(wc.ProjectID, s.activeProject)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if row.CreatedAt == "" {
+		row.CreatedAt = now
+	}
+	row.UpdatedAt = now
+
+	var id int64
+	err := s.runInTx(ctx, func(tx pgx.Tx) error {
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO vlp_state (session_id, state, last_event, last_verdict, turn_count,
+			                      minset_current, constitution_id, constitution_ver,
+			                      created_at, updated_at, project_id)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+			ON CONFLICT (project_id, session_id) DO UPDATE SET
+				state             = EXCLUDED.state,
+				last_event        = EXCLUDED.last_event,
+				last_verdict      = EXCLUDED.last_verdict,
+				turn_count        = EXCLUDED.turn_count,
+				minset_current    = EXCLUDED.minset_current,
+				constitution_id   = EXCLUDED.constitution_id,
+				constitution_ver  = EXCLUDED.constitution_ver,
+				updated_at        = EXCLUDED.updated_at
+			RETURNING id`,
+			row.SessionID, row.State, row.LastEvent, row.LastVerdict, row.TurnCount,
+			row.MinsetCurrent, row.ConstitutionID, row.ConstitutionVer,
+			row.CreatedAt, row.UpdatedAt, projectID,
+		).Scan(&id); err != nil {
+			return fmt.Errorf("vlp_state: upsert: %w", err)
+		}
+
+		// Row-level audit row in the same tx (INV-1).
+		if wc.WritePath == "" {
+			wc.WritePath = "SaveVLPState"
+		}
+		if err := s.recordWriteTx(ctx, tx, audit.WriteEvent{
+			TableName:       "vlp_state",
+			RowID:           id,
+			Actor:           wc.Actor,
+			SessionID:       row.SessionID,
+			WritePath:       wc.WritePath,
+			ConstitutionID:  wc.ConstitutionID,
+			ConstitutionVer: wc.ConstitutionVer,
+			CreatedAt:       now,
+		}, ""); err != nil {
+			return fmt.Errorf("vlp_state: audit (row-level): %w", err)
+		}
+
+		// Transition-level audit (spec 2.4).
+		if transitionNotes != "" {
+			if err := s.recordWriteTx(ctx, tx, audit.WriteEvent{
+				TableName:       "vlp_state",
+				RowID:           id,
+				Actor:           wc.Actor,
+				SessionID:       row.SessionID,
+				WritePath:       "vlp.transition",
+				ConstitutionID:  wc.ConstitutionID,
+				ConstitutionVer: wc.ConstitutionVer,
+				Notes:           transitionNotes,
+				CreatedAt:       now,
+			}, ""); err != nil {
+				return fmt.Errorf("vlp_state: audit (transition-level): %w", err)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	row.ID = id
+	row.ProjectID = projectID
+	return id, nil
+}
+
+// GetVLPState returns the row for sessionID, or nil if not found.
+// Filtered by active project (INV-7).
+func (s *Store) GetVLPState(ctx context.Context, sessionID string) (*store.VLPStateRow, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.ActiveProject()
+	var (
+		id          int64
+		sid         string
+		state       int
+		lastEvent   *string
+		lastVerdict *string
+		turnCount   int
+		minset      *string
+		consID      *string
+		consVer     *string
+		createdAt   string
+		updatedAt   string
+		projectID   string
+	)
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, session_id, state, last_event, last_verdict, turn_count,
+		       minset_current, constitution_id, constitution_ver,
+		       created_at, updated_at, project_id
+		FROM vlp_state WHERE session_id = $1 AND project_id = $2`,
+		sessionID, activeProject).Scan(&id, &sid, &state, &lastEvent, &lastVerdict,
+		&turnCount, &minset, &consID, &consVer, &createdAt, &updatedAt, &projectID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	r := &store.VLPStateRow{
+		ID:        id,
+		SessionID: sid,
+		State:     state,
+		TurnCount: turnCount,
+		CreatedAt: createdAt,
+		UpdatedAt: updatedAt,
+		ProjectID: projectID,
+	}
+	if lastEvent != nil {
+		r.LastEvent = *lastEvent
+	}
+	if lastVerdict != nil {
+		r.LastVerdict = *lastVerdict
+	}
+	if minset != nil {
+		r.MinsetCurrent = *minset
+	}
+	if consID != nil {
+		r.ConstitutionID = *consID
+	}
+	if consVer != nil {
+		r.ConstitutionVer = *consVer
+	}
+	return r, nil
+}
+
+// ListVLPStates returns rows filtered by stateFilter (NUMERIC — the int
+// value of internal/vlp.State; empty = all states), newest-first. Limit
+// <= 0 means no limit.
+//
+// Callers should pass the numeric form ("2", "3", etc.) — name strings
+// like "drafting_spec" are NOT resolved here (resolving would require
+// importing internal/vlp, which is forbidden to break a cycle). The
+// internal/vlp.Persistence wrapper accepts the State enum and converts
+// to numeric before calling this method.
+func (s *Store) ListVLPStates(ctx context.Context, stateFilter string, limit int) ([]store.VLPStateRow, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.ActiveProject()
+
+	// Effective limit for SQL push-down. 0 → no LIMIT clause (caller owns
+	// result-set size; same as the public contract).
+	effectiveLimit := 0
+	if limit > 0 {
+		effectiveLimit = limit
+	}
+
+	var rows pgx.Rows
+	var err error
+	if stateFilter == "" {
+		if effectiveLimit > 0 {
+			rows, err = s.pool.Query(ctx, `
+				SELECT id, session_id, state, last_event, last_verdict, turn_count,
+				       minset_current, constitution_id, constitution_ver,
+				       created_at, updated_at, project_id
+				FROM vlp_state WHERE project_id = $1
+				ORDER BY updated_at DESC LIMIT $2`, activeProject, effectiveLimit)
+		} else {
+			rows, err = s.pool.Query(ctx, `
+				SELECT id, session_id, state, last_event, last_verdict, turn_count,
+				       minset_current, constitution_id, constitution_ver,
+				       created_at, updated_at, project_id
+				FROM vlp_state WHERE project_id = $1
+				ORDER BY updated_at DESC`, activeProject)
+		}
+	} else {
+		if effectiveLimit > 0 {
+			rows, err = s.pool.Query(ctx, `
+				SELECT id, session_id, state, last_event, last_verdict, turn_count,
+				       minset_current, constitution_id, constitution_ver,
+				       created_at, updated_at, project_id
+				FROM vlp_state WHERE project_id = $1 AND state = $2
+				ORDER BY updated_at DESC LIMIT $3`, activeProject, stateFilter, effectiveLimit)
+		} else {
+			rows, err = s.pool.Query(ctx, `
+				SELECT id, session_id, state, last_event, last_verdict, turn_count,
+				       minset_current, constitution_id, constitution_ver,
+				       created_at, updated_at, project_id
+				FROM vlp_state WHERE project_id = $1 AND state = $2
+				ORDER BY updated_at DESC`, activeProject, stateFilter)
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]store.VLPStateRow, 0, effectiveLimit)
+	for rows.Next() {
+		var (
+			id          int64
+			sid         string
+			state       int
+			lastEvent   *string
+			lastVerdict *string
+			turnCount   int
+			minset      *string
+			consID      *string
+			consVer     *string
+			createdAt   string
+			updatedAt   string
+			projectID   string
+		)
+		if err := rows.Scan(&id, &sid, &state, &lastEvent, &lastVerdict,
+			&turnCount, &minset, &consID, &consVer, &createdAt, &updatedAt, &projectID); err != nil {
+			return nil, err
+		}
+		r := store.VLPStateRow{
+			ID:        id,
+			SessionID: sid,
+			State:     state,
+			TurnCount: turnCount,
+			CreatedAt: createdAt,
+			UpdatedAt: updatedAt,
+			ProjectID: projectID,
+		}
+		if lastEvent != nil {
+			r.LastEvent = *lastEvent
+		}
+		if lastVerdict != nil {
+			r.LastVerdict = *lastVerdict
+		}
+		if minset != nil {
+			r.MinsetCurrent = *minset
+		}
+		if consID != nil {
+			r.ConstitutionID = *consID
+		}
+		if consVer != nil {
+			r.ConstitutionVer = *consVer
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
 
 func notImpl(name string) error {
 	return fmt.Errorf("%w: %s", store.ErrNotConfigured, name)
