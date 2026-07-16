@@ -1,10 +1,10 @@
-// LLMClient is one LLM-as-judge endpoint. Three implementations:
+﻿// LLMClient is one LLM-as-judge endpoint. Three implementations:
 //
 //   - SelfHarnessClient: detects the harness's own LLM via env vars
 //     (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, ...). This is
 //     the default: the same model that called the MCP tool acts as
 //     judge. Self-judge is biased but zero-config.
-//   - DarkscrapperClient: uses the dark-scrapper virtual-key pool,
+//   - DarkscrapperClient: uses the [drift-judge-daemon] virtual-key pool,
 //     rotating across providers for cost/quality optimisation. Used
 //     when the orchestrator's OSINT selector says "this eval_type is
 //     better served by a different model".
@@ -65,8 +65,8 @@ var ErrNoLLMAvailable = errors.New("no LLM available: harness has no API key (se
 //   1. ANTHROPIC_API_KEY  → Anthropic Claude
 //   2. OPENAI_API_KEY     → OpenAI GPT
 //   3. GEMINI_API_KEY     → Google Gemini
-//   4. DARK_SCRAPPER_URL  → dark-scrapper pool (delegated; requires
-//                           dark-scrapper as a sidecar)
+//   4. DARK_SCRAPPER_URL  → [drift-judge-daemon] pool (delegated; requires
+//                           [drift-judge-daemon] as a sidecar)
 //   5. none               → ErrNoLLMAvailable
 //
 // The model is auto-picked via the OSINTSelector for the eval_type
@@ -122,18 +122,18 @@ func (s *SelfHarnessClient) Name() string {
 // Judge implements LLMClient.
 //
 // NOTE: This is the SPEC layer. The actual HTTP/gRPC call to
-// Anthropic / OpenAI / Gemini / dark-scrapper is NOT wired here
+// Anthropic / OpenAI / Gemini / [drift-judge-daemon] is NOT wired here
 // because:
 //
 //   1. Each provider has a different API shape.
-//   2. Real integration needs dark-scrapper or direct HTTP clients
+//   2. Real integration needs [drift-judge-daemon] or direct HTTP clients
 //      (deferred to Wave 4+).
 //   3. For now, SelfHarnessClient.Judge returns ErrNoLLMAvailable
 //      so the orchestrator's fallback path is visible in production
 //      today (rather than silently returning fake verdicts).
 //
-// When dark-scrapper integration lands, this method will call into
-// the dark-scrapper client (which rotates virtual keys across the
+// When [drift-judge-daemon] integration lands, this method will call into
+// the [drift-judge-daemon] client (which rotates virtual keys across the
 // 4 providers). Until then, tests use MockLLMClient and production
 // callers see ErrNoLLMAvailable.
 func (s *SelfHarnessClient) Judge(ctx context.Context, req JudgeRequest) (*JudgeResponse, error) {
@@ -142,7 +142,7 @@ func (s *SelfHarnessClient) Judge(ctx context.Context, req JudgeRequest) (*Judge
 	}
 	// Provider integration deferred to Wave 4. Wrap the error in
 	// ErrNoLLMAvailable so callers can errors.Is against it.
-	return nil, fmt.Errorf("%w: self_harness provider=%s model=%s — integration deferred to Wave 4 (when dark-scrapper client is wired)",
+	return nil, fmt.Errorf("%w: self_harness provider=%s model=%s — integration deferred to Wave 4 (when [drift-judge-daemon] client is wired)",
 		ErrNoLLMAvailable, s.provider, s.model)
 }
 

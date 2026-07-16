@@ -100,8 +100,19 @@ func envOr(key, def string) string {
 }
 
 func defaultDSN() string {
-	// Default to ./dark.db in the current working directory. Safe for
-	// the e2e test and for development; production deployments set
-	// DARK_DB explicitly.
-	return "dark.db"
+	// F38+ (v1.2.2): Default to ./dark-memory.db in the current
+	// working directory — NOT dark.db. dark-memory-mcp and
+	// dark-research-mcp historically shared the same dark.db file
+	// (sharing `schema_migrations` book-keeping by version NAME,
+	// e.g. v1=initial_schema in both) which produced v7/v8 boot
+	// crashes against partial-state dbs shared with dark-research's
+	// vec0 triggers + v1-v3 book-keeping rows. The v1.2.2 release
+	// split dark-memory-mcp out of that shared namespace by giving it
+	// its own default filename; operators can still force the legacy
+	// shared mode via DARK_DB=dark.db in the env. Production
+	// deployments continue to set DARK_DB explicitly.
+	return "dark-memory.db"
 }
+
+// DefaultDSN exposes defaultDSN for tests/invariants. See docs/INVARIANTS.md INV-8.
+func DefaultDSN() string { return defaultDSN() }

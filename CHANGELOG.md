@@ -1,8 +1,21 @@
-# Changelog
+﻿# Changelog
 
 All notable changes to dark-memory-mcp are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+---
+
+## [1.2.3] — 2026-07-16
+
+### Added
+- **INV-8 (per-MCP database isolation).** Each MCP server in the dark-agents family owns its **own SQLite file** by convention. dark-memory-mcp now defaults to `dark-memory.db` instead of `dark.db`; dark-research-mcp continues to use `dark.db`. Sharing `dark.db` was the root cause of the v1.2.2 boot crashes (schema_migrations name collisions in the shared bookkeeping table). The principle is documented in `docs/INVARIANTS.md` (new `INV-8` section, with rationale, defence test, operator signal, and applicability to all future dark-* servers). Defensive test: `tests/invariants/inv8_test.go::TestServer_DefaultDSN_DoesNotCollideWithDarkResearch_INV8` — asserts the default DSN (a) is not `dark.db`, (b) doesn't contain `dark-research`, (c) contains `dark-memory`. Operators who want the legacy shared-DB behaviour can opt in via `DARK_DB=dark.db` env var.
+
+### Changed
+- **`defaultDSN()` → `"dark-memory.db"`** (was `"dark.db"`). Backward-compatible override via `DARK_DB=` env var. Affects `internal/server/bootstrap.go` only. New public accessor `server.DefaultDSN()` so tests/invariants can assert without reflection. No DB migration needed; the change only affects the default path.
+
+### Future directions
+- **`[FUTURE-MCP-1]`** (the next dark-* project, see session notes) MUST default to a project-specific filename (`harvest.db` or per-project variant) and pass the `INV-8 defaultDSN uniqueness` lint. The lint is informal today (a grep in CI) but will become a go-vet rule in v1.3.0. Documented in `docs/INVARIANTS.md` under INV-8.
 
 ---
 
@@ -17,7 +30,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Operator notes
 - v1.2.2 is a **drop-in replacement** for v1.2.1. No migrations required. The 27-tool canonical surface is unchanged. No DB schema change.
 - Restart the running `dark-mem-mcp.exe` to pick up the new code; the F37/F38/F39/F40 changes only affect boot behaviour.
-- **However**, today's dark.db at the canonical path is in a pre-v1.2.0 partial state (has `attempts`, `audit`, `findings`, `judgments`, `runs`, etc. tables from a previous dark-copilot loadout, plus orphan vec0 triggers). Even with v1.2.2's tolerance patches, v8 (`vibe_brands_composite_unique`) will fail at the `INSERT INTO vibe_brands SELECT FROM vibe_brands_old` step because the rename was silently skipped (F39). To bootstrap a clean dark-memory-mcp state without losing recent work, see the operator's playbook:
+- **However**, today's dark.db at the canonical path is in a pre-v1.2.0 partial state (has `attempts`, `audit`, `findings`, `judgments`, `runs`, etc. tables from a previous [prior-evaluation-loadout] loadout, plus orphan vec0 triggers). Even with v1.2.2's tolerance patches, v8 (`vibe_brands_composite_unique`) will fail at the `INSERT INTO vibe_brands SELECT FROM vibe_brands_old` step because the rename was silently skipped (F39). To bootstrap a clean dark-memory-mcp state without losing recent work, see the operator's playbook:
   - **Safe path A (recommended):** archive the current dark.db (`Rename-Item dark.db dark.db.bak-$(date)`) and let v1.2.2 create a fresh one. Existing `research_*` rows from dark-research-mcp won't be visible (that's the cross-project trade-off) but dark-memory-mcp boots cleanly.
   - **Safe path B:** point dark-memory-mcp at a separate DB via `DARK_DB=./dark-memory.db`. The defaultDSN stays `./dark.db`; setting the env var on the binary is sufficient.
   - **Risky path C (do not try):** manually drop `vibe_brands` before booting v1.2.2 so v8 can recreate it. The F37/F39 tolerance will then drop the rename/recreate loop back into a clean state. Only do this if you've back-vacuumed data.

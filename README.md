@@ -1,4 +1,4 @@
-<div align="center">
+﻿<div align="center">
 
 ```
 ╔════════════════════════════════════════════════════════════════════════════════════╗
@@ -232,7 +232,7 @@ Detalles en [`docs/`](docs/) y [`vibe-flow/main/DARK_MEMORY_MCP_RFC.md`](vibe-fl
 
 ---
 
-## Los 7 invariantes operacionales
+## Los 8 invariantes operacionales
 
 Cada operación del Store respeta estos contratos — defendidos en el boundary, no en la constitución como texto:
 
@@ -245,6 +245,7 @@ Cada operación del Store respeta estos contratos — defendidos en el boundary,
 | **INV-5** | Cache re-hash on Get (mismatch = anomaly) | `internal/llm/cache.go` |
 | **INV-6** | Mod content sanitization (injection markers) | `internal/safety/safety.go` injectionMarkers regex |
 | **INV-7** | Multi-tenancy: `SetActiveProject` requerido antes de leer/escribir | `Store.requireProject` |
+| **INV-8** | **Per-MCP database isolation**: cada MCP usa su propio archivo SQLite. Default = `dark-memory.db` (NO `dark.db`). Operador puede sobrescribir pero el default mantiene aislado de dark-research-mcp. Aplica a toda la familia dark-* (futuro [FUTURE-MCP-1] debe usar `harvest.db`). | `server.DefaultDSN()` retorna string con substring `dark-memory`; CI lint valida que `defaultDSN` de cada MCP sea único |
 
 Tabla completa con cada método Store → su set de invariantes en [`docs/INVARIANTS.md`](docs/INVARIANTS.md).
 
@@ -255,7 +256,7 @@ Tabla completa con cada método Store → su set de invariantes en [`docs/INVARI
 | Variable | Default | Propósito |
 |---|---|---|
 | `DARK_DB_DRIVER` | `sqlite` | `sqlite` \| `postgres` |
-| `DARK_DB` | `./dark.db` (cwd) | Path al SQLite o URL Postgres |
+| `DARK_DB` | `./dark-memory.db` (cwd) | Path al SQLite o URL Postgres. Default cambió en v1.2.3 (era `./dark.db` antes de v1.2.2) por **INV-8**: cada MCP de la familia dark-* usa su propio archivo. |
 | `DARK_CACHE_DIR` | (vacío) | Dónde persiste el LLM cache (INV-5). Vacío = in-process only. |
 | `DARK_MOD_WHITELIST` | (vacío) | Lista comma-separated de mod IDs permitidos a cargar (INV-6) |
 | `DARK_SERVER_NAME` | `dark-memory-mcp` | `serverInfo.name` en initialize response |
@@ -310,6 +311,8 @@ Highlights:
 - ✅ **v1.1.0** — DMAP v1.1 Layer 6: `dark_memory_vlp_handle_event` (Vibe-Loop Protocol wire tool) + OpenCode adapter demo + L6.1 merge
 - ✅ **v1.2.0** (F33 + F35, 2026-07-16) — `dark_memory_project_create` cierra el loop de bootstrap multi-tenant. `vibe_publish` JSON Schema corregido (nested spec+artifact en lugar de flat) + `vibeSpecTaskSchema` strict (additionalProperties:false) + `BindOrchestrator`'s `typeMismatchToolError` devuelve field path + expected/actual type. Tool count: 26 → 27.
 - ✅ **v1.2.1** (F36, 2026-07-16) — `dark_memory_vibe_spec.tasks` ahora acepta tanto JSON array como JSON-encoded string (compatibilidad con la gemela `dark_research_spec_create` que persiste el campo como string opaco). 2 tests nuevos. Drop-in replacement; sin migrations; sin cambio de surface. **Restart requerido del binario `dark-mem-mcp.exe`** para tomar el código nuevo.
+- ✅ **v1.2.2** (F37 + F38 + F39 + F40, 2026-07-16) — Migration runner self-healing: `applyOne` ahora split-on-`;` y tolera 4 clases de errores DDL idempotentes (`duplicate column name`, `no such module`, `table already exists`). `EnsureCoreTables` recrea tablas core faltantes al boot. Sin esto, dark-memory-mcp NO podía arrancar contra dark.dbs parcialmente migrados. 8 tests nuevos en `tests/migrate/`.
+- ✅ **v1.2.3** (INV-8, 2026-07-16) — `defaultDSN` retorna `dark-memory.db` (era `dark.db`). Principio constitucional: **cada MCP usa su propia DB**. Documenteado en `docs/INVARIANTS.md` INV-8. Default test en `tests/invariants/inv8_test.go`. Aplica a toda futura familia dark-* ([FUTURE-MCP-1] usará `harvest.db` por convención). **Migration-safe**: la oscura `dark.db` que el operador tenga de v1.2.x NO se modifica; sólo el path default para arranques nuevos cambia.
 - 🚧 **v1.3** — Vector recall via sqlite-vec; constitution mod registry v2; L7-REDTEAM integration formal (actualmente en operator-WIP)
 
 Patches publicados:

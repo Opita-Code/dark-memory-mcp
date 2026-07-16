@@ -1,4 +1,4 @@
-{
+﻿{
   "$schema": "https://dark-agents.dev/schemas/spec/v1.json",
   "spec_id": "dark-memory-mcp-v1",
   "vibe_case": "C1",
@@ -11,7 +11,7 @@
     "non_goals": [
       "MySQL or other drivers (v1 supports SQLite + Postgres only)",
       "Cross-driver replication or sharding",
-      "LLM inference (delegated to dark-scrapper / external)",
+      "LLM inference (delegated to [drift-judge-daemon] / external)",
       "OSINT data acquisition (delegated to dark-research-mcp)",
       "UI / web frontend",
       "Tenant isolation beyond session_id filter",
