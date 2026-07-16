@@ -38,7 +38,7 @@ import (
 )
 
 // Version is set at build time via -ldflags. Default in dev builds.
-var Version = "0.1.0-dev"
+var Version = "1.1.0-dev"
 
 // Exit codes (matching RFC D-1 §6 conventions).
 const (
