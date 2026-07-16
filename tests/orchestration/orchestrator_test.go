@@ -1,4 +1,4 @@
-// Package orchestration_test covers the workflow API. Each
+﻿// Package orchestration_test covers the workflow API. Each
 // orchestrator method has at least one happy-path test + one error
 // path test. Tests use the in-memory SQLite Store via runtime.Open,
 // same pattern as tests/context and tests/project.
@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -27,6 +28,20 @@ import (
 	"fmt"
 )
 
+// mustMarshalTasks serialises a typed task slice to json.RawMessage,
+// the form VibeSpecInput.Tasks now requires after F36 (v1.2.1). The
+// existing tests built typed slices for the pre-F36 signature
+// (Tasks []VibeSpecTask); this helper bridges both shapes without
+// rewriting every test body.
+func mustMarshalTasks(t *testing.T, tasks []orchestration.VibeSpecTask) json.RawMessage {
+	t.Helper()
+	b, err := json.Marshal(tasks)
+	if err != nil {
+		t.Fatalf("mustMarshalTasks: %v", err)
+	}
+	return b
+}
+
 func openOrchestratorTestEnv(t *testing.T) (*orchestration.Orchestrator, store.Store) {
 	t.Helper()
 	cfg := store.Config{
@@ -44,7 +59,7 @@ func openOrchestratorTestEnv(t *testing.T) (*orchestration.Orchestrator, store.S
 	return orchestration.New(s, nil), s
 }
 
-// O1: SessionStart — happy path. Creates a session bound to a project,
+// O1: SessionStart â€” happy path. Creates a session bound to a project,
 // returns a non-empty SessionID, project_id echoed, audit row emitted.
 func TestSessionStart_HappyPath(t *testing.T) {
 	ctx := context.Background()
@@ -205,7 +220,7 @@ func errIs(err, target error) bool {
 	return false
 }
 
-// O2: SessionClose — happy path. Closes a session, returns summary.
+// O2: SessionClose â€” happy path. Closes a session, returns summary.
 // WritesTotal >= 1 (SaveSession emitted a write_audit row).
 func TestSessionClose_HappyPath(t *testing.T) {
 	ctx := context.Background()
@@ -361,7 +376,7 @@ func TestSessionClose_CrossProject(t *testing.T) {
 	}
 }
 
-// O3: ResearchTopic — happy path with one mock backend returning 3 items.
+// O3: ResearchTopic â€” happy path with one mock backend returning 3 items.
 func TestResearchTopic_OneBackend(t *testing.T) {
 	ctx := context.Background()
 	orch, s := openOrchestratorTestEnv(t)
@@ -416,7 +431,7 @@ func TestResearchTopic_OneBackend(t *testing.T) {
 	}
 }
 
-// O3: ResearchTopic — MaxItems cap.
+// O3: ResearchTopic â€” MaxItems cap.
 func TestResearchTopic_MaxItemsCap(t *testing.T) {
 	ctx := context.Background()
 	orch, _ := openOrchestratorTestEnv(t)
@@ -444,7 +459,7 @@ func TestResearchTopic_MaxItemsCap(t *testing.T) {
 	}
 }
 
-// O3: ResearchTopic — missing query rejected.
+// O3: ResearchTopic â€” missing query rejected.
 func TestResearchTopic_MissingQuery(t *testing.T) {
 	ctx := context.Background()
 	orch, _ := openOrchestratorTestEnv(t)
@@ -461,7 +476,7 @@ func TestResearchTopic_MissingQuery(t *testing.T) {
 	}
 }
 
-// O3: ResearchTopic — backend error does not fail the call; logged into Errors.
+// O3: ResearchTopic â€” backend error does not fail the call; logged into Errors.
 func TestResearchTopic_BackendErrorGracefulDegradation(t *testing.T) {
 	ctx := context.Background()
 	orch, s := openOrchestratorTestEnv(t)
@@ -499,7 +514,7 @@ func TestResearchTopic_BackendErrorGracefulDegradation(t *testing.T) {
 	}
 }
 
-// O3: ResearchTopic — fan-out across multiple backends aggregates items.
+// O3: ResearchTopic â€” fan-out across multiple backends aggregates items.
 func TestResearchTopic_MultipleBackendsAggregate(t *testing.T) {
 	ctx := context.Background()
 	orch, _ := openOrchestratorTestEnv(t)
@@ -530,7 +545,7 @@ func TestResearchTopic_MultipleBackendsAggregate(t *testing.T) {
 	}
 }
 
-// O4: RecallContext — happy path with persisted data.
+// O4: RecallContext â€” happy path with persisted data.
 func TestRecallContext_HappyPath(t *testing.T) {
 	ctx := context.Background()
 	orch, s := openOrchestratorTestEnv(t)
@@ -578,7 +593,7 @@ func TestRecallContext_HappyPath(t *testing.T) {
 	}
 }
 
-// O4: RecallContext — missing query rejected.
+// O4: RecallContext â€” missing query rejected.
 func TestRecallContext_MissingQuery(t *testing.T) {
 	ctx := context.Background()
 	orch, s := openOrchestratorTestEnv(t)
@@ -594,7 +609,7 @@ func TestRecallContext_MissingQuery(t *testing.T) {
 	}
 }
 
-// O4: RecallContext — tight MaxTokens reduces items further.
+// O4: RecallContext â€” tight MaxTokens reduces items further.
 func TestRecallContext_TightBudget(t *testing.T) {
 	ctx := context.Background()
 	orch, s := openOrchestratorTestEnv(t)
@@ -639,7 +654,7 @@ func TestRecallContext_TightBudget(t *testing.T) {
 	}
 }
 
-// O4: RecallContext — no active project returns ErrSessionRequired.
+// O4: RecallContext â€” no active project returns ErrSessionRequired.
 func TestRecallContext_NoProject(t *testing.T) {
 	ctx := context.Background()
 	orch, _ := openOrchestratorTestEnv(t)
@@ -653,7 +668,7 @@ func TestRecallContext_NoProject(t *testing.T) {
 	}
 }
 
-// O5: Judge — happy path with mock LLM returning a verdict.
+// O5: Judge â€” happy path with mock LLM returning a verdict.
 func TestJudge_HappyPath(t *testing.T) {
 	ctx := context.Background()
 	orch, s := openOrchestratorTestEnv(t)
@@ -698,7 +713,7 @@ func TestJudge_HappyPath(t *testing.T) {
 	}
 }
 
-// O5: Judge — low confidence verdict still gets saved.
+// O5: Judge â€” low confidence verdict still gets saved.
 func TestJudge_LowConfidenceStillSaves(t *testing.T) {
 	ctx := context.Background()
 	orch, s := openOrchestratorTestEnv(t)
@@ -728,7 +743,7 @@ func TestJudge_LowConfidenceStillSaves(t *testing.T) {
 	}
 }
 
-// O5: Judge — content with canary token is refused (INV-3).
+// O5: Judge â€” content with canary token is refused (INV-3).
 func TestJudge_CanaryRejection(t *testing.T) {
 	ctx := context.Background()
 	orch, _ := openOrchestratorTestEnv(t)
@@ -747,7 +762,7 @@ func TestJudge_CanaryRejection(t *testing.T) {
 		EvalType:   "brand_match",
 		TargetType: "brand",
 		TargetID:   "poison",
-		Content:    "This contains the canary: " + canary + " — do not score me.",
+		Content:    "This contains the canary: " + canary + " â€” do not score me.",
 	})
 	if err == nil {
 		t.Fatalf("expected canary rejection error")
@@ -760,7 +775,7 @@ func TestJudge_CanaryRejection(t *testing.T) {
 	}
 }
 
-// O5: Judge — no LLM available returns ErrNoLLMAvailable.
+// O5: Judge â€” no LLM available returns ErrNoLLMAvailable.
 func TestJudge_NoLLMAvailable(t *testing.T) {
 	ctx := context.Background()
 	orch, _ := openOrchestratorTestEnv(t)
@@ -785,7 +800,7 @@ func TestJudge_NoLLMAvailable(t *testing.T) {
 	}
 }
 
-// O5: Judge — missing content rejected.
+// O5: Judge â€” missing content rejected.
 func TestJudge_MissingContent(t *testing.T) {
 	ctx := context.Background()
 	orch, _ := openOrchestratorTestEnv(t)
@@ -806,7 +821,7 @@ func TestJudge_MissingContent(t *testing.T) {
 	}
 }
 
-// O5: SelfHarnessClient — env detection returns ErrNoLLMAvailable
+// O5: SelfHarnessClient â€” env detection returns ErrNoLLMAvailable
 // when no key is set in test env.
 func TestSelfHarnessClient_NoKey(t *testing.T) {
 	// Wipe env vars that SelfHarnessClient reads (test isolation).
@@ -823,7 +838,7 @@ func TestSelfHarnessClient_NoKey(t *testing.T) {
 	}
 }
 
-// O5: SelfHarnessClient — env detection picks ANTHROPIC_API_KEY first.
+// O5: SelfHarnessClient â€” env detection picks ANTHROPIC_API_KEY first.
 func TestSelfHarnessClient_AnthropicPriority(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test")
 	t.Setenv("OPENAI_API_KEY", "sk-openai-test")
@@ -836,7 +851,7 @@ func TestSelfHarnessClient_AnthropicPriority(t *testing.T) {
 	}
 }
 
-// O5: OSINT catalog — known provider returns per-eval recommendation.
+// O5: OSINT catalog â€” known provider returns per-eval recommendation.
 func TestRecommendedModel_KnownProvider(t *testing.T) {
 	cases := []struct {
 		provider, evalType, want string
@@ -856,7 +871,7 @@ func TestRecommendedModel_KnownProvider(t *testing.T) {
 	}
 }
 
-// O5: OSINT catalog — unknown provider returns "" (caller falls
+// O5: OSINT catalog â€” unknown provider returns "" (caller falls
 // through to client auto-config).
 func TestRecommendedModel_UnknownProvider(t *testing.T) {
 	got := orchestration.RecommendedModel("my-internal-model-v1", "brand_match")
@@ -937,10 +952,10 @@ func TestSessionClose_SummaryCounts(t *testing.T) {
 }
 
 // ============================================================================
-// O7: PublishVibe — spec_create + artifact_log + drift_judge + drift_log.
+// O7: PublishVibe â€” spec_create + artifact_log + drift_judge + drift_log.
 // ============================================================================
 
-// O7: PublishVibe — happy path with mock LLM returning aligned verdict.
+// O7: PublishVibe â€” happy path with mock LLM returning aligned verdict.
 func TestPublishVibe_HappyPath(t *testing.T) {
 	ctx := context.Background()
 	orch, s := openOrchestratorTestEnv(t)
@@ -1021,7 +1036,7 @@ func TestPublishVibe_HappyPath(t *testing.T) {
 	}
 }
 
-// O7: PublishVibe — missing artifact_url is rejected.
+// O7: PublishVibe â€” missing artifact_url is rejected.
 func TestPublishVibe_MissingArtifactURL(t *testing.T) {
 	ctx := context.Background()
 	orch, s := openOrchestratorTestEnv(t)
@@ -1040,7 +1055,7 @@ func TestPublishVibe_MissingArtifactURL(t *testing.T) {
 	}
 }
 
-// O7: PublishVibe — missing vibe_case is rejected.
+// O7: PublishVibe â€” missing vibe_case is rejected.
 func TestPublishVibe_MissingVibeCase(t *testing.T) {
 	ctx := context.Background()
 	orch, s := openOrchestratorTestEnv(t)
@@ -1061,7 +1076,7 @@ func TestPublishVibe_MissingVibeCase(t *testing.T) {
 	}
 }
 
-// O7: PublishVibe — drift_detected verdict triggers NextAction=reconcile
+// O7: PublishVibe â€” drift_detected verdict triggers NextAction=reconcile
 // and validation_status=failed.
 func TestPublishVibe_DriftDetected(t *testing.T) {
 	ctx := context.Background()
@@ -1110,7 +1125,7 @@ func TestPublishVibe_DriftDetected(t *testing.T) {
 	}
 }
 
-// O7: PublishVibe — no LLM available still persists spec + artifact +
+// O7: PublishVibe â€” no LLM available still persists spec + artifact +
 // drift_log with verdict="drift_detected" + reasoning explaining skip.
 func TestPublishVibe_NoLLM(t *testing.T) {
 	ctx := context.Background()
@@ -1152,7 +1167,7 @@ func TestPublishVibe_NoLLM(t *testing.T) {
 	}
 }
 
-// O7: PublishVibe — AutoDriftCheck=false (explicit pointer) skips drift.
+// O7: PublishVibe â€” AutoDriftCheck=false (explicit pointer) skips drift.
 func TestPublishVibe_AutoDriftCheckFalse(t *testing.T) {
 	ctx := context.Background()
 	orch, s := openOrchestratorTestEnv(t)
@@ -1196,7 +1211,7 @@ func TestPublishVibe_AutoDriftCheckFalse(t *testing.T) {
 	}
 }
 
-// O7: PublishVibe — no artifact text => verdict="skipped", no LLM call.
+// O7: PublishVibe â€” no artifact text => verdict="skipped", no LLM call.
 func TestPublishVibe_NoText(t *testing.T) {
 	ctx := context.Background()
 	orch, s := openOrchestratorTestEnv(t)
@@ -1225,7 +1240,7 @@ func TestPublishVibe_NoText(t *testing.T) {
 	}
 }
 
-// O7: PublishVibe — content with canary token is rejected (INV-3).
+// O7: PublishVibe â€” content with canary token is rejected (INV-3).
 func TestPublishVibe_CanaryRejection(t *testing.T) {
 	ctx := context.Background()
 	orch, s := openOrchestratorTestEnv(t)
@@ -1261,7 +1276,7 @@ func TestPublishVibe_CanaryRejection(t *testing.T) {
 	}
 }
 
-// O7: PublishVibe — brand_match + compliance_check fire when set; 3 LLM calls.
+// O7: PublishVibe â€” brand_match + compliance_check fire when set; 3 LLM calls.
 func TestPublishVibe_BrandAndCompliance(t *testing.T) {
 	ctx := context.Background()
 	orch, s := openOrchestratorTestEnv(t)
@@ -1324,10 +1339,10 @@ func (t *togglingMock) Judge(ctx context.Context, req orchestration.JudgeRequest
 }
 
 // ============================================================================
-// O8: JudgeConsensus — n-shot verdict with modal + confidence interval.
+// O8: JudgeConsensus â€” n-shot verdict with modal + confidence interval.
 // ============================================================================
 
-// O8: JudgeConsensus — happy path with 3 unanimous samples (all aligned).
+// O8: JudgeConsensus â€” happy path with 3 unanimous samples (all aligned).
 func TestJudgeConsensus_Unanimous(t *testing.T) {
 	ctx := context.Background()
 	orch, s := openOrchestratorTestEnv(t)
@@ -1385,7 +1400,7 @@ func TestJudgeConsensus_Unanimous(t *testing.T) {
 	}
 }
 
-// O8: JudgeConsensus — majority verdict (2 aligned, 1 drift_detected).
+// O8: JudgeConsensus â€” majority verdict (2 aligned, 1 drift_detected).
 func TestJudgeConsensus_Majority(t *testing.T) {
 	ctx := context.Background()
 	orch, s := openOrchestratorTestEnv(t)
@@ -1433,7 +1448,7 @@ func TestJudgeConsensus_Majority(t *testing.T) {
 	}
 }
 
-// O8: JudgeConsensus — low agreement (2 aligned, 2 drift in N=4) triggers needs_human.
+// O8: JudgeConsensus â€” low agreement (2 aligned, 2 drift in N=4) triggers needs_human.
 func TestJudgeConsensus_LowAgreement(t *testing.T) {
 	ctx := context.Background()
 	orch, s := openOrchestratorTestEnv(t)
@@ -1478,7 +1493,7 @@ func TestJudgeConsensus_LowAgreement(t *testing.T) {
 	}
 }
 
-// O8: JudgeConsensus — confidence variance surfaces in StdDev + interval.
+// O8: JudgeConsensus â€” confidence variance surfaces in StdDev + interval.
 func TestJudgeConsensus_ConfidenceInterval(t *testing.T) {
 	ctx := context.Background()
 	orch, s := openOrchestratorTestEnv(t)
@@ -1526,7 +1541,7 @@ func TestJudgeConsensus_ConfidenceInterval(t *testing.T) {
 	}
 }
 
-// O8: JudgeConsensus — N clamps to [1, 7]; N=0 defaults 3; N=99 clamps to 7.
+// O8: JudgeConsensus â€” N clamps to [1, 7]; N=0 defaults 3; N=99 clamps to 7.
 func TestJudgeConsensus_NClamping(t *testing.T) {
 	ctx := context.Background()
 	orch, s := openOrchestratorTestEnv(t)
@@ -1574,7 +1589,7 @@ func TestJudgeConsensus_NClamping(t *testing.T) {
 	}
 }
 
-// O8: JudgeConsensus — canary rejection (INV-3).
+// O8: JudgeConsensus â€” canary rejection (INV-3).
 func TestJudgeConsensus_CanaryRejection(t *testing.T) {
 	ctx := context.Background()
 	orch, s := openOrchestratorTestEnv(t)
@@ -1606,7 +1621,7 @@ func TestJudgeConsensus_CanaryRejection(t *testing.T) {
 	}
 }
 
-// O8: JudgeConsensus — missing content rejected.
+// O8: JudgeConsensus â€” missing content rejected.
 func TestJudgeConsensus_MissingContent(t *testing.T) {
 	ctx := context.Background()
 	orch, s := openOrchestratorTestEnv(t)
@@ -1626,7 +1641,7 @@ func TestJudgeConsensus_MissingContent(t *testing.T) {
 	}
 }
 
-// O8: JudgeConsensus — the consensus row uses TargetID + ":consensus" suffix.
+// O8: JudgeConsensus â€” the consensus row uses TargetID + ":consensus" suffix.
 func TestJudgeConsensus_TargetIDSuffix(t *testing.T) {
 	ctx := context.Background()
 	orch, s := openOrchestratorTestEnv(t)
@@ -1662,10 +1677,10 @@ func TestJudgeConsensus_TargetIDSuffix(t *testing.T) {
 }
 
 // ============================================================================
-// O9: ActivePolicy — read-only snapshot of constitution + mods + canary.
+// O9: ActivePolicy â€” read-only snapshot of constitution + mods + canary.
 // ============================================================================
 
-// O9: ActivePolicy — happy path with no active constitution (fresh store).
+// O9: ActivePolicy â€” happy path with no active constitution (fresh store).
 func TestActivePolicy_Empty(t *testing.T) {
 	ctx := context.Background()
 	orch, _ := openOrchestratorTestEnv(t)
@@ -1694,7 +1709,7 @@ func TestActivePolicy_Empty(t *testing.T) {
 	}
 }
 
-// O9: ActivePolicy — with a saved constitution, returns its id+version+sha.
+// O9: ActivePolicy â€” with a saved constitution, returns its id+version+sha.
 func TestActivePolicy_WithConstitution(t *testing.T) {
 	ctx := context.Background()
 	orch, s := openOrchestratorTestEnv(t)
@@ -1741,7 +1756,7 @@ func TestActivePolicy_WithConstitution(t *testing.T) {
 	}
 }
 
-// O9: ActivePolicy — drift detected when stored SHA256 != actual SHA.
+// O9: ActivePolicy â€” drift detected when stored SHA256 != actual SHA.
 func TestActivePolicy_ConstitutionDrift(t *testing.T) {
 	ctx := context.Background()
 	orch, s := openOrchestratorTestEnv(t)
@@ -1780,7 +1795,7 @@ func TestActivePolicy_ConstitutionDrift(t *testing.T) {
 	}
 }
 
-// O9: ActivePolicy — canary is reported present (without token).
+// O9: ActivePolicy â€” canary is reported present (without token).
 func TestActivePolicy_CanaryPresent(t *testing.T) {
 	ctx := context.Background()
 	orch, _ := openOrchestratorTestEnv(t)
@@ -1799,7 +1814,7 @@ func TestActivePolicy_CanaryPresent(t *testing.T) {
 	}
 }
 
-// O9: ActivePolicy — mods list reflects ListMods with ManifestJSON decoded.
+// O9: ActivePolicy â€” mods list reflects ListMods with ManifestJSON decoded.
 func TestActivePolicy_ModsList(t *testing.T) {
 	ctx := context.Background()
 	orch, s := openOrchestratorTestEnv(t)
@@ -1839,10 +1854,10 @@ func TestActivePolicy_ModsList(t *testing.T) {
 }
 
 // ============================================================================
-// O10: MemoryState — runtime snapshot of dark.db.
+// O10: MemoryState â€” runtime snapshot of dark.db.
 // ============================================================================
 
-// O10: MemoryState — empty store has expected zero counts.
+// O10: MemoryState â€” empty store has expected zero counts.
 func TestMemoryState_Empty(t *testing.T) {
 	ctx := context.Background()
 	orch, _ := openOrchestratorTestEnv(t)
@@ -1872,7 +1887,7 @@ func TestMemoryState_Empty(t *testing.T) {
 	}
 }
 
-// O10: MemoryState — counts reflect persisted data.
+// O10: MemoryState â€” counts reflect persisted data.
 func TestMemoryState_Populated(t *testing.T) {
 	ctx := context.Background()
 	orch, s := openOrchestratorTestEnv(t)
@@ -1939,7 +1954,7 @@ func TestMemoryState_Populated(t *testing.T) {
 	}
 }
 
-// O10: MemoryState — SessionsActive drops to 0 after SessionClose.
+// O10: MemoryState â€” SessionsActive drops to 0 after SessionClose.
 func TestMemoryState_SessionLifecycle(t *testing.T) {
 	ctx := context.Background()
 	orch, _ := openOrchestratorTestEnv(t)
@@ -1964,7 +1979,7 @@ func TestMemoryState_SessionLifecycle(t *testing.T) {
 	}
 }
 
-// O10: MemoryState — canary present is surfaced.
+// O10: MemoryState â€” canary present is surfaced.
 func TestMemoryState_CanarySurfaced(t *testing.T) {
 	ctx := context.Background()
 	orch, _ := openOrchestratorTestEnv(t)
@@ -1983,10 +1998,10 @@ func TestMemoryState_CanarySurfaced(t *testing.T) {
 }
 
 // ============================================================================
-// O11: ResolveDrift — human-gate action (accept | reject).
+// O11: ResolveDrift â€” human-gate action (accept | reject).
 // ============================================================================
 
-// O11: ResolveDrift — accept a drift_detected verdict.
+// O11: ResolveDrift â€” accept a drift_detected verdict.
 func TestResolveDrift_Accept(t *testing.T) {
 	ctx := context.Background()
 	orch, s := openOrchestratorTestEnv(t)
@@ -2047,7 +2062,7 @@ func TestResolveDrift_Accept(t *testing.T) {
 	}
 }
 
-// O11: ResolveDrift — reject a drift_detected verdict.
+// O11: ResolveDrift â€” reject a drift_detected verdict.
 func TestResolveDrift_Reject(t *testing.T) {
 	ctx := context.Background()
 	orch, s := openOrchestratorTestEnv(t)
@@ -2085,7 +2100,7 @@ func TestResolveDrift_Reject(t *testing.T) {
 	}
 }
 
-// O11: ResolveDrift — already-reconciled drift returns ErrInvalidState.
+// O11: ResolveDrift â€” already-reconciled drift returns ErrInvalidState.
 func TestResolveDrift_DoubleResolve(t *testing.T) {
 	ctx := context.Background()
 	orch, s := openOrchestratorTestEnv(t)
@@ -2124,7 +2139,7 @@ func TestResolveDrift_DoubleResolve(t *testing.T) {
 	}
 }
 
-// O11: ResolveDrift — unknown drift_id returns ErrNotFound.
+// O11: ResolveDrift â€” unknown drift_id returns ErrNotFound.
 func TestResolveDrift_NotFound(t *testing.T) {
 	ctx := context.Background()
 	orch, _ := openOrchestratorTestEnv(t)
@@ -2143,7 +2158,7 @@ func TestResolveDrift_NotFound(t *testing.T) {
 	}
 }
 
-// O11: ResolveDrift — invalid decision rejected.
+// O11: ResolveDrift â€” invalid decision rejected.
 func TestResolveDrift_InvalidDecision(t *testing.T) {
 	ctx := context.Background()
 	orch, _ := openOrchestratorTestEnv(t)
@@ -2162,7 +2177,7 @@ func TestResolveDrift_InvalidDecision(t *testing.T) {
 	}
 }
 
-// O11: ResolveDrift — missing operator_id rejected.
+// O11: ResolveDrift â€” missing operator_id rejected.
 func TestResolveDrift_MissingOperator(t *testing.T) {
 	ctx := context.Background()
 	orch, _ := openOrchestratorTestEnv(t)
@@ -2181,7 +2196,7 @@ func TestResolveDrift_MissingOperator(t *testing.T) {
 	}
 }
 
-// O11: ResolveDrift — missing drift_id rejected.
+// O11: ResolveDrift â€” missing drift_id rejected.
 func TestResolveDrift_MissingDriftID(t *testing.T) {
 	ctx := context.Background()
 	orch, _ := openOrchestratorTestEnv(t)
@@ -2201,10 +2216,10 @@ func TestResolveDrift_MissingDriftID(t *testing.T) {
 }
 
 // ============================================================================
-// O12: VibeSpec — spec_create wrapper with structured tasks validation.
+// O12: VibeSpec â€” spec_create wrapper with structured tasks validation.
 // ============================================================================
 
-// O12: VibeSpec — happy path with 3 valid tasks.
+// O12: VibeSpec â€” happy path with 3 valid tasks.
 func TestVibeSpec_HappyPath(t *testing.T) {
 	ctx := context.Background()
 	orch, s := openOrchestratorTestEnv(t)
@@ -2215,11 +2230,11 @@ func TestVibeSpec_HappyPath(t *testing.T) {
 	out, err := orch.VibeSpec(ctx, orchestration.VibeSpecInput{
 		VibeCase: "C1",
 		Spec:     `{"intent":"build a CLI"}`,
-		Tasks: []orchestration.VibeSpecTask{
+		Tasks: mustMarshalTasks(t, []orchestration.VibeSpecTask{
 			{ID: "t1", Description: "Write code"},
 			{ID: "t2", Description: "Write tests", DependsOn: []string{"t1"}},
 			{ID: "t3", Description: "Document", DependsOn: []string{"t2"}},
-		},
+		}),
 	})
 	if err != nil {
 		t.Fatalf("VibeSpec: %v", err)
@@ -2246,7 +2261,7 @@ func TestVibeSpec_HappyPath(t *testing.T) {
 	}
 }
 
-// O12: VibeSpec — missing vibe_case rejected.
+// O12: VibeSpec â€” missing vibe_case rejected.
 func TestVibeSpec_MissingVibeCase(t *testing.T) {
 	ctx := context.Background()
 	orch, _ := openOrchestratorTestEnv(t)
@@ -2254,7 +2269,7 @@ func TestVibeSpec_MissingVibeCase(t *testing.T) {
 		t.Fatalf("set: %v", err)
 	}
 	_, err := orch.VibeSpec(ctx, orchestration.VibeSpecInput{
-		Tasks: []orchestration.VibeSpecTask{{ID: "t1", Description: "x"}},
+		Tasks: mustMarshalTasks(t, []orchestration.VibeSpecTask{{ID: "t1", Description: "x"}}),
 	})
 	if err == nil {
 		t.Fatalf("expected error for missing vibe_case")
@@ -2264,7 +2279,7 @@ func TestVibeSpec_MissingVibeCase(t *testing.T) {
 	}
 }
 
-// O12: VibeSpec — empty tasks rejected.
+// O12: VibeSpec â€” empty tasks rejected.
 func TestVibeSpec_EmptyTasks(t *testing.T) {
 	ctx := context.Background()
 	orch, _ := openOrchestratorTestEnv(t)
@@ -2273,7 +2288,7 @@ func TestVibeSpec_EmptyTasks(t *testing.T) {
 	}
 	_, err := orch.VibeSpec(ctx, orchestration.VibeSpecInput{
 		VibeCase: "C1",
-		Tasks:    []orchestration.VibeSpecTask{},
+		Tasks:    mustMarshalTasks(t, []orchestration.VibeSpecTask{}),
 	})
 	if err == nil {
 		t.Fatalf("expected error for empty tasks")
@@ -2283,7 +2298,7 @@ func TestVibeSpec_EmptyTasks(t *testing.T) {
 	}
 }
 
-// O12: VibeSpec — duplicate task ids rejected.
+// O12: VibeSpec â€” duplicate task ids rejected.
 func TestVibeSpec_DuplicateIDs(t *testing.T) {
 	ctx := context.Background()
 	orch, _ := openOrchestratorTestEnv(t)
@@ -2292,10 +2307,10 @@ func TestVibeSpec_DuplicateIDs(t *testing.T) {
 	}
 	_, err := orch.VibeSpec(ctx, orchestration.VibeSpecInput{
 		VibeCase: "C1",
-		Tasks: []orchestration.VibeSpecTask{
+		Tasks: mustMarshalTasks(t, []orchestration.VibeSpecTask{
 			{ID: "t1", Description: "a"},
 			{ID: "t1", Description: "b"},
-		},
+		}),
 	})
 	if err == nil {
 		t.Fatalf("expected error for duplicate ids")
@@ -2308,7 +2323,7 @@ func TestVibeSpec_DuplicateIDs(t *testing.T) {
 	}
 }
 
-// O12: VibeSpec — empty task description rejected.
+// O12: VibeSpec â€” empty task description rejected.
 func TestVibeSpec_EmptyDescription(t *testing.T) {
 	ctx := context.Background()
 	orch, _ := openOrchestratorTestEnv(t)
@@ -2317,7 +2332,7 @@ func TestVibeSpec_EmptyDescription(t *testing.T) {
 	}
 	_, err := orch.VibeSpec(ctx, orchestration.VibeSpecInput{
 		VibeCase: "C1",
-		Tasks:    []orchestration.VibeSpecTask{{ID: "t1", Description: ""}},
+		Tasks:    mustMarshalTasks(t, []orchestration.VibeSpecTask{{ID: "t1", Description: ""}}),
 	})
 	if err == nil {
 		t.Fatalf("expected error for empty description")
@@ -2327,7 +2342,7 @@ func TestVibeSpec_EmptyDescription(t *testing.T) {
 	}
 }
 
-// O12: VibeSpec — depends_on referencing unknown task rejected.
+// O12: VibeSpec â€” depends_on referencing unknown task rejected.
 func TestVibeSpec_UnknownDependency(t *testing.T) {
 	ctx := context.Background()
 	orch, _ := openOrchestratorTestEnv(t)
@@ -2336,10 +2351,10 @@ func TestVibeSpec_UnknownDependency(t *testing.T) {
 	}
 	_, err := orch.VibeSpec(ctx, orchestration.VibeSpecInput{
 		VibeCase: "C1",
-		Tasks: []orchestration.VibeSpecTask{
+		Tasks: mustMarshalTasks(t, []orchestration.VibeSpecTask{
 			{ID: "t1", Description: "a"},
 			{ID: "t2", Description: "b", DependsOn: []string{"ghost"}},
-		},
+		}),
 	})
 	if err == nil {
 		t.Fatalf("expected error for unknown dependency")
@@ -2352,7 +2367,7 @@ func TestVibeSpec_UnknownDependency(t *testing.T) {
 	}
 }
 
-// O12: VibeSpec — circular dependency rejected.
+// O12: VibeSpec â€” circular dependency rejected.
 func TestVibeSpec_Cycle(t *testing.T) {
 	ctx := context.Background()
 	orch, _ := openOrchestratorTestEnv(t)
@@ -2361,11 +2376,11 @@ func TestVibeSpec_Cycle(t *testing.T) {
 	}
 	_, err := orch.VibeSpec(ctx, orchestration.VibeSpecInput{
 		VibeCase: "C1",
-		Tasks: []orchestration.VibeSpecTask{
+		Tasks: mustMarshalTasks(t, []orchestration.VibeSpecTask{
 			{ID: "t1", Description: "a", DependsOn: []string{"t3"}},
 			{ID: "t2", Description: "b", DependsOn: []string{"t1"}},
 			{ID: "t3", Description: "c", DependsOn: []string{"t2"}},
-		},
+		}),
 	})
 	if err == nil {
 		t.Fatalf("expected error for cycle")
@@ -2378,7 +2393,7 @@ func TestVibeSpec_Cycle(t *testing.T) {
 	}
 }
 
-// O12: VibeSpec — happy single-task spec (no warnings).
+// O12: VibeSpec â€” happy single-task spec (no warnings).
 func TestVibeSpec_ExternalRefs(t *testing.T) {
 	ctx := context.Background()
 	orch, _ := openOrchestratorTestEnv(t)
@@ -2388,9 +2403,9 @@ func TestVibeSpec_ExternalRefs(t *testing.T) {
 
 	out, err := orch.VibeSpec(ctx, orchestration.VibeSpecInput{
 		VibeCase: "C1",
-		Tasks: []orchestration.VibeSpecTask{
+		Tasks: mustMarshalTasks(t, []orchestration.VibeSpecTask{
 			{ID: "t1", Description: "do work"},
-		},
+		}),
 	})
 	if err != nil {
 		t.Fatalf("happy single-task spec: %v", err)
@@ -2400,5 +2415,81 @@ func TestVibeSpec_ExternalRefs(t *testing.T) {
 	}
 	if len(out.Warnings) != 0 {
 		t.Fatalf("expected no warnings, got: %v", out.Warnings)
+	}
+}
+
+// F36 (v1.2.1) — tasks may be passed as a JSON-encoded string of an
+// array (legacy dark_research_spec_create compatibility). The orchestrator
+// must decode the string, re-parse it as a task array, and validate.
+func TestVibeSpec_AcceptsStringifiedTasks(t *testing.T) {
+	ctx := context.Background()
+	orch, s := openOrchestratorTestEnv(t)
+	if err := s.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	// Build the inner JSON array, then wrap it as a JSON string.
+	inner, err := json.Marshal([]orchestration.VibeSpecTask{
+		{ID: "t1", Description: "stringified alpha"},
+		{ID: "t2", Description: "stringified beta", DependsOn: []string{"t1"}},
+	})
+	if err != nil {
+		t.Fatalf("marshal inner: %v", err)
+	}
+	wrapped, err := json.Marshal(string(inner))
+	if err != nil {
+		t.Fatalf("wrap: %v", err)
+	}
+
+	out, err := orch.VibeSpec(ctx, orchestration.VibeSpecInput{
+		VibeCase: "C1",
+		Tasks:    wrapped,
+	})
+	if err != nil {
+		t.Fatalf("stringified tasks: %v", err)
+	}
+	if out.SpecID == 0 {
+		t.Fatalf("SpecID should be > 0")
+	}
+	if out.TasksValidated != 2 {
+		t.Fatalf("TasksValidated: want 2, got %d", out.TasksValidated)
+	}
+	// Round-trip: the stored tasks_json must be a JSON array (NOT a
+	// JSON-encoded string of an array). parseTasksField must have
+	// unwrapped the string before storage.
+	gotSpec, _ := s.GetSpec(ctx, out.SpecID)
+	if gotSpec == nil {
+		t.Fatalf("GetSpec returned nil")
+	}
+	got := strings.TrimSpace(gotSpec.Tasks)
+	if !strings.HasPrefix(got, "[") {
+		t.Fatalf("stored tasks_json should be a JSON array, got: %q", got[:min(40, len(got))])
+	}
+}
+
+// F36 (v1.2.1) — malformed stringified tasks should yield a
+// precise ErrInvalidArgument message naming the field.
+func TestVibeSpec_StringifiedTasks_MalformedRejected(t *testing.T) {
+	ctx := context.Background()
+	orch, s := openOrchestratorTestEnv(t)
+	if err := s.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	// Wrap a non-array string.
+	wrapped, _ := json.Marshal(`{"unexpected":"object"}`)
+
+	_, err := orch.VibeSpec(ctx, orchestration.VibeSpecInput{
+		VibeCase: "C1",
+		Tasks:    wrapped,
+	})
+	if err == nil {
+		t.Fatalf("expected error for non-array stringified tasks")
+	}
+	if !errIs(err, store.ErrInvalidArgument) {
+		t.Fatalf("expected ErrInvalidArgument, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "stringified") {
+		t.Fatalf("error should mention 'stringified', got: %v", err)
 	}
 }

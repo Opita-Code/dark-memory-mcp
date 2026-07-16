@@ -42,20 +42,78 @@ type VibeSpecTask struct {
 // VibeSpecInput is the request to create a new spec with validated
 // tasks. The caller supplies the spec body (intent + constitution +
 // raw spec string) plus the parsed tasks array.
+//
+// F36 (v1.2.1, see CHANGELOG): Tasks is now json.RawMessage rather
+// than []VibeSpecTask because the gemela tool `dark_research_spec_create`
+// declares `tasks` as `type: "string"` (it stores the value as opaque
+// text) while `dark_memory_vibe_spec` declares `tasks` as `type: "array"`.
+// Some MCP harnesses serialise arrays as JSON-encoded strings under
+// either schema; previously this caused `json.UnmarshalTypeError: cannot
+// unmarshal string into Go struct field VibeSpecInput.tasks of type
+// []orchestration.VibeSpecTask` to surface as a generic ErrInvalidArgument
+// (the field path detail was preserved by typeMismatchToolError but the
+// operator-visible error message had no specific field hint). Accepting
+// both forms here closes the compatibility loop.
 type VibeSpecInput struct {
-	VibeCase     string         `json:"vibe_case"`
-	Constitution string         `json:"constitution,omitempty"`
-	Spec         string         `json:"spec,omitempty"`  // opaque intent JSON
-	Tasks        []VibeSpecTask `json:"tasks"`           // validated + serialised to Tasks JSON
-	SessionID    string         `json:"session_id,omitempty"` // INV-2: optional session binding
+	VibeCase     string          `json:"vibe_case"`
+	Constitution string          `json:"constitution,omitempty"`
+	Spec         string          `json:"spec,omitempty"` // opaque intent JSON
+	Tasks        json.RawMessage `json:"tasks"`          // F36: accept array OR JSON-string-encoded array
+	SessionID    string          `json:"session_id,omitempty"`
+}
+
+// parseTasksField accepts both forms of the `tasks` input:
+//
+//   - JSON array of objects: `[{...}, {...}]` (preferred)
+//   - JSON-encoded string of an array: `"[{...}, {...}]"` (legacy
+//     `dark_research_spec_create` style; some MCP harnesses stringify
+//     arrays under either schema)
+//
+// Any other shape returns store.ErrInvalidArgument with a precise
+// message naming the offending value type.
+func parseTasksField(raw json.RawMessage) ([]VibeSpecTask, error) {
+	if len(raw) == 0 {
+		return nil, errMissingField("tasks")
+	}
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "null" {
+		return nil, errMissingField("tasks")
+	}
+
+	// Peek at the first non-whitespace byte to decide which path.
+	switch trimmed[0] {
+	case '[':
+		// Direct JSON array.
+		var out []VibeSpecTask
+		if err := json.Unmarshal(raw, &out); err != nil {
+			return nil, fmt.Errorf("%w: tasks is not a valid JSON array of task objects: %v", store.ErrInvalidArgument, err)
+		}
+		return out, nil
+	case '"':
+		// JSON-encoded string. Decode to string, then re-parse as array.
+		var s string
+		if err := json.Unmarshal(raw, &s); err != nil {
+			return nil, fmt.Errorf("%w: tasks is a JSON string but cannot be decoded: %v", store.ErrInvalidArgument, err)
+		}
+		if strings.TrimSpace(s) == "" {
+			return nil, errMissingField("tasks")
+		}
+		var out []VibeSpecTask
+		if err := json.Unmarshal([]byte(s), &out); err != nil {
+			return nil, fmt.Errorf("%w: tasks (stringified) is not a valid JSON array of task objects: %v", store.ErrInvalidArgument, err)
+		}
+		return out, nil
+	default:
+		return nil, fmt.Errorf("%w: tasks must be a JSON array or a JSON-encoded string of an array, got leading byte %q", store.ErrInvalidArgument, string(trimmed[0]))
+	}
 }
 
 // VibeSpecResult is the outcome.
 type VibeSpecResult struct {
 	SpecID         int64    `json:"spec_id"`
 	TasksValidated int      `json:"tasks_validated"`
-	TaskIDs        []string `json:"task_ids"`        // canonical order
-	TasksJSON      string   `json:"tasks_json"`      // serialised for storage
+	TaskIDs        []string `json:"task_ids"`            // canonical order
+	TasksJSON      string   `json:"tasks_json"`          // serialised for storage
 	Warnings       []string `json:"warnings,omitempty"` // non-fatal: orphan ext refs, etc.
 }
 
@@ -65,14 +123,20 @@ func (o *Orchestrator) VibeSpec(ctx context.Context, in VibeSpecInput) (*VibeSpe
 	if strings.TrimSpace(in.VibeCase) == "" {
 		return nil, errMissingField("vibe_case")
 	}
-	if len(in.Tasks) == 0 {
+
+	// 1a. F36: parse `tasks` accepting both forms (array OR stringified array).
+	tasks, err := parseTasksField(in.Tasks)
+	if err != nil {
+		return nil, err
+	}
+	if len(tasks) == 0 {
 		return nil, errMissingField("tasks")
 	}
 
 	// 2. Validate tasks: unique ids + non-empty description.
-	seen := make(map[string]bool, len(in.Tasks))
-	canonicalIDs := make([]string, 0, len(in.Tasks))
-	for i, t := range in.Tasks {
+	seen := make(map[string]bool, len(tasks))
+	canonicalIDs := make([]string, 0, len(tasks))
+	for i, t := range tasks {
 		if strings.TrimSpace(t.ID) == "" {
 			return nil, fmt.Errorf("%w: task[%d].id is required", store.ErrInvalidArgument, i)
 		}
@@ -91,7 +155,7 @@ func (o *Orchestrator) VibeSpec(ctx context.Context, in VibeSpecInput) (*VibeSpe
 	// whose target isn't otherwise known (we don't enforce; we just
 	// flag for the operator).
 	var warnings []string
-	for _, t := range in.Tasks {
+	for _, t := range tasks {
 		for _, dep := range t.DependsOn {
 			if strings.HasPrefix(dep, "ext:") {
 				// External ref. Log a warning if the target
@@ -111,12 +175,12 @@ func (o *Orchestrator) VibeSpec(ctx context.Context, in VibeSpecInput) (*VibeSpe
 
 	// 4. Cycle detection: BFS from each task; if we revisit a
 	// task in the same walk, there's a cycle.
-	if cycle := detectCycle(in.Tasks); cycle != nil {
+	if cycle := detectCycle(tasks); cycle != nil {
 		return nil, fmt.Errorf("%w: cycle detected: %s", store.ErrInvalidArgument, strings.Join(cycle, " -> "))
 	}
 
 	// 5. Serialise tasks to JSON for storage.
-	tasksJSON, err := json.Marshal(in.Tasks)
+	tasksJSON, err := json.Marshal(tasks)
 	if err != nil {
 		return nil, fmt.Errorf("vibe_spec: marshal tasks: %w", err)
 	}
@@ -143,7 +207,7 @@ func (o *Orchestrator) VibeSpec(ctx context.Context, in VibeSpecInput) (*VibeSpe
 
 	return &VibeSpecResult{
 		SpecID:         specID,
-		TasksValidated: len(in.Tasks),
+		TasksValidated: len(tasks),
 		TaskIDs:        canonicalIDs,
 		TasksJSON:      string(tasksJSON),
 		Warnings:       warnings,

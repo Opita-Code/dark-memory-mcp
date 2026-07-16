@@ -5,3 +5,7 @@ vibe-flow/*.tmp
 .idea/
 .vscode/
 *.exe
+*.patch
+.dark-agents-cache/
+dev/
+

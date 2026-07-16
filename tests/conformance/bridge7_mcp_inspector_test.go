@@ -117,7 +117,10 @@ func TestBridge7_Initialize(t *testing.T) {
 }
 
 // TestBridge7_ListToolsCanonical asserts tools/list returns exactly
-// 26 tools in the canonical RFC D-9 namespace order (bridge.4).
+// 27 tools in the canonical RFC D-9 namespace order (bridge.4).
+//
+// v1.2.0: PROJECT namespace (1 tool: project_create) inserted at
+// index 0, before SESSION. The wire order is otherwise unchanged.
 //
 // This is the wire-format regression for the bug we caught during
 // the W4A polish: mcp-go's handleListTools sorts alphabetically;
@@ -142,8 +145,8 @@ func TestBridge7_ListToolsCanonical(t *testing.T) {
 		t.Fatalf("list tools: %v", err)
 	}
 
-	if len(result.Tools) != 26 {
-		t.Fatalf("tool count: want 26, got %d", len(result.Tools))
+	if len(result.Tools) != 27 {
+		t.Fatalf("tool count: want 27, got %d", len(result.Tools))
 	}
 
 	want := canonicalWireOrder()
@@ -260,11 +263,14 @@ func TestBridge7_CallToolErrorPath(t *testing.T) {
 }
 
 // canonicalWireOrder is the wire-format (dark_memory_*) version of
-// the 26-tool canonical order, mirrored from internal/tools/registry.go
-// so this test doesn't depend on the library's internal package
-// (it tests the wire format, not the library shape).
+// the 27-tool canonical order (v1.2.0), mirrored from
+// internal/tools/registry.go so this test doesn't depend on the
+// library's internal package (it tests the wire format, not the
+// library shape).
 func canonicalWireOrder() []string {
 	bare := []string{
+		// PROJECT (1) — v1.2.0
+		"project_create",
 		// SESSION (4)
 		"session_start", "session_resume", "session_status", "session_close",
 		// RESEARCH (3)

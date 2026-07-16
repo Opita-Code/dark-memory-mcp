@@ -79,10 +79,22 @@ type NextAction struct {
 // Code is the typed sentinel name (e.g. "ErrCanaryInPayload"); Message
 // is 1 sentence fact + 1 sentence implication; Hint is optional
 // guidance.
+//
+// F35 (v1.2.0): extended with Field, ExpectedType, ActualType, and
+// SchemaHintURL so json.UnmarshalTypeError failures surface a
+// structured field path + type expectation instead of a free-form
+// message. Callers (LLM-driven or operator-driven) can render targeted
+// fix-up hints without parsing Message strings. All new fields are
+// omitempty so the legacy shape is preserved for non-type-mismatch
+// errors.
 type ToolError struct {
-	Code    string `json:"code"`              // sentinel name
-	Message string `json:"message"`           // 1-sentence fact + 1-sentence implication
-	Hint    string `json:"hint,omitempty"`    // optional: what to do next
+	Code          string `json:"code"`                          // sentinel name
+	Message       string `json:"message"`                       // 1-sentence fact + 1-sentence implication
+	Hint          string `json:"hint,omitempty"`                // optional: what to do next
+	Field         string `json:"field,omitempty"`               // F35: JSON path to the offending field (e.g. "tasks[2].depends_on"); empty if not a type-mismatch
+	ExpectedType  string `json:"expected_type,omitempty"`       // F35: Go type the struct expects (e.g. "[]string")
+	ActualType    string `json:"actual_type,omitempty"`         // F35: JSON type the payload supplied (e.g. "string")
+	SchemaHintURL string `json:"schema_hint_url,omitempty"`     // F35: optional URL to the per-tool schema doc
 }
 
 // Common canonical NextAction verbs. Used by next.go and the tool

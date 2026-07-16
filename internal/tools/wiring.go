@@ -15,6 +15,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
@@ -53,6 +54,21 @@ func BindSimple(name, description string, schema json.RawMessage, h HandlerFunc)
 // Audit and Next are NOT populated by this adapter; tools that
 // produce audit rows or next-step hints should call the higher-level
 // BindOrchestratorWithAudit (added in a follow-up if needed).
+//
+// Error reporting (F35 — see CHANGELOG v1.2.0): when json.Unmarshal
+// fails with a *json.UnmarshalTypeError, the adapter promotes the
+// field path + expected type into the structured ToolError so the
+// caller (LLM or operator) can pinpoint the offending key without
+// parsing free-form Message text. Example ToolError on a type
+// mismatch at `tasks[2].depends_on`:
+//
+//	{
+//	  "code": "ErrInvalidArgument",
+//	  "message": "input JSON does not match expected schema for vibe_spec: json: cannot unmarshal string into Go struct field VibeSpecTask.tasks.depends_on of type []string",
+//	  "field":  "tasks[2].depends_on",
+//	  "expected_type": "array",
+//	  "hint":   "tasks[2].depends_on must be an array of strings, not a single string. Omit the field entirely when there are no dependencies (omitempty).",
+//	}
 func BindOrchestrator[In any, Out any](
 	name, description string,
 	schema json.RawMessage,
@@ -67,11 +83,7 @@ func BindOrchestrator[In any, Out any](
 			if len(raw) > 0 {
 				if err := json.Unmarshal(raw, &in); err != nil {
 					return &ToolResponse{
-						Error: &ToolError{
-							Code:    "ErrInvalidArgument",
-							Message: fmt.Sprintf("input JSON does not match expected schema for %s: %v", name, err),
-							Hint:    "Inspect the tool's input schema and ensure the payload matches the declared fields.",
-						},
+						Error: typeMismatchToolError(name, err),
 					}, nil
 				}
 			}
@@ -81,6 +93,45 @@ func BindOrchestrator[In any, Out any](
 			}
 			return &ToolResponse{Data: out}, nil
 		},
+	}
+}
+
+// typeMismatchToolError maps a json.Unmarshal error to a structured
+// ToolError. When the error is a *json.UnmarshalTypeError (i.e. a
+// type mismatch, the most common schema-vs-struct drift), the field
+// path and expected type are surfaced as discrete fields on
+// ToolError so callers can render targeted fix-up hints instead of
+// parsing free-form Message strings.
+//
+// For other error kinds (syntax errors, unknown fields, EOF), the
+// function falls back to the legacy generic shape (Message + Hint)
+// to keep backwards compatibility with callers that pattern-match on
+// Message.
+func typeMismatchToolError(toolName string, err error) *ToolError {
+	var typeErr *json.UnmarshalTypeError
+	if errors.As(err, &typeErr) {
+		field := typeErr.Field
+		if field == "" {
+			field = "(root)"
+		}
+		return &ToolError{
+			Code:          "ErrInvalidArgument",
+			Message:       fmt.Sprintf("input JSON does not match expected schema for %s: %v", toolName, err),
+			Field:         field,
+			ExpectedType:  typeErr.Type.String(),
+			ActualType:    typeErr.Value,
+			Hint:          fmt.Sprintf("Field %q must be of type %s, got %s. Update the input payload to match the tool's input schema.", field, typeErr.Type.String(), typeErr.Value),
+			SchemaHintURL: "", // reserved for future: link to the per-tool schema doc
+		}
+	}
+	// Fallback: generic ErrInvalidArgument. Includes the raw error in
+	// Message (preserved for backwards compatibility) and the empty
+	// Field/Type fields (zero values are omitted by json.Marshal's
+	// omitempty tags on ToolError).
+	return &ToolError{
+		Code:    "ErrInvalidArgument",
+		Message: fmt.Sprintf("input JSON does not match expected schema for %s: %v", toolName, err),
+		Hint:    "Inspect the tool's input schema and ensure the payload matches the declared fields.",
 	}
 }
 

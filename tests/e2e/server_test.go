@@ -19,19 +19,20 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/tools"
 )
 
-// TestE2E_26ToolsRegistered is the canonical-order sanity check: all
-// 26 tools are present in the registry after RegisterAll.
-func TestE2E_26ToolsRegistered(t *testing.T) {
+// TestE2E_27ToolsRegistered is the canonical-order sanity check: all
+// 27 tools are present in the registry after RegisterAll (v1.2.0:
+// added project_create to the PROJECT namespace at index 0).
+func TestE2E_27ToolsRegistered(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.close()
 
 	canonical := tools.CanonicalOrder()
-	if got := len(canonical); got != 26 {
-		t.Fatalf("canonical order length: want 26, got %d", got)
+	if got := len(canonical); got != 27 {
+		t.Fatalf("canonical order length: want 27, got %d", got)
 	}
 	registered := ts.srv.Registry().ListCanonical()
-	if len(registered) != 26 {
-		t.Fatalf("registered: want 26, got %d", len(registered))
+	if len(registered) != 27 {
+		t.Fatalf("registered: want 27, got %d", len(registered))
 	}
 	for i, name := range canonical {
 		if got := registered[i].Name; got != name {

@@ -54,7 +54,7 @@ type Registry struct {
 	order  []string // canonical order, fixed at construction
 }
 
-// NewRegistry constructs an empty Registry with the canonical 26-tool
+// NewRegistry constructs an empty Registry with the canonical 27-tool
 // order pre-registered (tools may not exist yet; ListCanonical will
 // return placeholders that the server filters out at startup).
 func NewRegistry() *Registry {
@@ -118,18 +118,65 @@ func (r *Registry) Names() []string {
 
 // CanonicalOrder returns the fixed canonical tool order (spec 164,
 // bridge.4). Used by tests that want to assert "did we register all
-// 25 in the right order".
+// 27 in the right order".
 func CanonicalOrder() []string {
 	out := make([]string, len(canonicalToolOrder))
 	copy(out, canonicalToolOrder)
 	return out
 }
 
-// canonicalToolOrder is the fixed 26-tool order (bare names, no
+// ListExtras returns registered tools that are NOT in the canonical
+// order. Used by the server bootstrap to register armed-mode
+// extras (e.g. the L7-REDTEAM namespace) without polluting the
+// canonical 27-tool surface (v1.2.0; was 26 in v1.1.x).
+//
+// The returned order is alphabetical by name (stable across runs;
+// no canonical-order contract for extras).
+func (r *Registry) ListExtras() []*Tool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	canon := make(map[string]bool, len(r.order))
+	for _, n := range r.order {
+		canon[n] = true
+	}
+	out := make([]*Tool, 0, 8)
+	names := make([]string, 0, len(r.byName))
+	for n := range r.byName {
+		if !canon[n] {
+			names = append(names, n)
+		}
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		out = append(out, r.byName[n])
+	}
+	return out
+}
+
+// CountExtras returns the number of registered tools not in the
+// canonical order. Convenience for boot logs.
+func (r *Registry) CountExtras() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	canon := make(map[string]bool, len(r.order))
+	for _, n := range r.order {
+		canon[n] = true
+	}
+	c := 0
+	for n := range r.byName {
+		if !canon[n] {
+			c++
+		}
+	}
+	return c
+}
+
+// canonicalToolOrder is the fixed 27-tool order (bare names, no
 // "dark_memory_" prefix; the server prepends on wire).
 //
-// Per RFC D-9 + BRIDGE_AND_COEXISTENCE.md §3 (bridge.4):
+// Per RFC D-9 + BRIDGE_AND_COEXISTENCE.md §3 (bridge.4), v1.2.0:
 //
+//	PROJECT        (1)  → create                          (v1.2.0, INV-7)
 //	SESSION        (4)  → start, resume, status, close
 //	RESEARCH       (3)  → topic, recall, resume_thread
 //	VIBE           (4)  → publish, spec, pipeline_status, resolve_drift
@@ -140,10 +187,16 @@ func CanonicalOrder() []string {
 //	ADMIN          (3)  → admin_migrate, admin_schema_status, admin_vacuum
 //	L6-VLP         (1)  → vlp_handle_event          (DMAP v1.1 spec 193)
 //
-// Total: 4+3+4+3+3+2+3+3+1 = 26. The L6 namespace was added in DMAP
-// v1.1 to expose the VLP state machine to MCP harnesses (opencode,
-// claude code, etc.) as a first-class wire protocol.
+// Total: 1+4+3+4+3+3+2+3+3+1 = 27. PROJECT was added in v1.2.0 to
+// close the bootstrap loop (operators can now provision a tenant
+// from inside the MCP surface instead of having to insert into
+// the projects table out of band). It is positioned at index 0
+// because the natural discovery order is project_create →
+// session_start → …; harness callers that iterate the canonical
+// list get project_create first.
 var canonicalToolOrder = []string{
+	// PROJECT (1) — v1.2.0
+	"project_create",
 	// SESSION (4)
 	"session_start", "session_resume", "session_status", "session_close",
 	// RESEARCH (3)

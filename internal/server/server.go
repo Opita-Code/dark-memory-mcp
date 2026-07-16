@@ -112,6 +112,12 @@ func New(ctx context.Context) (*Server, error) {
 // added are silently skipped (the canonical order is the contract;
 // the actual set is the intersection of canonical ∩ registered).
 //
+// It also registers any "extra" tools — registered tools that are
+// NOT in the canonical order. These are armed-mode namespaces (e.g.
+// L7-REDTEAM) that appear only when the operator has flipped the
+// relevant env flag. The public surface in the un-armed server stays
+// at 26; the armed server gets 26 + extras.
+//
 // The handler adapter converts tools.HandlerFunc (our internal
 // shape) into the mcp-go handler signature: it pulls Arguments from
 // the CallToolRequest, calls our handler, and packages the
@@ -122,7 +128,19 @@ func (s *Server) RegisterAll() error {
 			return fmt.Errorf("server.RegisterAll: tool %q: %w", t.Name, err)
 		}
 	}
-	log.Printf("dark-mem-mcp: registered %d tools (canonical order)", len(s.boot.Registry.ListCanonical()))
+	canonicalCount := len(s.boot.Registry.ListCanonical())
+	extras := s.boot.Registry.ListExtras()
+	for _, t := range extras {
+		if err := s.registerOne(t); err != nil {
+			return fmt.Errorf("server.RegisterAll: extra tool %q: %w", t.Name, err)
+		}
+	}
+	if len(extras) > 0 {
+		log.Printf("dark-mem-mcp: registered %d canonical + %d extras (armed-mode namespaces)",
+			canonicalCount, len(extras))
+	} else {
+		log.Printf("dark-mem-mcp: registered %d tools (canonical order)", canonicalCount)
+	}
 	return nil
 }
 
