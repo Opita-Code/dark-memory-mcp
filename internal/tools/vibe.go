@@ -13,6 +13,7 @@ package tools
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/orchestration"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
@@ -151,8 +152,12 @@ func RegisterVibe(reg *Registry, orch *orchestration.Orchestrator, st store.Stor
 		}))
 
 	// pipeline_status — read-only: latest drift for an artifact_id.
+	// F7 enhancement: when no local drift is found AND a federation peer
+	// is configured, attempt a peer lookup and surface the result in a
+	// `cross_namespace_hint` field. The local response shape is
+	// backward-compatible (the new field is omitempty).
 	reg.Add(BindStore("pipeline_status",
-		"Return the latest drift report for an artifact_id (or nil if none). Read-only.",
+		"Return the latest drift report for an artifact_id (or nil if none). Read-only. With DARK_FEDERATION_PEER_DSN configured, also probes the dark-research peer when the local lookup misses.",
 		MustJSONSchema(map[string]any{
 			"type":     "object",
 			"required": []string{"artifact_id"},
@@ -166,18 +171,32 @@ func RegisterVibe(reg *Registry, orch *orchestration.Orchestrator, st store.Stor
 			if err != nil {
 				return nil, err
 			}
-			if d == nil {
-				return &PipelineStatusResult{ArtifactID: in.ArtifactID, HasDrift: false}, nil
+			if d != nil {
+				return &PipelineStatusResult{
+					ArtifactID:  in.ArtifactID,
+					HasDrift:    true,
+					DriftID:     d.ID,
+					Verdict:     d.Verdict,
+					SpecDiff:    d.SpecDiff,
+					ReconciledAt: d.ReconciledAt,
+					CreatedAt:   d.CreatedAt,
+				}, nil
 			}
-			return &PipelineStatusResult{
-				ArtifactID:  in.ArtifactID,
-				HasDrift:    true,
-				DriftID:     d.ID,
-				Verdict:     d.Verdict,
-				SpecDiff:    d.SpecDiff,
-				ReconciledAt: d.ReconciledAt,
-				CreatedAt:   d.CreatedAt,
-			}, nil
+			// Local miss. If a federation peer is configured, attempt
+			// a cross-namespace lookup so the operator learns WHERE
+			// the artifact actually lives (without merging data).
+			res := &PipelineStatusResult{ArtifactID: in.ArtifactID, HasDrift: false}
+			peer := GetFederationPeer()
+			if peer != nil && peer.IsEnabled() {
+				art, perr := peer.LookupArtifact(ctx, in.ArtifactID)
+				if perr == nil && art != nil {
+					res.CrossNamespaceHint = fmt.Sprintf(
+						"artifact_id=%d not found in local dark-memory.db, but the dark-research peer reports it exists (peer_validation_status=%s, peer_artifact_url=%q). Use dark_memory_federation_lookup or dark_research_pipeline_status to inspect cross-namespace.",
+						in.ArtifactID, art.ValidationStatus, art.ArtifactURL,
+					)
+				}
+			}
+			return res, nil
 		}))
 
 	// resolve_drift — wraps O11 ResolveDrift orchestrator.
@@ -205,11 +224,16 @@ type PipelineStatusInput struct {
 
 // PipelineStatusResult is the output for pipeline_status.
 type PipelineStatusResult struct {
-	ArtifactID   int64  `json:"artifact_id"`
-	HasDrift     bool   `json:"has_drift"`
-	DriftID      int64  `json:"drift_id,omitempty"`
-	Verdict      string `json:"verdict,omitempty"`
-	SpecDiff     string `json:"spec_diff,omitempty"`
-	ReconciledAt string `json:"reconciled_at,omitempty"`
-	CreatedAt    string `json:"created_at,omitempty"`
+	ArtifactID         int64  `json:"artifact_id"`
+	HasDrift           bool   `json:"has_drift"`
+	DriftID            int64  `json:"drift_id,omitempty"`
+	Verdict            string `json:"verdict,omitempty"`
+	SpecDiff           string `json:"spec_diff,omitempty"`
+	ReconciledAt       string `json:"reconciled_at,omitempty"`
+	CreatedAt          string `json:"created_at,omitempty"`
+	// CrossNamespaceHint is populated ONLY when (a) no local drift was
+	// found, AND (b) a federation peer is configured, AND (c) the peer
+	// reports the artifact exists. It is a metadata-only signal: no peer
+	// data is copied into the local response. F7.
+	CrossNamespaceHint string `json:"cross_namespace_hint,omitempty"`
 }

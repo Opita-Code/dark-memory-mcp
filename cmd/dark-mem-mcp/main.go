@@ -12,6 +12,7 @@ import (
 	"runtime/debug"
 	"syscall"
 
+	"github.com/dark-agents/dark-memory-mcp/internal/federation"
 	"github.com/dark-agents/dark-memory-mcp/internal/server"
 	"github.com/dark-agents/dark-memory-mcp/internal/tools"
 )
@@ -66,6 +67,31 @@ func main() {
 	if err := tools.RegisterAll(srv.Registry(), bootState.Orchestrator, bootState.Store); err != nil {
 		fmt.Fprintf(os.Stderr, "dark-mem-mcp: tools.RegisterAll failed: %v\n", err)
 		os.Exit(1)
+	}
+
+	// F7 federation peer: opt-in cross-namespace lookup against the
+	// dark-research DB. Read-only. Boot fails if DARK_FEDERATION_PEER_DSN
+	// points to a DB without vibe_artifacts + vibe_drift_reports tables
+	// (we validate at startup so a misconfiguration doesn't silently
+	// disable the federation lookup at request time).
+	peer, err := federation.NewPeerFromEnv()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "dark-mem-mcp: federation peer init failed: %v\n", err)
+		os.Exit(1)
+	}
+	tools.SetFederationPeer(peer)
+	defer func() {
+		if peer != nil {
+			_ = peer.Close()
+		}
+	}()
+	// Register the federation_lookup tool ONLY when the peer is enabled.
+	// Same opt-in pattern as DARK_REDTEAM=armed (redteam extras). When
+	// DARK_FEDERATION_PEER_DSN is unset, the surface stays at 28 canonical
+	// tools and the conformance test `TestBridge7_ListToolsCanonical`
+	// continues to pass.
+	if peer != nil {
+		tools.RegisterFederation(srv.Registry())
 	}
 	if err := srv.RegisterAll(); err != nil {
 		fmt.Fprintf(os.Stderr, "dark-mem-mcp: server.RegisterAll failed: %v\n", err)
