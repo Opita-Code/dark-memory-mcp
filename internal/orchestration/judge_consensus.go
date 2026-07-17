@@ -1,4 +1,4 @@
-// O8: JudgeConsensus — runs the Judge N times and returns the modal
+﻿// O8: JudgeConsensus — runs the Judge N times and returns the modal
 // verdict with a confidence interval. Use this for HIGH-STAKES
 // verdicts (compliance, brand match on launch, grounding of political
 // claims) where a single sample's confidence might be misleading.
@@ -99,7 +99,7 @@ func (o *Orchestrator) JudgeConsensus(ctx context.Context, in JudgeConsensusInpu
 	// 3. Run N samples. Sequential today; if the orchestrator gains a
 	// concurrency knob, the N samples can fan out (LLM clients are
 	// stateless; safe for concurrent calls given typical clients
-	// are HTTP or dark-scrapper pool).
+	// are HTTP or [drift-judge-daemon] pool).
 	wc := store.WriteContext{
 		Actor:     "orchestrator_judge_consensus",
 		WritePath: "JudgeConsensus",

@@ -84,6 +84,17 @@ func openSQLite(ctx context.Context, cfg store.Config) (store.Store, error) {
 	db.SetMaxOpenConns(1)
 	s := &Store{db: db, cfg: cfg, canary: buildSafetyHolder(cfg)}
 	migrate.SetClock(func() string { return time.Now().UTC().Format(time.RFC3339Nano) })
+	// F38 (v1.2.2): pre-create the core tables v5+ expect. CREATE
+	// TABLE IF NOT EXISTS is a no-op when the table already exists;
+	// it materialises a missing table when dark-memory-mcp boots
+	// against a dark.db that was last touched by dark-research-mcp
+	// (which uses a separate schema_migrations ledger and may have
+	// left dark-memory-mcp's v5+ rows marked as applied without the
+	// matching tables actually existing).
+	if err := migrate.EnsureCoreTables(ctx, db); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("sqlite: ensure core tables: %w", err)
+	}
 	if err := migrate.Migrate(ctx, db, migratesqlite.Migrations); err != nil {
 		_ = db.Close()
 		return nil, err

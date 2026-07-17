@@ -125,6 +125,38 @@ var (
 	ErrInvalidState       = errors.New("store: invalid state for requested operation")
 )
 
+// FieldError carries the offending JSON field name AND the sentinel
+// it wraps, so the tools layer (ToToolError in internal/tools/errors.go)
+// can populate ToolError.Field for the harness. errors.As extracts it.
+//
+// F35 wire-propagation: previously only json.UnmarshalTypeError set
+// ToolError.Field; orchestrator-level semantic errors (e.g. missing
+// required field, parseTasksField rejecting a non-array non-string)
+// silently dropped the field info. FieldError fixes that.
+//
+// Use NewFieldError from any package; do not construct the struct
+// directly (the Store field is unexported).
+type FieldError struct {
+	Store error
+	Field string
+}
+
+func (e *FieldError) Error() string {
+	if e.Field == "" {
+		return e.Store.Error()
+	}
+	return e.Store.Error() + " (field=" + e.Field + ")"
+}
+
+func (e *FieldError) Unwrap() error { return e.Store }
+
+// NewFieldError wraps store-err as an ErrInvalidArgument-wrapping
+// FieldError carrying field name. ToToolError extracts both via
+// errors.Is (for the sentinel) and errors.As (for Field).
+func NewFieldError(storeErr error, field string) error {
+	return &FieldError{Store: storeErr, Field: field}
+}
+
 // Store is the abstraction over the persistent backend. Two implementations:
 // internal/store/sqlite (modernc.org/sqlite) and internal/store/postgres
 // (jackc/pgx/v5). The factory in factory.go selects the right one based on

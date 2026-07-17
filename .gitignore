@@ -5,3 +5,13 @@ vibe-flow/*.tmp
 .idea/
 .vscode/
 *.exe
+*.patch
+.dark-agents-cache/
+dev/
+
+
+# Build / dev artifacts (legacy operator WIP that are not part of this repo)
+*.exe~
+dev/
+mods/
+

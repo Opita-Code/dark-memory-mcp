@@ -23,9 +23,25 @@ const ErrInternal = "ErrInternal"
 // ToToolError maps any error into a ToolError. Returns nil if err is
 // nil. Known sentinels get a stable Code + helpful Hint; unknown
 // errors map to ErrInternal with the error string in Message.
+//
+// F35 wire-propagation: when the wrapped ErrInvalidArgument also
+// carries a store.FieldError (set via errors.As), we propagate Field
+// to ToolError.Field so the harness renders a precise fix-up hint
+// instead of the generic "one or more arguments failed validation"
+// message.
 func ToToolError(err error) *ToolError {
 	if err == nil {
 		return nil
+	}
+
+	// F35 wire-propagation: extract the FieldError (if any) before
+	// the switch so we can populate ToolError.Field regardless of
+	// which sentinel the error wraps.
+	var fe *store.FieldError
+	fieldsAs := errors.As(err, &fe)
+	fieldName := ""
+	if fieldsAs {
+		fieldName = fe.Field
 	}
 
 	// Sentinel-by-sentinel. We compare with errors.Is for wrapped
@@ -39,11 +55,16 @@ func ToToolError(err error) *ToolError {
 			Hint:    "Call dark_memory_session_start with operator and project_id, then retry.",
 		}
 	case errors.Is(err, store.ErrInvalidArgument):
-		return &ToolError{
+		te := &ToolError{
 			Code:    "ErrInvalidArgument",
-			Message: "One or more arguments failed validation. The offending field is described in the wrapped error.",
+			Message: "One or more arguments failed validation.",
 			Hint:    "Inspect the error message for the missing or malformed field, correct the input, and retry.",
 		}
+		if fieldsAs && fieldName != "" {
+			te.Field = fieldName
+			te.Message = "invalid argument at field=" + fieldName
+		}
+		return te
 	case errors.Is(err, store.ErrNotFound):
 		return &ToolError{
 			Code:    "ErrNotFound",
