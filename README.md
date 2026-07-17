@@ -175,9 +175,9 @@ Cada `dark_ssd_drift_judge` (sub-spec 180) persiste su verdict en `sdd_evaluatio
         │   │  ├ CONTEXT (3)           │     │
         │   │  ├ JUDGE (3)             │     │
         │   │  ├ POLICY (2)            │     │
-│   │  ├ OBSERVABILITY (3)     │     │
-│   │  ├ ADMIN (3)             │     │
-│   │  └ L6-VLP (1)            │     │
+        │   │  ├ OBSERVABILITY (3)     │     │
+        │   │  ├ ADMIN (3)             │     │
+        │   │  └ L6-VLP (1)            │     │
         │   └──────────────────────────┘     │
         │                                    │
         │   ┌──────────────────────────┐     │
