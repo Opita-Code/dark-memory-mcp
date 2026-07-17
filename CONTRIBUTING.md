@@ -1,161 +1,264 @@
-# Contributing to Dark Memory MCP
+# Contributing to dark-agents projects
 
-Thanks for your interest in dark-memory-mcp. This project is part of the
-[dark-agents-v2](https://github.com/Opita-Code) ecosystem — a standalone Go
-module that provides persistent memory + workflow orchestration for MCP-native
-harnesses.
+This document is the **constitution of conventions** for any
+`dark-*` MCP server. Every rule here comes from a real bug we fixed
+in production. Apply them mechanically in PR reviews; the
+[Hard rules](#hard-rules) at the bottom are non-negotiable.
 
-## Code of conduct
+---
 
-This project follows the [Contributor Covenant v2.1](CODE_OF_CONDUCT.md). By
-participating you agree to its terms.
+## Why this document exists
 
-## What we accept
+Between v1.2.0 and v1.2.4, dark-memory-mcp shipped four releases
+(F36, F37, F38, F39, F40) that fixed bugs caught only by running the
+**actual binary against a real JSON-RPC wire** — not Go-level
+orchestrator tests. Every one of them taught us a lesson. This
+document bakes those lessons into rules so the next dark-*
+server (sibling dark-* future projects under the dark-agents org)
+doesn't re-learn them.
 
-- **Bug fixes** that have a clear repro and a minimal change.
-- **Performance improvements** with before/after measurements.
-- **Documentation fixes** (typos, broken links, unclear examples).
-- **New orchestrators** that follow the RFC §D-9 contract and ship with tests.
-- **New context projections** that follow the design rules in
-  [`docs/CONTEXT_OBJECTS.md`](docs/CONTEXT_OBJECTS.md).
+## Hard rules
 
-## What we don't accept (yet)
+These rules are **inviolable**. A PR that violates one is rejected
+at review; exceptions require written justification in the PR
+description.
 
-- New binary distribution formats (deb, rpm, brew, scoop). v1.0 is `go install`
-  + `go build`. Packaging is v1.1 work.
-- New storage drivers beyond SQLite + Postgres. MySQL/etcd are explicit
-  non-goals per the constitution.
-- Replacement of the canonical 25-tool order. The order is a wire contract —
-  adding a tool is fine; renumbering breaks harnesses.
+### H-1. Each MCP owns its own database file.
 
-## Development setup
+Per **INV-8** in [`docs/INVARIANTS.md`](docs/INVARIANTS.md).
+
+* Each project's `defaultDSN()` must return a project-specific
+  filename (`<project>.db`, never just `dark.db`).
+* CI lint `scripts/lint-no-private-projects.sh` verifies the default
+  doesn't collide with another known server's default.
+* Migration bookkeeping tables must be project-namespaced
+  (e.g. `<project>_schema_migrations`, not the bare `schema_migrations`)
+  to avoid v1-vN name collisions across servers sharing a directory.
+
+### H-2. Array/object parameters MUST accept string fallback.
+
+Per **F36 lesson** in CHANGELOG v1.2.1.
+
+The harness (opencode + Vercel AI SDK + the LLM) decides the JSON
+shape. We don't pick — the LLM does. Therefore:
+
+```go
+"tasks": map[string]any{
+    "anyOf": []any{
+        // Form A: JSON array (preferred).
+        map[string]any{
+            "type":     "array",
+            "minItems": 1,
+            "items":    someItemSchema,
+        },
+        // Form B: JSON-encoded string (legacy gemela compat).
+        map[string]any{"type": "string", "minLength": 2},
+    },
+},
+```
+
+The orchestrator's parser dispatches on the payload's leading byte:
+`[` → unmarshal as array; `"` → unmarshal as string then re-parse;
+anything else → structured `store.FieldError` with `Field="tasks"`.
+
+> **Why this matters:** the `dark_research_spec_create` gemela in
+> dark-research-mcp persists `tasks` as a string. LLMs trained
+> against that history emit string form against `dark_memory_vibe_spec`
+> at random. Without `anyOf` we get a generic ErrInvalidArgument
+> at the wire.
+
+### H-3. JSON-RPC wire tests are MANDATORY for every fix.
+
+Per **wire-conformance lesson** in this release.
+
+Go-level orchestrator tests prove the function works. They do
+**not** prove:
+- The schema the harness sees matches what we wrote.
+- The harness+LLM can actually produce a valid payload.
+- The server's error envelope propagates `Field`/`ExpectedType`.
+- Migration runner survives half-migrated DBs in production.
+
+Every fix MUST ship with at least one test in `tests/wire/`. The
+test boots the actual binary (`dark-{name}.exe`) via `os/exec`,
+sends newline-delimited JSON-RPC frames on stdin, and asserts
+against parsed responses on stdout.
+
+**v1.3.0 addendum — race-detector on POSIX**: on Linux/macOS dev
+hosts (where `gcc` is available), the wire suite should ALSO be
+run with `-race` before publishing, because the harness is the
+canonical concurrency exerciser:
 
 ```bash
-# Clone
-git clone https://github.com/Opita-Code/dark-memory-mcp
-cd dark-memory-mcp
-
-# Requires Go 1.25+
-go version
-
-# Run all tests (~11 min with -count=1 cold rebuild)
-go test -count=1 ./...
-
-# Run just the contract tests (~7s, sqlite only)
-go test ./tests/dual_driver/...
-
-# Run the MCP Inspector conformance test (~14s, requires Go toolchain)
-go test ./tests/conformance/...
-
-# Run the invariant tests (~6s)
-go test ./tests/invariants/...
-
-# Build the 3 binaries
-go build -o bin/dark-mem-mcp ./cmd/dark-mem-mcp
-go build -o bin/dark-mem-cli ./cmd/dark-mem-cli
-go build -o bin/dark-mem-inspect ./cmd/dark-mem-inspect
+CGO_ENABLED=1 CC=gcc go test -race ./tests/wire/... -count=1 -timeout 120s
 ```
 
-### Postgres testing (optional, requires local Postgres)
+On Windows hosts (no C compiler by default; see
+`docs/PRODUCTION_CHECKLIST.md` §Race detector availability), `-race`
+is unavailable locally. CI on POSIX runners handles it.
 
-```bash
-export DARK_TEST_POSTGRES_DSN="postgres://user:pass@localhost:5432/darkdb?sslmode=disable"
-go test ./tests/dual_driver/...
+### H-4. Never mention private project names in public artifacts.
+
+Per operator mandate, hard rule, see
+[`scripts/lint-no-private-projects.sh`](scripts/lint-no-private-projects.sh).
+
+The BLOCKLIST contains private dark-* siblings and operator-side
+project names. Any public file (markdown, code comment, test name,
+config key) MUST NOT contain them. Replace with placeholders:
+- `[FUTURE-MCP-N]` for unnamed future dark-* servers
+- `[drift-judge-daemon]` for the LLM inference backend
+- `[NEIGHBORING-SCRAPER]` for scan-only tools
+- `[prior-evaluation-loadout]` for legacy test rigs (e.g. older
+  dark-research eval drivers)
+
+Run the lint before every `git commit` and on every CI push.
+The `.ps1` variant covers Windows-CI runners.
+
+---
+
+## Conventions
+
+These conventions are **defaults** — deviate with justification,
+document the deviation in the PR, and update this section.
+
+### C-1. Directory layout
+
+Every dark-* server follows:
 ```
-
-The CI runner exercises both drivers. Local dev box can skip Postgres if you
-only care about the sqlite path.
-
-## Project layout
-
-```
-dark-memory-mcp/
-├── cmd/                  # 3 binaries (mcp / cli / inspect) — each with its own go.mod
+dark-{name}/
+├── cmd/{name}/main.go              # ONE binary, subcommand-dispatched
 ├── internal/
-│   ├── audit/            # write_audit event types (INV-1)
-│   ├── constitution/     # INV-4 watchdog
-│   ├── context/          # 8 context projections
-│   ├── economy/          # Atlan 2026 token economy pipeline
-│   ├── llm/              # LLM client + cache (INV-5)
-│   ├── migrate/          # Schema migrations v1..v7
-│   ├── mods/             # Mod loader (INV-6)
-│   ├── orchestration/    # 9 typed orchestrators (RFC §D-6)
-│   ├── project/          # INV-7 multi-tenancy
-│   ├── research/         # OSINT run/item/link types
-│   ├── safety/           # Canary + injection markers (INV-3, INV-6)
-│   ├── server/           # MCP server bootstrap + lifecycle
-│   ├── session/          # Session lifecycle types
-│   ├── ssd/              # LLM-as-judge verdict types
-│   ├── store/            # Store interface + sqlite/postgres impls
-│   ├── tools/            # 26 tool handlers + canonical registry
-│   └── vibeflow/         # Spec/artifact/drift types
-├── tests/                # 9 test suites (cli, conformance, context, dual_driver, e2e, ...)
-├── docs/                 # 6 operator-facing runbooks
-├── vibe-flow/            # RFC + BRIDGE + constitution + master plan
-└── README.md
+│   ├── domain/                     # SSOT types — zero external deps
+│   ├── plugin/                     # interface contracts only
+│   ├── sources/                    # one folder per external resource
+│   ├── pipeline/                   # chan-based, composable stages
+│   ├── transport/http/              # net/http ServeMux + otelhttp
+│   ├── observability/              # slog + prometheus + audit
+│   ├── store/                      # the project-specific DB
+│   ├── ratelimit/, circuit/        # shared infra
+├── migrations/                     # numbered, go-migrate-friendly
+├── configs/{name}.example.toml
+├── deploy/{name}.service, Dockerfile, cross-build.sh
+├── tests/{unit,integration,e2e,wire}/
+├── docs/{ARCHITECTURE,SOURCES,OPERATIONS}.md
+└── go.mod, README.md, CONTRIBUTING.md, CHANGELOG.md
 ```
 
-## Testing policy
+### C-2. Storage: modernc.org/sqlite, NEVER cgo
 
-Every PR must pass all 9 test suites locally:
+Prefer pure-Go SQLite via `modernc.org/sqlite`. Add
+`_ "modernc.org/sqlite"` in package main + use it in tests. The CGO
+build chain breaks cross-compilation and slows CI.
 
-```bash
-go test -count=1 ./...
+### C-3. Plugin registration: init() + embed.FS
+
+Auto-register every plugin via `init()` calls; generate the canonical
+order via `//go:embed` + a codegen step. NO manual wire.go in the
+main binary — that's the source of every "I forgot to register the
+redis source" bug in v1.x.
+
+### C-4. Error taxonomy: 7 sentinels + structured FieldError
+
+```go
+// sentinels (in store package):
+var (
+    ErrSessionRequired
+    ErrInvalidArgument
+    ErrNotFound
+    ErrAlreadyExists
+    ErrCanaryInPayload
+    ErrConstitutionDrift
+    ErrInvalidState
+)
+// structured carrier:
+type FieldError struct{ Store error; Field string }
 ```
 
-CI runs the same on Linux + macOS runners. The 1 flake we know about
-(review-w4-b01) is `go test -race` on Windows without TDM-GCC — this is a
-tooling gap, not a code issue. Don't worry about it unless you're adding
-concurrent code paths.
+Orchestrators always wrap via `store.NewFieldError(store.ErrInvalidArgument, "tasks")`,
+NEVER `fmt.Errorf("%w: ... invalid")`. The latter drops the field
+name and forces the harness to render a generic error message.
 
-## Pull request process
+### C-5. Tests layout
 
-1. **Open an issue first** for non-trivial changes (anything beyond a typo or
-   small bug fix). We use issues to discuss design before code lands.
-2. **Branch from `main`**. Use the convention `topic/short-description`
-   (e.g. `fix/canary-bypass`, `feat/new-context-projection`).
-3. **Keep commits atomic**. One logical change per commit. Use the prefixes:
-   - `feat:` for new functionality
-   - `fix:` for bug fixes
-   - `docs:` for documentation only
-   - `test:` for adding tests
-   - `refactor:` for restructuring without behavior change
-   - `chore:` for tooling/build/docs maintenance
-4. **Write a spec for any non-trivial change**. Use `dark_research_spec_create`
-   (C1 case for code, C2 for text/image/video artifacts). The spec is the
-   source of truth; the implementation is checked against it via
-   `dark_ssd_drift_judge`.
-5. **Add or update tests** for any behavior change. The 9 test suites are the
-   contract — every new tool, every new orchestrator, every new invariant must
-   be exercised by at least one test.
-6. **Update docs** if your change affects operator workflow (CLI flags, env
-   vars, runbook, README).
-7. **One approver required** from a maintainer. Complex changes (new
-   orchestrators, schema migrations, security-sensitive code) need 2.
+| Layer | Purpose | Speed budget |
+|---|---|---|
+| `tests/unit` | in-process Go function tests | < 1s total |
+| `tests/orchestration` | Orchestrator + Store integration, in-memory | < 30s |
+| `tests/integrations` | SQLite on disk, real migrations | < 60s |
+| `tests/e2e` | HTTP server up, real curl | < 90s |
+| `tests/wire` | `os/exec` + JSON-RPC against actual binary | < 30s per test |
 
-## Coding style
+Wire tests are **separate** from the rest so they can run in CI
+without booting subprocesses for unit work. They live under
+`./tests/wire/`.
 
-- **Go formatting**: `gofmt -s -w .` (or `goimports -w .` for import ordering)
-- **Comments**: all exported types/functions MUST have godoc comments starting
-  with the name. No inline comments unless necessary.
-- **Errors**: return sentinel errors (`ErrFoo`), wrap with `fmt.Errorf("context:
-  %w", err)`, use `errors.Is` for checking.
-- **Context**: always accept `context.Context` as the first parameter in
-  handlers and long-running functions.
-- **Thread safety**: use `sync.Mutex` for shared state; document thread-safety
-  requirements in comments.
-- **JSON**: use `json` tags with `omitempty` for optional fields; use
-  `json.RawMessage` for flexible/deferred parsing.
+### C-6. Schemas: strict, with `additionalProperties: false`
 
-## Release process
+Every MCP tool's input schema must:
+- declare `"type": "object"`
+- declare `"required": [...]` explicitly
+- declare `"additionalProperties": false`
+- for arrays: declare `"minItems": 1` (rejects accidental empty)
+- for typed strings: declare `"minLength": N` where N>1
 
-We follow [SemVer 2.0.0](https://semver.org/). Breaking changes bump the major
-version; the wire-format tool order is a breaking change for harnesses that
-index by position, so renumbering requires a major bump.
+opencode's harness will FORCE `additionalProperties: false`
+anyway (see `opencode/packages/opencode/src/mcp/catalog.ts`,
+`convertTool`), but declaring it server-side keeps the schema
+self-documenting.
 
-Releases are cut from `main` via annotated git tags. The current tag is
-[`v1.0.0`](https://github.com/Opita-Code/dark-memory-mcp/releases/tag/v1.0.0).
+### C-7. Versions: Keep a Changelog + semver
 
-## Questions?
+Every release bumps `DARK_SERVER_VERSION` in the
+`defaultDSN()`-adjacent config struct, and the CHANGELOG.md must
+have a dated entry with the **Five-W's**:
 
-Open an issue. We read all of them.
+```markdown
+## [1.2.3] — 2026-07-16
+
+### Fixed
+- **F-something — short title.** Why: root cause. Tests: which
+  tests catch the regression. Operator notes: rollback plan if
+  the fix breaks.
+```
+
+The operator-facing F-codes (`F35`, `F36`, etc.) are **immutable**
+once published. If you need to reference a fix in a later release,
+keep the code (`F36: tasks dual-form`); never re-purpose a code.
+
+---
+
+## Adding a new MCP server
+
+1. **Repository setup.** Copy this CONTRIBUTING.md and the directory
+   layout from C-1. Pick a new module path
+   (`github.com/<org>/<project>`).
+2. **Default DSN.** Pick a project-specific SQLite filename, NOT
+   `dark.db`. Add `INV-{N}` to your INVARIANTS doc that codifies
+   "<project> never reads/writes another server's file".
+3. **Schemas.** Apply C-6 to every tool. Every `array`/`object`
+   parameter gets the `anyOf:[array,string]` fallback (H-2).
+4. **Wire tests first.** Before writing the orchestrator, write
+   `tests/wire/{tool}_test.go` that asserts each tool accepts both
+   forms via a subprocess. THEN implement the tool to make the
+   test pass. The harness-shape problem always surfaces at the wire.
+5. **Field-level errors.** Every error path uses `store.NewFieldError`
+   with the offending field's name. Tests assert `errors.As` against
+   `store.FieldError` and verify Field.
+6. **Private-name lint.** Run `scripts/lint-no-private-projects.{sh,ps1}`
+   in CI. Any leak fails the build.
+7. **CHANGELOG + version.** Bump `DARK_SERVER_VERSION`, add a
+   Keep-a-Changelog entry.
+
+---
+
+## Review checklist (paste at PR bottom)
+
+- [ ] No private project names in any file (`scripts/lint-no-private-projects.ps1`)
+- [ ] Every new tool has at least one `tests/wire/` test
+- [ ] Every `array`/`object` parameter has `anyOf:[array,string]`
+- [ ] Every error returns `store.NewFieldError`, not `fmt.Errorf`
+- [ ] No committed `.exe`, `.db`, or `.patch` files (gitignore enforced)
+- [ ] Version bumped; CHANGELOG dated entry added; tests pass
+- [ ] Cross-build matrix tested (`deploy/cross-build.sh`)
+
+These checks are mechanical. If a PR fails any of them, the
+reviewer should reject with a single line: "Block on check {N}".

@@ -1,4 +1,4 @@
-# Dark Memory MCP — Human Gate Report (Wave 4 final review)
+﻿# Dark Memory MCP — Human Gate Report (Wave 4 final review)
 
 **Spec**: 184 (sub-spec 10 of RFC root)
 **Session**: `dark-memory-mcp-human-gate-w4`
@@ -72,7 +72,7 @@ cddacce o10 MemoryState: runtime counts + driver + schema_version
 | 4 | dark-memory-mcp binary registers 25 tools, survives 1000 mixed calls | `tests/e2e/server_test.go`: `TestE2E_25ToolsRegistered 18.45s PASS`, `TestE2E_1000MixedCallsNoDeadlock 12.72s PASS` | **PASS** |
 | 5 | dark-recall v2.3 plugin compiles + detects dark-memory-mcp presence | NOT IN THIS REPO — lives in `~/.opencode/plugins/dark-recall.ts`. Sub-spec 160 deferred to operator-side (per master plan task `plan.dark_recall`). | **DEFERRED** (out of scope for this repo; tracked separately) |
 | 6 | dark-research-mcp's `dark_mem_recall_research` returns `{deprecated: true, successor: 'dark-memory-mcp', ...}` | NOT IN THIS REPO — lives in `dark-research-mcp/internal/tools/dark_mem.go`. Sub-spec 8 (deprecation shim) deferred per RFC §11. | **DEFERRED** (out of scope for this repo) |
-| 7 | `dark_ssd_drift_judge` returns `aligned` for dual-driver contract | **N/A** — `dark_ssd_drift_judge` returns http 401 (minimax stub API key revoked; dark-scrapper daemon on :8901 not running on this host). Per constitution R9, **agent self-judges**: 9 drift_logs (186..204, 206) all `drift_resolved` or `aligned`. Sub-spec 180 (start dark-scrapper daemon) deferred per master plan. | **PASS via R9** |
+| 7 | `dark_ssd_drift_judge` returns `aligned` for dual-driver contract | **N/A** — `dark_ssd_drift_judge` returns http 401 (minimax stub API key revoked; [drift-judge-daemon] daemon on :8901 not running on this host). Per constitution R9, **agent self-judges**: 9 drift_logs (186..204, 206) all `drift_resolved` or `aligned`. Sub-spec 180 (start [drift-judge-daemon] daemon) deferred per master plan. | **PASS via R9** |
 | 8 | README + RUNBOOK + COEXISTENCE.md exist + accurate | `docs/RUNBOOK.md` (~5.5K) + `docs/COEXISTENCE.md` (~5K) + `docs/INVARIANTS.md` (~7K) + `docs/CONTEXT_OBJECTS.md` (~6.5K) + `docs/PERFORMANCE.md` (~7K) + `docs/MIGRATION.md` (~10.5K). All committed in e667f6d (sub-spec 162). README at repo root TBD — flagged below. | **PARTIAL** (runbooks ✓, README root pending) |
 
 **Subtotal**: 6/8 PASS, 2 DEFERRED (sub-specs in sibling repos), 1 PARTIAL (no README at root — see §10 finding gate.6).
@@ -163,7 +163,7 @@ The constitution declares 6 invariants. INV-7 (multi-tenancy via project_id) was
 | **9 (162)** | **Runbooks** | **CLOSED** ✅ | **drift 205** | 6 docs (RUNBOOK, COEXISTENCE, INVARIANTS, CONTEXT_OBJECTS, PERFORMANCE, MIGRATION) |
 | **10 (163/184)** | **Human gate** | **THIS REPORT** ✅ | drift 207 | — |
 | — | review-w4 bug hunt | **CLOSED** ✅ | drift 206 | spec 182, 3 ship-now fixes committed |
-| — | sub-spec 180 (dark-scrapper daemon) | **DEFERRED** | — | Operator-side; not a code unit of dark-memory-mcp |
+| — | sub-spec 180 ([drift-judge-daemon] daemon) | **DEFERRED** | — | Operator-side; not a code unit of dark-memory-mcp |
 
 **Cascade verdict**: **PASS** — every sub-spec in this repo is closed. The 3 deferred sub-specs (160, 161, 180) live in sibling repos / operator scope and are tracked in `vibe-flow/PLAN.md` master plan (spec 178).
 
@@ -276,7 +276,7 @@ The 6 docs in `docs/` are operator-facing (audience: operator). There is **no RE
 | review-w4-b03 | Migration to `modelcontextprotocol/go-sdk` v1.6.1 official SDK | BACKLOG (architectural; new spec) |
 | sub-spec 160 | dark-recall v2.3 plugin | DEFERRED (sibling repo) |
 | sub-spec 161 | dark-research-mcp deprecation shim | DEFERRED (sibling repo) |
-| sub-spec 180 | dark-scrapper daemon on :8901 | DEFERRED (operator-side) |
+| sub-spec 180 | [drift-judge-daemon] daemon on :8901 | DEFERRED (operator-side) |
 
 ---
 
@@ -300,7 +300,7 @@ git push origin v1.0.0
 **Suggested next-wave work** (post-merge):
 1. Fix gate.3 — write README.md (5 min)
 2. Fix gate.2 — fix go.mod comment (1 min)
-3. Sub-spec 180 — start dark-scrapper daemon, unlock `dark_ssd_drift_judge` for real verdict (not R9 fallback)
+3. Sub-spec 180 — start [drift-judge-daemon] daemon, unlock `dark_ssd_drift_judge` for real verdict (not R9 fallback)
 4. Sub-spec 160 — implement dark-recall v2.3 routing state machine
 5. Sub-spec 161 — deprecation shim in dark-research-mcp's `dark_mem_*` namespace
 6. Consider migration to `modelcontextprotocol/go-sdk` v1.6.1 official SDK (architectural decision; new spec)

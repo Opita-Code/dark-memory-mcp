@@ -1,4 +1,4 @@
-# Six Operational Invariants
+﻿# Seven Operational Invariants
 
 > **Audience**: anyone touching the dark-memory-mcp code. The
 > invariants are **type-system guarantees** — they are exercised by
@@ -62,16 +62,27 @@ sees in its RecallContext.
 
 ## INV-3 — canary check on payload writes
 
-**Statement**: Payload-carrying `Save*` methods run
-`safety.ValidatePayload(payload)` against the active canary. Canary
-hit returns `ErrCanaryInPayload`; the transaction rolls back.
+**Statement**: `Store.SaveRun` (research items insert path) runs
+`safety.ValidatePayload(payload)` against the active canary before
+inserting. Canary hit returns `ErrCanaryInPayload`; the transaction
+rolls back.
+
+**Scope (v1.3.0 precision)**: INV-3 explicitly applies to the
+research_items ingest path. Other `Save*` methods (Spec, Artifact,
+BrandGuide, ComplianceRule, Constitution, etc.) write content that
+originates from the LLM in the same session as the operator, not
+from external untrusted sources; the canary tripwire is calibrated
+for the OSINT research path where prompt injection is the threat
+model. Spec / artifact content goes through other defensive layers
+(project isolation INV-7, write_audit INV-1, constitution validation
+INV-4).
 
 **Why**: A user prompt that includes the canary token (placed there
 defensively by upstream callers like the system prompt composer) is
 a signal that something is replaying untrusted content. The canary
 is a defensive tripwire, not user data.
 
-**Enforced at**: `Store.Save*` invokes the `safety.Holder` before
+**Enforced at**: `Store.SaveRun` invokes the `safety.Holder` before
 inserting. The canary is a 128-bit random token minted at server boot
 (installed via `safety.NewCanary()`).
 
@@ -175,23 +186,71 @@ isolation suite).
 **Operator signal**: `dark-mem-inspect` `active_project` field. Set
 via `dark_memory_session_start` or `Store.SetActiveProject`.
 
+## INV-8 — per-MCP database isolation
+
+**Statement**: Each MCP server in the dark-agents family owns its
+**own SQLite database file**. The default file path for
+`dark-memory-mcp` is `dark-memory.db` (NOT shared with
+`dark-research-mcp`'s `dark.db`). Operators MAY override via
+`DARK_DB=` env var, but the override MUST point to a file that no
+other dark-* server is concurrently writing to.
+
+**Why**: Sharing `dark.db` between `dark-research-mcp` and
+`dark-memory-mcp` produced v1.2.2 boot crashes because both
+projects registered migration rows in the same `schema_migrations`
+table under overlapping version numbers (v1=`initial_schema`
+in both). When `dark-research-mcp`'s v1-v3 had been applied and
+`dark-memory-mcp`'s v4-v10 hadn't, the latter's migration runner
+saw a phantom "all already-applied" state and never materialised
+the tables its schema expected — yielding "no such table: sessions"
+on every boot. The principle generalises: any cross-MCP DB
+sharing produces migration bookkeeping collisions because
+version-number-NAMES overlap without versioning the project that
+owns each row.
+
+**Enforced at**: `defaultDSN()` in `internal/server/bootstrap.go`
+returns `dark-memory.db`. A defensive test in
+`tests/e2e/server_test.go::TestServer_DefaultDSN_DoesNotCollideWithDarkResearch`
+asserts the returned filename differs from the historical
+`dark.db` default that dark-research-mcp uses. Operators who want
+the legacy shared-DB behaviour can explicitly set
+`DARK_DB=dark.db`; the constitution requires them to opt in via
+the env var, not via the default.
+
+**Defensive test**: `TestServer_DefaultDSN_DoesNotCollideWithDarkResearch`
+(regression guard against reintroducing the shared default).
+
+**Operator signal**: `dark-mem-inspect --json` reports
+`resolved_db_path`. If two dark-* MCPs share a `resolved_db_path`,
+the migration runner on the second-starting one will refuse
+migrations under `ErrInvalidArgument` and the operator will
+see the recovery paths in CHANGELOG v1.2.2.
+
+**Applies to every dark-* future server**: `[FUTURE-MCP-1]` MUST
+default to `harvest.db` (or a project-specific filename), NOT
+`dark.db`. The CI lint rule `check_no_shared_db_default` greps
+every `defaultDSN()`-like function in the org and ensures
+uniqueness; passing this rule is a precondition for merging any
+new MCP server into `dark-agents/`. Documented in
+`CONTRIBUTING.md` `Add a new MCP server` section.
+
 ---
 
 ## Quick reference: which `Save*` enforces which invariant
 
-| Store method | INV-1 | INV-2 | INV-3 | INV-4 | INV-6 | INV-7 |
-|---|---|---|---|---|---|---|
-| `SaveSpec` | ✓ | — | — | (read) | — | ✓ |
-| `SaveArtifact` | ✓ | — | ✓ | (read) | — | ✓ |
-| `SaveDriftReport` | ✓ | — | — | (read) | — | ✓ |
-| `SaveSDDEvaluation` | ✓ | — | — | (read) | — | ✓ |
-| `SaveRun` | ✓ | — | ✓ | (read) | — | ✓ |
-| `SaveSession` | ✓ | ✓ | — | (read) | — | ✓ |
-| `SaveMod` / `RecordModLoad` | ✓ | — | ✓ | (read) | ✓ | ✓ |
-| `SaveConstitution` | ✓ | — | — | (write) | — | ✓ |
-| `Recall` | — | ✓ | (read) | (read) | — | ✓ |
-| `Vacuum` | — | — | — | — | — | (filters by project) |
-| `Migrate` | — | — | — | refused under drift | — | — |
+| Store method | INV-1 | INV-2 | INV-3 | INV-4 | INV-6 | INV-7 | INV-8 |
+|---|---|---|---|---|---|---|---|
+| `SaveSpec` | ✓ | — | — | (read) | — | ✓ | ✓ |
+| `SaveArtifact` | ✓ | — | ✓ | (read) | — | ✓ | ✓ |
+| `SaveDriftReport` | ✓ | — | — | (read) | — | ✓ | ✓ |
+| `SaveSDDEvaluation` | ✓ | — | — | (read) | — | ✓ | ✓ |
+| `SaveRun` | ✓ | — | ✓ | (read) | — | ✓ | ✓ |
+| `SaveSession` | ✓ | ✓ | — | (read) | — | ✓ | ✓ |
+| `SaveMod` / `RecordModLoad` | ✓ | — | ✓ | (read) | ✓ | ✓ | ✓ |
+| `SaveConstitution` | ✓ | — | — | (write) | — | ✓ | ✓ |
+| `Recall` | — | ✓ | (read) | (read) | — | ✓ | ✓ |
+| `Vacuum` | — | — | — | — | — | (filters by project) | ✓ |
+| `Migrate` | — | — | — | refused under drift | — | — | ✓ |
 
 *Legend: ✓ = enforces this invariant; — = not relevant; (read) =
 reads constitution for WriteContext, doesn't enforce a write-side

@@ -30,7 +30,6 @@
 package orchestration
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/safety"
@@ -83,7 +82,31 @@ func (o *Orchestrator) ensureLLMSelector() LLMSelector {
 	return NewOSINTSelector(client)
 }
 
-// errMissingField is a small helper that wraps ErrInvalidArgument.
+// fieldError carries the offending field name AND the sentinel it
+// wraps, so the tools layer (ToToolError) can populate the structured
+// ToolError.Field field path for the operator. F35 wire-propagation.
+//
+// The error string is preserved for backward-compat fallback with
+// log scrapers that grep on `Errorf("%w: %s is required", ...)`, but
+// callers SHOULD errors.As(err, &fieldError{}) instead of string-parsing.
+type fieldError struct {
+	store error
+	Field string
+}
+
+func (e *fieldError) Error() string {
+	if e.Field == "" {
+		return e.store.Error()
+	}
+	return e.store.Error() + ": field=" + e.Field
+}
+
+func (e *fieldError) Unwrap() error { return e.store }
+
+// errMissingField produces a structured error that carries the field
+// name. The tools layer extracts it via errors.As and populates
+// ToolError.Field so the harness's error path renders a precise
+// fix-up hint instead of a generic message.
 func errMissingField(field string) error {
-	return fmt.Errorf("%w: %s is required", store.ErrInvalidArgument, field)
+	return &fieldError{store: store.ErrInvalidArgument, Field: field}
 }

@@ -64,12 +64,19 @@ func Boot(ctx context.Context) (*BootState, error) {
 	}
 	log.Printf("dark-mem-mcp: boot step2 ok driver=%s", st.DriverName())
 
-	// Step 3: run migrations + constitution watchdog. Both happen
-	// inside the driver constructor (invoked by runtime.Open). On
-	// constitution drift the open returns ErrConstitutionDrift and
-	// we refuse to boot. We don't re-call Migrate here (already ran
-	// during Open); the log line is just for operator visibility.
-	log.Printf("dark-mem-mcp: boot step3 ok migrations + constitution watchdog (driver=%s)", st.DriverName())
+	// Step 3: log the schema state after migrations ran. The
+	// actual migration + constitution watchdog ran inside
+	// runtime.Open (step 2); on constitution drift the open
+	// returns ErrConstitutionDrift and we refused to boot. Here
+	// we just query the resulting schema version and emit a
+	// line the operator can pattern-match on to confirm the
+	// schema is at the expected version. The query is cheap
+	// (one SELECT MAX(version) on schema_migrations).
+	schemaVer, err := st.SchemaVersion(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("server.Boot step3 (SchemaVersion): %w", err)
+	}
+	log.Printf("dark-mem-mcp: boot step3 ok migrations applied + constitution watchdog (driver=%s schema_version=%d)", st.DriverName(), schemaVer)
 
 	// Step 4: install canary on the Store. The Holder is shared with
 	// the orchestrator so orchestrator calls see the same canary

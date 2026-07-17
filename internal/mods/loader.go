@@ -14,6 +14,17 @@
 //     is recorded; this package returns a typed error so the caller can
 //     surface the rejection to the user / LLM before persisting.
 //
+// RESEARCH-MODE OVERRIDE (operator-controlled, additive):
+//   When DARK_REDTEAM=armed is set AND the mod is whitelisted via
+//   DARK_MOD_WHITELIST, INV-6 is bypassed regardless of risk_class. This
+//   is the explicit "we are running a security-research session and we
+//   accept responsibility for what these prompts do" mode. The bypass
+//   applies only to the safetyCheckContent step; manifest validation
+//   (parse, required fields, path-escape) still runs.
+//   Recorded in the audit row with constitution_id="redteam-research"
+//   so the operator's intent is durable. Default DARK_REDTEAM is unset
+//   (i.e. the standard public-version safety posture applies).
+//
 // This file does NOT take a Store dependency — it's the parser. The
 // caller (the MCP server bootstrap) is responsible for calling Store.SaveMod
 // after a successful Load. Keep the layering.
@@ -110,7 +121,16 @@ func LoadWithWhitelist(modRoot string, whitelist []string) (*Loaded, error) {
 
 	// INV-6 sanitization gate. The whitelist applies to ALL of the mod's
 	// loaded content (knowledge + directives) — we don't pick and choose.
-	allowed := isAllowedRiskClass(m.Risk.Class) || isWhitelisted(m.Meta.ID, whitelist)
+	// Three unlock conditions, in increasing order of operator intent:
+	//   1. isAllowedRiskClass: the mod declares its own risk envelope
+	//      (active-probing | exploit-development).
+	//   2. isWhitelisted: the operator added this mod_id to the whitelist.
+	//   3. IsRedTeamArmed: the operator has flipped the operator-wide
+	//      research-mode toggle AND the mod is whitelisted. This is the
+	//      "we accept responsibility for red-team payloads" flag.
+	allowed := isAllowedRiskClass(m.Risk.Class) ||
+		isWhitelisted(m.Meta.ID, whitelist) ||
+		(IsRedTeamArmed() && isWhitelisted(m.Meta.ID, whitelist))
 
 	// Load knowledge files.
 	for _, rel := range m.Knowledge.PromptInjections {
@@ -355,6 +375,15 @@ func bytesReader(b []byte) *bytesReaderImpl { return &bytesReaderImpl{b: b} }
 // isAllowedRiskClass: exploit-development + active-probing bypass INV-6.
 func isAllowedRiskClass(rc string) bool {
 	return rc == string(RiskClassExploitDevelopment) || rc == string(RiskClassActiveProbing)
+}
+
+// IsRedTeamArmed reports whether the operator has flipped the
+// DARK_REDTEAM=armed environment variable. This is the explicit
+// "we are running a security-research session" gate. Exposed so
+// callers (e.g. the red-team tool registration in internal/tools)
+// can gate their own tools behind the same flag.
+func IsRedTeamArmed() bool {
+	return os.Getenv("DARK_REDTEAM") == "armed"
 }
 
 // isWhitelisted: checks the explicit whitelist first, then DARK_MOD_WHITELIST.

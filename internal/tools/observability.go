@@ -1,13 +1,16 @@
-// Package tools — observability.go: the OBSERVABILITY namespace (3 tools).
+// Package tools — observability.go: the OBSERVABILITY namespace (4 tools).
 //
 // Per RFC §5 / D-9:
 //	dark_memory_memory_state
 //	dark_memory_writes
 //	dark_memory_anomalies
+//	dark_memory_health_ping          (v1.3.0)
 //
 // Maps to orchestrator O10 (MemoryState) + 2 new read-only helpers
 // (writes lists recent write_audit rows; anomalies reads the
-// anomaly_events table — INV-5 cache mismatches + INV-3 canary hits).
+// anomaly_events table — INV-5 cache mismatches + INV-3 canary hits)
+// + 1 health probe (health_ping — v1.3.0; safe for K8s liveness, no
+// audit/VLP side effects; see health.go for the contract).
 package tools
 
 import (
@@ -18,8 +21,16 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 )
 
-// RegisterObservability wires the 3 OBSERVABILITY tools into the registry.
+// RegisterObservability wires the 4 OBSERVABILITY tools into the registry.
+// v1.3.0: registers health_ping as the 4th tool. health_ping is
+// intentionally sibling to memory_state (not a replacement) — see
+// health.go for the rationale.
 func RegisterObservability(reg *Registry, orch *orchestration.Orchestrator, st store.Store) {
+	// health_ping — v1.3.0. Operator-facing liveness probe; sits FIRST
+	// in the namespace so monitoring rules can pattern-match on
+	// "memory_state" or "health_ping" by index without confusing them.
+	// Wired via the storeBridge shim in health.go so tests can stub it.
+	RegisterHealth(reg, st)
 	// memory_state — wraps O10 MemoryState orchestrator.
 	reg.Add(BindOrchestrator("memory_state",
 		"Return the runtime memory snapshot: driver, schema version, table list, per-table counts, active project, canary presence. Read-only.",

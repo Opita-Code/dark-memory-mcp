@@ -1,4 +1,4 @@
-# =============================================================================
+﻿# =============================================================================
 # dark-mem constitution — v1.0.0
 #
 # Operating ruleset for the dark-mem unit. Defines identity, authority,
@@ -74,7 +74,7 @@ In scope:
     or via Go import.
 
 Out of scope:
-  - LLM inference (delegated to dark-scrapper / external).
+  - LLM inference (delegated to [drift-judge-daemon] / external).
   - OSINT data acquisition (delegated to dark-research-mcp).
   - UI / web frontend.
   - Cross-driver replication (single-writer per DB at a time).

@@ -1,4 +1,4 @@
-# Dark Memory MCP — Merge Decision Matrix
+﻿# Dark Memory MCP — Merge Decision Matrix
 
 **Session**: dark-memory-mcp-merge-decision-2026-07-15
 **Audience**: operator
@@ -71,9 +71,9 @@ If you pick (a), say so and I'll write it before the merge command in §6.
 
 ---
 
-## Decision 3 — Sub-spec 180 (dark-scrapper daemon on :8901): start now, defer, or ignore?
+## Decision 3 — Sub-spec 180 ([drift-judge-daemon] daemon on :8901): start now, defer, or ignore?
 
-**What**: The `dark_ssd_drift_judge` MCP tool currently returns HTTP 401 because the minimax stub API key is revoked. The dark-scrapper daemon (TypeScript+Bun, listens on :8901) is the resolved-correct-path per spec 180. Without it, **drift judgments for dark-research-mcp artifacts fall back to R9 self-judge**.
+**What**: The `dark_ssd_drift_judge` MCP tool currently returns HTTP 401 because the minimax stub API key is revoked. The [drift-judge-daemon] daemon (TypeScript+Bun, listens on :8901) is the resolved-correct-path per spec 180. Without it, **drift judgments for dark-research-mcp artifacts fall back to R9 self-judge**.
 
 **Why now**: This blocks the dark-research-mcp drift_judge pipeline, NOT the dark-memory-mcp merge. The two are sibling repos.
 
@@ -82,7 +82,7 @@ If you pick (a), say so and I'll write it before the merge command in §6.
 **Options**:
 | Option | Effort | Outcome |
 |---|---|---|
-| (a) Start daemon now (run `bun --watch 'run src/cli.ts daemon'` from `C:\Users\Nico\dark-scrapper`) | 10-15 min | dark_ssd_drift_judge works end-to-end with real LLM verdicts; future drift logs use real judge instead of R9 |
+| (a) Start daemon now (run `bun --watch 'run src/cli.ts daemon'` from `C:\Users\Nico\[drift-judge-daemon]`) | 10-15 min | dark_ssd_drift_judge works end-to-end with real LLM verdicts; future drift logs use real judge instead of R9 |
 | (b) Defer to next session | 0 min | Continue using R9; spec 180 stays deferred per master plan |
 | (c) Ignore | 0 min | Drift_judge always falls back to R9; future specs must accept R9 verdicts |
 
@@ -106,7 +106,7 @@ If you want to do (a), tell me now and I'll run the sub-tasks. Otherwise spec 18
 - `review-w4-b03` ARCH: migration to `modelcontextprotocol/go-sdk` v1.6.1 (official SDK)
 - `sub-spec 160` DEFERRED: dark-recall v2.3 plugin (sibling repo)
 - `sub-spec 161` DEFERRED: dark-research-mcp deprecation shim (sibling repo)
-- `sub-spec 180` DEFERRED: dark-scrapper daemon (= Decision 3 if you pick (b)/(c))
+- `sub-spec 180` DEFERRED: [drift-judge-daemon] daemon (= Decision 3 if you pick (b)/(c))
 
 **Why now**: Affects how the merge commit message is shaped and what shows up in the post-merge state.
 

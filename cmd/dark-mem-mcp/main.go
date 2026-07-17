@@ -40,11 +40,30 @@ func main() {
 	}
 	defer srv.Close()
 
-	// Register all 26 tools in canonical order (BRIDGE_AND_COEXISTENCE.md
+	// v1.3.0: install the boot-time metadata that
+	// dark_memory_health_ping reads (server version, name,
+	// coexistence group, driver label, DSN path) BEFORE the
+	// tool registry is built so the first health_ping call
+	// already reports the correct values. Installing AFTER
+	// RegisterAll is also OK (SetRuntimeContext uses atomic
+	// stores; subsequent health_pings see the new values) but
+	// doing it before is cleaner.
+	bootState := srv.BootState()
+	tools.SetRuntimeContext(tools.RuntimeContext{
+		BootedAt:         bootState.Config.BootedAt,
+		ServerVersion:    bootState.Config.ServerVersion,
+		ServerName:       bootState.Config.ServerName,
+		CoexistenceGroup: bootState.Config.CoexistenceGroup,
+		DriverLabel:      string(bootState.Config.DBDriver),
+		DSNPath:          bootState.Config.DBDSN,
+	})
+
+	// Register all 28 tools in canonical order (BRIDGE_AND_COEXISTENCE.md
 	// §3 / spec 164 bridge.4 + DMAP v1.1 spec 193 Layer 6). RegisterAll
-	// returns an error if any of the 26 expected tools is missing from
-	// the registry — fail fast.
-	if err := tools.RegisterAll(srv.Registry(), srv.BootState().Orchestrator, srv.BootState().Store); err != nil {
+	// returns an error if any of the 28 expected tools is missing from
+	// the registry — fail fast. v1.3.0: health_ping added to OBSERVABILITY
+	// (3 → 4 tools); canonical count is now 28.
+	if err := tools.RegisterAll(srv.Registry(), bootState.Orchestrator, bootState.Store); err != nil {
 		fmt.Fprintf(os.Stderr, "dark-mem-mcp: tools.RegisterAll failed: %v\n", err)
 		os.Exit(1)
 	}

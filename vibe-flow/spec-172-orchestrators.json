@@ -1,11 +1,11 @@
-{
+﻿{
   "vibe_case": "C1",
   "constitution": "Wave 3 part 2: orchestrators",
   "spec": {
     "purpose": "Wave 3 part 2: build the Orchestrator layer — typed workflow API that wraps the Store with safety/audit/economy. These are the entry points the MCP server will eventually call. Spec 157+171 (W3-001..W3-005) made the Store trustworthy; this wave makes it usable.",
     "exit_criteria": "5 orchestrators (O1-O5) shipped, each with tests, drift_log, and persistence. Orchestrator struct + types + LLM interface all landed. Spec 172 closes.",
     "decisions": [
-      "LLMClient is an interface with a MockClient for tests; production client (dark-scrapper integration) deferred to Wave 4+",
+      "LLMClient is an interface with a MockClient for tests; production client ([drift-judge-daemon] integration) deferred to Wave 4+",
       "ResearchBackend is an interface; mock backend for tests; real backends plug in later",
       "Each orchestrator method: validate input → apply safety (canary, hash) → call Store with WriteContext → emit write_audit → return typed output",
       "Tests use the in-memory SQLite store via runtime.Open (same pattern as tests/context and tests/project)",

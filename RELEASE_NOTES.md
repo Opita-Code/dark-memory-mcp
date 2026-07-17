@@ -1,4 +1,4 @@
-# Dark Memory MCP v1.0.0 — Release Notes
+﻿# Dark Memory MCP v1.0.0 — Release Notes
 
 First stable release of the dark-memory-mcp module. 25 `dark_memory_*` MCP
 tools backed by a dual-driver store (SQLite for dev, Postgres for prod),
@@ -53,7 +53,7 @@ conforming to MCP 2025-06-18 with the `dark-agents/memory` coexistence group.
 Deferred per the master plan (`vibe-flow/PLAN.md`):
 
 - **Real `dark_ssd_drift_judge` verdicts** — currently uses R9 self-judge
-  because the dark-scrapper daemon (sub-spec 180) is not running on this
+  because the [drift-judge-daemon] daemon (sub-spec 180) is not running on this
   host. The integration is wired; starting the daemon in a future session
   unlocks real LLM-as-judge verdicts.
 - **`dark-recall` v2.3 plugin** — sibling opencode plugin; lives outside
