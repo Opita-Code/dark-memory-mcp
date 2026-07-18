@@ -1,4 +1,4 @@
-# Security Policy
+﻿# Security Policy
 
 ## Supported versions
 
@@ -74,7 +74,7 @@ via `tests/dual_driver/` contract tests.
 ### Out of scope
 
 - The `dark-research-mcp` sibling (separate repo, separate security policy)
-- The `dark-scrapper` daemon (separate repo, separate security policy)
+- The `[drift-judge-daemon]` daemon (separate repo, separate security policy)
 - Third-party LLM providers (we are a storage layer; LLM behavior is upstream)
 - The operator's `dark.db` file once it leaves the boundary of dark-memory-mcp
 - The Go module proxy / public Go ecosystem

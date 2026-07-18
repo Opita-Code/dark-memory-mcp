@@ -1,0 +1,93 @@
+# dark-memory-mcp — operator-reproducible CI recipe
+#
+# NEVER-PUSH: this repository is local-only. There is no git remote
+# configured. This workflow YAML is committed for transparency so an
+# operator who clones the repo can run the same recipe locally with:
+#
+#   $env:DARK_MEM_MCP_BIN = "$PWD/cmd/dark-mem-mcp/dark-mem-mcp.exe"
+#   go test ./... -count=1 -timeout 240s
+#   DARK_MEM_MCP_BIN=$env:DARK_MEM_MCP_BIN go test ./tests/wire/... -count=1 -timeout 90s
+#   pwsh -File scripts/lint-no-private-projects.ps1
+#
+# Replace `DARK_MEM_MCP_BIN` with the actual binary path on your
+# platform (the snippet above assumes Windows; on Linux/macOS swap
+# the .exe suffix).
+#
+# If you DO push this repo to GitHub and want CI to run, copy this
+# file to .github/workflows/ci.yml (it is excluded from the operator
+# lint and the production checklist by design — see CONTRIBUTING.md
+# H-4: lint-no-private-projects must remain silent).
+#
+# The 4 stages match docs/PRODUCTION_CHECKLIST.md §CI recipe:
+#
+#   1. build    — go build ./... (parent module + cmd/dark-mem-mcp submodule)
+#   2. unit     — go test ./... (15 packages; wire tests skip on missing binary)
+#   3. wire     — go test ./tests/wire/... with DARK_MEM_MCP_BIN (10 tests)
+#   4. lint     — private-project name lint (CI guard for CONTRIBUTING H-4)
+#
+# Each stage fails the run on non-zero exit. The wire stage is the
+# authoritative production-readiness gate (CONTRIBUTING.md H-3).
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    name: build (parent + cmd)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+      - name: go build (parent module)
+        run: go build ./...
+      - name: go build (cmd/dark-mem-mcp)
+        run: |
+          cd cmd/dark-mem-mcp
+          go build -o ./dark-mem-mcp ./
+
+  unit:
+    name: unit tests
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+      - name: go test ./...
+        run: go test ./... -count=1 -timeout 240s
+
+  wire:
+    name: wire conformance (production gate)
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+      - name: build binary for wire tests
+        run: |
+          cd cmd/dark-mem-mcp
+          go build -o ./dark-mem-mcp ./
+      - name: wire tests with DARK_MEM_MCP_BIN
+        env:
+          DARK_MEM_MCP_BIN: ${{ github.workspace }}/cmd/dark-mem-mcp/dark-mem-mcp
+        run: go test ./tests/wire/... -count=1 -timeout 90s -v
+
+  lint:
+    name: lint (no private project names)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: lint-no-private-projects (sh)
+        run: bash scripts/lint-no-private-projects.sh

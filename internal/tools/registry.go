@@ -1,13 +1,20 @@
 // Package tools — registry.go: the Tool type and the canonical Registry.
 //
-// Per BRIDGE_AND_COEXISTENCE.md §3 (spec 164, bridge.4), the 26 tools
+// Per BRIDGE_AND_COEXISTENCE.md §3 (spec 164, bridge.4), the 28 tools
 // are emitted in tools/list in a fixed canonical order. The order is
 // NOT alphabetical — it follows the RFC D-9 namespace grouping plus
 // the L6-VLP namespace (DMAP v1.1 spec 193): SESSION (4) →
 // RESEARCH (3) → VIBE (4) → CONTEXT (3) → JUDGE (3) → POLICY (2) →
-// OBSERVABILITY (3) → ADMIN (3) → L6-VLP (1). The order is part of
+// OBSERVABILITY (4) → ADMIN (3) → L6-VLP (1). The order is part of
 // the public contract: changing it is a breaking change for any
 // harness that indexes by position.
+//
+// OBSERVABILITY grew from 3 → 4 in v1.3.0 with the addition of
+// `dark_memory_health_ping`. Health_ping is a sibling of
+// memory_state (NOT a replacement): it is a strict liveness probe
+// intended for K8s/readiness checks and deliberately returns a
+// stable documented shape whereas memory_state is the
+// debug-friendly snapshot. See RFC §C-2 (Health Probe contract).
 package tools
 
 import (
@@ -54,7 +61,7 @@ type Registry struct {
 	order  []string // canonical order, fixed at construction
 }
 
-// NewRegistry constructs an empty Registry with the canonical 26-tool
+// NewRegistry constructs an empty Registry with the canonical 28-tool
 // order pre-registered (tools may not exist yet; ListCanonical will
 // return placeholders that the server filters out at startup).
 func NewRegistry() *Registry {
@@ -118,32 +125,94 @@ func (r *Registry) Names() []string {
 
 // CanonicalOrder returns the fixed canonical tool order (spec 164,
 // bridge.4). Used by tests that want to assert "did we register all
-// 25 in the right order".
+// 28 in the right order".
 func CanonicalOrder() []string {
 	out := make([]string, len(canonicalToolOrder))
 	copy(out, canonicalToolOrder)
 	return out
 }
 
-// canonicalToolOrder is the fixed 26-tool order (bare names, no
+// ListExtras returns registered tools that are NOT in the canonical
+// order. Used by the server bootstrap to register armed-mode
+// extras (e.g. the L7-REDTEAM namespace) without polluting the
+// canonical 28-tool surface (v1.3.0; was 27 in v1.2.x and 26 in
+// v1.1.x).
+//
+// The returned order is alphabetical by name (stable across runs;
+// no canonical-order contract for extras).
+func (r *Registry) ListExtras() []*Tool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	canon := make(map[string]bool, len(r.order))
+	for _, n := range r.order {
+		canon[n] = true
+	}
+	out := make([]*Tool, 0, 8)
+	names := make([]string, 0, len(r.byName))
+	for n := range r.byName {
+		if !canon[n] {
+			names = append(names, n)
+		}
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		out = append(out, r.byName[n])
+	}
+	return out
+}
+
+// CountExtras returns the number of registered tools not in the
+// canonical order. Convenience for boot logs.
+func (r *Registry) CountExtras() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	canon := make(map[string]bool, len(r.order))
+	for _, n := range r.order {
+		canon[n] = true
+	}
+	c := 0
+	for n := range r.byName {
+		if !canon[n] {
+			c++
+		}
+	}
+	return c
+}
+
+// canonicalToolOrder is the fixed 28-tool order (bare names, no
 // "dark_memory_" prefix; the server prepends on wire).
 //
-// Per RFC D-9 + BRIDGE_AND_COEXISTENCE.md §3 (bridge.4):
+// Per RFC D-9 + BRIDGE_AND_COEXISTENCE.md §3 (bridge.4), v1.3.0:
 //
+//	PROJECT        (1)  → create                              (v1.2.0, INV-7)
 //	SESSION        (4)  → start, resume, status, close
 //	RESEARCH       (3)  → topic, recall, resume_thread
 //	VIBE           (4)  → publish, spec, pipeline_status, resolve_drift
 //	CONTEXT        (3)  → artifact_context, spec_context, session_context
 //	JUDGE          (3)  → judge, consensus, judgment_history
 //	POLICY         (2)  → active_policy, load_constitution
-//	OBSERVABILITY  (3)  → memory_state, writes, anomalies
+//	OBSERVABILITY  (4)  → memory_state, writes, anomalies, health_ping (v1.3.0)
 //	ADMIN          (3)  → admin_migrate, admin_schema_status, admin_vacuum
 //	L6-VLP         (1)  → vlp_handle_event          (DMAP v1.1 spec 193)
 //
-// Total: 4+3+4+3+3+2+3+3+1 = 26. The L6 namespace was added in DMAP
-// v1.1 to expose the VLP state machine to MCP harnesses (opencode,
-// claude code, etc.) as a first-class wire protocol.
+// Total: 1+4+3+4+3+3+2+4+3+1 = 28.
+//
+//   - PROJECT was added in v1.2.0 to close the bootstrap loop
+//     (operators can now provision a tenant from inside the MCP
+//     surface instead of having to insert into the projects table
+//     out of band). It is positioned at index 0 because the natural
+//     discovery order is project_create → session_start → …;
+//     harness callers that iterate the canonical list get
+//     project_create first.
+//   - OBSERVABILITY grew from 3 → 4 in v1.3.0 with `health_ping`.
+//     Health_ping is the operator-facing liveness probe; it is a
+//     SIBLING of memory_state, not a replacement, because the two
+//     have different latency budgets and different side-effect
+//     profiles (health_ping does not touch the audit bus). See
+//     RFC §C-2 and docs/PRODUCTION_CHECKLIST.md §Health probe.
 var canonicalToolOrder = []string{
+	// PROJECT (1) — v1.2.0
+	"project_create",
 	// SESSION (4)
 	"session_start", "session_resume", "session_status", "session_close",
 	// RESEARCH (3)
@@ -156,8 +225,8 @@ var canonicalToolOrder = []string{
 	"judge", "consensus", "judgment_history",
 	// POLICY (2)
 	"active_policy", "load_constitution",
-	// OBSERVABILITY (3)
-	"memory_state", "writes", "anomalies",
+	// OBSERVABILITY (4) — v1.3.0: health_ping added
+	"memory_state", "writes", "anomalies", "health_ping",
 	// ADMIN (3)
 	"admin_migrate", "admin_schema_status", "admin_vacuum",
 	// L6-VLP (1) — DMAP v1.1
@@ -175,7 +244,7 @@ func WireName(bare string) string {
 }
 
 // CanonicalPosition returns the index of wireName in the canonical
-// 26-tool order, or -1 if not found. Used by tools/list filters that
+// 28-tool order, or -1 if not found. Used by tools/list filters that
 // need to re-sort the alphabetically-sorted output of mcp-go's
 // handleListTools back to the RFC D-9 namespace-grouped order.
 func CanonicalPosition(wireName string) int {
