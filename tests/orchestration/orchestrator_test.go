@@ -1077,6 +1077,48 @@ func TestPublishVibe_MissingVibeCase(t *testing.T) {
 	}
 }
 
+// v1.4.1: PublishVibe - non-canonical vibe_case rejected (defense
+// in depth). Pairs with TestVibeSpec_InvalidVibeCase to pin the
+// symmetry between the two orchestrators. Previously vibe_publish
+// only validated via JSON Schema enum at the tools layer; the
+// orchestrator now re-validates via vibecase.Parse so direct
+// orchestrator calls (and any future non-MCP transport) cannot
+// persist an unknown case.
+func TestPublishVibe_InvalidVibeCase(t *testing.T) {
+	ctx := context.Background()
+	orch, s := openOrchestratorTestEnv(t)
+	if err := s.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	bad := []string{
+		"C0",
+		"C8",
+		"c1",
+		"code",
+		"C-1",
+	}
+	for _, in := range bad {
+		_, err := orch.PublishVibe(ctx, orchestration.PublishVibeInput{
+			Spec: orchestration.PublishSpecInput{VibeCase: in},
+			Artifact: orchestration.PublishArtifactInput{
+				ArtifactType: "code",
+				ArtifactURL:  "file:///x",
+			},
+		})
+		if err == nil {
+			t.Errorf("PublishVibe with VibeCase=%q should be rejected", in)
+			continue
+		}
+		if !errIs(err, store.ErrInvalidArgument) {
+			t.Errorf("VibeCase=%q: expected ErrInvalidArgument, got: %v", in, err)
+		}
+		if !strings.Contains(err.Error(), "vibe_case") {
+			t.Errorf("VibeCase=%q: error should mention field path, got: %v", in, err)
+		}
+	}
+}
+
 // O7: PublishVibe â€” drift_detected verdict triggers NextAction=reconcile
 // and validation_status=failed.
 func TestPublishVibe_DriftDetected(t *testing.T) {
@@ -2280,7 +2322,75 @@ func TestVibeSpec_MissingVibeCase(t *testing.T) {
 	}
 }
 
-// O12: VibeSpec â€” empty tasks rejected.
+// v1.4.1: VibeSpec - non-canonical vibe_case rejected (defense in
+// depth, in addition to the new JSON Schema enum constraint).
+func TestVibeSpec_InvalidVibeCase(t *testing.T) {
+	ctx := context.Background()
+	orch, _ := openOrchestratorTestEnv(t)
+	if err := orch.Store.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	bad := []string{
+		"C0",
+		"C8",
+		"c1",
+		"code",
+		"C-1",
+	}
+	for _, in := range bad {
+		_, err := orch.VibeSpec(ctx, orchestration.VibeSpecInput{
+			VibeCase: in,
+			Tasks:    mustMarshalTasks(t, []orchestration.VibeSpecTask{{ID: "t1", Description: "x"}}),
+		})
+		if err == nil {
+			t.Errorf("VibeCase=%q should be rejected", in)
+			continue
+		}
+		if !errIs(err, store.ErrInvalidArgument) {
+			t.Errorf("VibeCase=%q: expected ErrInvalidArgument, got: %v", in, err)
+		}
+		if !strings.Contains(err.Error(), "vibe_case") {
+			t.Errorf("VibeCase=%q: error should mention field path vibe_case, got: %v", in, err)
+		}
+	}
+}
+
+// v1.4.1: VibeSpec - all seven canonical cases accepted.
+func TestVibeSpec_AcceptsAllCanonicalCases(t *testing.T) {
+	ctx := context.Background()
+	orch, _ := openOrchestratorTestEnv(t)
+	if err := orch.Store.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	for _, c := range []string{"C1", "C2", "C3", "C4", "C5", "C6", "C7"} {
+		_, err := orch.VibeSpec(ctx, orchestration.VibeSpecInput{
+			VibeCase: c,
+			Tasks:    mustMarshalTasks(t, []orchestration.VibeSpecTask{{ID: "t1", Description: "x"}}),
+		})
+		if err != nil {
+			t.Errorf("VibeCase=%q: unexpected error: %v", c, err)
+		}
+	}
+}
+
+// v1.4.1: VibeSpec - whitespace-padded canonical case accepted.
+func TestVibeSpec_AcceptsTrimmedVibeCase(t *testing.T) {
+	ctx := context.Background()
+	orch, _ := openOrchestratorTestEnv(t)
+	if err := orch.Store.SetActiveProject(ctx, "default"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	_, err := orch.VibeSpec(ctx, orchestration.VibeSpecInput{
+		VibeCase: "  C4  ",
+		Tasks:    mustMarshalTasks(t, []orchestration.VibeSpecTask{{ID: "t1", Description: "x"}}),
+	})
+	if err != nil {
+		t.Fatalf("expected trimmed C4 to be accepted, got: %v", err)
+	}
+}
+
+// O12: VibeSpec â€" empty tasks rejected.
 func TestVibeSpec_EmptyTasks(t *testing.T) {
 	ctx := context.Background()
 	orch, _ := openOrchestratorTestEnv(t)

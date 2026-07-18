@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
+	"github.com/dark-agents/dark-memory-mcp/internal/vibecase"
 	"github.com/dark-agents/dark-memory-mcp/internal/vibeflow"
 )
 
@@ -120,6 +121,17 @@ func (o *Orchestrator) VibeSpec(ctx context.Context, in VibeSpecInput) (*VibeSpe
 	// 1. Validate top-level fields.
 	if strings.TrimSpace(in.VibeCase) == "" {
 		return nil, errMissingField("vibe_case")
+	}
+	// 1a. v1.4.1: vibe_case must be a canonical C1..C7 identifier.
+	//     This closes the asymmetry where vibe_publish enforced the
+	//     enum (JSON Schema layer) but vibe_spec did not. Both
+	//     orchestrators now derive from the same source of truth
+	//     (internal/vibecase). Defense in depth: even if the JSON
+	//     Schema enum is bypassed (direct orchestrator call, future
+	//     HTTP transport, etc.), the validator rejects unknown cases
+	//     before the row is persisted.
+	if _, err := vibecase.Parse(in.VibeCase); err != nil {
+		return nil, store.NewFieldError(store.ErrInvalidArgument, "vibe_case: "+err.Error())
 	}
 
 	// 1a. F36: parse `tasks` accepting both forms (array OR stringified array).

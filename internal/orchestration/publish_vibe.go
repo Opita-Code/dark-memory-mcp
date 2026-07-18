@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
+	"github.com/dark-agents/dark-memory-mcp/internal/vibecase"
 	"github.com/dark-agents/dark-memory-mcp/internal/vibeflow"
 )
 
@@ -98,6 +99,15 @@ func (o *Orchestrator) PublishVibe(ctx context.Context, in PublishVibeInput) (*P
 	}
 	if strings.TrimSpace(in.Spec.VibeCase) == "" {
 		return nil, errMissingField("spec.vibe_case")
+	}
+	// v1.4.1: vibe_case must be a canonical C1..C7 identifier.
+	// Defense in depth: the JSON Schema layer (internal/tools/vibe.go)
+	// already validates via the enum constraint, but the orchestrator
+	// re-validates so direct orchestrator calls (and any future
+	// non-MCP transport) cannot persist an unknown case. Both layers
+	// derive from internal/vibecase — single source of truth.
+	if _, err := vibecase.Parse(in.Spec.VibeCase); err != nil {
+		return nil, store.NewFieldError(store.ErrInvalidArgument, "spec.vibe_case: "+err.Error())
 	}
 
 	// 2. Persist the spec. SaveSpec enforces INV-1 (write_audit) and
