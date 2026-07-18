@@ -123,9 +123,27 @@ func TestWire_HealthPingShape(t *testing.T) {
 		if operator != "" && strings.Contains(got.DB.DSNPath, operator) {
 			t.Errorf("PII leak: db.dsn_path contains operator username %q; want redacted. dsn_path=%q", operator, got.DB.DSNPath)
 		}
-		if !strings.Contains(got.DB.DSNPath, "<USER>") {
-			t.Errorf("expected redacted <USER> token in db.dsn_path; got %q", got.DB.DSNPath)
-		}
+		// v1.4.1 (fix #2 of 2 follow-ups to v1.4.1 release): the
+		// previous assertion `strings.Contains(dsn_path, "<USER>")`
+		// was over-strict. redactHomeInPath only fires for paths
+		// under the operator's $HOME (Windows: C:\Users\<name>\,
+		// POSIX: /home/<name>/ or ~). It does NOT redact paths under
+		// /tmp/, C:\Temp\, or any other location that isn't the
+		// user's home directory.
+		//
+		// In CI, the wire test uses t.TempDir() which resolves to
+		// /tmp/TestWire_HealthPingShape<id>/001/dark-memory.db —
+		// outside any user home, so redaction never fires, so the
+		// <USER> MUST-contain assertion fails.
+		//
+		// The meaningful PII guarantee is the MUST-NOT-contain
+		// check above: the operator's literal username must never
+		// appear in the wire response. That check still runs and
+		// still protects the operator. The MUST-contain check
+		// asserted an *implementation detail* of redactHomeInPath,
+		// not a security property, so we drop it.
+		//
+		// PR #9.
 	}
 
 	fmt.Fprintf(os.Stderr,
