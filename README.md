@@ -22,7 +22,7 @@
 [![MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Go 1.25+](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go&logoColor=white)](go.mod)
 [![MCP tools](https://img.shields.io/badge/MCP-28%20tools-blueviolet)](#los-28-tools)
-[![Tests](https://img.shields.io/badge/tests-15%20suites%20passing-brightgreen)](#tests)
+[![Tests](https://img.shields.io/badge/tests-20%20suites%20passing-brightgreen)](#tests)
 [![Backends](https://img.shields.io/badge/backends-sqlite%20%7C%20postgres-blue)](docs/MIGRATION.md)
 [![Conformant](https://img.shields.io/badge/MCP%20Inspector-passing-success)](tests/conformance/)
 
@@ -90,7 +90,7 @@ Salida esperada:
 {
   "generated_at": "2026-07-15T22:50:00Z",
   "driver": "sqlite",
-  "schema_version": 7,
+  "schema_version": 10,
   "canary_present": false,
   "active_constitution_id": "dark-agents/dark-memory-mcp",
   "active_constitution_version": "1.0.0",
@@ -144,30 +144,34 @@ El problema #1 sin resolver en 2026 AI-assisted development es el **spec-drift**
 **dark-memory-mcp** cierra ese loop con persistencia + LLM-as-judge:
 
 ```
-                    ┌───────────────────────────────────────────┐
-                    │  1. Crear spec (vibe_publish / vibe_spec) │
-                    │     Persiste intent + tasks + constitution│
-                    │                                           │
-                    │  2. Generar el artifact                   │
-                    │     (tu modelo / servicio preferido)      │
-                    │                                           │
-                    │  3. Loggear artifact                      │
-                    │     artifact_log → write_audit row        │
-                    │                                           │
-                    │  4. LLM-as-judge: drift                   │
-                    │     drift_judge(artifact_id)              │
-                    │     verdict ∈ {aligned, drift_detected,   │
-                    │                  needs_human}             │
-                    │                                           │
-                    │  5. Loggear verdict                       │
-                    │     drift_log(verdict, judge_reasoning)   │
-                    │                                           │
-                    │  6. Human gate si algo falló              │
-                    │     resolve_drift(accept | reject)        │
-                    └───────────────────────────────────────────┘
+                     ┌───────────────────────────────────────────┐
+                     │  1. Crear spec (vibe_publish / vibe_spec) │
+                     │     Persiste intent + tasks + constitution│
+                     │     (vibe_case ∈ {C1..C7} enforced, v1.4.1)│
+                     │                                           │
+                     │  2. Generar el artifact                   │
+                     │     (tu modelo / servicio preferido)      │
+                     │                                           │
+                     │  3. Loggear artifact                      │
+                     │     artifact_log → write_audit row        │
+                     │                                           │
+                     │  4. LLM-as-judge: drift                   │
+                     │     dark_memory_judge(                    │
+                     │       eval_type="drift_judge",            │
+                     │       target_id=artifact_id,              │
+                     │       content=artifact_text)              │
+                     │     verdict ∈ {aligned, drift_detected,   │
+                     │                  needs_human}             │
+                     │                                           │
+                     │  5. Loggear verdict                       │
+                     │     drift_log(verdict, judge_reasoning)   │
+                     │                                           │
+                     │  6. Human gate si algo falló              │
+                     │     resolve_drift(accept | reject)        │
+                     └───────────────────────────────────────────┘
 ```
 
-Cada `dark_ssd_drift_judge` (sub-spec 180) persiste su verdict en `sdd_evaluations` con `prompt_version` + `model`. **Reproducible, auditable, mejorable con el tiempo** (calibration loop).
+Cada `dark_memory_judge(eval_type=drift_judge)` persiste su verdict en `sdd_evaluations` con `prompt_version` + `model`. **Reproducible, auditable, mejorable con el tiempo** (calibration loop). Para high-stakes verdicts usa `dark_memory_consensus(eval_type, content, n=5..7)` — N-shot LLM-as-judge con modal verdict. (El viejo namespace `dark_ssd_*` se deprecó en v1.4.0 y se consolidó en dark-memory-mcp como `dark_memory_judge`.)
 
 ---
 
@@ -195,35 +199,52 @@ Cada `dark_ssd_drift_judge` (sub-spec 180) persiste su verdict en `sdd_evaluatio
          │   │  ├ POLICY (2)            │     │
          │   │  ├ OBSERVABILITY (4)     │     │
          │   │  ├ ADMIN (3)             │     │
-         │   │  └ L6-VLP (1)            │     │
+         │   │  └ L6-VLP (1, v1.1.0)    │     │
          │   │  + L7-REDTEAM (3, armed) │     │
          │   └──────────────────────────┘     │
          │                                    │
          │   ┌──────────────────────────┐     │
-         │   │  internal/               │     │
+         │   │  internal/  (22 packages)│     │
          │   │  ├ store (sqlite/pg)     │◄──── DARK_DB_DRIVER + DARK_DB
-         │   │  ├ orchestration (9)     │     │
-         │   │  ├ context (8)           │     │
+         │   │  ├ tools (28 handlers)   │     │
+         │   │  ├ orchestration (16)   │     │
+         │   │  ├ vlp (state machine,  │     │
+         │   │  │  DMAP v1.1 Layer 2)  │     │
+         │   │  ├ vibecase (C1-C7,      │     │
+         │   │  │  v1.4.1)             │     │
          │   │  ├ vibeflow (5)          │     │
-         │   │  ├ safety (canary)       │     │
-         │   │  ├ constitution (INV-4)  │     │
-         │   │  ├ audit (INV-1)         │     │
+         │   │  ├ context (8)           │     │
+         │   │  ├ ssd (judge persist)   │     │
          │   │  ├ llm/cache (INV-5)     │     │
+         │   │  ├ constitution (INV-4)  │     │
+         │   │  ├ safety (canary)       │     │
+         │   │  ├ audit (INV-1)         │     │
          │   │  ├ mods/loader (INV-6)   │     │
-         │   │  └ project (INV-7)       │     │
+         │   │  ├ project (INV-7)       │     │
+         │   │  ├ session               │     │
+         │   │  ├ server/bootstrap      │     │
+         │   │  ├ version (resolver,    │     │
+         │   │  │  v1.4.0)             │     │
+         │   │  ├ adapter/opencode      │     │
+         │   │  ├ federation (cross-MCP)│     │
+         │   │  ├ migrate (sqlite+pg)   │     │
+         │   │  └ economy (Atlan 5-bkt) │     │
          │   └──────────────────────────┘     │
          └────────────────┬───────────────────┘
                          │
               ┌──────────┴──────────┐
               ▼                     ▼
    ┌───────────────────┐  ┌──────────────────┐
-   │  dark.db (SQLite) │  │ Postgres         │
-   │                   │  │ (jackc/pgx/v5)   │
-   │  projects         │  │                  │
-   │  sessions         │  │  same schema,    │
-   │  write_audit      │  │  v7 migrations   │
-   │  research_*       │  │  + dark-research │
-   │  vibe_*           │  │  cross-link      │
+   │ dark-memory.db    │  │ Postgres         │
+   │ (SQLite, INV-8    │  │ (jackc/pgx/v5)   │
+   │  default)         │  │                  │
+   │                   │  │  same schema,    │
+   │  projects         │  │  v10 migrations  │
+   │  sessions         │  │  + dark-research │
+   │  vlp_state        │  │  cross-link      │
+   │  write_audit      │  │                  │
+   │  research_*       │  │                  │
+   │  vibe_*           │  │                  │
    │  sdd_evaluations  │  │                  │
    │  constitutions    │  │                  │
    │  mods             │  │                  │
@@ -262,7 +283,7 @@ Tabla completa con cada método Store → su set de invariantes en [`docs/INVARI
 | `DARK_CACHE_DIR` | (vacío) | Dónde persiste el LLM cache (INV-5). Vacío = in-process only. |
 | `DARK_MOD_WHITELIST` | (vacío) | Lista comma-separated de mod IDs permitidos a cargar (INV-6) |
 | `DARK_SERVER_NAME` | `dark-memory-mcp` | `serverInfo.name` en initialize response |
-| `DARK_SERVER_VERSION` | `1.2.1` | `serverInfo.version` en initialize response |
+| `DARK_SERVER_VERSION` | `1.4.1-dev` | `serverInfo.version` en initialize response (canonical source: `internal/version` resolver; `Makefile release` lo inyecta via `-ldflags`) |
 | `DARK_COEXISTENCE_GROUP` | `dark-agents/memory` | Bridge §2.1 coexistence contract |
 | `DARK_HOME` | `~/.config/dark-memory-mcp` | Donde `dark-mem-cli set-driver` escribe `config.toml` |
 | `DARK_REDTEAM` | (unset) | Si =`armed`, registra las 3 herramientas L7-REDTEAM. Surface total = 31. Sin la var, surface = 28. |
@@ -276,22 +297,29 @@ Tabla completa con cada método Store → su set de invariantes en [`docs/INVARI
 go test -count=1 ./...
 ```
 
-**13 suites verdes** con `-count=1` (cold rebuild, ~12 min total):
+**20 suites verdes** con `-count=1` (cold rebuild, ~12 min total). v1.4.0–v1.4.2 añadieron: `internal/vibecase` (15 tests, v1.4.1), `internal/version` (9 tests, v1.4.0), `internal/federation` (v1.4.2), `internal/vlp` (55 tests across 6 files, DMAP v1.1).
 
 ```
-ok  internal/adapter/opencode  25s   (OpenCode harness adapter)
-ok  internal/tools             43s   (BindOrchestrator, typeMismatchToolError, project tool F33)
-ok  internal/vlp               64s   (DMAP v1.1 spec 193 state machine + VLP tool)
-ok  tests/cli                  70s   (13 tests: 11 + 2 canary_present regression)
-ok  tests/conformance          51s   (4 bridge.7 tests via mcp-go real client)
-ok  tests/context              25s
-ok  tests/dual_driver          11s   (sqlite contract 7/7 sub-tests)
-ok  tests/e2e                  62s   (6 tests including 1000-mixed-no-deadlock + 28-tool register guard)
-ok  tests/economy               0s
-ok  tests/invariants            1s   (INV-5 + INV-6)
-ok  tests/orchestration        80s   (73+ tests across 9 orchestrators; F36 dual-form tasks)
-ok  tests/project              64s   (INV-7 multi-tenancy)
-ok  tests/tools                28s   (F33 project tool: 7 sub-tests, schema rejection, idempotency)
+ok  internal/adapter/opencode   ~46s   (OpenCode harness adapter)
+ok  internal/federation         ~49s   (cross-MCP federation lookup)
+ok  internal/orchestration       ~3s   (16 orchestrators)
+ok  internal/server              ~5s   (bootstrap + version + DSN)
+ok  internal/tools              ~73s   (28 tool handlers + registry)
+ok  internal/version             ~1s   (resolver: ldflags|buildinfo|dev)
+ok  internal/vibecase            ~1s   (15 tests: C1..C7 taxonomy)
+ok  internal/vlp                ~103s   (55 tests: state machine + persistence + audit)
+ok  tests/cli                   ~123s   (13 tests: 11 + 2 canary_present regression)
+ok  tests/conformance            ~99s   (4 bridge.7 tests via mcp-go real client)
+ok  tests/context                ~37s
+ok  tests/dual_driver             ~8s   (sqlite contract 7/7 sub-tests)
+ok  tests/e2e                   ~108s   (1000-mixed-no-deadlock + 28-tool register guard)
+ok  tests/economy                 ~1s
+ok  tests/invariants              ~6s   (INV-5 + INV-6)
+ok  tests/migrate                ~88s
+ok  tests/orchestration         ~124s   (73+ tests; F36 dual-form + v1.4.1 vibecase)
+ok  tests/project                ~90s   (INV-7 multi-tenancy)
+ok  tests/tools                  ~44s   (F33 project tool: 7 sub-tests, schema rejection, idempotency)
+ok  tests/wire                   ~26s   (wire conformance: F33/F35/F36/F37/F38/F39/F40 + health_ping)
 ```
 
 Highlights:
@@ -315,13 +343,17 @@ Highlights:
 - ✅ **v1.2.1** (F36, 2026-07-16) — `dark_memory_vibe_spec.tasks` ahora acepta tanto JSON array como JSON-encoded string (compatibilidad con la gemela `dark_research_spec_create` que persiste el campo como string opaco). 2 tests nuevos. Drop-in replacement; sin migrations; sin cambio de surface. **Restart requerido del binario `dark-mem-mcp.exe`** para tomar el código nuevo.
 - ✅ **v1.2.2** (F37 + F38 + F39 + F40, 2026-07-16) — Migration runner self-healing: `applyOne` ahora split-on-`;` y tolera 4 clases de errores DDL idempotentes (`duplicate column name`, `no such module`, `table already exists`). `EnsureCoreTables` recrea tablas core faltantes al boot. Sin esto, dark-memory-mcp NO podía arrancar contra dark.dbs parcialmente migrados. 8 tests nuevos en `tests/migrate/`.
 - ✅ **v1.3.0** (production-readiness, 2026-07-16) — `dark_memory_health_ping` (liveness probe enlatado, OBSERVABILITY 3→4), wire-conformance total (10/10 tests PASS contra el binario real), wait-for-boot-marker para eliminar race en startup, `.github/workflows/ci.yml` con receta de CI operator-reproducible, race-detector note en PRODUCTION_CHECKLIST, stale-binary gotcha documentada. **28 tools canónicos, 31 armed.**
-- 🚧 **v1.3.x** — Vector recall via sqlite-vec; constitution mod registry v2; L7-REDTEAM integration formal (actualmente en operator-WIP)
+- ✅ **v1.4.0** (release-integrity, 2026-07-18) — [`CONSTITUTION.md`](CONSTITUTION.md) `release-integrity@1.0.0` (5 reglas: single source of truth, archive-not-delete, CHANGELOG authoritative, drift detection on boot, session-bound governance). `internal/version` package — resolver canónico (`-ldflags` → `debug.ReadBuildInfo()` → hardcoded `"dev"`). `Makefile` con `build`/`release`/`drift-check`/`version`/`tag` targets. `dark_memory_health_ping` ahora incluye bloque `git` (`tag`, `commit`, `dirty`, `build_time`, `source`, `is_dev`) + `drift` bool. `scripts/inject-version.{sh,ps1}`. 9 tests del resolver cubren los 3 paths.
+- ✅ **v1.4.1** (vibecase taxonomy, 2026-07-18) — `internal/vibecase` como **single source of truth** para la taxonomía C1..C7 (vibe_case case labels). `dark_memory_vibe_spec` ahora enforza el enum (antes era free string; **ver "Behavior change" en CHANGELOG [1.4.1]**). `dark_memory_vibe_publish` JSON Schema enum deriva de `vibecase.JSONSchemaEnum()`. Ambos orchestrators validan via `vibecase.Parse` (defense in depth). 4 nuevos tests (InvalidVibeCase x2, AcceptsAllCanonicalCases, AcceptsTrimmedVibeCase). 15 nuevos unit tests en `internal/vibecase`. **Behavior change**: callers que pasaban valores no canónicos ahora reciben `ErrInvalidArgument`.
+- ✅ **v1.4.2** (CI follow-ups, 2026-07-18) — 2 PRs separados (#8 + #9) cerrando las fallas de CI pre-existentes que cargó v1.4.1 (merge con `--admin`). PR #8: `redteamModsAbsPath` honra `DARK_REDTEAM_MODS_PATH` primero, fallback `t.Skipf` (no `t.Fatalf`) cuando no hay mods → 6 unit tests pasan/skipped clean. PR #9: drop over-strict `USER` MUST-contain check en `TestWire_HealthPingShape` (redaction sólo aplica a paths bajo `$HOME`). Vendoring guide en `internal/tools/testdata/redteam-vendoring.md`. **Primer release con CI 100% verde desde v1.4.0.**
+- 🚧 **v1.5.x** — Vector recall via sqlite-vec; constitution mod registry v2; L7-REDTEAM integration formal (actualmente en operator-WIP)
 
-Patches publicados:
+Patches publicados (release artifacts, no en el repo):
 - `dark-memory-mcp-v1.2.0.patch` — superficie 27 tools, ~870 LOC adicionales
 - `dark-memory-mcp-v1.2.1.patch` — drop-in replacement, F36 fix
 - `dark-memory-mcp-v1.2.5.patch` — wire-conformance suite (tests/wire/) + F35 wire propagation + CONTRIBUTING + PRODUCTION_CHECKLIST
 - `dark-memory-mcp-v1.3.0.patch` — production-readiness: health_ping + wire-conformance bump + race-free boot + CI workflow
+- v1.4.0 / v1.4.1 / v1.4.2 — distribuidos vía GitHub Releases (no como `.patch` files) por la mayor densidad de cambios (constitution + version resolver + vibecase + 2 CI fixes)
 
 Ver [`CHANGELOG.md`](CHANGELOG.md) para el detalle completo de cada release y [`docs/PR-v1.2.0.md`](docs/PR-v1.2.0.md) para el desglose técnico de F33+F35.
 
@@ -331,7 +363,7 @@ Ver [`CHANGELOG.md`](CHANGELOG.md) para el detalle completo de cada release y [`
 
 Lee [`CONTRIBUTING.md`](CONTRIBUTING.md). PRs bienvenidos:
 
-1. `go test -count=1 ./...` antes de pushear (9 suites, ~11 min)
+1. `go test -count=1 ./...` antes de pushear (20 suites, ~12 min)
 2. Si añades un tool nuevo: sigue el orden canónico (no renumeres) — el orden es wire contract
 3. Si añades un orchestrator: implementa tests + spec_create (C1) + drift_judge antes de merge
 4. Si añades una migración: append a `migratesqlite.Migrations` / `migratepostgres.Migrations`, nunca edites una pasada

@@ -8,6 +8,32 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [1.4.1] — 2026-07-18
 
+### Behavior change (callers MUST verify)
+
+- **`dark_memory_vibe_spec` now rejects non-canonical `vibe_case` values**
+  with `ErrInvalidArgument`. Previously the JSON Schema layer accepted
+  any string (e.g. `"C8"`, `"code"`, `"c1"`); now both the JSON Schema
+  enum AND the orchestrator reject unknown values via `vibecase.Parse`
+  (defense in depth).
+- Callers using valid `C1`..`C7` values see **no change**.
+- Callers passing `""`, whitespace-only, or any non-canonical label
+  now receive a structured error:
+  ```
+  vibe_case: vibecase: invalid case identifier: "X" is not one of
+             [C1 C2 C3 C4 C5 C6 C7]
+  ```
+- **Migration:** if your harness ever passed an unexpected `vibe_case`
+  value (e.g. a downstream convention of `"image"` for C3), map it
+  to the canonical `"C3"` label before sending. No migration tool
+  ships; the rejection is fail-loud and the operator-visible error
+  names the allowed set.
+
+This is the change that motivated the v1.4.1 PATCH bump instead of
+v1.4.2: the new validation is observable to callers but does not
+break any caller that was previously compliant with the canonical
+C1..C7 set. Per the project's SemVer convention (no formal API
+stability promise at v1.x), a PATCH bump is appropriate.
+
 ### Added (canonical C1..C7 taxonomy)
 
 - **`internal/vibecase` package** — single source of truth for the
