@@ -50,7 +50,7 @@ func redteamModsAbsPath(t *testing.T) string {
 	}
 	abs := filepath.Join(wd, "..", "..", "mods", "redteam")
 	if _, err := os.Stat(abs); err != nil {
-		t.Skipf("mods/redteam not found at %s (CWD=%s); set DARK_REDTEAM_MODS_PATH or vendor fixtures under internal/tools/testdata/mods/redteam/ to run these tests", abs, wd)
+		t.Skipf("mods/redteam not found at %s (CWD=%s); set DARK_REDTEAM_MODS_PATH or vendor fixtures under mods/redteam/ to run these tests (see internal/tools/testdata/redteam-vendoring.md for instructions)", abs, wd)
 	}
 	return abs
 }
