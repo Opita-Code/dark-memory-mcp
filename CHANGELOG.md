@@ -6,6 +6,56 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [1.4.1] — 2026-07-18
+
+### Added (canonical C1..C7 taxonomy)
+
+- **`internal/vibecase` package** — single source of truth for the
+  C1..C7 case taxonomy. Replaces a JSON Schema enum fragment that
+  was duplicated across `vibe_publish` and (asymmetrically) absent
+  from `vibe_spec`. Exports:
+  - `Case` (typed string) and the seven canonical constants
+    `CaseCode..CaseMixed`.
+  - `Parse(s)` (strict, trims, rejects empty + unknown + mixed-case),
+    `MustParse(s)` (panic-on-error for startup constants),
+    `IsValid(s)` (boolean shortcut).
+  - `All()` and `JSONSchemaEnum()` — stable, ordered, defensively
+    copied.
+  - `Description(c)` — human-facing one-liner per case (for LLM
+    context projections).
+  - `ErrInvalidCase` — exported sentinel for `errors.Is` checks.
+  - 15 unit tests covering ordering, defensive copy, trim, empty,
+    unknown, mixed-case, error message contents, panic, boolean
+    shortcut, round-trip, description, cardinality.
+
+### Changed
+
+- **`vibe_spec` now enforces the C1..C7 enum** at the JSON Schema
+  layer (`internal/tools/vibe.go`) AND at the orchestrator layer
+  (`internal/orchestration/vibe_spec.go`), closing the asymmetry
+  where `vibe_publish` validated the enum but `vibe_spec` did not.
+- **`vibe_publish` JSON Schema enum now derives from
+  `vibecase.JSONSchemaEnum()`** instead of a hardcoded literal. Any
+  future case addition automatically propagates to both tools.
+- **Both orchestrators validate via `vibecase.Parse`** (defense in
+  depth): even if the JSON Schema layer is bypassed (direct
+  orchestrator call, future non-MCP transport, etc.), the validator
+  rejects unknown cases before the row is persisted.
+- 4 new orchestrator tests:
+  `TestVibeSpec_InvalidVibeCase`,
+  `TestVibeSpec_AcceptsAllCanonicalCases`,
+  `TestVibeSpec_AcceptsTrimmedVibeCase`,
+  `TestPublishVibe_InvalidVibeCase`.
+
+### Versioning note
+
+Adding a case (e.g. C8) is a MINOR bump and is backward-compatible
+(case labels are stored as TEXT; existing rows remain readable).
+Reordering or renaming an existing case is a BREAKING change. See
+the package doc on `internal/vibecase` for the full contract.
+
+---
+
 ## [1.4.0] — 2026-07-18
 
 ### Added (release-integrity release)

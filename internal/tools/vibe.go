@@ -17,6 +17,7 @@ import (
 
 	"github.com/dark-agents/dark-memory-mcp/internal/orchestration"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
+	"github.com/dark-agents/dark-memory-mcp/internal/vibecase"
 )
 
 // vibeSpecTaskSchema is the per-item JSON Schema for the `tasks`
@@ -73,7 +74,10 @@ func RegisterVibe(reg *Registry, orch *orchestration.Orchestrator, st store.Stor
 					"properties": map[string]any{
 						"vibe_case": map[string]any{
 							"type": "string",
-							"enum": []string{"C1", "C2", "C3", "C4", "C5", "C6", "C7"},
+							// v1.4.1: enum now derived from the
+							// canonical vibecase package — single
+							// source of truth shared with vibe_spec.
+							"enum": vibecase.JSONSchemaEnum(),
 						},
 						"constitution": map[string]any{"type": "string", "description": "Optional JSON constitution blob."},
 						"spec":         map[string]any{"type": "string", "description": "Optional JSON intent blob."},
@@ -128,7 +132,13 @@ func RegisterVibe(reg *Registry, orch *orchestration.Orchestrator, st store.Stor
 			"required": []string{"vibe_case", "tasks"},
 			"additionalProperties": false,
 			"properties": map[string]any{
-				"vibe_case":    map[string]any{"type": "string"},
+				// v1.4.1: vibe_spec now enforces the same C1..C7
+				// enum constraint as vibe_publish, closing the
+				// asymmetry. Both layers derive from vibecase.
+				"vibe_case": map[string]any{
+					"type": "string",
+					"enum": vibecase.JSONSchemaEnum(),
+				},
 				"constitution": map[string]any{"type": "string"},
 				"spec":         map[string]any{"type": "string"},
 				"tasks": map[string]any{
