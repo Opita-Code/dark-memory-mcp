@@ -18,15 +18,39 @@ import (
 // the test's working directory. Tests run with CWD = the package
 // directory (internal/tools), so we walk up two levels to reach the
 // workspace root and then descend into mods/redteam.
+//
+// Resolution order (v1.4.1 — fix #1 of 2 follow-ups to v1.4.1 release):
+//
+//  1. If DARK_REDTEAM_MODS_PATH is already set in the test process's
+//     environment (operator override), use it as-is. If the path is
+//     inaccessible, skip the test rather than fail — the operator's
+//     config is authoritative.
+//  2. Otherwise, fall back to the repo-root default (mods/redteam).
+//     Skip if absent — vendoring redteam fixtures in the public repo
+//     is out of scope (the actual canonical mods live in the peer
+//     project dark-research-mcp/mods-examples). CI runners and
+//     fresh clones will skip cleanly.
+//
+// Previously this function called t.Fatalf when the default path was
+// missing, which made 6 unit-test cases fail on every CI run where
+// the fixtures aren't vendored. See PR #8.
 func redteamModsAbsPath(t *testing.T) string {
 	t.Helper()
+	// 1. Operator override.
+	if p := os.Getenv("DARK_REDTEAM_MODS_PATH"); p != "" {
+		if _, err := os.Stat(p); err != nil {
+			t.Skipf("DARK_REDTEAM_MODS_PATH=%s not accessible: %v", p, err)
+		}
+		return p
+	}
+	// 2. Default: repo-root mods/redteam.
 	wd, err := os.Getwd()
 	if err != nil {
 		t.Fatalf("getwd: %v", err)
 	}
 	abs := filepath.Join(wd, "..", "..", "mods", "redteam")
 	if _, err := os.Stat(abs); err != nil {
-		t.Fatalf("mods/redteam not found at %s: %v (CWD=%s)", abs, err, wd)
+		t.Skipf("mods/redteam not found at %s (CWD=%s); set DARK_REDTEAM_MODS_PATH or vendor fixtures under internal/tools/testdata/mods/redteam/ to run these tests", abs, wd)
 	}
 	return abs
 }
