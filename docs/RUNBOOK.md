@@ -43,9 +43,11 @@ go build -o ./bin/dark-mem-mcp   ./cmd/dark-mem-mcp
 go build -o ./bin/dark-mem-cli    ./cmd/dark-mem-cli
 go build -o ./bin/dark-mem-inspect ./cmd/dark-mem-inspect
 
-# 2. Pick a DB path (default: ./dark.db in CWD; override with DARK_DB)
+# 2. Pick a DB path (default: ./dark-memory.db in CWD; override with DARK_DB)
+#    INV-8: each MCP in dark-agents/* owns its own DB. dark-memory-mcp's
+#    default is dark-memory.db, NOT dark.db (that one is dark-research-mcp).
 mkdir -p ~/.local/share/dark-memory-mcp
-export DARK_DB=~/.local/share/dark-memory-mcp/dark.db
+export DARK_DB=~/.local/share/dark-memory-mcp/dark-memory.db
 
 # 3. Optional: write driver config (CLI handles this)
 ./bin/dark-mem-cli set-driver --driver=sqlite --dsn=$DARK_DB
@@ -53,8 +55,8 @@ export DARK_DB=~/.local/share/dark-memory-mcp/dark.db
 # 4. Migrations are applied on first open. Verify:
 ./bin/dark-mem-cli schema-status
 # driver: sqlite
-# schema_version: 8
-# tables (16): ...
+# schema_version: 10
+# tables (21): ...
 
 # 5. (optional) Diagnostic snapshot:
 ./bin/dark-mem-inspect
@@ -93,8 +95,8 @@ export DARK_DB="postgres://dark:$(cat ~/.dark-pg-pass)@127.0.0.1:5432/dark_memor
 # 3. Verify schema
 ./bin/dark-mem-cli schema-status
 # driver: postgres
-# schema_version: 8
-# tables (16): ...
+# schema_version: 10
+# tables (21): ...
 
 # 4. Run
 ./bin/dark-mem-mcp
@@ -115,7 +117,7 @@ only the `DARK_DB_DRIVER=postgres` + libpq `DARK_DB` DSN differ.
 # Phase 1 — bring up the new Postgres, apply schema (DARK_DB points at it)
 export DARK_DB_DRIVER=postgres
 export DARK_DB="postgres://...new-db..."
-./bin/dark-mem-cli schema-status      # confirm schema_version: 8
+./bin/dark-mem-cli schema-status      # confirm schema_version: 10
 
 # Phase 2 — stop the MCP server, then point at the new DB
 # (operator-supplied row copy is your responsibility; see MIGRATION.md)
@@ -172,7 +174,7 @@ For production, schedule a weekly cron:
 ./bin/dark-mem-cli migrate --json
 ```
 
-Schema migrations are versioned (`v1` … `v8` currently) and stored in
+Schema migrations are versioned (`v1` … `v10` currently) and stored in
 `internal/migrate/{sqlite,postgres}/ddl.go`. The `schema_migrations`
 table tracks what's been applied. **Migrations never delete data.**
 
@@ -264,11 +266,11 @@ ORDER BY id DESC LIMIT 20;
 | Var | Default | Purpose |
 |---|---|---|
 | `DARK_DB_DRIVER` | `sqlite` | `sqlite` or `postgres` |
-| `DARK_DB` | `./dark.db` | DSN (file path or libpq URL) |
+| `DARK_DB` | `./dark-memory.db` (cwd) | DSN (file path or libpq URL). Default changed by **INV-8** (v1.2.3): each MCP in dark-agents/* uses its own file. Set explicitly if you override. |
 | `DARK_CACHE_DIR` | (same dir as DB) | LLM cache (INV-5) |
 | `DARK_MOD_WHITELIST` | empty | CSV of allowed mod IDs (INV-6) |
 | `DARK_SERVER_NAME` | `dark-memory-mcp` | serverInfo.name |
-| `DARK_SERVER_VERSION` | `0.1.0` | serverInfo.version |
+| `DARK_SERVER_VERSION` | `1.4.1-dev` | serverInfo.version (canonical source: `internal/version` resolver; `Makefile release` injects via `-ldflags`) |
 | `DARK_COEXISTENCE_GROUP` | `dark-agents/memory` | bridge.2 wire evidence |
 | `DARK_HOME` | `~/.config/dark-memory-mcp` | base dir for `config.toml` |
 | `DARK_TEST_POSTGRES_DSN` | (unset) | if set, dual-driver test runs Postgres too |

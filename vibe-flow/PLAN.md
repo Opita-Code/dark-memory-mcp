@@ -1,8 +1,8 @@
 # Dark Memory MCP — Master Plan v1
 
-> **Snapshot**: 2026-07-15 16:32 UTC · **dark.db** spec_id `178` (canónico)
+> **Snapshot**: 2026-07-15 16:32 UTC (initial), refreshed through v1.4.2 (2026-07-18) · **dark.db** spec_id `178` (canónico)
 >
-> Este documento es el **roadmap vivo** del proyecto. Cualquier wave nueva debe referenciarlo vía `dark_research_spec_update(spec_id=178, ...)`.
+> Este documento es el **roadmap vivo** del proyecto. Cualquier wave nueva debe referenciarlo vía `dark_research_spec_update(spec_id=178, ...)`. Wave 4 (MCP server) shipped in v1.0.0; the remaining Wave 4 work (CLI, runbooks, bridge conformance, dark-recall) shipped across v1.0.0–v1.4.x. See **Status** section below for the current state.
 
 ---
 
@@ -10,9 +10,9 @@
 
 | Estado | Qué | Siguiente |
 |---|---|---|
-| ✅ **11/25 orchestrators** shipped (9 del RFC 153 + 2 lifecycle O1/O2) | Wave 1 + 2 + 3p1 + 3p2 + 3p3 | Wave 4: exponer como MCP server |
-| ❌ **Wave 4** (MCP server, CLI, runbooks, bridge conformance, dark-recall v2.3) | 5 sub-specs pendientes | Después de cerrar spec 176 (LLM routing) |
-| ⛔ **BLOQUEADO** | drift_judge batch (8 artifacts de spec 177) | Spec 176 — fix LLM routing con `opencode-with-vault.ps1` |
+| ✅ **Waves 1–4 shipped** through v1.4.2 (2026-07-18) | All sections complete except L1 (Atomic Context), L3 (Delegation), L4 (Persona), L5 (Mod System), L6.2/6.3 (Claude Code / Cursor adapters) | Wave 5: L1 + L3 + L4 + L5 + L6.2/6.3 |
+| ✅ **v1.4.2 released** as the canonical state | release-integrity@1.0.0 constitution, version resolver, drift detection in health_ping, vibecase C1..C7 taxonomy | Maintain + monitoring |
+| 🚧 **Wave 5+** (atomic context, persona, mods) | 5+ atomic specs pending | DMAP v1.1 |
 
 ---
 
@@ -47,8 +47,8 @@
 - **Cierre**: 5/5 orchestrators shipped, drift_resolved (drift 170)
 - **Bookkeeping cleanup** (Wave 3 part 3 Task 0): 18 artifacts de spec 173 sincronizados a `validation_status=passed` (artifact_ids 299-322)
 
-### Wave 3 part 3 — Orchestrators O7-O12 (spec 177) ← ESTAMOS AQUÍ
-6 orchestrators nuevos shipped + 41 tests verdes (suite completa 74/74):
+### Wave 3 part 3 — Orchestrators O7-O12 (spec 177) — SHIPPED
+6 orchestrators nuevos shipped + 41 tests verdes (suite completa 74/74 + everything since):
 
 | # | Orchestrator | Archivo | Tests | Función |
 |---|---|---|---|---|
@@ -242,7 +242,7 @@ NOW ─┬─→ operator: opencode-with-vault.ps1          [cierra spec 176]
 
 1. **Cada wave abre un spec** (`dark_research_spec_create`) ANTES de codear.
 2. **Cada artefacto se loguea** (`dark_research_artifact_log`) ANTES de publicar.
-3. **drift_judge ANTES de close** (`dark_ssd_drift_judge` + `dark_research_drift_log`).
+3. **drift_judge ANTES de close** (`dark_memory_judge(eval_type=drift_judge)` + `dark_research_drift_log`). The historical `dark_ssd_*` namespace was deprecated in v1.4.0 and consolidated into dark-memory-mcp.
 4. **bookkeeping propagation**: validation_status debe reflejar el drift_log verdict.
 5. **commits por wave** (no mega-commits): cada wave = N commits con mensaje descriptivo.
 6. **anti-prototipo**: las herramientas residuales (`dark_recall_*`, `dark_mem_publish_*`, `extract_api_keys`, `wrapper-mcp.ps1`, etc.) NO existen en este proyecto. Si aparecen, rechazar.
@@ -257,7 +257,7 @@ NOW ─┬─→ operator: opencode-with-vault.ps1          [cierra spec 176]
 - **Bridge architecture**: `vibe-flow/main/BRIDGE_AND_COEXISTENCE.md` (15K — coexistence_group, versionado)
 - **Testing framework**: spec 174 (4-layer pyramid, severity tiers, patterns)
 - **Master plan (canónico)**: spec 178 en dark.db
-- **Branch**: `review/w3p1` (uncommitted Wave 3 part 3 work)
+- **Branch**: `main` (v1.4.2 = `bfb15e2`; v1.4.1 = `e4e5b68`; v1.4.0 = `a12b2d9`)
 
 ---
 

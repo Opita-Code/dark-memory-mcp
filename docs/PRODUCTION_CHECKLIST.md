@@ -1,4 +1,4 @@
-# Production Checklist — dark-memory-mcp v1.3.0+
+# Production Checklist — dark-memory-mcp v1.4.0+
 
 This is the operator's runbook for what to check, what to do, and
 when to panic. Every entry came from a real production incident.
@@ -26,7 +26,7 @@ dark-mem-mcp: serving stdio (server=dark-memory-mcp vX.Y.Z coexistence_group=dar
 | step2 | SQLite Store opened | Either file missing+locked, or v1.2.0+ DB schema corruption |
 | step3 | Migrations applied + constitution watchdog OK | See "Migration recovery" below |
 | step4 | Canary installed | Drifted constitution file (INV-4) — see INV-4 in docs/INVARIANTS.md |
-| `registered 28 tools` | Tool registry sanity | If < 28, a new tool wasn't added to `CanonicalOrder()` in `internal/tools/registry.go`. v1.3.0 grew OBSERVABILITY 3→4 with health_ping. |
+| `registered 28 tools` | Tool registry sanity | If < 28, a new tool wasn't added to `CanonicalOrder()` in `internal/tools/registry.go`. v1.3.0 grew OBSERVABILITY 3→4 with health_ping; v1.4.0 added internal/version (resolver, no tool); v1.4.1 added internal/vibecase (no tool). 28 stays stable through v1.4.x. |
 | `serving stdio (...)` | Ready for JSON-RPC | If absent, boot completed but stdio MCP transport didn't bind |
 
 ## Health probe (operator script)
@@ -158,11 +158,11 @@ Mitigation:
 
 ## Recovery playbooks
 
-### R-1. v8 / vec0 triggers block the boot
+### R-1. v10 / vec0 triggers block the boot
 
 **Symptom:** stderr contains:
 ```
-dark-mem-mcp: server.New failed: server.Boot step2 (runtime.Open): migrate: v8 up: stmt[N]: SQL logic error: no such module: vec0
+dark-mem-mcp: server.New failed: server.Boot step2 (runtime.Open): migrate: v10 up: stmt[N]: SQL logic error: no such module: vec0
 ```
 
 **Cause:** orphan triggers from a previous sqlite-vec install still
@@ -179,7 +179,7 @@ DROP TABLE IF EXISTS research_items_vec;
 DROP TABLE IF EXISTS vibe_specs_vec;
 DROP TABLE IF EXISTS vibe_artifacts_vec;
 ```
-Then restart the daemon; v8 will re-create the tables via the
+Then restart the daemon; v10 will re-create the tables via the
 vibe_brands migration. F37+F39 will tolerate the rest.
 
 After the fix, run the unit tests for `tests/migrate` to confirm:
@@ -353,5 +353,5 @@ $DARK_MEM_MCP_BIN=.\dark-mem-mcp.exe go test ./tests/wire/... -v
 
 # Verify INV-8 (operator-mandated default):
 select * from schema_migrations where version >= 7; -- should show at least v7
-# If dark.db instead of dark-memory.db, run R-2.
+# If dark.db instead of dark-memory.db, run R-2. (v1.4.2 added v10 with audit_project_index.)
 ```

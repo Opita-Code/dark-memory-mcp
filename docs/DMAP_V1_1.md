@@ -1,6 +1,7 @@
 # Spec 193: Dark Memory Agent Protocol (DMAP) v1.1
 
 > **Status:** **LAYER 2 (loop coordinator) COMPLETE** — atomic specs 2.1 (SessionState) + 2.2 (VLPPackage) + 2.3 (VLPPersistence) + 2.4 (VLPAuditor) + 2.5 (VLPLoopUseCase) IMPLEMENTED + tests green. Other 21 atomic specs pending.
+> **Note:** Layer 2 implementation reflects v1.4.2 tool count (28 canonical = 25 v1.0 + vlp_handle_event v1.1 + project_create v1.2.0 + health_ping v1.3.0). v1.4.1 added internal/vibecase (no new tool, just an enum constraint).
 > **Vibe case:** C5 (strategic planning / architecture)
 > **Constitution ref:** dark-agents/dark-memory-mcp@1.0.0
 > **Author:** Opita Code + dark-research-mcp build agent
@@ -19,7 +20,7 @@
 
 ## §1 Problem statement
 
-Today, `dark-memory-mcp` exposes 26 tools via MCP (25 in v1.0 + `vlp_handle_event` added in v1.1) and trusts the LLM to call them correctly per turn. This is brittle (research-backed):
+Today, `dark-memory-mcp` exposes 28 tools via MCP (25 in v1.0 + `vlp_handle_event` added in v1.1 + `project_create` added in v1.2.0 + `health_ping` added in v1.3.0) and trusts the LLM to call them correctly per turn. This is brittle (research-backed):
 
 - **Anthropic Context Engineering (Sep 2025):** LLM "context rot" — as the prompt grows, recall degrades. Best practice is "just-in-time retrieval" with minimal context per task.
 - **Anthropic Multi-Agent Research (Jun 2025):** production multi-agent systems use 15× more tokens than chat, but outperform single-agent by 90.2% on breadth-first queries. The key is server-driven loop control, not LLM-driven tool selection.
@@ -47,12 +48,12 @@ The current architecture has no state machine per session, no per-task context i
 - Async streaming responses (deferred to v1.2)
 - Multi-language harness adapters beyond opencode/Claude Code/Cursor (community-driven after v1.1)
 - Vector store beyond sqlite FTS5 / pgvector (deferred to v1.2)
-- Server-side LLM-as-judge (`dark_ssd_drift_judge` remains external; integration in v1.2)
+- Server-side LLM-as-judge (`dark_ssd_drift_judge` was external; in **v1.4.0** consolidated into `dark_memory_judge(eval_type=drift_judge)` as the canonical harness). The `dark_ssd_*` namespace now lives as a deprecation shim inside dark-research-mcp and emits a `{deprecated:true, successor:"dark-memory-mcp"}` envelope on the v0.7.0+ release.
 - MCP 2026-07-28-specific features (Tasks extension, MRTR) — wait for mcp-go Tier 1 SDK support
 
 ### 2.3 Backward compatibility
 
-The 25 existing tools (8 namespaces) remain unchanged. All v1.1 capabilities are **opt-in** via new packages (`internal/vlp/`, `internal/mods/`, etc.) and new tools layered on top.
+The 25 existing tools (8 namespaces) remain unchanged at the time v1.1 was authored. Subsequent v1.2.0+ releases added `project_create` (PROJECT namespace, v1.2.0) and `health_ping` (OBSERVABILITY 4th tool, v1.3.0); both were additive — no existing tool was renamed or removed. v1.4.x added no new tools (`internal/vibecase` is a shared enum constraint, `internal/version` is the build provenance resolver). All post-v1.1 capabilities remain **opt-in** via new packages (`internal/vlp/`, `internal/mods/`, `internal/vibecase/`, `internal/version/`, etc.) and the new tools layered on top.
 
 ## §3 Architecture overview
 
@@ -84,7 +85,8 @@ DMAP v1.1 has 6 layers. Each layer has **one** responsibility:
 │  (ContextShape + Contextualizer + Retriever + TierCoordinator)           │
 ├──────────────────────────────────────────────────────────────────────────┤
 │  Layer 0: Foundation (existing, shipped)                                 │
-│  26 tools (9 namespaces — v1.1 added L6-VLP) + 7 INV-* + Store + Audit    │
+│  28 tools (10 namespaces — v1.1 added L6-VLP, v1.2.0 added PROJECT,       │
+│   v1.3.0 added health_ping to OBSERVABILITY) + 8 INV-* + Store + Audit     │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -92,7 +94,7 @@ DMAP v1.1 has 6 layers. Each layer has **one** responsibility:
 
 ### Layer 0 — Foundation (existing, no changes)
 - **Responsibility:** persist + audit + enforce invariants
-- **Components:** 26 tools (25 in v1.0 + 1 L6-VLP in v1.1), 7 INV-*, Store (sqlite + postgres), write_audit table, Constitution registry
+- **Components:** 28 tools (25 in v1.0 + 1 L6-VLP in v1.1 + 1 PROJECT in v1.2.0 + 1 health_ping in v1.3.0), 8 INV-* (INV-8 added in v1.2.3), Store (sqlite + postgres), write_audit table, Constitution registry
 - **Atomic specs:** none — already shipped
 
 ### Layer 1 — Atomic Context
@@ -304,7 +306,7 @@ See [§4 Layer decomposition](#4-layer-decomposition) above. Total: **26 atomic 
 - **No auto-generation of specs.** Vibe_publish requires a complete spec from the caller.
 - **No streaming responses in v1.1.** SSE/streaming deferred to v1.2 (when MCP Tasks extension stabilizes).
 - **No vector store in v1.1.** Uses sqlite FTS5 + pgvector only. Dedicated vector DB deferred.
-- **No server-side LLM judge.** `dark_ssd_drift_judge` remains external.
+- **No server-side LLM judge.** `dark_ssd_drift_judge` was external pre-v1.4.0. In **v1.4.0** the canonical harness moved to `dark_memory_judge(eval_type=drift_judge)` inside dark-memory-mcp (the `dark_ssd_*` shim still exists in dark-research-mcp as deprecation, routing callers to dark-memory-mcp).
 - **No hard persona steering via activation vectors.** Persona is enforced at the system level (constitution + mods), not at the inference activation level (out of scope for an MCP server).
 
 ## §10 Open decisions (linked to atomic decision specs)

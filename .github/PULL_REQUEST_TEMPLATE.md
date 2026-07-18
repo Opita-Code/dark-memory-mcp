@@ -13,11 +13,11 @@ One-sentence summary. Link the issue it closes (`Closes #123`).
 
 ## How was this tested?
 
-- [ ] Ran `go test -count=1 ./...` — all 9 suites green
+- [ ] Ran `go test -count=1 ./...` — all 20 suites green
 - [ ] Added new tests for the change (which?)
 - [ ] Tested manually (describe)
 
-If this affects an operational invariant (INV-1..7), name it and the defensive
+If this affects an operational invariant (INV-1..8), name it and the defensive
 test that covers it:
 
 ```

@@ -61,12 +61,12 @@ export DARK_DB="postgres://dark:$(cat ~/.dark-pg-pass)@127.0.0.1:5432/dark_memor
 # Migrations are applied on first open. Verify:
 ./dark-mem-cli schema-status
 # driver: postgres
-# schema_version: 8
-# tables (16): ...
+# schema_version: 10
+# tables (21): ...
 ```
 
 If `schema_status` returns the same schema version as the SQLite
-source (and the same 16 tables), you're ready to copy rows.
+source (and the same tables), you're ready to copy rows.
 
 ---
 
@@ -168,7 +168,7 @@ VACUUM ANALYZE;
 -- 2. Indexes already exist (migration v7+). Verify:
 SELECT schemaname, tablename, indexname FROM pg_indexes
 WHERE schemaname = 'public' ORDER BY tablename, indexname;
--- Expect: 16 tables × ~3 indexes each (~50 indexes total)
+-- Expect: 21 tables × ~3 indexes each (~60 indexes total)
 
 -- 3. Connection pooling: use pgBouncer in front of Postgres for
 --    >10 concurrent MCP servers

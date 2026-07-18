@@ -1,4 +1,4 @@
-﻿# Seven Operational Invariants
+﻿# Eight Operational Invariants
 
 > **Audience**: anyone touching the dark-memory-mcp code. The
 > invariants are **type-system guarantees** — they are exercised by

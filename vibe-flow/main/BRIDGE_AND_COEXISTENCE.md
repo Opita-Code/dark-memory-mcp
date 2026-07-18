@@ -46,7 +46,7 @@ From [MCP spec 2025-06-18](https://modelcontextprotocol.io/specification/2025-06
 We support both per [MCP architecture](https://modelcontextprotocol.io/docs/concepts/architecture):
 
 - **stdio**: local process, default. dark-memory-mcp and dark-research-mcp both use stdio when launched as child processes by the harness.
-- **Streamable HTTP**: remote, future. dark-memory-mcp will gain this in v1.1 for shared-team deployments.
+- **Streamable HTTP**: remote, future. dark-memory-mcp gains this in a future release for shared-team deployments; today (v1.4.2) it remains stdio-only.
 
 ## 2. Conformance profile
 
@@ -69,15 +69,15 @@ Every dark-agents MCP MUST satisfy:
 }
 ```
 
-`coexistence_group` is a dark-agents extension. When the harness connects to multiple servers and sees two or more with the same `coexistence_group`, it knows they share state. The dark-recall plugin uses this to make routing decisions.
+`coexistence_group` is a dark-agents extension. When the harness connects to multiple servers and sees two or more with the same `coexistence_group`, it knows they belong to the same family. (Per **INV-8**, "family" is a routing concept — actual DB state is per-MCP.) The dark-recall plugin uses this to make routing decisions.
 
 ### 2.2 Tool namespace
 
 | MCP | Namespace | Count |
 |---|---|---|
-| dark-research-mcp | `dark_research_*` | 13 + multi + 1 router |
-| dark-memory-mcp | `dark_memory_*` | 25 orchestrators (per RFC §D-9) |
-| (deprecated) | `dark_mem_*` | legacy — `dark-research-mcp` internal, deprecated |
+| dark-research-mcp | `dark_research_*` | 13 + multi + 1 router + 38 deprecation shims (v0.7.0) |
+| dark-memory-mcp | `dark_memory_*` | 28 canonical (per RFC §D-9; +3 armed → 31 when `DARK_REDTEAM=armed`) |
+| (deprecated, v0.7.0+) | `dark_mem_*` | legacy shim inside dark-research-mcp; emits `{deprecated: true, successor: "dark-memory-mcp"}` envelope |
 
 Namespaces never overlap. This is enforced by lint in CI (regex `^dark_(research|memory)_` for new tools, with a deprecation lint for `dark_mem_*`).
 
@@ -207,19 +207,27 @@ What they don't do (and the plugin adds) is **cross-MCP prefill**: automatically
 ## 5. The dark-memory-mcp `tools/list` contract (canonical)
 
 When a harness connects to dark-memory-mcp and calls `tools/list`, it
-MUST see exactly the 26 orchestrators from RFC §D-9 + DMAP v1.1 spec 193
-Layer 6 (vlp_handle_event appended at position 26), in the canonical order:
+MUST see exactly the **28 canonical orchestrators** from RFC §D-9 +
+DMAP v1.1 spec 193 Layer 6, in the canonical order:
 
 ```
+PROJECT         (1)  dark_memory_project_create              [v1.2.0]
 SESSION         (4)  dark_memory_session_start, _resume, _status, _close
 RESEARCH        (3)  dark_memory_research_topic, _recall, _resume_thread
 VIBE            (4)  dark_memory_vibe_publish, _spec, _pipeline_status, _resolve_drift
 CONTEXT         (3)  dark_memory_artifact_context, _spec_context, _session_context
 JUDGE           (3)  dark_memory_judge, _consensus, _judgment_history
 POLICY          (2)  dark_memory_active_policy, _load_constitution
-OBSERVABILITY   (3)  dark_memory_memory_state, _writes, _anomalies
+OBSERVABILITY   (4)  dark_memory_health_ping, _memory_state, _writes, _anomalies  [v1.3.0]
 ADMIN           (3)  dark_memory_admin_migrate, _schema_status, _vacuum
+L6-VLP          (1)  dark_memory_vlp_handle_event            [v1.1 / DMAP]
 ```
+
+Sum: 1+4+3+4+3+3+2+4+3+1 = 28.
+
+`PROJECT` was added in v1.2.0 at index 0 (operators iterate `tools/list`
+in bootstrap order: project → session → research → vibe → …). `health_ping`
+was added in v1.3.0 at OBSERVABILITY index 0 (liveness probe before state).
 
 Each tool's `inputSchema` is a JSON Schema describing required and optional fields. Each tool's `description` includes a one-line "next tool" hint when applicable.
 
@@ -234,7 +242,7 @@ This tool (RFC §D-9, POLICY namespace) returns the runtime context the harness 
   "constitution": { "id": "dark-agents/dark-memory-mcp", "version": "1.0.0", "enabled": true, "sha256": "..." },
   "active_mods": [ {"mod_id": "...", "version": "...", "risk_class": "..."} ],
   "watchdog_status": "ok | drift",
-  "schema_version": 6,
+  "schema_version": 10,
   "driver": "sqlite | postgres",
   "coexistence_group": "dark-agents/memory",
   "coexistence_version": "cx.v2"
@@ -259,7 +267,7 @@ A new sub-spec is added: **sub-spec 12 — bridge conformance verification** (se
 Goal: prove that dark-memory-mcp + dark-research-mcp + dark-recall v2.3 conform to this document. Tasks:
 
 1. Run [MCP Inspector](https://github.com/modelcontextprotocol/inspector) against dark-memory-mcp; verify `initialize` returns the conformance profile from §2.1
-2. Verify `tools/list` returns exactly the 26 orchestrators in the
+2. Verify `tools/list` returns exactly the 28 orchestrators in the
    canonical order
 3. Verify `listChanged` notification fires when armed-mode is toggled (planned v1.1)
 4. Run the inspector against dark-research-mcp; verify its `coexistence_group = dark-agents/memory`

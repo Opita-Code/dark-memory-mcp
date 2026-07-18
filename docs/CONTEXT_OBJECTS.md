@@ -12,11 +12,14 @@ a row dump. The LLM's question is rarely "give me row 47"; it's
 requires 4-5 tool calls and in-context joining. A Context object is one
 tool call returning one coherent view.
 
-## The 25 MCP tools → 8 Context projections
+## The 28 MCP tools → 8 Context projections
 
 The MCP surface (`dark_memory_*`) maps onto **8 context projections**.
 Some projections are returned by a single tool, others compose
-multiple stores.
+multiple stores. The 28 tools (added incrementally — 25 in v1.0,
+`vlp_handle_event` in v1.1, `project_create` in v1.2.0, `health_ping`
+in v1.3.0) cover 10 namespaces; the 8 context projections below are
+the LLM-facing views that matter for tool selection.
 
 | Context | Returned by | Stores it composes |
 |---|---|---|
