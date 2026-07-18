@@ -31,6 +31,8 @@ import (
 	"regexp"
 	"sync/atomic"
 	"time"
+
+	"github.com/dark-agents/dark-memory-mcp/internal/version"
 )
 
 // serverBootTime, serverVersion, serverName, coexistenceGroup are
@@ -151,6 +153,17 @@ type RuntimeContext struct {
 //   - db:        connectivity + schema version + canary + active project
 //   - runtime:   process-level metrics (uptime, boot time, PID)
 //   - registry:  the tool surface dark_memory_* is advertising
+//   - git:       build provenance (v1.4.0 — DARK-MEM-003).
+//                tag/commit/dirty/build_time are the resolver's view of
+//                where this binary came from. `source` reports which
+//                resolution path the resolver took (ldflags / buildinfo
+//                / dev) so the operator can tell at a glance whether
+//                this is a release build or a dev build.
+//   - drift:     true iff the resolver fell back to the dev path
+//                (is_dev=true) OR the working tree was dirty at build
+//                time. Per CONSTITUTION.md Rule 1, a release binary
+//                MUST have drift=false. Operators can use this as a
+//                single-bit liveness rule for monitoring.
 //   - latency_ms:    the round-trip cost of THIS health call (helpful
 //                    for spotting slow-down trends in monitoring dashboards)
 //   - checked_at:    ISO8601 of when this response was generated
@@ -179,6 +192,15 @@ type healthPingResult struct {
 		CanonicalTools int `json:"canonical_tools"`
 		ExtraTools     int `json:"extra_tools"`
 	} `json:"registry"`
+	Git struct {
+		Tag       string `json:"tag,omitempty"`
+		Commit    string `json:"commit,omitempty"`
+		Dirty     bool   `json:"dirty,omitempty"`
+		BuildTime string `json:"build_time,omitempty"`
+		Source    string `json:"source"`
+		IsDev     bool   `json:"is_dev,omitempty"`
+	} `json:"git"`
+	Drift     bool    `json:"drift,omitempty"`
 	LatencyMS float64 `json:"latency_ms"`
 	CheckedAt string  `json:"checked_at"`
 }
@@ -275,6 +297,22 @@ func RegisterHealth(reg *Registry, st storeBridge) {
 			out.Runtime.BootedAt = serverBootTime.UTC().Format(time.RFC3339Nano)
 			out.Runtime.PID = os.Getpid()
 			out.Runtime.GoVersion = goVersion()
+
+			// --- git (DARK-MEM-003, v1.4.0) ---
+			// Populate from the resolver. The resolver is memoized
+			// (sync.Once) so this is a cheap call after the first one.
+			// Drift is true iff the build resolved via the dev
+			// fallback OR the working tree was dirty at build time.
+			// A release build (`make release`) sets IsDev=false and
+			// Dirty=false, so Drift=false; any other path flips it.
+			resolved := version.Resolve()
+			out.Git.Tag = resolved.Version
+			out.Git.Commit = resolved.Commit
+			out.Git.Dirty = resolved.Dirty
+			out.Git.BuildTime = resolved.BuildTime
+			out.Git.Source = resolved.Source
+			out.Git.IsDev = resolved.IsDev
+			out.Drift = resolved.IsDev || resolved.Dirty
 
 			// --- registry ---
 			out.Registry.CanonicalTools = int(registryCanonicalN.Load())

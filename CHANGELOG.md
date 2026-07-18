@@ -6,6 +6,113 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [1.4.0] — 2026-07-18
+
+### Added (release-integrity release)
+
+- **`release-integrity@1.0.0` constitution** ([`CONSTITUTION.md`](CONSTITUTION.md)).
+  Five rules codify release hygiene: (1) single source of truth for
+  version, (2) archive-not-delete for deprecation, (3) CHANGELOG is
+  authoritative, (4) drift detection on every boot, (5) session-bound
+  governance. Cross-cutting reference for every `vibe_publish` artifact
+  in the dark-memory-mcp project.
+- **`internal/version` package** — single-source version resolver.
+  Replaces the hardcoded `DefaultServerVersion = "1.3.0"` constant in
+  `internal/server/bootstrap.go` and the `var Version = "1.1.0-dev"`
+  in `cmd/dark-mem-cli/main.go` and `cmd/dark-mem-inspect/main.go`.
+  Resolution priority: `-ldflags` injection (canonical, set by
+  `make release`) → `debug.ReadBuildInfo()` (dev) → hardcoded
+  `"dev"` sentinel (emergency). 9 unit tests cover all three paths.
+- **`Makefile`** with `build` / `release` / `drift-check` /
+  `version` / `version-json` / `inspect` / `tag` / `clean` targets.
+  Handles the multi-module `cmd/*` layout (each cmd is its own Go
+  module; the Makefile `cd`s into each before `go build`).
+- **`scripts/inject-version.sh`** (bash) and
+  **`scripts/inject-version.ps1`** (PowerShell) — resolve the canonical
+  version from `git describe` and emit the `-ldflags` expression that
+  feeds `make release`. Same resolution rules, same output formats
+  (`--raw` / `--json` / default), same `--strict` flag.
+
+### Added (drift detection in health_ping)
+
+- **`dark_memory_health_ping` response grew a `git` block.**
+  New fields: `git.tag`, `git.commit`, `git.dirty`, `git.build_time`,
+  `git.source` (one of `ldflags|buildinfo|dev`), `git.is_dev`.
+- **Top-level `drift` bool** — true iff the resolver fell back to the
+  dev path OR the working tree was dirty at build time. Per
+  `CONSTITUTION.md` Rule 4, a release binary MUST report
+  `drift=false`. Operators can monitor the single-bit signal directly.
+- Wire-conformance test (`tests/wire/health_ping_test.go`) and the
+  e2e binary (`cmd/e2e/main.go`) updated to mirror and assert the
+  new fields.
+
+### Changed
+
+- The `internal/server/bootstrap.go::DefaultServerVersion` constant
+  is now a deprecated string (`"1.4.0-dev"`) for any external
+  callers; the canonical default flows through `version.Resolve()`.
+- `cmd/e2e/main.go` relaxed the hardcoded `"1.3.0"` health_ping
+  version assertion to "non-empty" — the value is now driven by the
+  resolver, not by source code.
+
+### Notes
+
+- v1.4.0 ships together with **dark-research-mcp v0.7.0**, which
+  wraps 38 duplicate tools (the dark_mem_*, dark_research_spec_*, etc.,
+  and dark_ssd_* tools) in a deprecation envelope pointing at
+  dark-memory-mcp. See
+  [`dark-research-mcp/RELEASE_NOTES_v0.7.0.md`](https://github.com/Opita-Code/dark-research-mcp/blob/main/RELEASE_NOTES_v0.7.0.md)
+  for the peer release notes and migration guide.
+
+---
+
+## [1.3.2] — 2026-07-16
+
+### Fixed
+
+- **`fix(llm): wire SelfHarnessClient.Judge to drift-judge-daemon HTTP route.**
+  `SelfHarnessClient.Judge` was returning `ErrNoLLMAvailable` unconditionally
+  (deferred to Wave 4+ in source). Wired to POST to `DARK_SCRAPPER_URL/v1/messages`
+  with `Bearer ds-managed` (sentinel auth) when `provider == "dark_scrapper"`.
+  Other providers (anthropic / openai / google) still return `ErrNoLLMAvailable`
+  by design, preserving the source's visibility-over-silent-degrade philosophy.
+  URL validation rejects empty / `file://` / no-scheme / no-host before any
+  HTTP call (R5 defense).
+
+### Added
+
+- **`feat(federation): cross-namespace lookup tool + pipeline_status hint.**
+  dark-memory and dark-research MCPs use two physically separate SQLite files
+  (`dark-memory.db` vs `dark.db`) with compatible schemas on shared tables.
+  New `internal/federation` package: read-only `Peer` handle opened from
+  `DARK_FEDERATION_PEER_DSN`. New `dark_memory_federation_lookup` tool
+  (opt-in extra, same pattern as `DARK_REDTEAM=armed`). `pipeline_status`
+  now probes the peer on local miss and adds a `cross_namespace_hint` field.
+
+### Governance
+
+- DARK-MEM-001 establishes the `release-integrity@1.0.0` constitution
+  (see [`CONSTITUTION.md`](CONSTITUTION.md)) and retroactively tags `v1.3.1`
+  at `fbc5c03` to give the squash commit a canonical annotated reference.
+
+---
+
+## [1.3.1] — 2026-07-16
+
+### Note (release plumbing)
+
+- **Local tag `v1.3.1` retroactively created at commit `fbc5c03`.** The
+  commit message reads `release: v1.3.1 -- sync unreleased work to origin/main
+  (squashed)`. The squash landed in the repo on 2026-07-16 but no annotated
+  tag was created at the time; the v1.3.1 entry exists to give that squash
+  a canonical reference and to keep the tag chain (v1.3.0 → v1.3.1 → v1.3.2)
+  consistent with the commit graph.
+- No standalone code changes between v1.3.0 and v1.3.2: v1.3.1 is a
+  release-plumbing tag only. The substantive changes in this window are
+  documented under v1.3.0 and v1.3.2.
+
+---
+
 ## [1.3.0] — 2026-07-16
 
 ### Added (production-readiness release)

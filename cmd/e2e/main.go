@@ -319,8 +319,8 @@ func main() {
 	if err := json.Unmarshal([]byte(hpText), &hpData); err != nil {
 		fail("health_ping body: %v\n  body=%s", err, hpText)
 	}
-	if hpData.Data.Server.Version != "1.3.0" {
-		fail("health_ping server.version=%q; want 1.3.0", hpData.Data.Server.Version)
+	if hpData.Data.Server.Version == "" {
+		fail("health_ping server.version empty; want non-empty (resolved from version.Resolve().Version)")
 	}
 	if hpData.Data.Server.CoexistenceGroup != "dark-agents/memory" {
 		fail("coexistence_group=%q; want dark-agents/memory", hpData.Data.Server.CoexistenceGroup)

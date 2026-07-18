@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
+	"github.com/dark-agents/dark-memory-mcp/internal/version"
 )
 
 // Config is the resolved boot configuration. Constructed by
@@ -69,13 +70,20 @@ func (c *Config) StoreConfig() store.Config {
 // returns an error for missing env vars — defaults are applied
 // silently. Returns an error only for malformed values (e.g. a
 // DBDriver that isn't sqlite or postgres).
+//
+// Per CONSTITUTION.md Rule 1, the canonical ServerVersion default is
+// the resolver's value (`version.Resolve().Version`). Operators may
+// still override via DARK_SERVER_VERSION (e.g. for canary / blue-green
+// deploys), but the typical path is to build the binary with
+// `make release`, which injects the git tag into the resolver.
 func LoadConfig() (*Config, error) {
+	resolvedVersion := version.Resolve().Version
 	cfg := &Config{
 		DBDriver:         strings.TrimSpace(strings.ToLower(envOr("DARK_DB_DRIVER", "sqlite"))),
 		DBDSN:            strings.TrimSpace(envOr("DARK_DB", defaultDSN())),
 		CacheDir:         strings.TrimSpace(envOr("DARK_CACHE_DIR", "")),
 		ServerName:       strings.TrimSpace(envOr("DARK_SERVER_NAME", "dark-memory-mcp")),
-		ServerVersion:    strings.TrimSpace(envOr("DARK_SERVER_VERSION", DefaultServerVersion)),
+		ServerVersion:    strings.TrimSpace(envOr("DARK_SERVER_VERSION", resolvedVersion)),
 		CoexistenceGroup: strings.TrimSpace(envOr("DARK_COEXISTENCE_GROUP", "dark-agents/memory")),
 		BootedAt:         time.Now().UTC(),
 	}
@@ -173,8 +181,9 @@ func defaultDSN() string {
 // DefaultDSN exposes defaultDSN for tests/invariants. See docs/INVARIANTS.md INV-8.
 func DefaultDSN() string { return defaultDSN() }
 
-// DefaultServerVersion is the canonical server version baked at build
-// time. Operators can override it via DARK_SERVER_VERSION in env,
-// which LoadConfig resolves into Config.ServerVersion. Bumped to
-// 1.3.0 in the v1.3.0 release (health_ping tool added).
-const DefaultServerVersion = "1.3.0"
+// DefaultServerVersion is the canonical server version. Deprecated as
+// a hardcoded constant since the v1.4.0 release; the canonical source
+// is now `version.Resolve().Version` (set by `make release` via
+// `-ldflags`). Retained as a string for any external call sites that
+// still reference it. See CONSTITUTION.md Rule 1.
+const DefaultServerVersion = "1.4.0-dev"

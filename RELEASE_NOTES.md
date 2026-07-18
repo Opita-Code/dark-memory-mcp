@@ -117,3 +117,62 @@ to get involved.
 ## License
 
 MIT. See [`LICENSE`](https://github.com/Opita-Code/dark-memory-mcp/blob/main/LICENSE).
+
+---
+
+# v1.3.2 — 2026-07-16 (current)
+
+> The full change history is in [`CHANGELOG.md`](CHANGELOG.md). This
+> section captures the highlights for operators evaluating the current
+> release.
+
+## Headline
+
+**Federation across the dark-agents namespace.** `dark-memory-mcp` and
+`dark-research-mcp` are now peers over a shared schema — read-only
+cross-namespace lookup via the new `internal/federation` package and
+the `dark_memory_federation_lookup` tool (opt-in via
+`DARK_FEDERATION_PEER_DSN`). The drift-judge-daemon HTTP route is
+finally wired in `SelfHarnessClient.Judge` for the `dark_scrapper`
+provider.
+
+## Headline (release integrity)
+
+The `release-integrity@1.0.0` constitution (see
+[`CONSTITUTION.md`](CONSTITUTION.md)) is established. From this
+release forward, every `dark_memory_health_ping` call reports
+`git.tag`, `git.head_sha`, `git.dirty`, and `git.build_version`. A
+disagreement between any of those and the running `server.version`
+flips `drift=true` in the response and dispatches a
+`vlp_handle_event(verdict=drift_detected)`.
+
+## Single source of truth for version
+
+The `internal/version` package is the new canonical version resolver.
+All three binaries (`dark-mem-mcp`, `dark-mem-cli`, `dark-mem-inspect`)
+resolve their reported version through it. Build-time injection via
+`-ldflags` is the canonical path; `runtime/debug.ReadBuildInfo()` is
+the dev-build path; the hardcoded `dev` fallback is reserved for
+emergency debugging and emits a `drift_warning` in the health
+response.
+
+## What changed since v1.0.0
+
+| Version | Date | Headline |
+|---|---|---|
+| v1.0.0 | 2026-07-12 | First stable release (26 tools, dual driver, 6 invariants) |
+| v1.1.0 | 2026-07-16 | `vlp_handle_event` (L6-VLP namespace) |
+| v1.2.0–v1.2.5 | 2026-07-16 | Production-readiness sweep (F33–F40), per-MCP DB isolation, migration self-healing |
+| v1.3.0 | 2026-07-16 | `dark_memory_health_ping`, wire-conformance test suite, CI recipe |
+| v1.3.1 | 2026-07-16 | Release-plumbing tag (retroactive, see CHANGELOG) |
+| v1.3.2 | 2026-07-16 | Federation (cross-namespace lookup) + drift-judge-daemon HTTP wiring |
+
+## Upgrade
+
+No data migration required. Operators upgrading from v1.0.0–v1.3.1:
+
+1. `git pull` and `make release` (or `go install ...@v1.3.2`).
+2. Re-run `dark-mem-cli migrate` (idempotent).
+3. (Optional) Set `DARK_FEDERATION_PEER_DSN` to point at a peer
+   `dark-research-mcp`'s `dark.db` to enable cross-namespace lookup.
+4. (Optional) Set `DARK_REDTEAM=armed` to enable the 3 redteam tools.

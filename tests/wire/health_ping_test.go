@@ -88,6 +88,22 @@ func TestWire_HealthPingShape(t *testing.T) {
 		t.Errorf("checked_at empty")
 	}
 
+	// v1.4.0 (DARK-MEM-003): git block + drift. The `source` field
+	// is always one of {ldflags, buildinfo, dev} per the resolver
+	// contract. The `drift` field is true iff the build resolved via
+	// the dev fallback OR the working tree was dirty at build time.
+	// A CI release build should report drift=false; a dev build
+	// (this test running locally) reports drift=true. Both are valid.
+	switch got.Git.Source {
+	case "ldflags", "buildinfo", "dev":
+		// ok
+	default:
+		t.Errorf("git.source=%q; want one of ldflags|buildinfo|dev", got.Git.Source)
+	}
+	if got.Drift != (got.Git.IsDev || got.Git.Dirty) {
+		t.Errorf("drift=%v != IsDev||Dirty (%v)", got.Drift, got.Git.IsDev || got.Git.Dirty)
+	}
+
 	// v1.3.0 (bug-hunt polish): GDPR/CCPA scope. The wire response
 	// may be persisted by harnesses; the operator's username must
 	// not appear verbatim. The redacted form keeps the path layout
@@ -172,6 +188,12 @@ func TestWire_HealthPingLatency(t *testing.T) {
 // response. Mirrors tools.healthPingResult but with json tags the wire
 // decoder populates. Kept separate so the tools package can evolve its
 // internal struct without breaking this frozen contract test.
+//
+// v1.4.0 (DARK-MEM-003): the contract grew by a `git` block and a
+// top-level `drift` bool. Per CONSTITUTION.md Rule 4, the `git` block
+// is the resolver's view of the build provenance (tag, commit, dirty,
+// build_time, source, is_dev) and `drift` is a single-bit liveness
+// signal that the operator can monitor.
 type healthWireShape struct {
 	Server struct {
 		Name             string `json:"name"`
@@ -197,6 +219,15 @@ type healthWireShape struct {
 		CanonicalTools int `json:"canonical_tools"`
 		ExtraTools     int `json:"extra_tools"`
 	} `json:"registry"`
+	Git struct {
+		Tag       string `json:"tag,omitempty"`
+		Commit    string `json:"commit,omitempty"`
+		Dirty     bool   `json:"dirty,omitempty"`
+		BuildTime string `json:"build_time,omitempty"`
+		Source    string `json:"source"`
+		IsDev     bool   `json:"is_dev,omitempty"`
+	} `json:"git"`
+	Drift     bool    `json:"drift,omitempty"`
 	LatencyMS float64 `json:"latency_ms"`
 	CheckedAt string  `json:"checked_at"`
 }

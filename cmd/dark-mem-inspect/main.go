@@ -26,6 +26,7 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/audit"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 	"github.com/dark-agents/dark-memory-mcp/internal/store/runtime"
+	"github.com/dark-agents/dark-memory-mcp/internal/version"
 )
 
 // Exit codes (matching dark-mem-cli).
@@ -35,8 +36,12 @@ const (
 	exitUsageErr   = 2
 )
 
-// Version is set at build time via -ldflags.
-var Version = "1.1.0-dev"
+// Version is set at build time via -ldflags, resolved at runtime via
+// `version.Resolve()`. Per CONSTITUTION.md Rule 1, the ldflags path is
+// the canonical source; the resolver falls back to debug.ReadBuildInfo
+// for `go install` builds and to the "dev" sentinel for emergency
+// debug builds (emits IsDev=true so the operator sees a drift_warning).
+var Version = version.Resolve().String()
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
