@@ -1,4 +1,4 @@
-﻿// LLMClient is one LLM-as-judge endpoint. Three implementations:
+// LLMClient is one LLM-as-judge endpoint. Three implementations:
 //
 //   - SelfHarnessClient: detects the harness's own LLM via env vars
 //     (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, ...). This is
@@ -37,11 +37,11 @@ const driftJudgeDaemonTimeout = 60 * time.Second
 // system prompt template. Model is a hint from the OSINT selector
 // (recommended for the eval_type); clients may ignore or use it.
 type JudgeRequest struct {
-	EvalType    string `json:"eval_type"`    // brand_match | compliance_check | drift_judge | grounding_check | pii_detect | prompt_injection_scan | consensus
-	Content     string `json:"content"`      // the text to evaluate
-	TargetType  string `json:"target_type"`  // brand | artifact | spec | claim | code | ...
-	TargetID    string `json:"target_id"`    // brand_id | artifact_id | ...
-	Model       string `json:"model,omitempty"`     // recommended by OSINTSelector
+	EvalType     string `json:"eval_type"`               // brand_match | compliance_check | drift_judge | grounding_check | pii_detect | prompt_injection_scan | consensus
+	Content      string `json:"content"`                 // the text to evaluate
+	TargetType   string `json:"target_type"`             // brand | artifact | spec | claim | code | ...
+	TargetID     string `json:"target_id"`               // brand_id | artifact_id | ...
+	Model        string `json:"model,omitempty"`         // recommended by OSINTSelector
 	SystemPrompt string `json:"system_prompt,omitempty"` // optional override
 }
 
@@ -87,14 +87,14 @@ var ErrNoLLMAvailable = errors.New("no LLM available: harness has no API key (se
 //
 // Detection order (first match wins):
 //
-//   1. ANTHROPIC_API_KEY  → Anthropic Claude (stub in this build)
-//   2. OPENAI_API_KEY     → OpenAI GPT (stub in this build)
-//   3. GEMINI_API_KEY     → Google Gemini (stub in this build)
-//  4. DARK_DRIFT_JUDGE_DAEMON_URL  → [drift-judge-daemon] pool (WIRED)
-//   5. none               → ErrNoLLMAvailable
+//  1. ANTHROPIC_API_KEY  ÔåÆ Anthropic Claude (stub in this build)
+//  2. OPENAI_API_KEY     ÔåÆ OpenAI GPT (stub in this build)
+//  3. GEMINI_API_KEY     ÔåÆ Google Gemini (stub in this build)
+//  4. DARK_DRIFT_JUDGE_DAEMON_URL  ÔåÆ [drift-judge-daemon] pool (WIRED)
+//  5. none               ÔåÆ ErrNoLLMAvailable
 //
 // The model is auto-picked via the OSINTSelector for the eval_type
-// (config-based today, real OSINT later — see spec 173 O5).
+// (config-based today, real OSINT later ÔÇö see spec 173 O5).
 type SelfHarnessClient struct {
 	provider string
 	model    string
@@ -145,17 +145,19 @@ func (s *SelfHarnessClient) Name() string {
 
 // Judge implements LLMClient.
 //
-// Wave 3.5 update: when provider == "drift_judge_daemon", this method now
-// performs an actual HTTP POST to DARK_DRIFT_JUDGE_DAEMON_URL/v1/messages with
-// sentinel auth (Bearer ds-managed). Other providers (anthropic /
-// openai / google) still return ErrNoLLMAvailable; their direct HTTP
-// clients remain deferred to Wave 4+.
+// Wave 4 update (2026-07-18): provider=anthropic with SDD_LLM_BASE_URL set
+// now routes through the configured Anthropic-compatible endpoint using the
+// real ANTHROPIC_API_KEY. Probes confirmed that
+// `https://api.minimax.io/anthropic/v1/messages` accepts both
+// `x-api-key: <key>` and `Authorization: Bearer <key>`, so we send both
+// for safety. Without SDD_LLM_BASE_URL, fall through to the explicit stub
+// error to preserve the source's stated philosophy of surfacing the gap
+// (not silently faking verdicts). openai / google remain stubs.
 //
-// The chosen route is the [drift-judge-daemon] /v1/messages endpoint,
-// which is Anthropic Messages API compatible. This is the same wire
-// format used by verify-llm-pipeline.ps1 (stage 2 against the daemon,
-// stage 4 against mock-llm on :9000), so the patch is verified
-// independently by re-running that script.
+// The drift_judge_daemon path (DARK_DRIFT_JUDGE_DAEMON_URL with sentinel auth
+// "ds-managed") is preserved verbatim for [drift-judge-daemon] compatibility.
+// Wire format is identical (Anthropic Messages API), so verify-llm-pipeline.ps1
+// stage 2/4 regression suite continues to apply.
 func (s *SelfHarnessClient) Judge(ctx context.Context, req JudgeRequest) (*JudgeResponse, error) {
 	if s == nil || s.provider == "" {
 		return nil, ErrNoLLMAvailable
@@ -163,14 +165,38 @@ func (s *SelfHarnessClient) Judge(ctx context.Context, req JudgeRequest) (*Judge
 	if s.provider == "drift_judge_daemon" {
 		return s.judgeViaDriftJudgeDaemon(ctx, req)
 	}
-	// Other providers remain stubs in this build. Surfacing the gap
-	// (not silently faking verdicts) is intentional.
-	return nil, fmt.Errorf("%w: self_harness provider=%s model=%s — direct HTTP for this provider deferred to Wave 4",
+	// Wave 4: anthropic + SDD_LLM_BASE_URL set ÔåÆ real LLM via judgeViaHTTP.
+	// Guarded so that absence of SDD_LLM_BASE_URL (or empty ANTHROPIC_API_KEY)
+	// still surfaces the explicit gap error rather than silently faking.
+	if s.provider == "anthropic" {
+		if baseURL := os.Getenv("SDD_LLM_BASE_URL"); baseURL != "" && s.key != "" {
+			return s.judgeViaHTTP(ctx, req, baseURL, s.key)
+		}
+	}
+	// openai / google / no-env still return the explicit gap error.
+	return nil, fmt.Errorf("%w: self_harness provider=%s model=%s ÔÇö direct HTTP for this provider deferred to Wave 4 (or set SDD_LLM_BASE_URL for anthropic)",
 		ErrNoLLMAvailable, s.provider, s.model)
 }
 
-// judgeViaDriftJudgeDaemon performs one Anthropic-format POST to
-// DARK_DRIFT_JUDGE_DAEMON_URL/v1/messages with sentinel auth.
+// judgeViaDriftJudgeDaemon is the [drift-judge-daemon] HTTP path. It posts to
+// DARK_DRIFT_JUDGE_DAEMON_URL/v1/messages with sentinel auth ("ds-managed" in both
+// Authorization and x-api-key headers) so the daemon's pool router can
+// attribute the request to the harness without leaking the real key.
+//
+// Kept verbatim for the legacy harness. New code paths (provider=anthropic
+// + SDD_LLM_BASE_URL) call judgeViaHTTP directly with the real key.
+func (s *SelfHarnessClient) judgeViaDriftJudgeDaemon(ctx context.Context, req JudgeRequest) (*JudgeResponse, error) {
+	if s.key == "" {
+		return nil, fmt.Errorf("%w: drift-judge-daemon URL is empty (set DARK_DRIFT_JUDGE_DAEMON_URL)", ErrNoLLMAvailable)
+	}
+	return s.judgeViaHTTP(ctx, req, s.key, "ds-managed")
+}
+
+// judgeViaHTTP performs one Anthropic-format POST and parses the response.
+// It is the generic worker for both the drift-judge-daemon sentinel path and the
+// Wave 4 anthropic-direct path; the only differences between callers are the
+// baseURL and the authValue that goes into both `Authorization: Bearer` and
+// `x-api-key` headers.
 //
 // Request shape (Anthropic Messages API):
 //
@@ -181,32 +207,32 @@ func (s *SelfHarnessClient) Judge(ctx context.Context, req JudgeRequest) (*Judge
 //	  "messages": [{"role":"user","content":"..."}]
 //	}
 //
-// Response parsing is lenient: accepts both Anthropic Messages API
-// format (content[0].text) and the minimal mock-llm format ({text: "..."}).
-// Any non-JSON response is wrapped verbatim as the verdict text so the
+// Response parsing is lenient: accepts both Anthropic Messages API format
+// (content[0].text) and the minimal mock-llm format ({text: "..."}). Any
+// non-JSON response is wrapped verbatim as the verdict text so the
 // orchestrator's downstream parsing can decide.
 //
-// Safety: rejects URLs without an http(s) scheme, host, or with
-// non-loopback hosts in safety-strict mode. Does NOT block loopback
-// (operator runs the daemon locally by design).
-func (s *SelfHarnessClient) judgeViaDriftJudgeDaemon(ctx context.Context, req JudgeRequest) (*JudgeResponse, error) {
-	if s.key == "" {
-		return nil, fmt.Errorf("%w: drift-judge-daemon URL is empty (set DARK_DRIFT_JUDGE_DAEMON_URL)", ErrNoLLMAvailable)
+// Safety: rejects URLs without an http(s) scheme, host, or with non-loopback
+// hosts in safety-strict mode. Does NOT block loopback (operator runs the
+// daemon locally by design).
+func (s *SelfHarnessClient) judgeViaHTTP(ctx context.Context, req JudgeRequest, baseURL, authValue string) (*JudgeResponse, error) {
+	if baseURL == "" {
+		return nil, fmt.Errorf("judge: baseURL is empty")
 	}
 
 	// URL validation: must parse, must be http(s), must have a host.
-	endpoint, err := url.Parse(s.key)
+	endpoint, err := url.Parse(baseURL)
 	if err != nil {
-		return nil, fmt.Errorf("%w: invalid DARK_DRIFT_JUDGE_DAEMON_URL: %v", ErrNoLLMAvailable, err)
+		return nil, fmt.Errorf("judge: invalid baseURL %q: %w", baseURL, err)
 	}
 	if endpoint.Scheme != "http" && endpoint.Scheme != "https" {
-		return nil, fmt.Errorf("%w: DARK_DRIFT_JUDGE_DAEMON_URL must be http(s); got %q", ErrNoLLMAvailable, endpoint.Scheme)
+		return nil, fmt.Errorf("judge: baseURL must be http(s); got %q", endpoint.Scheme)
 	}
 	if endpoint.Host == "" {
-		return nil, fmt.Errorf("%w: DARK_DRIFT_JUDGE_DAEMON_URL has no host", ErrNoLLMAvailable)
+		return nil, fmt.Errorf("judge: baseURL %q has no host", baseURL)
 	}
 
-	// Resolve model. Caller hint > OSINT catalog > safe default.
+	// Resolve model. Caller hint > client config > safe default.
 	model := req.Model
 	if model == "" {
 		model = s.model
@@ -234,38 +260,38 @@ func (s *SelfHarnessClient) judgeViaDriftJudgeDaemon(ctx context.Context, req Ju
 		return nil, fmt.Errorf("judge: marshal request: %w", err)
 	}
 
-	endpointStr := strings.TrimRight(s.key, "/") + "/v1/messages"
+	endpointStr := strings.TrimRight(baseURL, "/") + "/v1/messages"
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpointStr, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("judge: build http request: %w", err)
 	}
-	httpReq.Header.Set("Authorization", "Bearer ds-managed")
-	httpReq.Header.Set("x-api-key", "ds-managed")
+	httpReq.Header.Set("Authorization", "Bearer "+authValue)
+	httpReq.Header.Set("x-api-key", authValue)
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
 
 	httpClient := &http.Client{Timeout: driftJudgeDaemonTimeout}
 	httpResp, err := httpClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("judge: drift-judge-daemon request: %w", err)
+		return nil, fmt.Errorf("judge: http request: %w", err)
 	}
 	defer httpResp.Body.Close()
 
 	respBytes, err := io.ReadAll(httpResp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("judge: read drift-judge-daemon response: %w", err)
+		return nil, fmt.Errorf("judge: read response: %w", err)
 	}
 
 	if httpResp.StatusCode != http.StatusOK {
 		// 503 with empty pool is a legitimate daemon signal: pool is
 		// drained, harvest cycle will refill. Surface the message.
-		return nil, fmt.Errorf("judge: drift-judge-daemon HTTP %d: %s", httpResp.StatusCode, truncateForErr(string(respBytes), 512))
+		return nil, fmt.Errorf("judge: HTTP %d: %s", httpResp.StatusCode, truncateForErr(string(respBytes), 512))
 	}
 
-	// Parse response. Two shapes:
-	//   1. Anthropic: {"content":[{"type":"text","text":"..."}], "model":"...", ...}
-	//   2. mock-llm:  {"text":"..."}
-	//   3. fallback:  raw text (wrapped as verdict)
+	// Parse response. Three shapes:
+	//   1. Anthropic Messages API: {"content":[{"type":"text","text":"..."}], ...}
+	//   2. mock-llm minimal:        {"text":"..."}
+	//   3. fallback:                raw text wrapped as verdict
 	var resp struct {
 		Content []struct {
 			Type string `json:"type"`
@@ -279,7 +305,7 @@ func (s *SelfHarnessClient) judgeViaDriftJudgeDaemon(ctx context.Context, req Ju
 			VerdictJSON: string(respBytes),
 			Confidence:  0.7,
 			Model:       model,
-			Provider:    "drift_judge_daemon",
+			Provider:    s.provider,
 		}, nil
 	}
 
@@ -305,7 +331,7 @@ func (s *SelfHarnessClient) judgeViaDriftJudgeDaemon(ctx context.Context, req Ju
 		VerdictJSON: text,
 		Confidence:  confidence,
 		Model:       model,
-		Provider:    "drift_judge_daemon",
+		Provider:    s.provider,
 	}, nil
 }
 

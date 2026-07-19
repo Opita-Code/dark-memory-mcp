@@ -13,8 +13,8 @@
 //
 //   - bridge.2: coexistence_group is declared in the initialize
 //     response (via the standard MCP instructions field).
-//   - bridge.4: tools/list returns the canonical 25-tool order
-//     (RFC D-9 namespace grouping).
+//   - bridge.4: tools/list returns the canonical 29-tool order
+//     (RFC D-9 namespace grouping, v2.0.0 after pivot added recall).
 //   - bridge.6: panic in a tool handler does not crash the server.
 //   - General: initialize / tools/list / tools/call wire format
 //     matches MCP 2025-06-18.
@@ -122,7 +122,7 @@ func TestBridge7_Initialize(t *testing.T) {
 // v1.2.0: PROJECT namespace (1 tool: project_create) inserted at
 // index 0, before SESSION.
 // v1.3.0: OBSERVABILITY namespace grew 3 → 4 with health_ping; the
-// canonical count is now 28 (was 27 in v1.2.x, 26 in v1.1.x).
+// canonical count is now 29 (was 28 in v1.3.x, 27 in v1.2.x, 26 in v1.1.x).
 //
 // This is the wire-format regression for the bug we caught during
 // the W4A polish: mcp-go's handleListTools sorts alphabetically;
@@ -147,8 +147,8 @@ func TestBridge7_ListToolsCanonical(t *testing.T) {
 		t.Fatalf("list tools: %v", err)
 	}
 
-	if len(result.Tools) != 28 {
-		t.Fatalf("tool count: want 28 (v1.3.0), got %d", len(result.Tools))
+	if len(result.Tools) != 29 {
+		t.Fatalf("tool count: want 29 (v2.0.0 — pivot added dark_memory_recall), got %d", len(result.Tools))
 	}
 
 	want := canonicalWireOrder()
@@ -265,9 +265,9 @@ func TestBridge7_CallToolErrorPath(t *testing.T) {
 }
 
 // canonicalWireOrder is the wire-format (dark_memory_*) version of
-// the 28-tool canonical order (v1.3.0; was 27 in v1.2.x and 26 in
-// v1.1.x), mirrored from internal/tools/registry.go so this test
-// doesn't depend on the library's internal package (it tests the
+// the 29-tool canonical order (v2.0.0; was 28 in v1.3.x, 27 in v1.2.x
+// and 26 in v1.1.x), mirrored from internal/tools/registry.go so this
+// test doesn't depend on the library's internal package (it tests the
 // wire format, not the library shape).
 func canonicalWireOrder() []string {
 	bare := []string{
@@ -279,8 +279,8 @@ func canonicalWireOrder() []string {
 		"research_topic", "research_recall", "research_resume_thread",
 		// VIBE (4)
 		"vibe_publish", "vibe_spec", "pipeline_status", "resolve_drift",
-		// CONTEXT (3)
-		"artifact_context", "spec_context", "session_context",
+		// CONTEXT (4) — v2.0.0 grew from 3 to 4 with `recall`
+		"artifact_context", "spec_context", "session_context", "recall",
 		// JUDGE (3)
 		"judge", "consensus", "judgment_history",
 		// POLICY (2)

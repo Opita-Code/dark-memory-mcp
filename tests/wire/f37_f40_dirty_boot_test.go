@@ -163,7 +163,7 @@ func seedDirtyDB(t *testing.T, dbPath string) {
 		`CREATE TABLE constitutions (id INTEGER PRIMARY KEY AUTOINCREMENT, constitution_id TEXT UNIQUE NOT NULL, version TEXT NOT NULL, sha256 TEXT NOT NULL, source_path TEXT, source_text TEXT NOT NULL, is_active INTEGER NOT NULL DEFAULT 0, last_verified_at TEXT, last_verified_sha256 TEXT, created_at TEXT NOT NULL)`,
 		`CREATE TABLE mods (mod_id TEXT PRIMARY KEY, version TEXT NOT NULL, sha256 TEXT NOT NULL, risk_class TEXT NOT NULL, source_path TEXT NOT NULL, created_at TEXT NOT NULL)`,
 		`CREATE TABLE mod_loads (id INTEGER PRIMARY KEY AUTOINCREMENT, mod_id TEXT NOT NULL, constitution_id TEXT, constitution_ver TEXT, session_id TEXT, actor TEXT, accepted INTEGER NOT NULL DEFAULT 0, reject_reason TEXT, created_at TEXT NOT NULL)`,
-		`CREATE TABLE write_audit (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), actor TEXT NOT NULL, action TEXT NOT NULL, target_type TEXT, target_id INTEGER, diff_json TEXT, notes TEXT, session_id TEXT, project_id TEXT NOT NULL DEFAULT 'default')`,
+		`CREATE TABLE write_audit (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')), actor TEXT NOT NULL, action TEXT NOT NULL, target_type TEXT, target_id INTEGER, diff_json TEXT, notes TEXT, session_id TEXT, project_id TEXT NOT NULL DEFAULT 'default', created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')))`,
 		`CREATE TABLE vibe_brands (brand_id TEXT PRIMARY KEY, voice_json TEXT, visual_json TEXT, narrative_json TEXT, compliance_json TEXT, created_at TEXT NOT NULL, updated_at TEXT)`,
 		// Record v1-v7 as applied (F38 will materialise sessions/projects
 		// when migrate runs and finds they don't exist).

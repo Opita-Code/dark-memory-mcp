@@ -14,6 +14,8 @@ package orchestration
 
 import (
 	"context"
+
+	"github.com/dark-agents/dark-memory-mcp/internal/session"
 )
 
 // MemoryStateResult is the runtime snapshot. Counts are aggregate
@@ -68,7 +70,10 @@ func (o *Orchestrator) MemoryState(ctx context.Context) (*MemoryStateResult, err
 	sessions, _ := o.Store.ListSessions(ctx, 1000)
 	sessionsActive := 0
 	for _, s := range sessions {
-		if s.Status == "active" {
+		// Wave 5E: sessions in 'open' OR 'idle' are accepting tool
+		// calls (active). 'closed_clean' / 'closed_aborted' / 'archived'
+		// are terminal-or-resurrectable only; they don't count as active.
+		if s.Status == string(session.StatusOpen) || s.Status == string(session.StatusIdle) {
 			sessionsActive++
 		}
 	}

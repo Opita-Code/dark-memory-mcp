@@ -50,6 +50,22 @@ type Config struct {
 	// §3 / spec 164 bridge.2). Default: "dark-agents/memory".
 	CoexistenceGroup string
 
+	// ConstitutionFile is the path to the constitution TOML. When set,
+	// the Store watchdog (INV-4) hashes the file and verifies against
+	// the stored SHA in the constitutions table. Wave INFRA-003 v2:
+	// combined with ConstitutionID + ConstitutionVer, enables the
+	// operator-facing migration step (DARK_CONSTITUTION_ACCEPT_BUMPS=1
+	// for version-bump opt-in). Default: empty (watchdog dormant).
+	ConstitutionFile string
+
+	// ConstitutionID identifies which constitution family the watchdog
+	// tracks. Default: empty. See ConstitutionFile.
+	ConstitutionID string
+
+	// ConstitutionVer is the active version the operator wants to run.
+	// The watchdog compares against this on Open(). Default: empty.
+	ConstitutionVer string
+
 	// BootedAt is the wall-clock time the server began its boot
 	// sequence (set by LoadConfig from time.Now()). dark_memory_health_ping
 	// uses it to compute uptime_seconds. v1.3.0.
@@ -61,8 +77,11 @@ type Config struct {
 // around the server without re-wrapping.
 func (c *Config) StoreConfig() store.Config {
 	return store.Config{
-		Driver: store.Driver(c.DBDriver),
-		DSN:    c.DBDSN,
+		Driver:          store.Driver(c.DBDriver),
+		DSN:             c.DBDSN,
+		ConstitutionFile: c.ConstitutionFile,
+		ConstitutionID:  c.ConstitutionID,
+		ConstitutionVer: c.ConstitutionVer,
 	}
 }
 
@@ -85,6 +104,12 @@ func LoadConfig() (*Config, error) {
 		ServerName:       strings.TrimSpace(envOr("DARK_SERVER_NAME", "dark-memory-mcp")),
 		ServerVersion:    strings.TrimSpace(envOr("DARK_SERVER_VERSION", resolvedVersion)),
 		CoexistenceGroup: strings.TrimSpace(envOr("DARK_COEXISTENCE_GROUP", "dark-agents/memory")),
+		// Constitution watchdog (INV-4 + Wave INFRA-003 v2). All three
+		// must be set for the watchdog to be active. If ConstitutionFile
+		// is empty the watchdog short-circuits (existing behavior).
+		ConstitutionFile: strings.TrimSpace(envOr("DARK_CONSTITUTION_FILE", "")),
+		ConstitutionID:   strings.TrimSpace(envOr("DARK_CONSTITUTION_ID", "")),
+		ConstitutionVer:  strings.TrimSpace(envOr("DARK_CONSTITUTION_VER", "")),
 		BootedAt:         time.Now().UTC(),
 	}
 
@@ -186,4 +211,4 @@ func DefaultDSN() string { return defaultDSN() }
 // is now `version.Resolve().Version` (set by `make release` via
 // `-ldflags`). Retained as a string for any external call sites that
 // still reference it. See CONSTITUTION.md Rule 1.
-const DefaultServerVersion = "1.4.1-dev"
+const DefaultServerVersion = "2.0.0-dev"

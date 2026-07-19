@@ -135,7 +135,7 @@ func TestProject_MigrationV7_BackwardCompat(t *testing.T) {
 	// Set active to 'default' (legacy path).
 	s.SetActiveProject(ctx, "default")
 	wc := store.WriteContext{Actor: "test", SessionID: "legacy-sess", WritePath: "test", ProjectID: "default"}
-	sess := &session.Session{SessionID: "legacy-sess", Status: string(session.StatusActive)}
+	sess := &session.Session{SessionID: "legacy-sess", Status: string(session.StatusOpen)}
 	if _, err := s.SaveSession(ctx, wc, sess); err != nil {
 		t.Fatalf("save legacy session: %v", err)
 	}
@@ -199,6 +199,78 @@ func TestProject_CRUD(t *testing.T) {
 		if p2.ProjectID == "acme-2026" {
 			t.Fatalf("archived project still in active list")
 		}
+	}
+}
+
+// TestProject_DriftStrictness_Roundtrip (Wave 5X.3): the
+// drift_strictness column must round-trip through CreateProject +
+// GetProject + ListProjects. Empty input → "default" sentinel.
+// Valid override → persisted verbatim.
+func TestProject_DriftStrictness_Roundtrip(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+
+	// Case 1: empty → default sentinel.
+	p1 := &project.Project{
+		ProjectID:   "drift-default",
+		DisplayName: "Default Drift",
+	}
+	if err := s.CreateProject(ctx, p1); err != nil {
+		t.Fatalf("create p1: %v", err)
+	}
+	got1, err := s.GetProject(ctx, "drift-default")
+	if err != nil {
+		t.Fatalf("get p1: %v", err)
+	}
+	if got1 == nil {
+		t.Fatalf("get p1: nil")
+	}
+	if got1.DriftStrictness != "default" {
+		t.Errorf("p1.DriftStrictness = %q, want \"default\" (empty input normalises)", got1.DriftStrictness)
+	}
+
+	// Case 2: explicit override → persisted verbatim.
+	p2 := &project.Project{
+		ProjectID:        "drift-strict",
+		DisplayName:      "Strict Drift",
+		DriftStrictness:  "strict",
+	}
+	if err := s.CreateProject(ctx, p2); err != nil {
+		t.Fatalf("create p2: %v", err)
+	}
+	got2, err := s.GetProject(ctx, "drift-strict")
+	if err != nil {
+		t.Fatalf("get p2: %v", err)
+	}
+	if got2 == nil {
+		t.Fatalf("get p2: nil")
+	}
+	if got2.DriftStrictness != "strict" {
+		t.Errorf("p2.DriftStrictness = %q, want \"strict\"", got2.DriftStrictness)
+	}
+
+	// Case 3: ListProjects includes the value.
+	list, err := s.ListProjects(ctx, 100)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	found := 0
+	for _, p := range list {
+		switch p.ProjectID {
+		case "drift-default":
+			if p.DriftStrictness != "default" {
+				t.Errorf("list drift-default.DriftStrictness = %q, want default", p.DriftStrictness)
+			}
+			found++
+		case "drift-strict":
+			if p.DriftStrictness != "strict" {
+				t.Errorf("list drift-strict.DriftStrictness = %q, want strict", p.DriftStrictness)
+			}
+			found++
+		}
+	}
+	if found != 2 {
+		t.Errorf("expected both drift-strictness projects in list, found %d", found)
 	}
 }
 
@@ -527,7 +599,7 @@ func TestProject_GetSession_CrossProject_ReturnsNil(t *testing.T) {
 	// Write a session in project A.
 	s.SetActiveProject(ctx, "acme")
 	wcA := store.WriteContext{Actor: "test", SessionID: "sess-A", WritePath: "test", ProjectID: "acme"}
-	if _, err := s.SaveSession(ctx, wcA, &session.Session{SessionID: "sess-A", Status: string(session.StatusActive)}); err != nil {
+	if _, err := s.SaveSession(ctx, wcA, &session.Session{SessionID: "sess-A", Status: string(session.StatusOpen)}); err != nil {
 		t.Fatalf("save A: %v", err)
 	}
 
@@ -566,12 +638,12 @@ func TestProject_ListSessions_CrossProject_Isolated(t *testing.T) {
 
 	s.SetActiveProject(ctx, "acme")
 	if _, err := s.SaveSession(ctx, store.WriteContext{Actor: "test", SessionID: "sess-A", WritePath: "test", ProjectID: "acme"},
-		&session.Session{SessionID: "sess-A", Status: string(session.StatusActive)}); err != nil {
+		&session.Session{SessionID: "sess-A", Status: string(session.StatusOpen)}); err != nil {
 		t.Fatalf("save A: %v", err)
 	}
 	s.SetActiveProject(ctx, "globex")
 	if _, err := s.SaveSession(ctx, store.WriteContext{Actor: "test", SessionID: "sess-B", WritePath: "test", ProjectID: "globex"},
-		&session.Session{SessionID: "sess-B", Status: string(session.StatusActive)}); err != nil {
+		&session.Session{SessionID: "sess-B", Status: string(session.StatusOpen)}); err != nil {
 		t.Fatalf("save B: %v", err)
 	}
 
@@ -615,13 +687,13 @@ func TestProject_CloseSession_CrossProject_NotClosed(t *testing.T) {
 
 	s.SetActiveProject(ctx, "acme")
 	if _, err := s.SaveSession(ctx, store.WriteContext{Actor: "test", SessionID: "sess-A", WritePath: "test", ProjectID: "acme"},
-		&session.Session{SessionID: "sess-A", Status: string(session.StatusActive)}); err != nil {
+		&session.Session{SessionID: "sess-A", Status: string(session.StatusOpen)}); err != nil {
 		t.Fatalf("save A: %v", err)
 	}
 
 	// Try to close from globex.
 	s.SetActiveProject(ctx, "globex")
-	err := s.CloseSession(ctx, store.WriteContext{Actor: "test", SessionID: "sess-A", WritePath: "test", ProjectID: "globex"}, "sess-A")
+	err := s.CloseSession(ctx, store.WriteContext{Actor: "test", SessionID: "sess-A", WritePath: "test", ProjectID: "globex"}, "sess-A", "clean")
 	if err == nil {
 		t.Fatalf("expected error closing cross-project session, got nil")
 	}
@@ -638,7 +710,7 @@ func TestProject_CloseSession_CrossProject_NotClosed(t *testing.T) {
 	if got == nil {
 		t.Fatalf("sess-A disappeared")
 	}
-	if got.Status != string(session.StatusActive) {
+	if got.Status != string(session.StatusOpen) {
 		t.Fatalf("sess-A was closed by cross-project attempt, status=%s", got.Status)
 	}
 }

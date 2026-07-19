@@ -125,7 +125,9 @@ func (r *Registry) Names() []string {
 
 // CanonicalOrder returns the fixed canonical tool order (spec 164,
 // bridge.4). Used by tests that want to assert "did we register all
-// 28 in the right order".
+// 29 in the right order".
+//
+// 5A.ii.b.2.c: bumped from 28 to 29 (added `recall`).
 func CanonicalOrder() []string {
 	out := make([]string, len(canonicalToolOrder))
 	copy(out, canonicalToolOrder)
@@ -219,8 +221,8 @@ var canonicalToolOrder = []string{
 	"research_topic", "research_recall", "research_resume_thread",
 	// VIBE (4)
 	"vibe_publish", "vibe_spec", "pipeline_status", "resolve_drift",
-	// CONTEXT (3)
-	"artifact_context", "spec_context", "session_context",
+	// CONTEXT (4) — v2.0.0 (5A.ii.b.2.c): `recall` added.
+	"artifact_context", "spec_context", "session_context", "recall",
 	// JUDGE (3)
 	"judge", "consensus", "judgment_history",
 	// POLICY (2)

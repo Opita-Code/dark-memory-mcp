@@ -1,13 +1,18 @@
 // Package postgres contains the Postgres-flavored DDL for Dark Memory MCP
-// migrations v1..v6.
+// migrations v1..v16.
 //
 // Differences from internal/migrate/sqlite:
 //   - INTEGER PRIMARY KEY AUTOINCREMENT → BIGSERIAL (or BIGINT GENERATED ALWAYS AS IDENTITY)
 //   - TEXT PRIMARY KEY stays TEXT PRIMARY KEY
 //   - ALTER TABLE ADD COLUMN is supported the same way
+//   - TIMESTAMP fields use TIMESTAMP WITH TIME ZONE (vs TEXT for SQLite)
 //
 // The Migration slice here MUST have the same Version+Name as the
 // sqlite package's Migrations; the Up SQL differs.
+//
+// v11 (5A.iii) and v12 (5E.ii) mirror the sqlite migrations. v12 in
+// particular rewrites the `sessions` table to the 5-state enum +
+// resurrection chain columns + write_audit.session_event.
 package postgres
 
 import "github.com/dark-agents/dark-memory-mcp/internal/migrate"
@@ -351,7 +356,8 @@ CREATE TABLE IF NOT EXISTS vlp_state (
     constitution_ver  TEXT,
     created_at        TEXT NOT NULL,
     updated_at        TEXT NOT NULL,
-    project_id        TEXT NOT NULL DEFAULT 'default'
+    project_id        TEXT NOT NULL DEFAULT 'default',
+    open_spec_id      BIGINT NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_vlp_state_session ON vlp_state(session_id);
 CREATE INDEX IF NOT EXISTS idx_vlp_state_state   ON vlp_state(state);
@@ -369,6 +375,172 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_vlp_state_project_session
 		Name:    "audit_project_index",
 		Up: `
 CREATE INDEX IF NOT EXISTS idx_write_audit_project_session ON write_audit(project_id, session_id);
+`,
+	},
+	{
+		// v11 — atomic frames + recall subscriptions (5A.iii).
+		// Postgres-flavored variant of the sqlite v11. Same column
+		// shape + index strategy; BIGSERIAL for PKs; CHECK constraints
+		// identical (Postgres supports them natively). See
+		// SCHEMA_v11_v12.md §2.4 for the canonical design.
+		Version: 11,
+		Name:    "atomic_frames_and_recall_subscriptions",
+		Up: `
+CREATE TABLE IF NOT EXISTS vibe_frames (
+  id              BIGSERIAL PRIMARY KEY,
+  project_id      TEXT NOT NULL,
+  session_id      TEXT NOT NULL,
+  scope_level     TEXT NOT NULL CHECK (scope_level IN ('global','project','session','call')),
+  scope_id        TEXT NOT NULL,
+  frame_kind      TEXT NOT NULL CHECK (frame_kind IN ('identity','scope','evidence','capabilities','drift','persona')),
+  composed_at     TIMESTAMP WITH TIME ZONE NOT NULL,
+  expires_at      TIMESTAMP WITH TIME ZONE NOT NULL,
+  frame_json      TEXT NOT NULL,
+  content_sha256  TEXT NOT NULL,
+  last_write_id   BIGINT NOT NULL DEFAULT 0,
+  created_at      TIMESTAMP WITH TIME ZONE NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_vibe_frames_scope_lookup
+  ON vibe_frames (session_id, scope_level, scope_id, frame_kind, expires_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_vibe_frames_project
+  ON vibe_frames (project_id, frame_kind, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_vibe_frames_invalidation
+  ON vibe_frames (session_id, last_write_id);
+
+CREATE TABLE IF NOT EXISTS vibe_recall_subscriptions (
+  id               BIGSERIAL PRIMARY KEY,
+  project_id       TEXT NOT NULL,
+  session_id       TEXT NOT NULL,
+  scope_level      TEXT NOT NULL CHECK (scope_level IN ('global','project','session','call')),
+  scope_id         TEXT NOT NULL,
+  last_seen_token  BIGINT NOT NULL DEFAULT 0,
+  created_at       TIMESTAMP WITH TIME ZONE NOT NULL,
+  updated_at       TIMESTAMP WITH TIME ZONE NOT NULL,
+  UNIQUE (session_id, scope_level, scope_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_recall_subs_lookup
+  ON vibe_recall_subscriptions (session_id, scope_level, scope_id);
+
+CREATE INDEX IF NOT EXISTS idx_recall_subs_project
+  ON vibe_recall_subscriptions (project_id, scope_level);
+`,
+	},
+	{
+		// v12 — session lifecycle overhaul (Wave 5E.ii). Postgres-flavored
+		// mirror of the sqlite v12. Same column shape, same CHECK constraints
+		// (Postgres supports them natively), same index list. BIGSERIAL PKs
+		// and TIMESTAMP WITH TIME ZONE for time fields. See SCHEMA_v11_v12.md
+		// §3 for the canonical design.
+		Version: 12,
+		Name:    "session_lifecycle_overhaul",
+		Up: `
+ALTER TABLE sessions RENAME TO _sessions_old;
+
+CREATE TABLE sessions (
+  id                  BIGSERIAL PRIMARY KEY,
+  session_id          TEXT    NOT NULL UNIQUE,
+  status              TEXT    NOT NULL DEFAULT 'open'
+                      CHECK (status IN ('open','idle','closed_clean','closed_aborted','archived')),
+  constitution_id     TEXT,
+  constitution_ver    TEXT,
+  active_mods         TEXT,
+  operator            TEXT    NOT NULL,
+  started_at          TIMESTAMP WITH TIME ZONE NOT NULL,
+  closed_at           TIMESTAMP WITH TIME ZONE,
+  last_heartbeat_at   TIMESTAMP WITH TIME ZONE,
+  parent_session_id   TEXT,
+  resurrected_from    TEXT,
+  notes               TEXT,
+  project_id          TEXT    NOT NULL DEFAULT 'default',
+  created_at          TIMESTAMP WITH TIME ZONE NOT NULL,
+  CHECK (
+    (status IN ('closed_clean','archived') AND closed_at IS NOT NULL)
+    OR (status = 'open' AND closed_at IS NULL)
+    OR (status IN ('idle','closed_aborted'))
+  )
+);
+
+INSERT INTO sessions
+  (id, session_id, status,
+   constitution_id, constitution_ver, active_mods,
+   operator, started_at, closed_at,
+   last_heartbeat_at, parent_session_id, resurrected_from,
+   notes, project_id, created_at)
+SELECT
+  id, session_id,
+  CASE
+    WHEN status='open'           THEN 'closed_aborted'
+    WHEN status='active'         THEN 'closed_clean'
+    WHEN status='closed'         THEN 'closed_clean'
+    WHEN status='closed_clean'   THEN 'closed_clean'
+    WHEN status='closed_aborted' THEN 'closed_aborted'
+    WHEN status='archived'       THEN 'archived'
+    ELSE 'closed_clean'
+  END,
+  constitution_id, constitution_ver, active_mods,
+  operator, started_at, closed_at,
+  NULL, NULL, NULL,
+  notes, project_id, started_at
+FROM _sessions_old;
+
+DROP TABLE _sessions_old;
+
+ALTER TABLE write_audit ADD COLUMN session_event TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_sessions_status_operator
+  ON sessions (status, operator, closed_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_resurrected
+  ON sessions (resurrected_from);
+
+CREATE INDEX IF NOT EXISTS idx_write_audit_session_event
+  ON write_audit (session_event, created_at);
+`,
+	},
+	{
+		// v13 — vibe_frames unique natural key (5A.ii.a polish).
+		// Mirror of sqlite v13. See sqlite/ddl.go for the full
+		// rationale (true UPSERT to fix the SELECT-then-INSERT/UPDATE
+		// race that the pivot drift judge flagged at 0.55).
+		Version: 13,
+		Name:    "vibe_frames_unique_natural_key",
+		Up: `
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vibe_frames_natural_key
+  ON vibe_frames (project_id, session_id, scope_level, scope_id, frame_kind);
+`,
+	},
+	{
+		// v14 — projects.drift_strictness (5X.3).
+		// Mirror of sqlite v14. Adds drift_strictness column to
+		// projects table for per-project override of the drift-at-write
+		// interceptor (5A.vi M6). See sqlite/ddl.go for full rationale.
+		Version: 14,
+		Name:    "projects_drift_strictness",
+		Up: `
+ALTER TABLE projects ADD COLUMN drift_strictness TEXT NOT NULL DEFAULT 'default';
+`,
+	},
+	{
+		// v15 — vlp_state.open_spec_id (5X.4). Mirror of sqlite v15.
+		// See sqlite/ddl.go for full rationale.
+		Version: 15,
+		Name:    "vlp_state_open_spec_id",
+		Up: `
+ALTER TABLE vlp_state ADD COLUMN open_spec_id BIGINT NOT NULL DEFAULT 0;
+`,
+	},
+	{
+		// v16 — constitution watchdog audit columns (5E.iv follow-up).
+		// Mirror of sqlite v16. See sqlite/ddl.go for full rationale.
+		Version: 16,
+		Name:    "constitution_watchdog_audit",
+		Up: `
+ALTER TABLE constitutions ADD COLUMN last_verified_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE constitutions ADD COLUMN last_verified_sha256 TEXT;
 `,
 	},
 }

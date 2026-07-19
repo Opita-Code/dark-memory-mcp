@@ -65,13 +65,30 @@ type VibeSpecInput struct {
 
 // parseTasksField accepts both forms of the `tasks` input:
 //
-//   - JSON array of objects: `[{...}, {...}]` (preferred)
+//   - JSON array of objects: `[{...}, {...}]` (preferred, "Form A")
 //   - JSON-encoded string of an array: `"[{...}, {...}]"` (legacy
 //     `dark_research_spec_create` style; some MCP harnesses stringify
-//     arrays under either schema)
+//     arrays under either schema, "Form B")
 //
-// Any other shape returns store.ErrInvalidArgument with a precise
-// message naming the offending value type.
+// Any other shape returns a wrapped store.ErrInvalidArgument carrying:
+//
+//  1. The underlying json.Unmarshal error message (preserves offset +
+//     offending byte info) so the operator can pinpoint the malformed
+//     payload without grepping server logs.
+//  2. Which Form (A/B) we attempted before bailing — closes the
+//     diagnostic gap that PRODUCTION_CHECKLIST.md R-3/R-4 flag as
+//     "file a bug with the actual JSON payload that fails"; the error
+//     now surfaces the failure mode on its own.
+//  3. The FieldError pointing at `tasks` so F35 wire-propagation
+//     (errors.As → ToolError.Field) keeps working unchanged.
+//
+// INFRA-002 (2026-07-19): pre-fix parseTasksField discarded the
+// underlying json.Unmarshal error via `store.NewFieldError(...)` with no
+// cause attached, surfacing only `"invalid argument at field=tasks"` to
+// the harness. The harness (LLM or operator) had no way to tell
+// whether they had picked the wrong form, shipped a trailing garbage
+// byte, or hit a real schema violation — every failure mode looked
+// identical. The fix preserves the cause so the operator can act.
 func parseTasksField(raw json.RawMessage) ([]VibeSpecTask, error) {
 	if len(raw) == 0 {
 		return nil, errMissingField("tasks")
@@ -84,27 +101,53 @@ func parseTasksField(raw json.RawMessage) ([]VibeSpecTask, error) {
 	// Peek at the first non-whitespace byte to decide which path.
 	switch trimmed[0] {
 	case '[':
+		// Form A: JSON array of objects.
 		var out []VibeSpecTask
 		if err := json.Unmarshal(raw, &out); err != nil {
-			return nil, store.NewFieldError(store.ErrInvalidArgument, "tasks")
+			return nil, wrapTasksParseErr("Form A (JSON array of objects)", err)
 		}
 		return out, nil
 	case '"':
+		// Form B: JSON-encoded string of an array.
 		var s string
 		if err := json.Unmarshal(raw, &s); err != nil {
-			return nil, store.NewFieldError(store.ErrInvalidArgument, "tasks")
+			return nil, wrapTasksParseErr("Form B step 1 (outer JSON string)", err)
 		}
 		if strings.TrimSpace(s) == "" {
 			return nil, errMissingField("tasks")
 		}
 		var out []VibeSpecTask
 		if err := json.Unmarshal([]byte(s), &out); err != nil {
-			return nil, store.NewFieldError(store.ErrInvalidArgument, "tasks")
+			return nil, wrapTasksParseErr("Form B step 2 (inner JSON array parsed from string)", err)
 		}
 		return out, nil
 	default:
-		return nil, store.NewFieldError(store.ErrInvalidArgument, "tasks")
+		// First non-whitespace byte is neither '[' nor '"' — neither
+		// form applies. Surface what we saw (one byte is safe to
+		// disclose; deliberately do not leak the rest of the payload,
+		// see classifyUnknown in internal/tools/errors.go).
+		return nil, wrapTasksParseErr(
+			fmt.Sprintf("unknown form (first non-whitespace byte=%q; expected '[' for Form A or '\"' for Form B)", string(trimmed[0])),
+			nil,
+		)
 	}
+}
+
+// wrapTasksParseErr attaches a *store.FieldError pointing at field
+// "tasks" so F35 wire-propagation surfaces it as ToolError.Field, then
+// wraps THAT with a descriptive prefix + the underlying json.Unmarshal
+// cause (if any) for F36-bis diagnostic depth. The returned error
+// chain satisfies both `errors.Is(err, store.ErrInvalidArgument)` and
+// `errors.As(err, &store.FieldError{Field:"tasks"})`.
+//
+// When cause is nil (the default-form rejection where we never reached
+// json.Unmarshal), only the descriptive prefix is appended.
+func wrapTasksParseErr(formDesc string, cause error) error {
+	fe := store.NewFieldError(store.ErrInvalidArgument, "tasks")
+	if cause == nil {
+		return fmt.Errorf("%w: rejected by parser (%s)", fe, formDesc)
+	}
+	return fmt.Errorf("%w: rejected by parser (%s): %v", fe, formDesc, cause)
 }
 
 // VibeSpecResult is the outcome.

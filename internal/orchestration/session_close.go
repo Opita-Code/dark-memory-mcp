@@ -16,8 +16,15 @@ import (
 )
 
 // SessionCloseInput is the request to close a session.
+//
+// Reason defaults to "clean" (operator-initiated, terminal) when
+// empty. Allowed values: "clean" (terminal, NOT resurrectable),
+// "aborted" (resurrectable via dark_memory_session_resurrect),
+// "archived" (terminal, NOT resurrectable, operator-vetted).
+// See session.CloseReason.Validate.
 type SessionCloseInput struct {
 	SessionID string `json:"session_id"`
+	Reason    string `json:"reason,omitempty"` // empty -> "clean"
 }
 
 // SessionCloseOutput summarises the session at close.
@@ -28,6 +35,9 @@ type SessionCloseOutput struct {
 	// RunsTotal / ItemsTotal are scoped to the active project, not
 	// specifically to this session (the Store doesn't expose a
 	// session-scoped runs/items query yet — see spec 173 O2 notes).
+	// Wave 5E.v: both counts come from indexed COUNT(*) queries
+	// (CountRunsForProject / CountItemsForProject), replacing the
+	// previous ListRuns + N×ListItems N+1 pattern.
 	RunsTotal  int `json:"runs_total"`
 	ItemsTotal int `json:"items_total"`
 }
@@ -48,7 +58,7 @@ func (o *Orchestrator) SessionClose(ctx context.Context, in SessionCloseInput) (
 		// ProjectID is resolved by CloseSession via requireProject and
 		// projectIDOrActive; we don't have to set it.
 	}
-	if err := o.Store.CloseSession(ctx, wc, in.SessionID); err != nil {
+	if err := o.Store.CloseSession(ctx, wc, in.SessionID, in.Reason); err != nil {
 		return nil, fmt.Errorf("session_close: close: %w", err)
 	}
 
@@ -71,19 +81,18 @@ func (o *Orchestrator) SessionClose(ctx context.Context, in SessionCloseInput) (
 		return nil, fmt.Errorf("session_close: list writes: %w", err)
 	}
 
-	// Runs/items counts via the active project's list methods.
-	runs, err := o.Store.ListRuns(ctx, "", 10000)
+	// Wave 5E.v: replaced ListRuns + N×ListItems (N+1 query) with two
+	// indexed COUNT(*) queries. For a project with N runs, this drops
+	// the work from O(N) round-trips to O(1). Both queries hit the
+	// project_id index; O(log n) lookup, constant memory.
+	activeProject := o.Store.ActiveProject()
+	runsTotal, err := o.Store.CountRunsForProject(ctx, activeProject)
 	if err != nil {
-		return nil, fmt.Errorf("session_close: list runs: %w", err)
+		return nil, fmt.Errorf("session_close: count runs: %w", err)
 	}
-
-	var itemsTotal int
-	for _, r := range runs {
-		items, err := o.Store.ListItems(ctx, r.ID, "", 10000)
-		if err != nil {
-			return nil, fmt.Errorf("session_close: list items (run %d): %w", r.ID, err)
-		}
-		itemsTotal += len(items)
+	itemsTotal, err := o.Store.CountItemsForProject(ctx, activeProject)
+	if err != nil {
+		return nil, fmt.Errorf("session_close: count items: %w", err)
 	}
 
 	closedAt, _ := time.Parse(time.RFC3339Nano, closedSess.ClosedAt)
@@ -96,7 +105,7 @@ func (o *Orchestrator) SessionClose(ctx context.Context, in SessionCloseInput) (
 		SessionID:   in.SessionID,
 		ClosedAt:    closedAt,
 		WritesTotal: len(writes),
-		RunsTotal:   len(runs),
+		RunsTotal:   runsTotal,
 		ItemsTotal:  itemsTotal,
 	}, nil
 }

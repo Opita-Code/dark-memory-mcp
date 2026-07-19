@@ -44,5 +44,6 @@ type SDDEvaluation struct {
 type ListFilters struct {
 	EvalType   string
 	TargetType string
+	TargetID   string // filter by target_id (e.g. specific spec_id)
 	Limit      int
 }

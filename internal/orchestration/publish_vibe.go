@@ -281,24 +281,43 @@ func (o *Orchestrator) PublishVibe(ctx context.Context, in PublishVibeInput) (*P
 // parseDriftVerdict maps an LLM Judge verdict JSON to one of the
 // canonical drift verdicts: aligned | drift_detected | needs_human.
 //
-// Convention: the LLM is asked to return JSON like
+// Two JSON shapes are accepted:
 //
-//	{"aligned": true, "confidence": 0.92, "issues": []}
+//	Modern (post-v1.4.0 dark_memory_judge):
+//	  {"verdict":"aligned"|"drift_detected"|"needs_human",
+//	   "confidence":0.92, "reasoning":"..."}
 //
-// or
-//
-//	{"aligned": false, "drift_items": ["missing_field_x"], "confidence": 0.85}
+//	Legacy:
+//	  {"aligned":true, "confidence":0.92, "issues":[]}
+//	  {"aligned":false, "drift_items":["..."], "confidence":0.85}
 //
 // confidence < 0.5 always returns "needs_human" regardless of the LLM's
 // verdict — that's the floor at which we trust the LLM-as-judge.
+//
+// INFRA-001 fix: pre-fix version only recognized the legacy {"aligned":bool}
+// shape and silently returned "drift_detected" for modern output, causing
+// every VibePublish to be misclassified. The fix checks the modern shape
+// first (canonical v1.4.0+), then falls back to legacy, then to a
+// whitespace/case-tolerant substring match.
 func parseDriftVerdict(verdictJSON string, confidence float32) string {
 	if confidence < 0.5 {
 		return "needs_human"
 	}
-	// Try to parse the JSON; fall through to string matching on parse
-	// failure (lenient).
+	// Try to parse the JSON; check both shapes.
 	var v map[string]any
 	if err := json.Unmarshal([]byte(verdictJSON), &v); err == nil {
+		// Modern shape (preferred, post-v1.4.0).
+		if verdict, ok := v["verdict"].(string); ok {
+			switch verdict {
+			case "aligned":
+				return "aligned"
+			case "drift_detected":
+				return "drift_detected"
+			case "needs_human":
+				return "needs_human"
+			}
+		}
+		// Legacy shape: boolean `aligned` field.
 		if aligned, ok := v["aligned"].(bool); ok {
 			if aligned {
 				return "aligned"
@@ -306,9 +325,37 @@ func parseDriftVerdict(verdictJSON string, confidence float32) string {
 			return "drift_detected"
 		}
 	}
-	// Lenient fallback: substring match.
-	lc := strings.ToLower(verdictJSON)
-	if strings.Contains(lc, `"aligned":true`) || strings.Contains(lc, `"drift":false`) {
+	// Lenient fallback: substring match on a whitespace-collapsed,
+	// lowercased copy of the raw JSON. Handles whitespace, case
+	// variation, and partial parses.
+	normalized := strings.ToLower(verdictJSON)
+	// Collapse runs of whitespace into a single space so that
+	// pretty-printed JSON like `"Verdict" : "aligned"` matches
+	// `"verdict":"aligned"`.
+	var b strings.Builder
+	b.Grow(len(normalized))
+	prevSpace := false
+	for _, r := range normalized {
+		isSpace := r == ' ' || r == '\t' || r == '\n' || r == '\r'
+		if isSpace {
+			if !prevSpace {
+				b.WriteRune(' ')
+			}
+			prevSpace = true
+			continue
+		}
+		prevSpace = false
+		b.WriteRune(r)
+	}
+	// Step 2: collapse whitespace around colons. The first ReplaceAll
+	// handles `: ` (colon followed by space, e.g. `"key": "value"`).
+	// The second handles ` :` (space followed by colon, e.g. `"key" : "value"`).
+	// Apply both to normalise pretty-printed JSON to the canonical compact form.
+	compact := strings.ReplaceAll(b.String(), `: `, `:`)
+	compact = strings.ReplaceAll(compact, ` :`, `:`)
+	if strings.Contains(compact, `"verdict":"aligned"`) ||
+		strings.Contains(compact, `"aligned":true`) ||
+		strings.Contains(compact, `"drift":false`) {
 		return "aligned"
 	}
 	return "drift_detected"

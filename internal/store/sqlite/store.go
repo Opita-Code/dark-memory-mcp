@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 	"sync"
@@ -23,6 +24,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
+	"github.com/dark-agents/dark-memory-mcp/internal/atomic"
 	"github.com/dark-agents/dark-memory-mcp/internal/audit"
 	"github.com/dark-agents/dark-memory-mcp/internal/constitution"
 	"github.com/dark-agents/dark-memory-mcp/internal/migrate"
@@ -236,6 +238,13 @@ func (s *Store) ActiveConstitution(ctx context.Context) (string, string, string)
 // runWatchdog verifies the constitution file SHA256 against the stored
 // value (INV-4). On mismatch: returns store.ErrConstitutionDrift. First run
 // (no stored row): records the file's SHA and returns nil.
+//
+// Wave INFRA-003 v2: upgrade scenario. When the file's version (cfg)
+// differs from the stored version AND the file's SHA differs from the
+// stored SHA AND DARK_CONSTITUTION_ACCEPT_BUMPS=1, write a NEW row
+// for the new version and disable the old one. Without the env var,
+// return ErrConstitutionDrift with an enhanced message that names the
+// env var (operator-facing migration step).
 func (s *Store) runWatchdog(ctx context.Context) error {
 	if s.cfg.ConstitutionFile == "" {
 		return nil
@@ -249,15 +258,17 @@ func (s *Store) runWatchdog(ctx context.Context) error {
 		// No active constitution ID configured — cannot verify; skip.
 		return nil
 	}
-	var stored string
+	// Look up both the stored SHA AND the stored version for the
+	// upgrade detection below.
+	var stored, storedVer string
 	err = s.db.QueryRowContext(ctx,
-		`SELECT sha256 FROM constitutions WHERE constitution_id = ? AND enabled = 1 ORDER BY version DESC LIMIT 1`,
-		s.cfg.ConstitutionID).Scan(&stored)
+		`SELECT sha256, version FROM constitutions WHERE constitution_id = ? AND enabled = 1 ORDER BY version DESC LIMIT 1`,
+		s.cfg.ConstitutionID).Scan(&stored, &storedVer)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			// No stored constitution yet. Write the watchdog initial
 			// row so subsequent Opens can detect drift.
-			_, _ = s.db.ExecContext(ctx,
+			if _, err := s.db.ExecContext(ctx,
 				`INSERT OR IGNORE INTO constitutions
 				 (constitution_id, version, label, source, file_path, parsed_json, sha256, enabled, created_at, activated_at, last_verified_at, last_verified_sha256)
 				 VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
@@ -271,14 +282,58 @@ func (s *Store) runWatchdog(ctx context.Context) error {
 				time.Now().UTC().Format(time.RFC3339Nano),
 				time.Now().UTC().Format(time.RFC3339Nano),
 				time.Now().UTC().Format(time.RFC3339Nano),
-				computed)
+				computed,
+			); err != nil {
+				return fmt.Errorf("watchdog: write initial row: %w", err)
+			}
 			return nil
 		}
 		return fmt.Errorf("watchdog: query stored sha: %w", err)
 	}
 	if stored != computed {
-		return fmt.Errorf("%w: file=%s computed=%s stored=%s",
-			store.ErrConstitutionDrift, s.cfg.ConstitutionFile, computed, stored)
+		// SHA mismatch. Two scenarios:
+		//   (a) Version upgrade (storedVer != cfg.ConstitutionVer): operator
+		//       is moving to a new constitution release. Acceptable with
+		//       explicit opt-in (DARK_CONSTITUTION_ACCEPT_BUMPS=1).
+		//   (b) File tampering (same version, different SHA): refuse
+		//       unconditionally — this is the security path.
+		isVersionBump := storedVer != "" && s.cfg.ConstitutionVer != "" && storedVer != s.cfg.ConstitutionVer
+		if isVersionBump && os.Getenv("DARK_CONSTITUTION_ACCEPT_BUMPS") == "1" {
+			// Migration step (Wave INFRA-003 v2): disable old row,
+			// insert new row with the new SHA + version + activation
+			// timestamp. Emits a write_audit row via the orchestrator
+			// caller (the operator-visible event).
+			now := time.Now().UTC().Format(time.RFC3339Nano)
+			_, _ = s.db.ExecContext(ctx,
+				`UPDATE constitutions SET enabled = 0, last_verified_at = ? WHERE constitution_id = ? AND version = ?`,
+				now, s.cfg.ConstitutionID, storedVer)
+			_, err := s.db.ExecContext(ctx,
+				`INSERT INTO constitutions
+				 (constitution_id, version, label, source, file_path, parsed_json, sha256, enabled, created_at, activated_at, last_verified_at, last_verified_sha256)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
+				s.cfg.ConstitutionID,
+				s.cfg.ConstitutionVer,
+				"watchdog-upgrade",
+				"watchdog",
+				s.cfg.ConstitutionFile,
+				"{}",
+				computed,
+				now, now, now, computed)
+			if err != nil {
+				return fmt.Errorf("watchdog: write upgrade row: %w", err)
+			}
+			log.Printf("dark-mem-mcp: constitution upgrade %s -> %s accepted (file_sha=%s env=DARK_CONSTITUTION_ACCEPT_BUMPS=1)",
+				storedVer, s.cfg.ConstitutionVer, computed)
+			return nil
+		}
+		// No opt-in (or same-version tamper): refuse with enhanced
+		// message that names the env var when it's an upgrade scenario.
+		if isVersionBump {
+			return fmt.Errorf("%w: stored version=%s sha=%s, file version=%s sha=%s. To accept this upgrade, set DARK_CONSTITUTION_ACCEPT_BUMPS=1 in the server's environment and restart.",
+				store.ErrConstitutionDrift, storedVer, stored, s.cfg.ConstitutionVer, computed)
+		}
+		return fmt.Errorf("%w: file=%s computed=%s stored=%s (version=%s; same-version tamper is refused unconditionally)",
+			store.ErrConstitutionDrift, s.cfg.ConstitutionFile, computed, stored, storedVer)
 	}
 	// Healthy; update last_verified columns.
 	_, _ = s.db.ExecContext(ctx,
@@ -373,10 +428,10 @@ func (s *Store) recordWriteLockedTx(ctx context.Context, tx *sql.Tx, ev audit.Wr
 	}
 	_, err := tx.ExecContext(ctx,
 		`INSERT INTO write_audit (table_name, row_id, project_id, actor, session_id, write_path,
-		                           content_sha256, canary_present, constitution_id, constitution_ver, notes, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		                           content_sha256, canary_present, constitution_id, constitution_ver, notes, session_event, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		ev.TableName, ev.RowID, ev.ProjectID, ev.Actor, ev.SessionID, ev.WritePath,
-		ev.ContentSHA256, canary, ev.ConstitutionID, ev.ConstitutionVer, ev.Notes, ev.CreatedAt)
+		ev.ContentSHA256, canary, ev.ConstitutionID, ev.ConstitutionVer, ev.Notes, ev.SessionEvent, ev.CreatedAt)
 	return err
 }
 
@@ -429,16 +484,16 @@ func (s *Store) recordWriteLocked(ctx context.Context, ev audit.WriteEvent, cont
 	}
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO write_audit (table_name, row_id, project_id, actor, session_id, write_path,
-		                           content_sha256, canary_present, constitution_id, constitution_ver, notes, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		                           content_sha256, canary_present, constitution_id, constitution_ver, notes, session_event, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		ev.TableName, ev.RowID, ev.ProjectID, ev.Actor, ev.SessionID, ev.WritePath,
-		ev.ContentSHA256, canary, ev.ConstitutionID, ev.ConstitutionVer, ev.Notes, ev.CreatedAt)
+		ev.ContentSHA256, canary, ev.ConstitutionID, ev.ConstitutionVer, ev.Notes, ev.SessionEvent, ev.CreatedAt)
 	return err
 }
 
 func (s *Store) ListWrites(ctx context.Context, f audit.ListFilters) ([]audit.WriteEvent, error) {
 	q := `SELECT id, table_name, row_id, COALESCE(project_id, ''), actor, session_id, write_path,
-	             COALESCE(content_sha256, ''), canary_present, COALESCE(constitution_id, ''), COALESCE(constitution_ver, ''), COALESCE(notes, ''), created_at
+	             COALESCE(content_sha256, ''), canary_present, COALESCE(constitution_id, ''), COALESCE(constitution_ver, ''), COALESCE(notes, ''), COALESCE(session_event, ''), created_at
 	      FROM write_audit WHERE 1=1`
 	args := []any{}
 	if f.ProjectID != "" {
@@ -461,6 +516,10 @@ func (s *Store) ListWrites(ctx context.Context, f audit.ListFilters) ([]audit.Wr
 		q += ` AND session_id = ?`
 		args = append(args, f.SessionID)
 	}
+	if f.SinceID > 0 {
+		q += ` AND id > ?`
+		args = append(args, f.SinceID)
+	}
 	if f.Limit <= 0 {
 		f.Limit = 50
 	}
@@ -476,7 +535,7 @@ func (s *Store) ListWrites(ctx context.Context, f audit.ListFilters) ([]audit.Wr
 		var ev audit.WriteEvent
 		var canary int
 		if err := rows.Scan(&ev.ID, &ev.TableName, &ev.RowID, &ev.ProjectID, &ev.Actor, &ev.SessionID, &ev.WritePath,
-			&ev.ContentSHA256, &canary, &ev.ConstitutionID, &ev.ConstitutionVer, &ev.Notes, &ev.CreatedAt); err != nil {
+			&ev.ContentSHA256, &canary, &ev.ConstitutionID, &ev.ConstitutionVer, &ev.Notes, &ev.SessionEvent, &ev.CreatedAt); err != nil {
 			return nil, err
 		}
 		ev.CanaryPresent = canary != 0
@@ -498,16 +557,32 @@ func (s *Store) SaveSession(ctx context.Context, wc store.WriteContext, sess *se
 		sess.StartedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
 	if sess.Status == "" {
-		sess.Status = string(session.StatusActive)
+		sess.Status = string(session.StatusOpen)
+	}
+	if sess.LastHeartbeatAt == "" {
+		// Newly-started sessions have last_heartbeat_at set to start
+		// time. The next heartbeat call refreshes it; sweeps compare
+		// against HEARTBEAT_TIMEOUT.
+		sess.LastHeartbeatAt = sess.StartedAt
 	}
 	var id int64
 	err := s.runInTx(ctx, func(tx *sql.Tx) error {
+		// closed_at must be NULL (not empty string) for open sessions
+		// to satisfy the v12 CHECK constraint
+		// `(status = 'open' AND closed_at IS NULL)`.
+		var closedAt sql.NullString
+		if sess.ClosedAt != "" {
+			closedAt = sql.NullString{String: sess.ClosedAt, Valid: true}
+		}
 		res, err := tx.ExecContext(ctx,
 			`INSERT INTO sessions (session_id, status, constitution_id, constitution_ver, active_mods,
-			                     started_at, closed_at, notes, parent_session_id, operator, project_id)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			                     started_at, closed_at, last_heartbeat_at, parent_session_id,
+			                     resurrected_from, notes, operator, project_id, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			sess.SessionID, sess.Status, sess.ConstitutionID, sess.ConstitutionVer, sess.ActiveMods,
-			sess.StartedAt, sess.ClosedAt, sess.Notes, sess.ParentSessionID, sess.Operator, projectID)
+			sess.StartedAt, closedAt, sess.LastHeartbeatAt, sess.ParentSessionID,
+			sess.ResurrectedFrom, sess.Notes, sess.Operator, projectID,
+			sess.StartedAt /* created_at proxy = started_at for new sessions */)
 		if err != nil {
 			return err
 		}
@@ -540,12 +615,13 @@ func (s *Store) GetSession(ctx context.Context, sessionID string) (*session.Sess
 	defer s.mu.Unlock()
 	row := s.db.QueryRowContext(ctx,
 		`SELECT id, session_id, status, constitution_id, constitution_ver, active_mods,
-		        started_at, closed_at, notes, parent_session_id, operator
+		        operator, started_at, closed_at, last_heartbeat_at,
+		        parent_session_id, resurrected_from, notes
 		 FROM sessions WHERE session_id = ? AND project_id = ?`, sessionID, activeProject)
 	var sess session.Session
-	var notes, closedAt sql.NullString
+	var notes, closedAt, heartbeat, parent, rescFrom sql.NullString
 	if err := row.Scan(&sess.ID, &sess.SessionID, &sess.Status, &sess.ConstitutionID, &sess.ConstitutionVer, &sess.ActiveMods,
-		&sess.StartedAt, &closedAt, &notes, &sess.ParentSessionID, &sess.Operator); err != nil {
+		&sess.Operator, &sess.StartedAt, &closedAt, &heartbeat, &parent, &rescFrom, &notes); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
@@ -554,24 +630,41 @@ func (s *Store) GetSession(ctx context.Context, sessionID string) (*session.Sess
 	if closedAt.Valid {
 		sess.ClosedAt = closedAt.String
 	}
+	if heartbeat.Valid {
+		sess.LastHeartbeatAt = heartbeat.String
+	}
+	if parent.Valid {
+		sess.ParentSessionID = parent.String
+	}
+	if rescFrom.Valid {
+		sess.ResurrectedFrom = rescFrom.String
+	}
 	if notes.Valid {
 		sess.Notes = notes.String
 	}
 	return &sess, nil
 }
 
-func (s *Store) CloseSession(ctx context.Context, wc store.WriteContext, sessionID string) error {
+func (s *Store) CloseSession(ctx context.Context, wc store.WriteContext, sessionID, reason string) error {
 	if err := s.requireProject(); err != nil {
 		return err
 	}
+	// Validate reason
+	reasonClose, err := session.ParseCloseReason(reason)
+	if err != nil {
+		return err
+	}
+	dest := reasonClose.DestinationStatus()
+	sessionEvent := session.SessionEventForReason(reasonClose)
 	activeProject := s.ActiveProject() // capture before locking
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	return s.runInTx(ctx, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx,
-			`UPDATE sessions SET status = ?, closed_at = ? WHERE session_id = ? AND project_id = ? AND status = ?`,
-			string(session.StatusClosed), now, sessionID, activeProject, string(session.StatusActive))
+			`UPDATE sessions SET status = ?, closed_at = ?
+			 WHERE session_id = ? AND project_id = ? AND status IN ('open','idle')`,
+			string(dest), now, sessionID, activeProject)
 		if err != nil {
 			return err
 		}
@@ -586,9 +679,194 @@ func (s *Store) CloseSession(ctx context.Context, wc store.WriteContext, session
 			WritePath:       wc.WritePath,
 			ConstitutionID:  wc.ConstitutionID,
 			ConstitutionVer: wc.ConstitutionVer,
+			SessionEvent:    sessionEvent,
 			CreatedAt:       now,
 		}, "")
 	})
+}
+
+// SaveHeartbeat refreshes sessions.last_heartbeat_at on an open
+// or idle session. Used by the harness adapters (5D) and the periodic
+// harness-side heartbeater (BRIDGE v2 §5.3). Returns ErrNotFound if
+// the session doesn't exist OR isn't open/idle (i.e. closed or
+// archived — refusing a heartbeat on a closed session is correct).
+//
+// The sweep (5E.iii) reads sessions.last_heartbeat_at; sessions whose
+// last_heartbeat_at is older than HEARTBEAT_TIMEOUT are promoted to
+// closed_aborted by either the sweeper or boot_reconcile.
+//
+// INV-9 heartbeat invariant.
+func (s *Store) SaveHeartbeat(ctx context.Context, wc store.WriteContext, sessionID string) error {
+	if err := s.requireProject(); err != nil {
+		return err
+	}
+	activeProject := s.ActiveProject() // capture before locking
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	return s.runInTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx,
+			`UPDATE sessions SET last_heartbeat_at = ?
+			 WHERE session_id = ? AND project_id = ? AND status IN ('open','idle')`,
+			now, sessionID, activeProject)
+		if err != nil {
+			return err
+		}
+		n, _ := res.RowsAffected()
+		if n == 0 {
+			return store.ErrNotFound
+		}
+		return s.recordWriteLockedTx(ctx, tx, audit.WriteEvent{
+			TableName:       "sessions",
+			Actor:           wc.Actor,
+			SessionID:       sessionID,
+			WritePath:       wc.WritePath,
+			ConstitutionID:  wc.ConstitutionID,
+			ConstitutionVer: wc.ConstitutionVer,
+			SessionEvent:    "heartbeat",
+			CreatedAt:       now,
+		}, "")
+	})
+}
+
+// FindClosedAbortedForActor returns the most-recent closed_aborted
+// session for the given operator within the lookback window
+// (RFC3339, e.g. "24h"). Read-only — the caller (Recover orchestrator)
+// decides whether to call SaveResurrect on the result. Returns
+// (nil, nil) when no candidate exists. (Wave 5E.ii.)
+//
+// The query walks sessions.operator + project_id + status=closed_aborted
+// + closed_at >= lookback, ordered most-recent first, limit 1.
+func (s *Store) FindClosedAbortedForActor(ctx context.Context, actor, operator, projectID, lookback string) (*session.Session, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	// Defensive: pin project_id to the active project when none was
+	// supplied. Operators shouldn't cross-project read others' sessions
+	// (INV-7).
+	if projectID == "" {
+		projectID = s.ActiveProject()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	row := s.db.QueryRowContext(ctx,
+		`SELECT id, session_id, status, constitution_id, constitution_ver, active_mods,
+		        operator, started_at, closed_at, last_heartbeat_at,
+		        parent_session_id, resurrected_from, notes
+		 FROM sessions
+		 WHERE operator = ? AND project_id = ? AND status = 'closed_aborted'
+		   AND closed_at >= ?
+		 ORDER BY closed_at DESC LIMIT 1`,
+		operator, projectID, lookback)
+	var sess session.Session
+	var notes, closedAt, heartbeat, parent, rescFrom sql.NullString
+	if err := row.Scan(
+		&sess.ID, &sess.SessionID, &sess.Status, &sess.ConstitutionID, &sess.ConstitutionVer, &sess.ActiveMods,
+		&sess.Operator, &sess.StartedAt, &closedAt, &heartbeat, &parent, &rescFrom, &notes,
+	); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if closedAt.Valid {
+		sess.ClosedAt = closedAt.String
+	}
+	if heartbeat.Valid {
+		sess.LastHeartbeatAt = heartbeat.String
+	}
+	if parent.Valid {
+		sess.ParentSessionID = parent.String
+	}
+	if rescFrom.Valid {
+		sess.ResurrectedFrom = rescFrom.String
+	}
+	if notes.Valid {
+		sess.Notes = notes.String
+	}
+	return &sess, nil
+}
+
+// SaveResurrect creates a new sessions row representing the
+// resurrection of a closed_aborted session. parent_session_id and
+// resurrected_from are set; status is 'open'; started_at and
+// last_heartbeat_at are now(). The original (closed) session is NOT
+// touched — it stays closed_aborted in the audit history.
+//
+// (Wave 5E.ii + 5E.iv.b.) Returns the newly-created session row
+// (with both ID and SessionID populated) so the caller can resume
+// without a follow-up read. The INSERT + LastInsertId + write_audit
+// are wrapped in a single transaction (atomic).
+func (s *Store) SaveResurrect(ctx context.Context, wc store.WriteContext, original *session.Session) (*session.Session, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	if original == nil {
+		return nil, fmt.Errorf("store: SaveResurrect: original is nil")
+	}
+	if !session.Status(original.Status).IsResurrectable() && session.Status(original.Status) != session.StatusIdle {
+		return nil, fmt.Errorf("store: SaveResurrect: original status %q is not resurrectable", original.Status)
+	}
+	activeProject := s.ActiveProject()
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	newSess := &session.Session{
+		SessionID:       session.NewSessionID(),
+		Status:          string(session.StatusOpen),
+		ConstitutionID:  original.ConstitutionID,
+		ConstitutionVer: original.ConstitutionVer,
+		ActiveMods:      original.ActiveMods,
+		Operator:        original.Operator,
+		StartedAt:       now,
+		LastHeartbeatAt: now,
+		ParentSessionID: original.SessionID,
+		ResurrectedFrom: original.ResurrectedFrom, // chain to original ancestor (may equal ParentSessionID if no chain)
+		Notes:           fmt.Sprintf("resurrect of %s", original.SessionID),
+	}
+	if newSess.ResurrectedFrom == "" {
+		newSess.ResurrectedFrom = original.SessionID
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	err := s.runInTx(ctx, func(tx *sql.Tx) error {
+		// closed_at must be NULL (not empty string) for open/idle sessions
+		// to satisfy the v12 CHECK constraint.
+		var closedAt sql.NullString
+		if newSess.ClosedAt != "" {
+			closedAt = sql.NullString{String: newSess.ClosedAt, Valid: true}
+		}
+		res, err := tx.ExecContext(ctx,
+			`INSERT INTO sessions (session_id, status, constitution_id, constitution_ver, active_mods,
+			                     started_at, last_heartbeat_at, closed_at, parent_session_id,
+			                     resurrected_from, notes, operator, project_id, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			newSess.SessionID, newSess.Status, newSess.ConstitutionID, newSess.ConstitutionVer,
+			newSess.ActiveMods, newSess.StartedAt, newSess.LastHeartbeatAt, closedAt,
+			newSess.ParentSessionID, newSess.ResurrectedFrom, newSess.Notes,
+			newSess.Operator, activeProject,
+			newSess.StartedAt /* created_at proxy = started_at for resurrected sessions */)
+		if err != nil {
+			return err
+		}
+		newID, err := res.LastInsertId()
+		if err != nil {
+			return err
+		}
+		newSess.ID = newID
+		return s.recordWriteLockedTx(ctx, tx, audit.WriteEvent{
+			TableName:       "sessions",
+			Actor:           wc.Actor,
+			SessionID:       newSess.SessionID,
+			WritePath:       wc.WritePath,
+			ConstitutionID:  wc.ConstitutionID,
+			ConstitutionVer: wc.ConstitutionVer,
+			SessionEvent:    "resurrect",
+			CreatedAt:       now,
+		}, "")
+	})
+	if err != nil {
+		return nil, err
+	}
+	return newSess, nil
 }
 
 func (s *Store) ListSessions(ctx context.Context, limit int) ([]session.Session, error) {
@@ -603,7 +881,8 @@ func (s *Store) ListSessions(ctx context.Context, limit int) ([]session.Session,
 	}
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, session_id, status, constitution_id, constitution_ver, active_mods,
-		        started_at, closed_at, notes, parent_session_id, operator
+		        operator, started_at, closed_at, last_heartbeat_at,
+		        parent_session_id, resurrected_from, notes
 		 FROM sessions WHERE project_id = ? ORDER BY id DESC LIMIT ?`, activeProject, limit)
 	if err != nil {
 		return nil, err
@@ -612,13 +891,22 @@ func (s *Store) ListSessions(ctx context.Context, limit int) ([]session.Session,
 	out := []session.Session{}
 	for rows.Next() {
 		var sess session.Session
-		var notes, closedAt sql.NullString
+		var notes, closedAt, heartbeat, parent, rescFrom sql.NullString
 		if err := rows.Scan(&sess.ID, &sess.SessionID, &sess.Status, &sess.ConstitutionID, &sess.ConstitutionVer, &sess.ActiveMods,
-			&sess.StartedAt, &closedAt, &notes, &sess.ParentSessionID, &sess.Operator); err != nil {
+			&sess.Operator, &sess.StartedAt, &closedAt, &heartbeat, &parent, &rescFrom, &notes); err != nil {
 			return nil, err
 		}
 		if closedAt.Valid {
 			sess.ClosedAt = closedAt.String
+		}
+		if heartbeat.Valid {
+			sess.LastHeartbeatAt = heartbeat.String
+		}
+		if parent.Valid {
+			sess.ParentSessionID = parent.String
+		}
+		if rescFrom.Valid {
+			sess.ResurrectedFrom = rescFrom.String
 		}
 		if notes.Valid {
 			sess.Notes = notes.String
@@ -626,6 +914,166 @@ func (s *Store) ListSessions(ctx context.Context, limit int) ([]session.Session,
 		out = append(out, sess)
 	}
 	return out, rows.Err()
+}
+
+// ListStaleSessions is the sweeper query (Wave 5E.iii, INV-9). Returns
+// sessions whose last_heartbeat_at is strictly older than cutoff AND
+// whose status is in the given set. Read-only; the caller (sweeper or
+// boot_reconcile) decides whether to transition.
+//
+// Implementation note: SQLite stores last_heartbeat_at as RFC3339Nano
+// TEXT. String comparison on ISO8601 timestamps is lexicographically
+// correct only when the timezone offset is consistent — RFC3339Nano
+// always produces UTC ("Z") so the comparison is safe.
+func (s *Store) ListStaleSessions(ctx context.Context, statuses []string, cutoff time.Time, limit int) ([]session.Session, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	if len(statuses) == 0 {
+		return nil, nil
+	}
+	activeProject := s.ActiveProject()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if limit <= 0 {
+		limit = 200
+	}
+	// Build placeholders for the IN clause.
+	placeholders := make([]string, len(statuses))
+	args := make([]any, 0, len(statuses)+3)
+	args = append(args, activeProject)
+	for i, st := range statuses {
+		placeholders[i] = "?"
+		args = append(args, st)
+	}
+	args = append(args, cutoff.UTC().Format(time.RFC3339Nano))
+	args = append(args, limit)
+
+	q := `SELECT id, session_id, status, constitution_id, constitution_ver, active_mods,
+	             operator, started_at, closed_at, last_heartbeat_at,
+	             parent_session_id, resurrected_from, notes
+	      FROM sessions
+	      WHERE project_id = ?
+	        AND status IN (` + strings.Join(placeholders, ",") + `)
+	        AND last_heartbeat_at IS NOT NULL
+	        AND last_heartbeat_at < ?
+	      ORDER BY last_heartbeat_at ASC
+	      LIMIT ?`
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []session.Session{}
+	for rows.Next() {
+		var sess session.Session
+		var notes, closedAt, heartbeat, parent, rescFrom sql.NullString
+		if err := rows.Scan(&sess.ID, &sess.SessionID, &sess.Status, &sess.ConstitutionID, &sess.ConstitutionVer, &sess.ActiveMods,
+			&sess.Operator, &sess.StartedAt, &closedAt, &heartbeat, &parent, &rescFrom, &notes); err != nil {
+			return nil, err
+		}
+		if closedAt.Valid {
+			sess.ClosedAt = closedAt.String
+		}
+		if heartbeat.Valid {
+			sess.LastHeartbeatAt = heartbeat.String
+		}
+		if parent.Valid {
+			sess.ParentSessionID = parent.String
+		}
+		if rescFrom.Valid {
+			sess.ResurrectedFrom = rescFrom.String
+		}
+		if notes.Valid {
+			sess.Notes = notes.String
+		}
+		out = append(out, sess)
+	}
+	return out, rows.Err()
+}
+
+// PromoteSessionStatus transitions a session to newStatus (Wave 5E.iii,
+// INV-9). Valid transitions: open → idle (sweeper demotes a stale live
+// session), idle → open (re-activate after a stray idle). Anything else
+// returns ErrInvalidState. Emits write_audit with session_event='promote'.
+func (s *Store) PromoteSessionStatus(ctx context.Context, wc store.WriteContext, sessionID, newStatus string) error {
+	if err := s.requireProject(); err != nil {
+		return err
+	}
+	activeProject := s.ActiveProject()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Wave 5E.iv bug-hunt: read-then-write MUST be in the same
+	// transaction so a concurrent writer (another dark-mem-mcp
+	// process, a CLI operator, the sweeper itself in a race) can't
+	// mutate status between our SELECT and UPDATE. Previously the
+	// SELECT happened outside runInTx (only mutex-serialized — not
+	// process-safe); the Postgres mirror already had this right.
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	err := s.runInTx(ctx, func(tx *sql.Tx) error {
+		var currentStatus string
+		if err := tx.QueryRowContext(ctx,
+			`SELECT status FROM sessions WHERE session_id = ? AND project_id = ?`,
+			sessionID, activeProject).Scan(&currentStatus); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return store.ErrNotFound
+			}
+			return err
+		}
+		// Validate transition.
+		if !isValidPromote(currentStatus, newStatus) {
+			return fmt.Errorf("%w: cannot promote %s -> %s", store.ErrInvalidState, currentStatus, newStatus)
+		}
+		res, err := tx.ExecContext(ctx,
+			`UPDATE sessions SET status = ? WHERE session_id = ? AND project_id = ?`,
+			newStatus, sessionID, activeProject)
+		if err != nil {
+			return err
+		}
+		rows, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if rows == 0 {
+			return store.ErrNotFound
+		}
+		// Look up the row id for the audit row.
+		var id int64
+		if err := tx.QueryRowContext(ctx,
+			`SELECT id FROM sessions WHERE session_id = ? AND project_id = ?`,
+			sessionID, activeProject).Scan(&id); err != nil {
+			return err
+		}
+		return s.recordWriteLockedTx(ctx, tx, audit.WriteEvent{
+			TableName:       "sessions",
+			RowID:           id,
+			Actor:           wc.Actor,
+			SessionID:       sessionID,
+			WritePath:       wc.WritePath,
+			ConstitutionID:  wc.ConstitutionID,
+			ConstitutionVer: wc.ConstitutionVer,
+			SessionEvent:    "promote",
+			CreatedAt:       now,
+		}, "")
+	})
+	return err
+}
+
+// isValidPromote returns true iff (current, new) is a valid status
+// promotion transition per INV-9 / Wave 5E.iii. Closed/archived states
+// are NOT valid targets — use CloseSession with the right reason instead.
+//
+// The same logic exists in internal/store/postgres/store.go (the
+// drivers are separate packages so they can't share helpers).
+func isValidPromote(current, next string) bool {
+	switch current {
+	case string(session.StatusOpen):
+		return next == string(session.StatusIdle)
+	case string(session.StatusIdle):
+		return next == string(session.StatusOpen)
+	}
+	return false
 }
 
 // ----- research -----
@@ -695,18 +1143,18 @@ func (s *Store) SaveRun(ctx context.Context, wc store.WriteContext, run *researc
 		}
 		_, err = tx.ExecContext(ctx,
 			`INSERT INTO write_audit (table_name, row_id, actor, session_id, write_path,
-			                           content_sha256, canary_present, constitution_id, constitution_ver, created_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			"research_items", itemID, wc.Actor, run.SessionID, wc.WritePath, hash, canary, wc.ConstitutionID, wc.ConstitutionVer, item.CreatedAt)
+			                           content_sha256, canary_present, constitution_id, constitution_ver, session_event, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			"research_items", itemID, wc.Actor, run.SessionID, wc.WritePath, hash, canary, wc.ConstitutionID, wc.ConstitutionVer, wc.SessionEvent, item.CreatedAt)
 		if err != nil {
 			return 0, err
 		}
 	}
 	_, err = tx.ExecContext(ctx,
 		`INSERT INTO write_audit (table_name, row_id, actor, session_id, write_path,
-		                           constitution_id, constitution_ver, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		"research_runs", runID, wc.Actor, run.SessionID, wc.WritePath, wc.ConstitutionID, wc.ConstitutionVer, run.CreatedAt)
+		                           constitution_id, constitution_ver, session_event, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		"research_runs", runID, wc.Actor, run.SessionID, wc.WritePath, wc.ConstitutionID, wc.ConstitutionVer, wc.SessionEvent, run.CreatedAt)
 	if err != nil {
 		return 0, err
 	}
@@ -938,6 +1386,56 @@ func (s *Store) ListItems(ctx context.Context, runID int64, source string, limit
 		out = append(out, it)
 	}
 	return out, rows.Err()
+}
+
+// CountItemsForProject — Wave 5E.v. Replaces the SessionClose N+1
+// query pattern (ListRuns + N×ListItems) with a single indexed
+// COUNT(*) on research_items. O(log n) via idx_research_items_project.
+// Read-only; no audit row emitted.
+//
+// Empty projectID falls back to the active project; this matches the
+// defensive pattern used by FindClosedAbortedForActor in 5E.ii.
+func (s *Store) CountItemsForProject(ctx context.Context, projectID string) (int, error) {
+	if err := s.requireProject(); err != nil {
+		return 0, err
+	}
+	activeProject := s.ActiveProject() // capture before locking
+	if projectID == "" {
+		projectID = activeProject
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM research_items WHERE project_id = ?`,
+		projectID).Scan(&n)
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+// CountRunsForProject — Wave 5E.v. Counterpart of CountItemsForProject
+// for research_runs. Same indexed-count pattern, replaces
+// "load all runs just to get the count" with a constant-time COUNT.
+func (s *Store) CountRunsForProject(ctx context.Context, projectID string) (int, error) {
+	if err := s.requireProject(); err != nil {
+		return 0, err
+	}
+	activeProject := s.ActiveProject() // capture before locking
+	if projectID == "" {
+		projectID = activeProject
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM research_runs WHERE project_id = ?`,
+		projectID).Scan(&n)
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
 }
 
 func (s *Store) LinkResearch(ctx context.Context, wc store.WriteContext, link *research.Link) error {
@@ -1960,6 +2458,10 @@ func (s *Store) ListSDDEvaluations(ctx context.Context, f ssd.ListFilters) ([]ss
 		q += ` AND target_type = ?`
 		args = append(args, f.TargetType)
 	}
+	if f.TargetID != "" {
+		q += ` AND target_id = ?`
+		args = append(args, f.TargetID)
+	}
 	q += ` ORDER BY id DESC LIMIT ?`
 	args = append(args, f.Limit)
 	rows, err := s.db.QueryContext(ctx, q, args...)
@@ -2182,6 +2684,12 @@ func (s *Store) VerifyConstitutionHash(ctx context.Context, constitutionID, sha2
 			return false, nil
 		}
 		return false, err
+	}
+	// Empty sha256Hash argument means "any row exists" — used by callers
+	// (e.g. TestSQLiteConstitutionWatchdogMigration) that want to
+	// confirm presence without committing to a specific SHA value.
+	if sha256Hash == "" {
+		return true, nil
 	}
 	return stored == sha256Hash, nil
 }
@@ -2454,7 +2962,7 @@ func (s *Store) Stats(ctx context.Context) (*store.Stats, error) {
 	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM vibe_drift_reports`).Scan(&out.DriftReportsTotal)
 	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sdd_evaluations`).Scan(&out.SDDEvaluations)
 	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM write_audit`).Scan(&out.WriteAuditTotal)
-	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sessions WHERE status = 'active'`).Scan(&out.SessionsActive)
+	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sessions WHERE status IN ('open','idle')`).Scan(&out.SessionsActive)
 	return out, nil
 }
 
@@ -2473,17 +2981,19 @@ func (s *Store) CreateProject(ctx context.Context, p *project.Project) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO projects (project_id, display_name, description, constitution_id, constitution_ver, created_at, archived_at, parent_project_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO projects (project_id, display_name, description, constitution_id, constitution_ver, created_at, archived_at, parent_project_id, drift_strictness)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(project_id) DO UPDATE SET
 		   display_name = excluded.display_name,
 		   description = excluded.description,
 		   constitution_id = excluded.constitution_id,
 		   constitution_ver = excluded.constitution_ver,
 		   parent_project_id = excluded.parent_project_id,
+		   drift_strictness = excluded.drift_strictness,
 		   archived_at = NULL`,
 		p.ProjectID, p.DisplayName, nullStr(p.Description), nullStr(p.ConstitutionID), nullStr(p.ConstitutionVer),
-		p.CreatedAt, nullStr(p.ArchivedAt), nullStr(p.ParentProjectID))
+		p.CreatedAt, nullStr(p.ArchivedAt), nullStr(p.ParentProjectID),
+		nullStr(driftStrictnessOrDefault(p.DriftStrictness)))
 	if err != nil {
 		return err
 	}
@@ -2503,11 +3013,11 @@ func (s *Store) GetProject(ctx context.Context, projectID string) (*project.Proj
 		return nil, err
 	}
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, project_id, display_name, description, constitution_id, constitution_ver, created_at, archived_at, parent_project_id
+		`SELECT id, project_id, display_name, description, constitution_id, constitution_ver, created_at, archived_at, parent_project_id, drift_strictness
 		 FROM projects WHERE project_id = ?`, projectID)
 	var p project.Project
-	var desc, consID, consVer, archived, parent sql.NullString
-	if err := row.Scan(&p.ID, &p.ProjectID, &p.DisplayName, &desc, &consID, &consVer, &p.CreatedAt, &archived, &parent); err != nil {
+	var desc, consID, consVer, archived, parent, drift sql.NullString
+	if err := row.Scan(&p.ID, &p.ProjectID, &p.DisplayName, &desc, &consID, &consVer, &p.CreatedAt, &archived, &parent, &drift); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
@@ -2528,6 +3038,9 @@ func (s *Store) GetProject(ctx context.Context, projectID string) (*project.Proj
 	if parent.Valid {
 		p.ParentProjectID = parent.String
 	}
+	if drift.Valid {
+		p.DriftStrictness = drift.String
+	}
 	return &p, nil
 }
 
@@ -2536,7 +3049,7 @@ func (s *Store) ListProjects(ctx context.Context, limit int) ([]project.Project,
 		limit = 100
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, project_id, display_name, description, constitution_id, constitution_ver, created_at, archived_at, parent_project_id
+		`SELECT id, project_id, display_name, description, constitution_id, constitution_ver, created_at, archived_at, parent_project_id, drift_strictness
 		 FROM projects
 		 WHERE archived_at IS NULL
 		 ORDER BY created_at DESC, project_id ASC
@@ -2548,8 +3061,8 @@ func (s *Store) ListProjects(ctx context.Context, limit int) ([]project.Project,
 	out := []project.Project{}
 	for rows.Next() {
 		var p project.Project
-		var desc, consID, consVer, archived, parent sql.NullString
-		if err := rows.Scan(&p.ID, &p.ProjectID, &p.DisplayName, &desc, &consID, &consVer, &p.CreatedAt, &archived, &parent); err != nil {
+		var desc, consID, consVer, archived, parent, drift sql.NullString
+		if err := rows.Scan(&p.ID, &p.ProjectID, &p.DisplayName, &desc, &consID, &consVer, &p.CreatedAt, &archived, &parent, &drift); err != nil {
 			return nil, err
 		}
 		if desc.Valid {
@@ -2566,6 +3079,9 @@ func (s *Store) ListProjects(ctx context.Context, limit int) ([]project.Project,
 		}
 		if parent.Valid {
 			p.ParentProjectID = parent.String
+		}
+		if drift.Valid {
+			p.DriftStrictness = drift.String
 		}
 		out = append(out, p)
 	}
@@ -2613,6 +3129,16 @@ func nullStr(s string) any {
 	return s
 }
 
+// driftStrictnessOrDefault (Wave 5X.3) normalizes the operator's
+// DriftStrictness field for INSERT. Empty or "default" → "default"
+// (the sentinel that means "use env"). Otherwise pass through.
+func driftStrictnessOrDefault(s string) string {
+	if s == "" {
+		return "default"
+	}
+	return s
+}
+
 // nullInt returns nil for 0 so the DB stores NULL cleanly.
 func nullInt(n int64) any {
 	if n == 0 {
@@ -2646,6 +3172,418 @@ func parseIntString(s string) int64 {
 		n = n*10 + int64(c-'0')
 	}
 	return n
+}
+
+// ----- Atomic frames (Wave 5A.ii.a; vibe_frames table from v11) -----
+
+// SaveFrame upserts a frame envelope by
+// (project_id, session_id, scope_level, scope_id, frame_kind). The
+// upsert target is the same tuple as the lookup key in GetFrame, so
+// repeated saves overwrite the existing row in place. Writes a
+// write_audit row in the SAME tx (INV-1: atomic audit).
+//
+// Schema note: v11 ships with `vibe_frames` (no UNIQUE constraint).
+// The cache layer (5A.ii.b) is expected to add a UNIQUE INDEX on
+// (session_id, scope_level, scope_id, frame_kind) as part of v11b.
+// Until that migration lands, SaveFrame degrades to "INSERT or
+// UPDATE-most-recent" via the (session_id, scope_level, scope_id,
+// frame_kind, MAX(created_at)) selector — implemented below by
+// matching the same composite key + composed_at.
+func (s *Store) SaveFrame(ctx context.Context, wc store.WriteContext, env *atomic.FrameEnvelope) (int64, error) {
+	if err := s.requireProject(); err != nil {
+		return 0, err
+	}
+	if env == nil {
+		return 0, fmt.Errorf("sqlite: SaveFrame: env is nil")
+	}
+	if env.SessionID == "" || env.Kind == "" || env.ScopeLevel == "" || env.ScopeID == "" {
+		return 0, fmt.Errorf("sqlite: SaveFrame: missing key fields (session_id=%q scope_level=%q scope_id=%q kind=%q)",
+			env.SessionID, env.ScopeLevel, env.ScopeID, env.Kind)
+	}
+	if len(env.FrameJSON) == 0 {
+		return 0, fmt.Errorf("sqlite: SaveFrame: frame_json is empty")
+	}
+	activeProject := s.ActiveProject()
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	if env.ComposedAt.IsZero() {
+		env.ComposedAt = time.Now().UTC()
+	}
+	if env.CreatedAt.IsZero() {
+		env.CreatedAt = time.Now().UTC()
+	}
+	shaHex := fmt.Sprintf("%x", env.ContentSHA256)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var id int64
+	// v13 polish: true UPSERT via INSERT ... ON CONFLICT. Requires the
+	// uq_vibe_frames_natural_key UNIQUE INDEX added in migration v13.
+	// Replaces the previous SELECT-then-INSERT/UPDATE pattern which
+	// was racy under concurrent writes for the same composite key.
+	err := s.runInTx(ctx, func(tx *sql.Tx) error {
+		// Use RETURNING id instead of LastInsertId() — the latter is
+		// unreliable for INSERT ... ON CONFLICT DO UPDATE in some
+		// SQLite versions (can return the rowid of the inserted row
+		// even when an UPDATE branch fired, leading to phantom new
+		// ids for idempotent upserts).
+		var newID int64
+		err := tx.QueryRowContext(ctx,
+			`INSERT INTO vibe_frames (project_id, session_id, scope_level, scope_id,
+			                          frame_kind, composed_at, expires_at, frame_json,
+			                          content_sha256, last_write_id, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 ON CONFLICT(project_id, session_id, scope_level, scope_id, frame_kind)
+			 DO UPDATE SET
+			   frame_json     = excluded.frame_json,
+			   content_sha256 = excluded.content_sha256,
+			   expires_at     = excluded.expires_at,
+			   last_write_id  = excluded.last_write_id,
+			   composed_at    = excluded.composed_at,
+			   created_at     = excluded.created_at
+			 RETURNING id`,
+			activeProject, env.SessionID, env.ScopeLevel, env.ScopeID, env.Kind,
+			env.ComposedAt.UTC().Format(time.RFC3339Nano),
+			env.ExpiresAt.UTC().Format(time.RFC3339Nano),
+			string(env.FrameJSON), shaHex, env.LastWriteID,
+			env.CreatedAt.UTC().Format(time.RFC3339Nano)).Scan(&newID)
+		if err != nil {
+			return err
+		}
+		id = newID
+		env.ID = id
+		return s.recordWriteLockedTx(ctx, tx, audit.WriteEvent{
+			TableName:       "vibe_frames",
+			Actor:           wc.Actor,
+			SessionID:       env.SessionID,
+			WritePath:       wc.WritePath,
+			ConstitutionID:  wc.ConstitutionID,
+			ConstitutionVer: wc.ConstitutionVer,
+			CreatedAt:       now,
+		}, "")
+	})
+	return id, err
+}
+
+// GetFrame returns the freshest non-expired frame matching the
+// composite key within the active project. Returns (nil, nil) on
+// cache miss (no row exists, or the row is past expires_at).
+//
+// NOTE (Wave 5A.ii.a): this is pure persistence — no INV-5 integrity
+// check happens here. The cache layer (Wave 5A.ii.b) is responsible
+// for verifying content_sha256 on read and emitting the
+// cache_mismatch audit breadcrumb. This wave exposes the bytes as
+// persisted; the cache layer is the trust boundary.
+func (s *Store) GetFrame(ctx context.Context, sessionID string, scope atomic.ScopeLevel, scopeID string, kind atomic.FrameKind) (*atomic.FrameEnvelope, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	if sessionID == "" || scope == "" || scopeID == "" || kind == "" {
+		return nil, fmt.Errorf("sqlite: GetFrame: missing key (session_id=%q scope=%q scope_id=%q kind=%q)",
+			sessionID, scope, scopeID, kind)
+	}
+	activeProject := s.ActiveProject()
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	row := s.db.QueryRowContext(ctx,
+		`SELECT id, project_id, session_id, scope_level, scope_id, frame_kind,
+		        composed_at, expires_at, frame_json, content_sha256, last_write_id, created_at
+		 FROM vibe_frames
+		 WHERE project_id = ? AND session_id = ? AND scope_level = ?
+		   AND scope_id = ? AND frame_kind = ?
+		   AND expires_at > ?
+		 ORDER BY composed_at DESC LIMIT 1`,
+		activeProject, sessionID, scope, scopeID, kind, now)
+	var env atomic.FrameEnvelope
+	var frameJSON string
+	var shaHex string
+	var composedAtStr, expiresAtStr, createdAtStr string
+	if err := row.Scan(
+		&env.ID, &env.ProjectID, &env.SessionID, &env.ScopeLevel, &env.ScopeID, &env.Kind,
+		&composedAtStr, &expiresAtStr, &frameJSON, &shaHex, &env.LastWriteID, &createdAtStr,
+	); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	env.ComposedAt = parseTimeRFC3339Nano(composedAtStr)
+	env.ExpiresAt = parseTimeRFC3339Nano(expiresAtStr)
+	env.CreatedAt = parseTimeRFC3339Nano(createdAtStr)
+	env.FrameJSON = []byte(frameJSON)
+	if err := parseSHA(shaHex, &env.ContentSHA256); err != nil {
+		return nil, fmt.Errorf("sqlite: GetFrame: parse content_sha256: %w", err)
+	}
+	return &env, nil
+}
+
+// ListFrames returns frames filtered by FrameListFilters. Expired rows
+// are always excluded at the SQL layer (hygiene, not cache policy).
+// Newest-first. Limit <= 0 means no limit.
+func (s *Store) ListFrames(ctx context.Context, filter store.FrameListFilters) ([]atomic.FrameEnvelope, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	if filter.ProjectID == "" {
+		filter.ProjectID = s.ActiveProject()
+	}
+	q := `SELECT id, project_id, session_id, scope_level, scope_id, frame_kind,
+	             composed_at, expires_at, frame_json, content_sha256, last_write_id, created_at
+	      FROM vibe_frames WHERE project_id = ? AND expires_at > ?`
+	args := []any{filter.ProjectID, time.Now().UTC().Format(time.RFC3339Nano)}
+	if filter.SessionID != "" {
+		q += " AND session_id = ?"
+		args = append(args, filter.SessionID)
+	}
+	if filter.ScopeLevel != "" {
+		q += " AND scope_level = ?"
+		args = append(args, string(filter.ScopeLevel))
+	}
+	if filter.Kind != "" {
+		q += " AND frame_kind = ?"
+		args = append(args, string(filter.Kind))
+	}
+	q += " ORDER BY composed_at DESC"
+	if filter.Limit > 0 {
+		q += " LIMIT ?"
+		args = append(args, filter.Limit)
+	}
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []atomic.FrameEnvelope{}
+	for rows.Next() {
+		var env atomic.FrameEnvelope
+		var frameJSON, shaHex string
+		var composedAtStr, expiresAtStr, createdAtStr string
+		if err := rows.Scan(
+			&env.ID, &env.ProjectID, &env.SessionID, &env.ScopeLevel, &env.ScopeID, &env.Kind,
+			&composedAtStr, &expiresAtStr, &frameJSON, &shaHex, &env.LastWriteID, &createdAtStr,
+		); err != nil {
+			return nil, err
+		}
+		env.ComposedAt = parseTimeRFC3339Nano(composedAtStr)
+		env.ExpiresAt = parseTimeRFC3339Nano(expiresAtStr)
+		env.CreatedAt = parseTimeRFC3339Nano(createdAtStr)
+		env.FrameJSON = []byte(frameJSON)
+		if err := parseSHA(shaHex, &env.ContentSHA256); err != nil {
+			return nil, fmt.Errorf("sqlite: ListFrames: parse content_sha256 row id=%d: %w", env.ID, err)
+		}
+		out = append(out, env)
+	}
+	return out, rows.Err()
+}
+
+// DeleteFrame removes a frame by id. Emits a write_audit row in the
+// SAME tx (INV-1) using the SessionID from WriteContext. Returns
+// store.ErrNotFound if the id doesn't exist. Note: this does NOT
+// fetch the row's session_id before deleting — the caller is
+// responsible for passing the right WriteContext.
+func (s *Store) DeleteFrame(ctx context.Context, wc store.WriteContext, id int64) error {
+	if err := s.requireProject(); err != nil {
+		return err
+	}
+	if id == 0 {
+		return fmt.Errorf("sqlite: DeleteFrame: id is 0")
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.runInTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, `DELETE FROM vibe_frames WHERE id = ?`, id)
+		if err != nil {
+			return err
+		}
+		n, _ := res.RowsAffected()
+		if n == 0 {
+			return store.ErrNotFound
+		}
+		return s.recordWriteLockedTx(ctx, tx, audit.WriteEvent{
+			TableName:       "vibe_frames",
+			Actor:           wc.Actor,
+			SessionID:       wc.SessionID,
+			WritePath:       "DeleteFrame",
+			ConstitutionID:  wc.ConstitutionID,
+			ConstitutionVer: wc.ConstitutionVer,
+			SessionEvent:    "frame_delete",
+			CreatedAt:       now,
+		}, "")
+	})
+}
+
+// ----- Recall subscriptions (Wave 5A.ii.b.1; vibe_recall_subscriptions) -----
+
+// SaveRecallSubscription inserts-or-updates a subscription row keyed by
+// (session_id, scope_level, scope_id). v11 has a UNIQUE constraint on
+// this triple so we can use INSERT ... ON CONFLICT for a true atomic
+// upsert (no SELECT-then-UPDATE pattern needed). Returns the row id.
+// Pure persistence: the recall orchestrator (5A.ii.b.2) owns the
+// delta-cursor logic.
+func (s *Store) SaveRecallSubscription(ctx context.Context, wc store.WriteContext, sub *store.RecallSubscription) (int64, error) {
+	if err := s.requireProject(); err != nil {
+		return 0, err
+	}
+	if sub == nil {
+		return 0, fmt.Errorf("sqlite: SaveRecallSubscription: sub is nil")
+	}
+	if sub.SessionID == "" || sub.ScopeLevel == "" || sub.ScopeID == "" {
+		return 0, fmt.Errorf("sqlite: SaveRecallSubscription: missing key fields (session_id=%q scope_level=%q scope_id=%q)",
+			sub.SessionID, sub.ScopeLevel, sub.ScopeID)
+	}
+	activeProject := s.ActiveProject()
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	sub.CreatedAt = now
+	sub.UpdatedAt = now
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var id int64
+	err := s.runInTx(ctx, func(tx *sql.Tx) error {
+		// ON CONFLICT (session_id, scope_level, scope_id) DO UPDATE
+		// refreshes last_seen_token, scope_id (no-op since key), and
+		// updated_at. Returns the row id via RETURNING.
+		err := tx.QueryRowContext(ctx,
+			`INSERT INTO vibe_recall_subscriptions (project_id, session_id, scope_level, scope_id,
+			                                        last_seen_token, created_at, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)
+			 ON CONFLICT (session_id, scope_level, scope_id) DO UPDATE
+			 SET last_seen_token = excluded.last_seen_token,
+			     updated_at = excluded.updated_at
+			 RETURNING id`,
+			activeProject, sub.SessionID, sub.ScopeLevel, sub.ScopeID,
+			sub.LastSeenToken, sub.CreatedAt, sub.UpdatedAt,
+		).Scan(&id)
+		if err != nil {
+			return err
+		}
+		sub.ID = id
+		return s.recordWriteLockedTx(ctx, tx, audit.WriteEvent{
+			TableName:       "vibe_recall_subscriptions",
+			Actor:           wc.Actor,
+			SessionID:       sub.SessionID,
+			WritePath:       "SaveRecallSubscription",
+			ConstitutionID:  wc.ConstitutionID,
+			ConstitutionVer: wc.ConstitutionVer,
+			SessionEvent:    "subscription_upsert",
+			CreatedAt:       now,
+		}, "")
+	})
+	return id, err
+}
+
+// GetRecallSubscription returns the row matching the natural key, or
+// (nil, nil) if not found. INV-7: filtered by active project.
+func (s *Store) GetRecallSubscription(ctx context.Context, sessionID string, scope atomic.ScopeLevel, scopeID string) (*store.RecallSubscription, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	if sessionID == "" || scope == "" || scopeID == "" {
+		return nil, fmt.Errorf("sqlite: GetRecallSubscription: missing key (session_id=%q scope=%q scope_id=%q)",
+			sessionID, scope, scopeID)
+	}
+	activeProject := s.ActiveProject()
+	row := s.db.QueryRowContext(ctx,
+		`SELECT id, project_id, session_id, scope_level, scope_id, last_seen_token, created_at, updated_at
+		 FROM vibe_recall_subscriptions
+		 WHERE project_id = ? AND session_id = ? AND scope_level = ? AND scope_id = ?`,
+		activeProject, sessionID, scope, scopeID)
+	var sub store.RecallSubscription
+	if err := row.Scan(&sub.ID, &sub.ProjectID, &sub.SessionID, &sub.ScopeLevel, &sub.ScopeID,
+		&sub.LastSeenToken, &sub.CreatedAt, &sub.UpdatedAt); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &sub, nil
+}
+
+// UpdateRecallSubscriptionLastSeenToken advances the cursor. Returns
+// store.ErrNotFound if no subscription exists for the key.
+func (s *Store) UpdateRecallSubscriptionLastSeenToken(ctx context.Context, wc store.WriteContext, sessionID string, scope atomic.ScopeLevel, scopeID string, newToken int64) error {
+	if err := s.requireProject(); err != nil {
+		return err
+	}
+	if sessionID == "" || scope == "" || scopeID == "" {
+		return fmt.Errorf("sqlite: UpdateRecallSubscriptionLastSeenToken: missing key (session_id=%q scope=%q scope_id=%q)",
+			sessionID, scope, scopeID)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.runInTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx,
+			`UPDATE vibe_recall_subscriptions
+			 SET last_seen_token = ?, updated_at = ?
+			 WHERE project_id = ? AND session_id = ? AND scope_level = ? AND scope_id = ?`,
+			newToken, now, s.activeProject, sessionID, scope, scopeID)
+		if err != nil {
+			return err
+		}
+		n, _ := res.RowsAffected()
+		if n == 0 {
+			return store.ErrNotFound
+		}
+		return s.recordWriteLockedTx(ctx, tx, audit.WriteEvent{
+			TableName:       "vibe_recall_subscriptions",
+			Actor:           wc.Actor,
+			SessionID:       sessionID,
+			WritePath:       "UpdateRecallSubscriptionLastSeenToken",
+			ConstitutionID:  wc.ConstitutionID,
+			ConstitutionVer: wc.ConstitutionVer,
+			SessionEvent:    "subscription_cursor_advance",
+			CreatedAt:       now,
+		}, "")
+	})
+}
+
+// parseSHA parses a hex-encoded SHA-256 string into a [32]byte array.
+func parseSHA(s string, out *[32]byte) error {
+	if len(s) != 64 {
+		return fmt.Errorf("sha256: expected 64 hex chars, got %d", len(s))
+	}
+	for i := 0; i < 32; i++ {
+		hi, err := unhex(s[2*i])
+		if err != nil {
+			return fmt.Errorf("sha256: byte %d high: %w", i, err)
+		}
+		lo, err := unhex(s[2*i+1])
+		if err != nil {
+			return fmt.Errorf("sha256: byte %d low: %w", i, err)
+		}
+		out[i] = (hi << 4) | lo
+	}
+	return nil
+}
+
+// parseTimeRFC3339Nano parses a TEXT column formatted via
+// time.RFC3339Nano into time.Time. Used by vibe_frames + sessions
+// where columns are TEXT (not TIMESTAMP) for portability across
+// sqlite/postgres. Returns zero time on empty input.
+func parseTimeRFC3339Nano(s string) time.Time {
+	if s == "" {
+		return time.Time{}
+	}
+	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
+		return t
+	}
+	// Fallback for legacy values without nanosecond precision.
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t
+	}
+	return time.Time{}
+}
+
+// unhex converts a single hex char to its 4-bit value.
+func unhex(c byte) (byte, error) {
+	switch {
+	case '0' <= c && c <= '9':
+		return c - '0', nil
+	case 'a' <= c && c <= 'f':
+		return c - 'a' + 10, nil
+	case 'A' <= c && c <= 'F':
+		return c - 'A' + 10, nil
+	default:
+		return 0, fmt.Errorf("not hex: %q", c)
+	}
 }
 
 // ----- VLP state (atomic spec 2.3 VLPPersistence) -----
@@ -2704,8 +3642,8 @@ func (s *Store) saveVLPStateTx(ctx context.Context, wc store.WriteContext, row *
 		if err := tx.QueryRowContext(ctx, `
 			INSERT INTO vlp_state (session_id, state, last_event, last_verdict, turn_count,
 			                      minset_current, constitution_id, constitution_ver,
-			                      created_at, updated_at, project_id)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			                      created_at, updated_at, project_id, open_spec_id)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(project_id, session_id) DO UPDATE SET
 				state             = excluded.state,
 				last_event        = excluded.last_event,
@@ -2714,11 +3652,12 @@ func (s *Store) saveVLPStateTx(ctx context.Context, wc store.WriteContext, row *
 				minset_current    = excluded.minset_current,
 				constitution_id   = excluded.constitution_id,
 				constitution_ver  = excluded.constitution_ver,
-				updated_at        = excluded.updated_at
+				updated_at        = excluded.updated_at,
+				open_spec_id      = excluded.open_spec_id
 			RETURNING id`,
 			row.SessionID, row.State, row.LastEvent, row.LastVerdict, row.TurnCount,
 			row.MinsetCurrent, row.ConstitutionID, row.ConstitutionVer,
-			row.CreatedAt, row.UpdatedAt, projectID,
+			row.CreatedAt, row.UpdatedAt, projectID, row.OpenSpecID,
 		).Scan(&id); err != nil {
 			return fmt.Errorf("vlp_state: upsert: %w", err)
 		}
@@ -2780,12 +3719,12 @@ func (s *Store) GetVLPState(ctx context.Context, sessionID string) (*store.VLPSt
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, session_id, state, last_event, last_verdict, turn_count,
 		       minset_current, constitution_id, constitution_ver,
-		       created_at, updated_at, project_id
+		       created_at, updated_at, project_id, open_spec_id
 		FROM vlp_state WHERE session_id = ? AND project_id = ?`, sessionID, activeProject)
 	var r store.VLPStateRow
 	var le, lv, mc, ci, cv, pid sql.NullString
 	if err := row.Scan(&r.ID, &r.SessionID, &r.State, &le, &lv, &r.TurnCount,
-		&mc, &ci, &cv, &r.CreatedAt, &r.UpdatedAt, &pid); err != nil {
+		&mc, &ci, &cv, &r.CreatedAt, &r.UpdatedAt, &pid, &r.OpenSpecID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}

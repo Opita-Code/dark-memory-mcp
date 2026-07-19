@@ -1,9 +1,14 @@
 // Package sqlite contains the SQLite-flavored DDL for Dark Memory MCP
-// migrations v1..v6. Each migration's Up SQL is idempotent.
+// migrations v1..v16. Each migration's Up SQL is idempotent.
 //
 // The Migration slice here MUST have the same Version+Name as the
 // postgres package's Migrations; the Up SQL differs (INTEGER PRIMARY
 // KEY AUTOINCREMENT vs SERIAL, etc.).
+//
+// v11 (5A.iii — pivote active-memory) adds the atom-frame storage:
+// `vibe_frames` + `vibe_recall_subscriptions`. v12 (5E.ii) is the
+// destructive-but-rebuild sessions lifecycle rewrite for the 5-state
+// enum + resurrection chain. See SCHEMA_v11_v12.md §3 for design.
 package sqlite
 
 import "github.com/dark-agents/dark-memory-mcp/internal/migrate"
@@ -396,7 +401,8 @@ CREATE TABLE IF NOT EXISTS vlp_state (
     constitution_ver  TEXT,
     created_at        TEXT NOT NULL,
     updated_at        TEXT NOT NULL,
-    project_id        TEXT NOT NULL DEFAULT 'default'
+    project_id        TEXT NOT NULL DEFAULT 'default',
+    open_spec_id      INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_vlp_state_session ON vlp_state(session_id);
 CREATE INDEX IF NOT EXISTS idx_vlp_state_state   ON vlp_state(state);
@@ -420,6 +426,243 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_vlp_state_project_session
 		Name:    "audit_project_index",
 		Up: `
 CREATE INDEX IF NOT EXISTS idx_write_audit_project_session ON write_audit(project_id, session_id);
+`,
+	},
+	{
+		// v11 — atomic frames + recall subscriptions (5A.iii).
+		// Additive: creates two new tables with no impact on existing
+		// rows. `vibe_frames` stores composed atomic frames keyed by
+		// (session_id, scope_level, scope_id, frame_kind) with TTL via
+		// `expires_at` and an `INV-5`-ish `content_sha256`. The `last_write_id`
+		// column is the cache-invalidation cursor (pointing into write_audit).
+		// `vibe_recall_subscriptions` tracks per-scope `last_seen_token` so
+		// `dark_memory_recall(scope, since_token)` can compute deltas.
+		// Both tables carry an explicit `project_id` (INV-7). See
+		// `vibe-flow/main/SCHEMA_v11_v12.md` §2.4 for the full SQL + index
+		// strategy.
+		Version: 11,
+		Name:    "atomic_frames_and_recall_subscriptions",
+		Up: `
+CREATE TABLE IF NOT EXISTS vibe_frames (
+  id              INTEGER PRIMARY KEY,
+  project_id      TEXT    NOT NULL,
+  session_id      TEXT    NOT NULL,
+  scope_level     TEXT    NOT NULL CHECK (scope_level IN ('global','project','session','call')),
+  scope_id        TEXT    NOT NULL,
+  frame_kind      TEXT    NOT NULL CHECK (frame_kind IN ('identity','scope','evidence','capabilities','drift','persona')),
+  composed_at     TEXT    NOT NULL,
+  expires_at      TEXT    NOT NULL,
+  frame_json      TEXT    NOT NULL,
+  content_sha256  TEXT    NOT NULL,
+  last_write_id   INTEGER NOT NULL DEFAULT 0,
+  created_at      TEXT    NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_vibe_frames_scope_lookup
+  ON vibe_frames (session_id, scope_level, scope_id, frame_kind, expires_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_vibe_frames_project
+  ON vibe_frames (project_id, frame_kind, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_vibe_frames_invalidation
+  ON vibe_frames (session_id, last_write_id);
+
+CREATE TABLE IF NOT EXISTS vibe_recall_subscriptions (
+  id               INTEGER PRIMARY KEY,
+  project_id       TEXT    NOT NULL,
+  session_id       TEXT    NOT NULL,
+  scope_level      TEXT    NOT NULL CHECK (scope_level IN ('global','project','session','call')),
+  scope_id         TEXT    NOT NULL,
+  last_seen_token  INTEGER NOT NULL DEFAULT 0,
+  created_at       TEXT    NOT NULL,
+  updated_at       TEXT    NOT NULL,
+  UNIQUE (session_id, scope_level, scope_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_recall_subs_lookup
+  ON vibe_recall_subscriptions (session_id, scope_level, scope_id);
+
+CREATE INDEX IF NOT EXISTS idx_recall_subs_project
+  ON vibe_recall_subscriptions (project_id, scope_level);
+`,
+	},
+	{
+		// v12 — session lifecycle overhaul (Wave 5E.ii).
+		// Destructive-but-rebuild on the `sessions` table. Backfills any
+		// legacy `status='open'` row to `closed_aborted` so harness-accidental
+		// deaths become resurrectable (per INV-8). Adds three new columns
+		// (last_heartbeat_at for INV-9, parent_session_id + resurrected_from
+		// for the resurrection chain). Adds a `session_event` column to
+		// `write_audit` so session-related writes carry an audit breadcrumb.
+		// Adds three indexes for status/operator lookups and resurrection
+		// chain walks. See SCHEMA_v11_v12.md §3 for the canonical design
+		// and SCHEMA_v11_v12.md §3.5 (backfill pre-flight) for the abort-on-
+		// unexpected-legacy-status guard (the Go migration runner runs that
+		// pre-flight; this SQL is the safe-rebuild path).
+		Version: 12,
+		Name:    "session_lifecycle_overhaul",
+		Up: `
+PRAGMA foreign_keys = OFF;
+ALTER TABLE sessions RENAME TO _sessions_old;
+
+CREATE TABLE sessions (
+  id                  INTEGER PRIMARY KEY,
+  session_id          TEXT    NOT NULL UNIQUE,
+  status              TEXT    NOT NULL DEFAULT 'open'
+                      CHECK (status IN ('open','idle','closed_clean','closed_aborted','archived')),
+  constitution_id     TEXT,
+  constitution_ver    TEXT,
+  active_mods         TEXT,
+  operator            TEXT    NOT NULL,
+  started_at          TEXT    NOT NULL,
+  closed_at           TEXT,
+  last_heartbeat_at   TEXT,
+  parent_session_id   TEXT,
+  resurrected_from    TEXT,
+  notes               TEXT,
+  project_id          TEXT    NOT NULL DEFAULT 'default',
+  created_at          TEXT    NOT NULL,
+  CHECK (
+    (status IN ('closed_clean','archived') AND closed_at IS NOT NULL)
+    OR (status = 'open' AND closed_at IS NULL)
+    OR (status IN ('idle','closed_aborted'))
+  )
+);
+
+-- Backfill: legacy 'open' (orphan by accident) -> closed_aborted (resurrectable).
+-- Legacy 'closed' (terminal by historical convention) -> closed_clean.
+-- Legacy 'active' (the v5 default before v12) -> closed_clean too (treat as
+-- pre-pivot baseline: any actually-still-open sessions will surface as orphans
+-- via the runtime's startup-recover sweep, which is the canonical resurrection
+-- entry point per BRIDGE_AND_COEXISTENCE.md §6.2).
+-- created_at: legacy schemas (v5 to v11) did not track created_at separately
+-- from started_at, so we use started_at as the proxy value.
+-- active_project_id (added in v7) is intentionally dropped — v12 schema folds
+-- that state into project_id + resurrected_from, and the project_id column
+-- already holds the active value for legacy rows.
+INSERT INTO sessions
+  (id, session_id, status,
+   constitution_id, constitution_ver, active_mods,
+   operator, started_at, closed_at,
+   last_heartbeat_at, parent_session_id, resurrected_from,
+   notes, project_id, created_at)
+SELECT
+  id, session_id,
+  CASE
+    WHEN status='open'           THEN 'closed_aborted'
+    WHEN status='active'         THEN 'closed_clean'
+    WHEN status='closed'         THEN 'closed_clean'
+    WHEN status='closed_clean'   THEN 'closed_clean'
+    WHEN status='closed_aborted' THEN 'closed_aborted'
+    WHEN status='archived'       THEN 'archived'
+    ELSE 'closed_clean'
+  END,
+  constitution_id, constitution_ver, active_mods,
+  operator, started_at, closed_at,
+  NULL, NULL, NULL,
+  notes, project_id, started_at
+FROM _sessions_old;
+
+DROP TABLE _sessions_old;
+
+ALTER TABLE write_audit ADD COLUMN session_event TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_sessions_status_operator
+  ON sessions (status, operator, closed_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_resurrected
+  ON sessions (resurrected_from);
+
+CREATE INDEX IF NOT EXISTS idx_write_audit_session_event
+  ON write_audit (session_event, created_at);
+
+PRAGMA foreign_keys = ON;
+`,
+	},
+	{
+		// v13 — vibe_frames unique natural key (5A.ii.a polish).
+		// Adds a UNIQUE INDEX on the composite key (project_id,
+		// session_id, scope_level, scope_id, frame_kind) so SaveFrame
+		// can use INSERT ... ON CONFLICT (true UPSERT) instead of the
+		// SELECT-then-INSERT/UPDATE pattern that was racy under
+		// concurrent writes for the same key. The pivot drift judge
+		// flagged this at 0.55 — the polish wave ships the fix.
+		//
+		// Failure mode: pre-v13 DBs that already accumulated duplicate
+		// rows from the race hit the UNIQUE INDEX creation with
+		// "UNIQUE constraint failed". The migration runner's applyOne
+		// propagates that error verbatim and aborts v13 — operator
+		// sees `migrate: v13: UNIQUE constraint failed: ...` and can
+		// resolve by deleting duplicates manually:
+		//
+		//   DELETE FROM vibe_frames WHERE id NOT IN (
+		//     SELECT MIN(id) FROM vibe_frames
+		//     GROUP BY project_id, session_id, scope_level, scope_id, frame_kind
+		//   );
+		//
+		// then re-run. The pivot's INFRA-003 work environment
+		// (corporate WDAC + Carbon Black) didn't exercise concurrent
+		// SaveFrame calls, so the live dark.db has no duplicates —
+		// the v13 migration applies cleanly. New DBs created after
+		// this wave have no race window.
+		Version: 13,
+		Name:    "vibe_frames_unique_natural_key",
+		Up: `
+CREATE UNIQUE INDEX IF NOT EXISTS uq_vibe_frames_natural_key
+  ON vibe_frames (project_id, session_id, scope_level, scope_id, frame_kind);
+`,
+	},
+	{
+		// v14 — projects.drift_strictness (5X.3).
+		// Adds drift_strictness column to projects table for per-project
+		// override of the drift-at-write interceptor (5A.vi M6). Values:
+		//   'default' (use DARK_DRIFT_STRICTNESS env)
+		//   'off' / 'warn' / 'strict' (per-project override)
+		// NOT NULL DEFAULT 'default' so pre-v14 DBs preserve the
+		// existing env-driven behavior. Idempotent: ADD COLUMN with
+		// DEFAULT is safe to re-run (SQLite records the column once).
+		Version: 14,
+		Name:    "projects_drift_strictness",
+		Up: `
+ALTER TABLE projects ADD COLUMN drift_strictness TEXT NOT NULL DEFAULT 'default';
+`,
+	},
+	{
+		// v15 — vlp_state.open_spec_id (5X.4).
+		// Adds the spec_id column that ScopeFrame needs to point at
+		// the active spec for a session. Pre-5X.4 the recall cache
+		// (5A.ii.b.2.c) had to use vlp_state.ID as a proxy because
+		// no real mapping existed. This column closes that gap.
+		//
+		// Idempotent: ADD COLUMN with DEFAULT 0 is safe to re-run.
+		// Pre-v15 DBs get open_spec_id=0 (no spec open) for all
+		// existing rows — same behavior as before.
+		Version: 15,
+		Name:    "vlp_state_open_spec_id",
+		Up: `
+ALTER TABLE vlp_state ADD COLUMN open_spec_id INTEGER NOT NULL DEFAULT 0;
+`,
+	},
+	{
+		// v16 - constitution watchdog audit columns (5E.iv follow-up).
+		// Adds last_verified_at + last_verified_sha256 to constitutions
+		// so the watchdog can record the timestamp + SHA of the most
+		// recent verification. Without these columns, the watchdog's
+		// INSERT INTO constitutions (runWatchdog, INV-4 path) fails
+		// silently with "no such column" because the INSERT statement
+		// references both fields. The Store code's `_, _ = ...Exec`
+		// discarded the error, so the watchdog appeared to succeed
+		// but no row was written. Surfaced by
+		// TestSQLiteConstitutionWatchdogMigration.
+		//
+		// activated_at already exists (added in the original v6
+		// constitution migration). Pre-v16 DBs already had activated_at
+		// populated; new columns default to NULL/empty for back-compat.
+		Version: 16,
+		Name:    "constitution_watchdog_audit",
+		Up: `
+ALTER TABLE constitutions ADD COLUMN last_verified_at TEXT;
+ALTER TABLE constitutions ADD COLUMN last_verified_sha256 TEXT;
 `,
 	},
 }
