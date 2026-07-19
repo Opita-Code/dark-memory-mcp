@@ -10,6 +10,8 @@ package server
 
 import (
 	"context"
+	"database/sql"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -17,6 +19,7 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/orchestration"
 	"github.com/dark-agents/dark-memory-mcp/internal/project"
 	"github.com/dark-agents/dark-memory-mcp/internal/session"
+	_ "modernc.org/sqlite"
 )
 
 // bootTestServer boots a server against an isolated sqlite DB in t.TempDir.
@@ -62,9 +65,11 @@ func TestShutdown_DefaultReasonIsClean(t *testing.T) {
 		t.Fatalf("Shutdown: %v", err)
 	}
 
-	got, err := boot.Store.GetSession(ctx, start.SessionID)
+	// Shutdown closes the Store, so we can't read via boot.Store.
+	// Open a fresh sqlite connection to verify the side effect on disk.
+	got, err := readSessionAfterShutdown(t, boot.DBPath, start.SessionID)
 	if err != nil {
-		t.Fatalf("GetSession after Shutdown: %v", err)
+		t.Fatalf("readSessionAfterShutdown: %v", err)
 	}
 	if got == nil {
 		t.Fatalf("session vanished after Shutdown")
@@ -99,7 +104,7 @@ func TestShutdown_AbortedReasonWhenOptIn(t *testing.T) {
 		t.Fatalf("Shutdown: %v", err)
 	}
 
-	got, err := boot.Store.GetSession(ctx, start.SessionID)
+	got, err := readSessionAfterShutdown(t, os.Getenv("DARK_DB"), start.SessionID)
 	if err != nil {
 		t.Fatalf("GetSession after Shutdown: %v", err)
 	}
@@ -132,7 +137,7 @@ func TestShutdown_InvalidReasonFallsBackToClean(t *testing.T) {
 		t.Fatalf("Shutdown should swallow invalid env, got: %v", err)
 	}
 
-	got, err := boot.Store.GetSession(ctx, start.SessionID)
+	got, err := readSessionAfterShutdown(t, os.Getenv("DARK_DB"), start.SessionID)
 	if err != nil || got == nil {
 		t.Fatalf("GetSession: %v got=%+v", err, got)
 	}
@@ -307,6 +312,12 @@ func TestStartupRecover_NoCandidateIsClean(t *testing.T) {
 	ctx := context.Background()
 	boot := bootTestServer(t, "fresh-operator")
 
+	// The recover flow needs an active project to query sessions.
+	// bootTestServer already created "acme" via CreateProject.
+	if err := boot.Store.SetActiveProject(ctx, "acme"); err != nil {
+		t.Fatalf("SetActiveProject: %v", err)
+	}
+
 	out, err := boot.Orchestrator.SessionRecover(ctx, orchestration.SessionRecoverInput{
 		Operator: "fresh-operator",
 		Lookback: "24h",
@@ -323,4 +334,34 @@ func TestStartupRecover_NoCandidateIsClean(t *testing.T) {
 	if out.RequiresConsent {
 		t.Errorf("RequiresConsent = true, want false")
 	}
+}
+
+// readSessionAfterShutdown opens a fresh sqlite connection to the DB
+// file (the original Store has been closed by Shutdown) and reads the
+// session row. Returns nil session + nil error if the row is absent.
+func readSessionAfterShutdown(t *testing.T, dbPath, sessionID string) (*session.Session, error) {
+	t.Helper()
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+	row := db.QueryRow(
+		`SELECT session_id, status, constitution_id, constitution_ver,
+		        active_mods, operator, started_at, closed_at,
+		        last_heartbeat_at, parent_session_id, resurrected_from,
+		        notes, project_id
+		 FROM sessions WHERE session_id = ?`, sessionID)
+	var s session.Session
+	err = row.Scan(&s.SessionID, &s.Status, &s.ConstitutionID, &s.ConstitutionVer,
+		&s.ActiveMods, &s.Operator, &s.StartedAt, &s.ClosedAt,
+		&s.LastHeartbeatAt, &s.ParentSessionID, &s.ResurrectedFrom,
+		&s.Notes, &s.ProjectID)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &s, nil
 }
