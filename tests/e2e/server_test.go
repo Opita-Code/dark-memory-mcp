@@ -248,7 +248,7 @@ func newTestServer(t *testing.T) *testServer {
 	if err != nil {
 		t.Fatalf("server.New: %v", err)
 	}
-	if err := tools.RegisterAll(srv.Registry(), srv.BootState().Orchestrator, srv.BootState().Store); err != nil {
+	if err := tools.RegisterAll(srv.Registry(), srv.BootState().Orchestrator, srv.BootState().Store, nil); err != nil {
 		srv.Close()
 		t.Fatalf("RegisterAll: %v", err)
 	}

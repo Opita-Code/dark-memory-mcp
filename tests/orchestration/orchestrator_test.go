@@ -200,7 +200,7 @@ func TestSessionStart_RowReachStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSession: %v", err)
 	}
-	if got == nil || got.Status != string(session.StatusActive) {
+	if got == nil || got.Status != string(session.StatusOpen) {
 		t.Fatalf("session should exist and be active, got: %+v", got)
 	}
 }
@@ -263,7 +263,7 @@ func TestSessionClose_HappyPath(t *testing.T) {
 	if got == nil {
 		t.Fatalf("session disappeared")
 	}
-	if got.Status != "closed" {
+	if got.Status != string(session.StatusClosedClean) {
 		t.Fatalf("session status should be 'closed', got %q", got.Status)
 	}
 }

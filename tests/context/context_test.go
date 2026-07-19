@@ -125,7 +125,7 @@ func seedSession(t *testing.T, ctx context.Context, s store.Store, sessionID str
 	wc := store.WriteContext{Actor: "test", SessionID: sessionID, WritePath: "seed"}
 	sess := &session.Session{
 		SessionID: sessionID,
-		Status:    string(session.StatusActive),
+		Status:    string(session.StatusOpen),
 		Operator:  "test",
 	}
 	if _, err := s.SaveSession(ctx, wc, sess); err != nil {
