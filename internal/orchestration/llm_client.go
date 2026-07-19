@@ -4,7 +4,7 @@
 //     (ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, ...). This is
 //     the default: the same model that called the MCP tool acts as
 //     judge. Self-judge is biased but zero-config.
-//   - DarkscrapperClient: uses the [drift-judge-daemon] virtual-key pool,
+//   - DriftJudgeDaemonClient: uses the [drift-judge-daemon] virtual-key pool,
 //     rotating across providers for cost/quality optimisation. Used
 //     when the orchestrator's OSINT selector says "this eval_type is
 //     better served by a different model".
@@ -28,9 +28,9 @@ import (
 	"time"
 )
 
-// scrapperTimeout bounds the HTTP call to DARK_SCRAPPER_URL/v1/messages.
+// driftJudgeDaemonTimeout bounds the HTTP call to DARK_DRIFT_JUDGE_DAEMON_URL/v1/messages.
 // Kept conservative; matches verify-llm-pipeline.ps1 stage 2 timeout.
-const scrapperTimeout = 60 * time.Second
+const driftJudgeDaemonTimeout = 60 * time.Second
 
 // JudgeRequest is the structured input to a Judge call. The
 // orchestrator fills it from the JudgeInput plus a per-eval_type
@@ -65,15 +65,15 @@ type LLMClient interface {
 // ErrNoLLMAvailable is returned when no LLM key is detected AND no
 // fallback was configured. The orchestrator wraps this with a
 // user-facing hint.
-var ErrNoLLMAvailable = errors.New("no LLM available: harness has no API key (set ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, or DARK_SCRAPPER_URL), and no fallback was configured")
+var ErrNoLLMAvailable = errors.New("no LLM available: harness has no API key (set ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, or DARK_DRIFT_JUDGE_DAEMON_URL), and no fallback was configured")
 
 // SelfHarnessClient delegates Judge calls to an LLM. Two supported
 // modes in this build:
 //
-//   - provider = "dark_scrapper": POST to DARK_SCRAPPER_URL/v1/messages
+//   - provider = "drift_judge_daemon": POST to DARK_DRIFT_JUDGE_DAEMON_URL/v1/messages
 //     with Bearer ds-managed (sentinel auth). Wave 3.5 wiring of the
 //     [drift-judge-daemon] integration; source previously deferred this
-//     to Wave 4+. Works against either the real dark-scrapper daemon
+//     to Wave 4+. Works against either the real [drift-judge-daemon]
 //     at :8901 (when pool is non-empty) or the deterministic mock-llm
 //     at :9000 (dev iteration).
 //
@@ -90,7 +90,7 @@ var ErrNoLLMAvailable = errors.New("no LLM available: harness has no API key (se
 //   1. ANTHROPIC_API_KEY  → Anthropic Claude (stub in this build)
 //   2. OPENAI_API_KEY     → OpenAI GPT (stub in this build)
 //   3. GEMINI_API_KEY     → Google Gemini (stub in this build)
-//   4. DARK_SCRAPPER_URL  → [drift-judge-daemon] pool (WIRED)
+//  4. DARK_DRIFT_JUDGE_DAEMON_URL  → [drift-judge-daemon] pool (WIRED)
 //   5. none               → ErrNoLLMAvailable
 //
 // The model is auto-picked via the OSINTSelector for the eval_type
@@ -98,7 +98,7 @@ var ErrNoLLMAvailable = errors.New("no LLM available: harness has no API key (se
 type SelfHarnessClient struct {
 	provider string
 	model    string
-	key      string // API key or DARK_SCRAPPER_URL
+	key      string // API key or DARK_DRIFT_JUDGE_DAEMON_URL
 }
 
 // NewSelfHarnessClient detects the available LLM via env vars.
@@ -125,10 +125,10 @@ func NewSelfHarnessClient() (*SelfHarnessClient, error) {
 			key:      key,
 		}, nil
 	}
-	if url := os.Getenv("DARK_SCRAPPER_URL"); url != "" {
+	if url := os.Getenv("DARK_DRIFT_JUDGE_DAEMON_URL"); url != "" {
 		return &SelfHarnessClient{
-			provider: "dark_scrapper",
-			model:    os.Getenv("DARK_JUDGE_MODEL_SCRAPPER"),
+			provider: "drift_judge_daemon",
+			model:    os.Getenv("DARK_JUDGE_MODEL_DRIFT_JUDGE_DAEMON"),
 			key:      url,
 		}, nil
 	}
@@ -145,8 +145,8 @@ func (s *SelfHarnessClient) Name() string {
 
 // Judge implements LLMClient.
 //
-// Wave 3.5 update: when provider == "dark_scrapper", this method now
-// performs an actual HTTP POST to DARK_SCRAPPER_URL/v1/messages with
+// Wave 3.5 update: when provider == "drift_judge_daemon", this method now
+// performs an actual HTTP POST to DARK_DRIFT_JUDGE_DAEMON_URL/v1/messages with
 // sentinel auth (Bearer ds-managed). Other providers (anthropic /
 // openai / google) still return ErrNoLLMAvailable; their direct HTTP
 // clients remain deferred to Wave 4+.
@@ -160,8 +160,8 @@ func (s *SelfHarnessClient) Judge(ctx context.Context, req JudgeRequest) (*Judge
 	if s == nil || s.provider == "" {
 		return nil, ErrNoLLMAvailable
 	}
-	if s.provider == "dark_scrapper" {
-		return s.judgeViaScrapper(ctx, req)
+	if s.provider == "drift_judge_daemon" {
+		return s.judgeViaDriftJudgeDaemon(ctx, req)
 	}
 	// Other providers remain stubs in this build. Surfacing the gap
 	// (not silently faking verdicts) is intentional.
@@ -169,8 +169,8 @@ func (s *SelfHarnessClient) Judge(ctx context.Context, req JudgeRequest) (*Judge
 		ErrNoLLMAvailable, s.provider, s.model)
 }
 
-// judgeViaScrapper performs one Anthropic-format POST to
-// DARK_SCRAPPER_URL/v1/messages with sentinel auth.
+// judgeViaDriftJudgeDaemon performs one Anthropic-format POST to
+// DARK_DRIFT_JUDGE_DAEMON_URL/v1/messages with sentinel auth.
 //
 // Request shape (Anthropic Messages API):
 //
@@ -189,21 +189,21 @@ func (s *SelfHarnessClient) Judge(ctx context.Context, req JudgeRequest) (*Judge
 // Safety: rejects URLs without an http(s) scheme, host, or with
 // non-loopback hosts in safety-strict mode. Does NOT block loopback
 // (operator runs the daemon locally by design).
-func (s *SelfHarnessClient) judgeViaScrapper(ctx context.Context, req JudgeRequest) (*JudgeResponse, error) {
+func (s *SelfHarnessClient) judgeViaDriftJudgeDaemon(ctx context.Context, req JudgeRequest) (*JudgeResponse, error) {
 	if s.key == "" {
-		return nil, fmt.Errorf("%w: dark_scrapper URL is empty (set DARK_SCRAPPER_URL)", ErrNoLLMAvailable)
+		return nil, fmt.Errorf("%w: drift-judge-daemon URL is empty (set DARK_DRIFT_JUDGE_DAEMON_URL)", ErrNoLLMAvailable)
 	}
 
 	// URL validation: must parse, must be http(s), must have a host.
 	endpoint, err := url.Parse(s.key)
 	if err != nil {
-		return nil, fmt.Errorf("%w: invalid DARK_SCRAPPER_URL: %v", ErrNoLLMAvailable, err)
+		return nil, fmt.Errorf("%w: invalid DARK_DRIFT_JUDGE_DAEMON_URL: %v", ErrNoLLMAvailable, err)
 	}
 	if endpoint.Scheme != "http" && endpoint.Scheme != "https" {
-		return nil, fmt.Errorf("%w: DARK_SCRAPPER_URL must be http(s); got %q", ErrNoLLMAvailable, endpoint.Scheme)
+		return nil, fmt.Errorf("%w: DARK_DRIFT_JUDGE_DAEMON_URL must be http(s); got %q", ErrNoLLMAvailable, endpoint.Scheme)
 	}
 	if endpoint.Host == "" {
-		return nil, fmt.Errorf("%w: DARK_SCRAPPER_URL has no host", ErrNoLLMAvailable)
+		return nil, fmt.Errorf("%w: DARK_DRIFT_JUDGE_DAEMON_URL has no host", ErrNoLLMAvailable)
 	}
 
 	// Resolve model. Caller hint > OSINT catalog > safe default.
@@ -244,22 +244,22 @@ func (s *SelfHarnessClient) judgeViaScrapper(ctx context.Context, req JudgeReque
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
 
-	httpClient := &http.Client{Timeout: scrapperTimeout}
+	httpClient := &http.Client{Timeout: driftJudgeDaemonTimeout}
 	httpResp, err := httpClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("judge: scrapper request: %w", err)
+		return nil, fmt.Errorf("judge: drift-judge-daemon request: %w", err)
 	}
 	defer httpResp.Body.Close()
 
 	respBytes, err := io.ReadAll(httpResp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("judge: read scrapper response: %w", err)
+		return nil, fmt.Errorf("judge: read drift-judge-daemon response: %w", err)
 	}
 
 	if httpResp.StatusCode != http.StatusOK {
 		// 503 with empty pool is a legitimate daemon signal: pool is
 		// drained, harvest cycle will refill. Surface the message.
-		return nil, fmt.Errorf("judge: scrapper HTTP %d: %s", httpResp.StatusCode, truncateForErr(string(respBytes), 512))
+		return nil, fmt.Errorf("judge: drift-judge-daemon HTTP %d: %s", httpResp.StatusCode, truncateForErr(string(respBytes), 512))
 	}
 
 	// Parse response. Two shapes:
@@ -279,7 +279,7 @@ func (s *SelfHarnessClient) judgeViaScrapper(ctx context.Context, req JudgeReque
 			VerdictJSON: string(respBytes),
 			Confidence:  0.7,
 			Model:       model,
-			Provider:    "dark_scrapper",
+			Provider:    "drift_judge_daemon",
 		}, nil
 	}
 
@@ -305,7 +305,7 @@ func (s *SelfHarnessClient) judgeViaScrapper(ctx context.Context, req JudgeReque
 		VerdictJSON: text,
 		Confidence:  confidence,
 		Model:       model,
-		Provider:    "dark_scrapper",
+		Provider:    "drift_judge_daemon",
 	}, nil
 }
 
