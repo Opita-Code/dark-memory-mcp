@@ -1,5 +1,5 @@
 // Package e2e — server_test.go: end-to-end stress test for the
-// dark-memory-mcp MCP server. Exercises the full 28-tool surface
+// dark-memory-mcp MCP server. Exercises the full 29-tool surface
 // under concurrent load; verifies no deadlock, no panic, audit rows
 // match writes (INV-1), and the canonical tool order is honored
 // (spec 164, bridge.4).
@@ -19,22 +19,24 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/tools"
 )
 
-// TestE2E_28ToolsRegistered is the canonical-order sanity check: all
-// 28 tools are present in the registry after RegisterAll. v1.2.0:
+// TestE2E_29ToolsRegistered is the canonical-order sanity check: all
+// 29 tools are present in the registry after RegisterAll. v1.2.0:
 // added project_create to the PROJECT namespace at index 0. v1.3.0:
 // added health_ping to OBSERVABILITY (3 → 4 tools; canonical count
-// 27 → 28).
-func TestE2E_28ToolsRegistered(t *testing.T) {
+// 27 → 28). v2.0.0: added dark_memory_recall to CONTEXT (3 → 4;
+// canonical count 28 → 29). The pivot landed as 9 commits; this
+// test guards the wire surface.
+func TestE2E_29ToolsRegistered(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.close()
 
 	canonical := tools.CanonicalOrder()
-	if got := len(canonical); got != 28 {
-		t.Fatalf("canonical order length: want 28, got %d", got)
+	if got := len(canonical); got != 29 {
+		t.Fatalf("canonical order length: want 29, got %d", got)
 	}
 	registered := ts.srv.Registry().ListCanonical()
-	if len(registered) != 28 {
-		t.Fatalf("registered: want 28, got %d", len(registered))
+	if len(registered) != 29 {
+		t.Fatalf("registered: want 29, got %d", len(registered))
 	}
 	for i, name := range canonical {
 		if got := registered[i].Name; got != name {

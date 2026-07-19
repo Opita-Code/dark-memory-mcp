@@ -567,11 +567,12 @@ func (s *Store) SaveSession(ctx context.Context, wc store.WriteContext, sess *se
 		res, err := tx.ExecContext(ctx,
 			`INSERT INTO sessions (session_id, status, constitution_id, constitution_ver, active_mods,
 			                     started_at, closed_at, last_heartbeat_at, parent_session_id,
-			                     resurrected_from, notes, operator, project_id)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			                     resurrected_from, notes, operator, project_id, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			sess.SessionID, sess.Status, sess.ConstitutionID, sess.ConstitutionVer, sess.ActiveMods,
 			sess.StartedAt, sess.ClosedAt, sess.LastHeartbeatAt, sess.ParentSessionID,
-			sess.ResurrectedFrom, sess.Notes, sess.Operator, projectID)
+			sess.ResurrectedFrom, sess.Notes, sess.Operator, projectID,
+			sess.StartedAt /* created_at proxy = started_at for new sessions */)
 		if err != nil {
 			return err
 		}
@@ -820,12 +821,13 @@ func (s *Store) SaveResurrect(ctx context.Context, wc store.WriteContext, origin
 		res, err := tx.ExecContext(ctx,
 			`INSERT INTO sessions (session_id, status, constitution_id, constitution_ver, active_mods,
 			                     started_at, last_heartbeat_at, closed_at, parent_session_id,
-			                     resurrected_from, notes, operator, project_id)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			                     resurrected_from, notes, operator, project_id, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			newSess.SessionID, newSess.Status, newSess.ConstitutionID, newSess.ConstitutionVer,
 			newSess.ActiveMods, newSess.StartedAt, newSess.LastHeartbeatAt, newSess.ClosedAt,
 			newSess.ParentSessionID, newSess.ResurrectedFrom, newSess.Notes,
-			newSess.Operator, activeProject)
+			newSess.Operator, activeProject,
+			newSess.StartedAt /* created_at proxy = started_at for resurrected sessions */)
 		if err != nil {
 			return err
 		}

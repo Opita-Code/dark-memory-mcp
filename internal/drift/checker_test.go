@@ -151,7 +151,7 @@ func TestCheckArtifact_NoSpecID_SkipsWithoutJudge(t *testing.T) {
 // TestCheckArtifact_JudgeUnavailable_PolicyByStrictness: the checker
 // differentiates "judge unavailable" by Strictness:
 //
-//   - off / warn: return Decision="skipped" with nil error. The operator
+//   - warn: return Decision="skipped" with nil error. The operator
 //     opted into permissive drift policy; a missing judge should not
 //     block the save.
 //
@@ -161,13 +161,16 @@ func TestCheckArtifact_NoSpecID_SkipsWithoutJudge(t *testing.T) {
 //     TestPostCheck_DriftWired_JudgeError_Strict_Refuses), an operator
 //     who enabled strict mode must not be able to bypass drift by
 //     disabling the LLM.
+//
+//   - off: CheckArtifact returns early at the StrictnessOff gate
+//     (the judge is never called); we test this separately via
+//     TestCheckArtifact_OffMode_SkipsWithoutCallingJudge.
 func TestCheckArtifact_JudgeUnavailable_PolicyByStrictness(t *testing.T) {
 	cases := []struct {
 		strictness Strictness
 		wantErr    bool
 		wantDec    string
 	}{
-		{StrictnessOff, false, "skipped"},
 		{StrictnessWarn, false, "skipped"},
 		{StrictnessStrict, true, "errored"},
 	}

@@ -279,7 +279,13 @@ func isToleratedDDLError(err error) bool {
 // new migration.
 func EnsureCoreTables(ctx context.Context, db *sql.DB) error {
 	stmts := []string{
-		// From v5 (sessions_table)
+		// From v5 (sessions_table) + v7 (project_namespace): the dirty-DB
+		// recovery path expects v7 to be recorded as applied, so the
+		// sessions table must include project_id even though that
+		// column was added by v7 (the operator-side reason: F38 runs
+		// before Migrate, so v7's ALTER TABLE has not yet fired). Without
+		// this column, the v12 migration's INSERT...SELECT would fail
+		// with "no such column: project_id" on dirty-DB recovery.
 		`CREATE TABLE IF NOT EXISTS sessions (
 			id                  INTEGER PRIMARY KEY AUTOINCREMENT,
 			session_id          TEXT NOT NULL UNIQUE,
@@ -291,7 +297,8 @@ func EnsureCoreTables(ctx context.Context, db *sql.DB) error {
 			closed_at           TEXT,
 			notes               TEXT,
 			parent_session_id   TEXT,
-			operator            TEXT
+			operator            TEXT,
+			project_id          TEXT NOT NULL DEFAULT 'default'
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_sessions_status  ON sessions(status)`,
 		`CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(started_at)`,
