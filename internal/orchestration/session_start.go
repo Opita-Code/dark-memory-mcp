@@ -57,12 +57,13 @@ func (o *Orchestrator) SessionStart(ctx context.Context, in SessionStartInput) (
 	now := o.now().Format(time.RFC3339Nano)
 	sess := &session.Session{
 		SessionID:       session.NewSessionID(), // see session/types.go
-		Status:          string(session.StatusActive),
+		Status:          string(session.StatusOpen),
 		ConstitutionID:  in.ConstitutionID,
 		ConstitutionVer: in.ConstitutionVer,
 		Notes:           in.Notes,
 		Operator:        in.Operator,
 		StartedAt:       now,
+		LastHeartbeatAt: now, // pristine heartbeat = started time; sweeps compare against HEARTBEAT_TIMEOUT
 	}
 
 	wc := store.WriteContext{
