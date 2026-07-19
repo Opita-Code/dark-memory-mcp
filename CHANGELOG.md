@@ -30,6 +30,38 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   session resurrection on server startup. Default: orphans are
   surfaced via a log entry but not auto-recovered.
 
+### Fixed
+
+- **INFRA-002 — `dark_memory_vibe_spec` now surfaces WHICH form and WHY
+  on tasks parse failure.** Pre-fix, `parseTasksField` in
+  `internal/orchestration/vibe_spec.go` discarded the underlying
+  `json.Unmarshal` error and returned only
+  `store.NewFieldError(store.ErrInvalidArgument, "tasks")`, surfacing
+  `"invalid argument at field=tasks"` to the harness with no
+  diagnostic. Post-fix:
+  - The error chain is `*store.FieldError{Field:"tasks"}`
+    (F35 wire-propagation keeps working: `errors.As(err, &fe)`
+    still finds it; `errors.Is(err, ErrInvalidArgument)` still
+    matches).
+  - Wrapped with `fmt.Errorf("%w: rejected by parser (Form A/B
+    step N/unknown form ...): %v", fe, cause)` so the operator
+    sees which form was attempted AND the underlying json
+    diagnostic (e.g. "invalid character '·' after top-level
+    value").
+  - The unknown-first-byte path explicitly names the offending
+    byte (`first non-whitespace byte='{'`) and the expected
+    shape without leaking the rest of the payload (preserves
+    `classifyUnknown`'s no-payload-leak policy).
+- Concrete reproductions covered by:
+  - `internal/orchestration/vibe_spec_test.go` (orchestrator-level):
+    - `[{...}]·` (trailing garbage byte after close-bracket, Form A)
+    - `"[not-an-array]"` (outer string but inner not parseable, Form B)
+    - `{...}` (object-shaped payload — neither Form applies)
+  - `tests/wire/infra002_vibe_spec_diagnostic_test.go` (H-3 wire
+    conformance): pins the contract end-to-end against the running
+    binary over JSON-RPC — the same envelope shape production
+    harnesses see.
+
 ### Added (memory-as-policy-gateway pivot)
 
 The pivot replaces the pull-based CRUD model (v1.x) with a
