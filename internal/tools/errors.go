@@ -11,6 +11,7 @@ package tools
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 )
@@ -62,7 +63,17 @@ func ToToolError(err error) *ToolError {
 		}
 		if fieldsAs && fieldName != "" {
 			te.Field = fieldName
-			te.Message = "invalid argument at field=" + fieldName
+			// INFRA-002 fix: surface the underlying error text alongside
+			// the field name so the LLM can pivot on diagnostic detail
+			// (e.g. "Form A (JSON array of objects): invalid character ...")
+			// instead of just the field. Strip the prefix `invalid
+			// argument (field=X): ` that NewFieldError prepends so we
+			// don't duplicate it.
+			msg := err.Error()
+			if i := strings.Index(msg, ": "); i >= 0 {
+				msg = msg[i+2:]
+			}
+			te.Message = "invalid argument at field=" + fieldName + ": " + msg
 		}
 		return te
 	case errors.Is(err, store.ErrNotFound):
