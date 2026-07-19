@@ -244,7 +244,7 @@ func (s *Store) runWatchdog(ctx context.Context) error {
 		s.cfg.ConstitutionID).Scan(&stored, &storedVer)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			_, _ = s.pool.Exec(ctx,
+			if _, err := s.pool.Exec(ctx,
 				`INSERT INTO constitutions
 				 (constitution_id, version, label, source, file_path, parsed_json, sha256, enabled, created_at, activated_at, last_verified_at, last_verified_sha256)
 				 VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE, $8, $9, $10, $11)
@@ -254,7 +254,10 @@ func (s *Store) runWatchdog(ctx context.Context) error {
 				time.Now().UTC().Format(time.RFC3339Nano),
 				time.Now().UTC().Format(time.RFC3339Nano),
 				time.Now().UTC().Format(time.RFC3339Nano),
-				computed)
+				computed,
+			); err != nil {
+				return fmt.Errorf("watchdog: write initial row: %w", err)
+			}
 			return nil
 		}
 		return fmt.Errorf("watchdog: query stored sha: %w", err)

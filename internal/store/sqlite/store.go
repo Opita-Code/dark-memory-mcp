@@ -268,7 +268,7 @@ func (s *Store) runWatchdog(ctx context.Context) error {
 		if errors.Is(err, sql.ErrNoRows) {
 			// No stored constitution yet. Write the watchdog initial
 			// row so subsequent Opens can detect drift.
-			_, _ = s.db.ExecContext(ctx,
+			if _, err := s.db.ExecContext(ctx,
 				`INSERT OR IGNORE INTO constitutions
 				 (constitution_id, version, label, source, file_path, parsed_json, sha256, enabled, created_at, activated_at, last_verified_at, last_verified_sha256)
 				 VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?)`,
@@ -282,7 +282,10 @@ func (s *Store) runWatchdog(ctx context.Context) error {
 				time.Now().UTC().Format(time.RFC3339Nano),
 				time.Now().UTC().Format(time.RFC3339Nano),
 				time.Now().UTC().Format(time.RFC3339Nano),
-				computed)
+				computed,
+			); err != nil {
+				return fmt.Errorf("watchdog: write initial row: %w", err)
+			}
 			return nil
 		}
 		return fmt.Errorf("watchdog: query stored sha: %w", err)
@@ -2681,6 +2684,12 @@ func (s *Store) VerifyConstitutionHash(ctx context.Context, constitutionID, sha2
 			return false, nil
 		}
 		return false, err
+	}
+	// Empty sha256Hash argument means "any row exists" — used by callers
+	// (e.g. TestSQLiteConstitutionWatchdogMigration) that want to
+	// confirm presence without committing to a specific SHA value.
+	if sha256Hash == "" {
+		return true, nil
 	}
 	return stored == sha256Hash, nil
 }
