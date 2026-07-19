@@ -23,6 +23,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -271,6 +272,55 @@ func (s *wireSession) toolsCall(name string, args map[string]any) ([]byte, error
 		"params": map[string]any{"name": name, "arguments": args},
 	})
 	if _, err := s.stdin.Write(append(raw, '\n')); err != nil {
+		return nil, fmt.Errorf("write: %w", err)
+	}
+	return s.stdout.readOne()
+}
+
+// toolsCallRaw wraps tools/call but lets the caller inject pre-encoded
+// JSON for each argument. Use this when the test needs the daemon to
+// receive a JSON array (or any non-string shape) as a tool argument —
+// toolsCall would marshal a Go string as a JSON string literal, which
+// is fine for Form B "JSON-string-of-array" payloads but wrong for
+// Form A "JSON array" payloads.
+//
+// Per-argument encoding: each map value is emitted verbatim (no
+// surrounding quotes), so callers must supply valid JSON for that
+// value (e.g. json.RawMessage(`"foo"`), json.RawMessage(`[1,2,3]`),
+// json.RawMessage(`{"a":1}`)).
+//
+// Added 2026-07-19 to fix TestWire_INFRA002_* where the Form A test
+// case needed the wire payload to carry a JSON array, not a JSON
+// string-of-array (the latter sends the parser down Form B by
+// accident, masking the Form A error path).
+func (s *wireSession) toolsCallRaw(name string, args map[string]json.RawMessage) ([]byte, error) {
+	// Build the arguments object by concatenating per-key JSON. We
+	// cannot use json.Marshal on a map[string]json.RawMessage directly
+	// because map iteration order is randomised in Go, which would
+	// produce a different wire payload per run (still valid JSON, but
+	// harder to reason about in logs).
+	keys := make([]string, 0, len(args))
+	for k := range args {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var argBuf bytes.Buffer
+	argBuf.WriteByte('{')
+	for i, k := range keys {
+		if i > 0 {
+			argBuf.WriteByte(',')
+		}
+		kb, _ := json.Marshal(k)
+		argBuf.Write(kb)
+		argBuf.WriteByte(':')
+		argBuf.Write(args[k])
+	}
+	argBuf.WriteByte('}')
+
+	id := s.nextID()
+	body := fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"tools/call","params":{"name":%q,"arguments":%s}}`,
+		id, name, argBuf.String())
+	if _, err := s.stdin.Write(append([]byte(body), '\n')); err != nil {
 		return nil, fmt.Errorf("write: %w", err)
 	}
 	return s.stdout.readOne()

@@ -27,10 +27,30 @@ import (
 //
 // Reference: PRODUCTION_CHECKLIST.md R-3/R-4 (the "field=tasks"
 // diagnostic gap that prompted this fix).
+//
+// Encoding note (post-mortem of the 2026-07-19 wire-test fix):
+// The original Case 1 ("Form A with trailing garbage byte") tried to
+// inject `[{...}]·` as a JSON array literal on the wire. That is
+// physically impossible: a UTF-8 multi-byte sequence after the
+// closing `]` makes the JSON-RPC envelope itself invalid, and the
+// daemon rejects the call at the transport layer before parseTasksField
+// ever runs. Real "garbage" in operator payloads only ever reaches
+// parseTasksField when the payload is a JSON string-of-array (Form B).
+//
+// The new Case 1 therefore exercises the Form A failure path with a
+// type-mismatch inside the array (object field `id` is a number, not
+// a string) — this is a real Form A failure mode operators hit when
+// the harness auto-coerces fields. The error chain still surfaces
+// "Form A" + the underlying json.UnmarshalTypeError, which is what
+// this test is asserting.
+//
+// toolsCallRaw is used (added 2026-07-19) to inject the raw JSON
+// array literal with a non-string field value — json.Marshal would
+// have refused or stringified it.
 func TestWire_INFRA002_ParseTasksFieldSurfacesFormAndCause(t *testing.T) {
 	s := startWireSession(t)
 	if _, err := s.toolsCall("dark_memory_session_start", map[string]any{
-		"operator":  "wire-test",
+		"operator":   "wire-test",
 		"project_id": "default",
 	}); err != nil {
 		t.Fatalf("session_start: %v", err)
@@ -79,19 +99,26 @@ func TestWire_INFRA002_ParseTasksFieldSurfacesFormAndCause(t *testing.T) {
 		t.Logf("%s OK: %s", caseName, e.Error.Message)
 	}
 
-	// Case 1: Form A with trailing garbage byte (middle dot, U+00B7).
-	// The exact shape observed in the operator report on 2026-07-19.
-	resp, err := s.toolsCall("dark_memory_vibe_spec", map[string]any{
-		"vibe_case": "C1",
-		"spec":      `{"intent":"INFRA-002 wire"}`,
-		"tasks":     `[{"id":"T1","description":"x"}]·`, // trailing U+00B7
+	// Case 1: Form A with a type-mismatch inside the array (field
+	// `id` is a number, expected string). This is the only way to
+	// exercise the Form A failure path over the wire: the array
+	// itself is valid JSON, but its inner object fails json.Unmarshal
+	// into []VibeSpecTask. The error chain surfaces "Form A" plus the
+	// json.UnmarshalTypeError detail.
+	resp, err := s.toolsCallRaw("dark_memory_vibe_spec", map[string]json.RawMessage{
+		"vibe_case": json.RawMessage(`"C1"`),
+		"spec":      json.RawMessage(`"{\"intent\":\"INFRA-002 wire\"}"`),
+		"tasks":     json.RawMessage(`[{"id":42,"description":"x"}]`),
 	})
 	if err != nil {
 		t.Fatalf("Case 1 transport error: %v resp=%s", err, respStr(resp))
 	}
-	checkField(t, "Form A trailing garbage", resp, []string{"form a", "invalid"})
+	checkField(t, "Form A type mismatch", resp, []string{"form a", "cannot unmarshal"})
 
 	// Case 2: Form B whose inner JSON is not an array.
+	// Here toolsCall works fine — the Go string is the Form B payload
+	// itself, so json.Marshal encodes it as a JSON string which the
+	// daemon correctly enters Form B with.
 	resp, err = s.toolsCall("dark_memory_vibe_spec", map[string]any{
 		"vibe_case": "C1",
 		"spec":      `{"intent":"INFRA-002 wire"}`,
@@ -103,6 +130,8 @@ func TestWire_INFRA002_ParseTasksFieldSurfacesFormAndCause(t *testing.T) {
 	checkField(t, "Form B inner non-JSON", resp, []string{"form b step 2"})
 
 	// Case 3: tasks as an object — neither form applies.
+	// Go map[string]any marshals as a JSON object, so the daemon
+	// sees first-byte='{' and enters the unknown-form path.
 	resp, err = s.toolsCall("dark_memory_vibe_spec", map[string]any{
 		"vibe_case": "C1",
 		"spec":      `{"intent":"INFRA-002 wire"}`,
