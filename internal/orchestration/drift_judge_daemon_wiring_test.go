@@ -1,10 +1,10 @@
-// scrapper_wiring_test.go - Wave 3.5 integration test for the
-// SelfHarnessClient dark_scrapper wiring patch.
+// drift_judge_daemon_wiring_test.go - Wave 3.5 integration test for the
+// SelfHarnessClient drift_judge_daemon wiring patch.
 //
 // Verifies (NO mocking inside the package, NO test-only stubs):
 //
-//   1. judgeViaScrapper builds a valid Anthropic-format request and
-//      sends it to DARK_SCRAPPER_URL/v1/messages.
+//   1. judgeViaDriftJudgeDaemon builds a valid Anthropic-format request and
+//      sends it to DARK_DRIFT_JUDGE_DAEMON_URL/v1/messages.
 //   2. Bearer ds-managed + x-api-key ds-managed headers are set.
 //   3. Anthropic-format response (content[0].text) is mapped to
 //      JudgeResponse.VerdictJSON.
@@ -14,11 +14,11 @@
 //      a real error, NOT swallowed as ErrNoLLMAvailable (preserves
 //      the visibility invariant from the original source comment).
 //   7. URL with no host, no scheme, or empty value is rejected.
-//   8. SelfHarnessClient.Judge dispatches dark_scrapper correctly
+//   8. SelfHarnessClient.Judge dispatches drift_judge_daemon correctly
 //      and still returns ErrNoLLMAvailable for anthropic/openai/google.
 //
 // These tests run against an httptest.Server; they do NOT require
-// the dark-scrapper daemon to be running.
+// the [drift-judge-daemon] to be running.
 package orchestration
 
 import (
@@ -31,9 +31,9 @@ import (
 	"testing"
 )
 
-// TestJudgeViaScrapper_AnthropicFormat verifies the canonical
+// TestJudgeViaDriftJudgeDaemon_AnthropicFormat verifies the canonical
 // Anthropic Messages API response shape is parsed correctly.
-func TestJudgeViaScrapper_AnthropicFormat(t *testing.T) {
+func TestJudgeViaDriftJudgeDaemon_AnthropicFormat(t *testing.T) {
 	var capturedPath, capturedAuth, capturedXAPIKey, capturedAnthropic string
 	var capturedBody []byte
 
@@ -56,8 +56,8 @@ func TestJudgeViaScrapper_AnthropicFormat(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := &SelfHarnessClient{provider: "dark_scrapper", key: srv.URL, model: "claude-opus-4-7"}
-	resp, err := c.judgeViaScrapper(context.Background(), JudgeRequest{
+	c := &SelfHarnessClient{provider: "drift_judge_daemon", key: srv.URL, model: "claude-opus-4-7"}
+	resp, err := c.judgeViaDriftJudgeDaemon(context.Background(), JudgeRequest{
 		EvalType: "drift_judge",
 		Content:  "sample content",
 	})
@@ -95,8 +95,8 @@ func TestJudgeViaScrapper_AnthropicFormat(t *testing.T) {
 	}
 
 	// Response assertions
-	if resp.Provider != "dark_scrapper" {
-		t.Errorf("Provider: want dark_scrapper, got %q", resp.Provider)
+	if resp.Provider != "drift_judge_daemon" {
+		t.Errorf("Provider: want drift_judge_daemon, got %q", resp.Provider)
 	}
 	if resp.Model != "claude-opus-4-7" {
 		t.Errorf("Model: want claude-opus-4-7 (from response), got %q", resp.Model)
@@ -109,18 +109,18 @@ func TestJudgeViaScrapper_AnthropicFormat(t *testing.T) {
 	}
 }
 
-// TestJudgeViaScrapper_MockLLMFormat verifies the minimal mock-llm
+// TestJudgeViaDriftJudgeDaemon_MockLLMFormat verifies the minimal mock-llm
 // response shape ({text:"..."}) is accepted (verify-llm-pipeline.ps1
 // stage 4 uses this format).
-func TestJudgeViaScrapper_MockLLMFormat(t *testing.T) {
+func TestJudgeViaDriftJudgeDaemon_MockLLMFormat(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"text": "{\"verdict\":\"aligned\",\"confidence\":0.99}"}`))
 	}))
 	defer srv.Close()
 
-	c := &SelfHarnessClient{provider: "dark_scrapper", key: srv.URL}
-	resp, err := c.judgeViaScrapper(context.Background(), JudgeRequest{
+	c := &SelfHarnessClient{provider: "drift_judge_daemon", key: srv.URL}
+	resp, err := c.judgeViaDriftJudgeDaemon(context.Background(), JudgeRequest{
 		EvalType: "drift_judge",
 		Content:  "x",
 	})
@@ -135,19 +135,19 @@ func TestJudgeViaScrapper_MockLLMFormat(t *testing.T) {
 	}
 }
 
-// TestJudgeViaScrapper_PoolEmpty503 verifies that a 503 (daemon
+// TestJudgeViaDriftJudgeDaemon_PoolEmpty503 verifies that a 503 (daemon
 // pool drained) is surfaced as a real error, NOT ErrNoLLMAvailable.
 // This preserves the original source philosophy of surfacing failures
 // instead of silently degrading.
-func TestJudgeViaScrapper_PoolEmpty503(t *testing.T) {
+func TestJudgeViaDriftJudgeDaemon_PoolEmpty503(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_, _ = w.Write([]byte(`{"type":"error","error":{"type":"api_error","message":"all keys failed"}}`))
 	}))
 	defer srv.Close()
 
-	c := &SelfHarnessClient{provider: "dark_scrapper", key: srv.URL}
-	_, err := c.judgeViaScrapper(context.Background(), JudgeRequest{
+	c := &SelfHarnessClient{provider: "drift_judge_daemon", key: srv.URL}
+	_, err := c.judgeViaDriftJudgeDaemon(context.Background(), JudgeRequest{
 		EvalType: "drift_judge",
 		Content:  "x",
 	})
@@ -162,8 +162,8 @@ func TestJudgeViaScrapper_PoolEmpty503(t *testing.T) {
 	}
 }
 
-// TestJudgeViaScrapper_RejectsBadURLs verifies URL validation.
-func TestJudgeViaScrapper_RejectsBadURLs(t *testing.T) {
+// TestJudgeViaDriftJudgeDaemon_RejectsBadURLs verifies URL validation.
+func TestJudgeViaDriftJudgeDaemon_RejectsBadURLs(t *testing.T) {
 	cases := []struct {
 		name string
 		url  string
@@ -175,8 +175,8 @@ func TestJudgeViaScrapper_RejectsBadURLs(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			c := &SelfHarnessClient{provider: "dark_scrapper", key: tc.url}
-			_, err := c.judgeViaScrapper(context.Background(), JudgeRequest{
+			c := &SelfHarnessClient{provider: "drift_judge_daemon", key: tc.url}
+			_, err := c.judgeViaDriftJudgeDaemon(context.Background(), JudgeRequest{
 				EvalType: "drift_judge",
 				Content:  "x",
 			})
@@ -187,20 +187,20 @@ func TestJudgeViaScrapper_RejectsBadURLs(t *testing.T) {
 	}
 }
 
-// TestJudge_DispatchesDarkScrapper verifies the dispatch layer.
-func TestJudge_DispatchesDarkScrapper(t *testing.T) {
+// TestJudge_DispatchesDriftJudgeDaemon verifies the dispatch layer.
+func TestJudge_DispatchesDriftJudgeDaemon(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"{\"verdict\":\"aligned\"}"}],"model":"x"}`))
 	}))
 	defer srv.Close()
 
-	c := &SelfHarnessClient{provider: "dark_scrapper", key: srv.URL}
+	c := &SelfHarnessClient{provider: "drift_judge_daemon", key: srv.URL}
 	resp, err := c.Judge(context.Background(), JudgeRequest{EvalType: "drift_judge", Content: "x"})
 	if err != nil {
 		t.Fatalf("unexpected: %v", err)
 	}
-	if resp.Provider != "dark_scrapper" {
-		t.Errorf("Provider: want dark_scrapper, got %q", resp.Provider)
+	if resp.Provider != "drift_judge_daemon" {
+		t.Errorf("Provider: want drift_judge_daemon, got %q", resp.Provider)
 	}
 }
 
