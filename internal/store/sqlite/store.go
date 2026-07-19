@@ -3282,15 +3282,19 @@ func (s *Store) GetFrame(ctx context.Context, sessionID string, scope atomic.Sco
 	var env atomic.FrameEnvelope
 	var frameJSON string
 	var shaHex string
+	var composedAtStr, expiresAtStr, createdAtStr string
 	if err := row.Scan(
 		&env.ID, &env.ProjectID, &env.SessionID, &env.ScopeLevel, &env.ScopeID, &env.Kind,
-		&env.ComposedAt, &env.ExpiresAt, &frameJSON, &shaHex, &env.LastWriteID, &env.CreatedAt,
+		&composedAtStr, &expiresAtStr, &frameJSON, &shaHex, &env.LastWriteID, &createdAtStr,
 	); err != nil {
 		if err == sql.ErrNoRows {
 			return nil, nil
 		}
 		return nil, err
 	}
+	env.ComposedAt = parseTimeRFC3339Nano(composedAtStr)
+	env.ExpiresAt = parseTimeRFC3339Nano(expiresAtStr)
+	env.CreatedAt = parseTimeRFC3339Nano(createdAtStr)
 	env.FrameJSON = []byte(frameJSON)
 	if err := parseSHA(shaHex, &env.ContentSHA256); err != nil {
 		return nil, fmt.Errorf("sqlite: GetFrame: parse content_sha256: %w", err)
@@ -3338,12 +3342,16 @@ func (s *Store) ListFrames(ctx context.Context, filter store.FrameListFilters) (
 	for rows.Next() {
 		var env atomic.FrameEnvelope
 		var frameJSON, shaHex string
+		var composedAtStr, expiresAtStr, createdAtStr string
 		if err := rows.Scan(
 			&env.ID, &env.ProjectID, &env.SessionID, &env.ScopeLevel, &env.ScopeID, &env.Kind,
-			&env.ComposedAt, &env.ExpiresAt, &frameJSON, &shaHex, &env.LastWriteID, &env.CreatedAt,
+			&composedAtStr, &expiresAtStr, &frameJSON, &shaHex, &env.LastWriteID, &createdAtStr,
 		); err != nil {
 			return nil, err
 		}
+		env.ComposedAt = parseTimeRFC3339Nano(composedAtStr)
+		env.ExpiresAt = parseTimeRFC3339Nano(expiresAtStr)
+		env.CreatedAt = parseTimeRFC3339Nano(createdAtStr)
 		env.FrameJSON = []byte(frameJSON)
 		if err := parseSHA(shaHex, &env.ContentSHA256); err != nil {
 			return nil, fmt.Errorf("sqlite: ListFrames: parse content_sha256 row id=%d: %w", env.ID, err)
@@ -3532,6 +3540,24 @@ func parseSHA(s string, out *[32]byte) error {
 		out[i] = (hi << 4) | lo
 	}
 	return nil
+}
+
+// parseTimeRFC3339Nano parses a TEXT column formatted via
+// time.RFC3339Nano into time.Time. Used by vibe_frames + sessions
+// where columns are TEXT (not TIMESTAMP) for portability across
+// sqlite/postgres. Returns zero time on empty input.
+func parseTimeRFC3339Nano(s string) time.Time {
+	if s == "" {
+		return time.Time{}
+	}
+	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
+		return t
+	}
+	// Fallback for legacy values without nanosecond precision.
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t
+	}
+	return time.Time{}
 }
 
 // unhex converts a single hex char to its 4-bit value.

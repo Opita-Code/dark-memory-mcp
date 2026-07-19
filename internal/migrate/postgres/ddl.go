@@ -1,5 +1,5 @@
 // Package postgres contains the Postgres-flavored DDL for Dark Memory MCP
-// migrations v1..v12.
+// migrations v1..v16.
 //
 // Differences from internal/migrate/sqlite:
 //   - INTEGER PRIMARY KEY AUTOINCREMENT → BIGSERIAL (or BIGINT GENERATED ALWAYS AS IDENTITY)
@@ -531,6 +531,16 @@ ALTER TABLE projects ADD COLUMN drift_strictness TEXT NOT NULL DEFAULT 'default'
 		Name:    "vlp_state_open_spec_id",
 		Up: `
 ALTER TABLE vlp_state ADD COLUMN open_spec_id BIGINT NOT NULL DEFAULT 0;
+`,
+	},
+	{
+		// v16 — constitution watchdog audit columns (5E.iv follow-up).
+		// Mirror of sqlite v16. See sqlite/ddl.go for full rationale.
+		Version: 16,
+		Name:    "constitution_watchdog_audit",
+		Up: `
+ALTER TABLE constitutions ADD COLUMN last_verified_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE constitutions ADD COLUMN last_verified_sha256 TEXT;
 `,
 	},
 }

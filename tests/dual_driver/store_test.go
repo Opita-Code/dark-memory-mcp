@@ -841,6 +841,21 @@ func runContract(t *testing.T, ctx context.Context, s store.Store, label string)
 			t.Fatalf("%s: CloseSession aborted: %v", label, err)
 		}
 
+		// Re-fetch the original session so the in-memory copy reflects
+		// the post-close status (closed_aborted). SaveResurrect's
+		// status guard checks the in-memory Status field, so a stale
+		// "open" would falsely trip the guard.
+		originalFull, err = s.GetSession(ctx, origSID)
+		if err != nil {
+			t.Fatalf("%s: GetSession original post-close: %v", label, err)
+		}
+		if originalFull == nil {
+			t.Fatalf("%s: GetSession returned nil post-close", label)
+		}
+		if originalFull.Status != string(session.StatusClosedAborted) {
+			t.Fatalf("%s: post-close Status = %q, want closed_aborted", label, originalFull.Status)
+		}
+
 		// Act: call SaveResurrect and verify the returned session row.
 		newSess, err := s.SaveResurrect(ctx, wc, originalFull)
 		if err != nil {

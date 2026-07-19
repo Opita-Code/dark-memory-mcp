@@ -1,5 +1,5 @@
 // Package sqlite contains the SQLite-flavored DDL for Dark Memory MCP
-// migrations v1..v12. Each migration's Up SQL is idempotent.
+// migrations v1..v16. Each migration's Up SQL is idempotent.
 //
 // The Migration slice here MUST have the same Version+Name as the
 // postgres package's Migrations; the Up SQL differs (INTEGER PRIMARY
@@ -641,6 +641,28 @@ ALTER TABLE projects ADD COLUMN drift_strictness TEXT NOT NULL DEFAULT 'default'
 		Name:    "vlp_state_open_spec_id",
 		Up: `
 ALTER TABLE vlp_state ADD COLUMN open_spec_id INTEGER NOT NULL DEFAULT 0;
+`,
+	},
+	{
+		// v16 - constitution watchdog audit columns (5E.iv follow-up).
+		// Adds last_verified_at + last_verified_sha256 to constitutions
+		// so the watchdog can record the timestamp + SHA of the most
+		// recent verification. Without these columns, the watchdog's
+		// INSERT INTO constitutions (runWatchdog, INV-4 path) fails
+		// silently with "no such column" because the INSERT statement
+		// references both fields. The Store code's `_, _ = ...Exec`
+		// discarded the error, so the watchdog appeared to succeed
+		// but no row was written. Surfaced by
+		// TestSQLiteConstitutionWatchdogMigration.
+		//
+		// activated_at already exists (added in the original v6
+		// constitution migration). Pre-v16 DBs already had activated_at
+		// populated; new columns default to NULL/empty for back-compat.
+		Version: 16,
+		Name:    "constitution_watchdog_audit",
+		Up: `
+ALTER TABLE constitutions ADD COLUMN last_verified_at TEXT;
+ALTER TABLE constitutions ADD COLUMN last_verified_sha256 TEXT;
 `,
 	},
 }
