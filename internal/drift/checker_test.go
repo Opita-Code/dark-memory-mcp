@@ -148,25 +148,49 @@ func TestCheckArtifact_NoSpecID_SkipsWithoutJudge(t *testing.T) {
 	}
 }
 
-// TestCheckArtifact_JudgeUnavailable_SkipsUnderAllModes: when the
-// judge returns an error (no LLM, canary rejection, network), the
-// checker reports Decision="skipped" — never refuses for a missing
-// judge (that would make strict mode a footgun).
-func TestCheckArtifact_JudgeUnavailable_SkipsUnderAllModes(t *testing.T) {
-	for _, s := range []Strictness{StrictnessWarn, StrictnessStrict} {
-		t.Run(s.String(), func(t *testing.T) {
+// TestCheckArtifact_JudgeUnavailable_PolicyByStrictness: the checker
+// differentiates "judge unavailable" by Strictness:
+//
+//   - off / warn: return Decision="skipped" with nil error. The operator
+//     opted into permissive drift policy; a missing judge should not
+//     block the save.
+//
+//   - strict: return Decision="errored" with a non-nil error. The
+//     policy gate is wired to refuse saves when this returns an error
+//     under strict mode. Per the design intent (gate_test.go's
+//     TestPostCheck_DriftWired_JudgeError_Strict_Refuses), an operator
+//     who enabled strict mode must not be able to bypass drift by
+//     disabling the LLM.
+func TestCheckArtifact_JudgeUnavailable_PolicyByStrictness(t *testing.T) {
+	cases := []struct {
+		strictness Strictness
+		wantErr    bool
+		wantDec    string
+	}{
+		{StrictnessOff, false, "skipped"},
+		{StrictnessWarn, false, "skipped"},
+		{StrictnessStrict, true, "errored"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.strictness.String(), func(t *testing.T) {
 			mock := &mockJudge{
 				err: errors.New("no LLM available (ANTHROPIC_API_KEY unset)"),
 			}
-			c := newTestChecker(mock, s)
+			c := newTestChecker(mock, tc.strictness)
 			v, err := c.CheckArtifact(context.Background(), ArtifactInput{
 				SpecID: 42, ArtifactType: "code", ArtifactURL: "f", Text: "x",
 			})
-			if err != nil {
-				t.Fatalf("CheckArtifact: %v", err)
+			if tc.wantErr && err == nil {
+				t.Errorf("CheckArtifact: want error under strict, got nil")
 			}
-			if v.Decision != "skipped" {
-				t.Errorf("Decision = %q, want skipped (LLM unavailable)", v.Decision)
+			if !tc.wantErr && err != nil {
+				t.Errorf("CheckArtifact: want nil error under %s, got %v", tc.strictness, err)
+			}
+			if v == nil {
+				t.Fatalf("CheckArtifact: verdict is nil")
+			}
+			if v.Decision != tc.wantDec {
+				t.Errorf("Decision = %q, want %q", v.Decision, tc.wantDec)
 			}
 			if !strings.Contains(v.Reasoning, "no LLM") {
 				t.Errorf("Reasoning should mention LLM unavailability; got %q", v.Reasoning)
