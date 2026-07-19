@@ -15,3 +15,12 @@ dev/
 dev/
 mods/
 
+# Build artifacts (bin/ directory holds compiled binaries + operator probe files)
+bin/
+
+# Operator-private infrastructure docs (corporate WDAC + Carbon Black quarantine)
+docs/INFRA-003.md
+
+# Operator-private constitutions (cerebro is the operator-side active-memory layer)
+vibe-flow/constitution/dark-memory-mcp-cerebro.constitution.toml
+

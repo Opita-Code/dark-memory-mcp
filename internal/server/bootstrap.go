@@ -211,4 +211,4 @@ func DefaultDSN() string { return defaultDSN() }
 // is now `version.Resolve().Version` (set by `make release` via
 // `-ldflags`). Retained as a string for any external call sites that
 // still reference it. See CONSTITUTION.md Rule 1.
-const DefaultServerVersion = "1.4.1-dev"
+const DefaultServerVersion = "2.0.0-dev"
