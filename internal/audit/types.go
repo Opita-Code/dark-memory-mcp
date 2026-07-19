@@ -14,6 +14,12 @@ package audit
 // ProjectID is populated by the Store impl from either wc.ProjectID
 // (if set) or s.ActiveProject() (fallback). Empty string is only
 // allowed for global tables (vibe_compliance, constitutions, mods).
+//
+// SessionEvent is populated by the Store impl when the write is
+// session-related (close, heartbeat, resurrect, recover). Values per
+// the v12 schema are: NULL, 'open', 'heartbeat', 'idle_timeout',
+// 'close_clean', 'close_aborted', 'resurrect', 'recover'. NULL for
+// non-session writes (drift_log, artifact_log, spec_log, etc.).
 type WriteEvent struct {
 	ID                int64  `json:"id"`
 	TableName         string `json:"table_name"`         // research_items | vibe_specs | ...
@@ -26,6 +32,7 @@ type WriteEvent struct {
 	CanaryPresent     bool   `json:"canary_present"`     // derived signal — payload contained active canary?
 	ConstitutionID    string `json:"constitution_id,omitempty"`
 	ConstitutionVer   string `json:"constitution_ver,omitempty"`
+	SessionEvent      string `json:"session_event,omitempty"` // v12; see const list in type doc above
 	Notes             string `json:"notes,omitempty"`
 	CreatedAt         string `json:"created_at"`
 }
@@ -35,8 +42,14 @@ type WriteEvent struct {
 // ProjectID: when non-empty, ListWrites filters to rows in that project
 // (INV-7). Store impl may also enforce this filter automatically based
 // on the active project (read-side tenant isolation).
+//
+// SinceID: when > 0, ListWrites returns rows with id > SinceID
+// (delta-by-id cursor). Used by the recall orchestrator (5A.ii.b.2.c)
+// to advance the per-scope last_seen_token. Mutually orthogonal
+// to Since (RFC3339 string); one or both can be set.
 type ListFilters struct {
 	Since     string // RFC3339, optional
+	SinceID   int64  // id > this value; optional
 	Actor     string
 	WritePath string
 	SessionID string

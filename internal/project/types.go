@@ -23,6 +23,15 @@ type Project struct {
 	CreatedAt        string `json:"created_at"`
 	ArchivedAt       string `json:"archived_at,omitempty"`        // soft delete
 	ParentProjectID  string `json:"parent_project_id,omitempty"` // for sub-projects
+
+	// DriftStrictness (Wave 5X.3) overrides the drift-at-write
+	// interceptor (5A.vi M6) on a per-project basis. Allowed values:
+	//   "" / "default" — use DARK_DRIFT_STRICTNESS env (default behavior)
+	//   "off"    — skip drift check entirely
+	//   "warn"   — drift_judge + log + allow + tag drift_pending
+	//   "strict" — drift_judge + refuse ErrDriftAtWrite on drift_detected
+	// Empty string is normalized to "default" by the drift package.
+	DriftStrictness string `json:"drift_strictness,omitempty"`
 }
 
 // IsArchived returns true if the project has been soft-deleted.
