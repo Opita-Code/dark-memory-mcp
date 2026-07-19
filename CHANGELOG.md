@@ -6,6 +6,132 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [2.0.0] — 2026-07-19
+
+### Breaking (operator env contract — ships in PR #10)
+
+- **`DARK_SCRAPPER_URL` → `DARK_DRIFT_JUDGE_DAEMON_URL`**.
+  SelfHarnessClient provider renamed from `"dark_scrapper"` to
+  `"drift_judge_daemon"`. Function `judgeViaScrapper` →
+  `judgeViaDriftJudgeDaemon`. **No backward-compat alias** —
+  operators must update their env.
+  Migration: `sed -i 's/DARK_SCRAPPER_URL/DARK_DRIFT_JUDGE_DAEMON_URL/g' .env`.
+- **`DARK_JUDGE_MODEL_SCRAPPER` → `DARK_JUDGE_MODEL_DRIFT_JUDGE_DAEMON`**.
+- Test file `internal/orchestration/scrapper_wiring_test.go` →
+  `internal/orchestration/drift_judge_daemon_wiring_test.go`.
+
+### Breaking (server lifecycle default)
+
+- **Shutdown default `close_reason` `aborted` → `clean`** in
+  `internal/server/lifecycle.go`. Operators who relied on the
+  legacy `aborted` default for crash-recovery workflows can opt
+  back via `DARK_SHUTDOWN_CLOSE_REASON=aborted`.
+- New env var `DARK_AUTO_RESURRECT=on_boot` opts into automatic
+  session resurrection on server startup. Default: orphans are
+  surfaced via a log entry but not auto-recovered.
+
+### Added (memory-as-policy-gateway pivot)
+
+The pivot replaces the pull-based CRUD model (v1.x) with a
+gate-driven active-memory model. Every `dark_memory_*` tool call
+now traverses `internal/policy.PostCheck` which:
+
+1. Composes an **atomic context frame** from session + project +
+   global state via `internal/atomic.FrameSource`.
+2. Verifies the call's intent is in scope and the LLM has the
+   capability grant for it (`CapabilitiesFrame`).
+3. Invokes the orchestrator with the frame as input.
+4. **Drift-checks the response at the write boundary** before
+   returning to the LLM (`internal/drift.Checker`).
+
+- **`dark_memory_recall` (29th canonical tool, CONTEXT 3 → 4)** —
+  the canonical scoped-replay orchestrator. Inputs: scope
+  (global|project|session), project_id, session_id, since_token.
+  Outputs: per-kind atomic frames (Identity, Scope, Capabilities,
+  Drift, Persona) + delta write_audit rows since since_token +
+  new_token cursor. RFC §3 M1 + §6.1.
+- **`internal/atomic` package (NEW)** — Frame interface + 6
+  concrete types: IdentityFrame, ScopeFrame, CapabilitiesFrame,
+  PersonaFrame, DriftFrame, EvidenceFrame. FrameSource interface.
+  Wave 5X.2: `Frame.Hash` signature `Hash() [32]byte` →
+  `Hash() ([32]byte, error)` (defense against previous
+  interface/type mismatch that was silently swallowed).
+- **`internal/drift` package (NEW)** — `Strictness` enum
+  (off|warn|strict), `Checker` type with `CheckArtifact(ctx,
+  ArtifactInput) → Verdict`, `JudgeCaller` interface. Replaces
+  the previous `policy.PostCheck` stub. Decision tree for judge
+  errors: strict refuses, warn allows.
+- **`internal/policy` package (NEW)** — gate.PostCheckInput
+  gains `DriftChecker + DriftArtifact` optional fields.
+  `PostCheck` now calls `drift.Checker` when `Strictness != off`.
+- **`internal/recall` package (NEW)** — `StoreSource` (reads
+  from `store.Store`) + `CachedSource` (INV-5 cache re-hash on
+  Get + audit emission on cache_mismatch). 9 tests.
+- **Session lifecycle resilience** — `session_resurrect`,
+  `session_recover`, `session_heartbeat`, `session_sweeper`,
+  `boot_reconcile`. Closed-due-to-crash sessions are now
+  resurrectable (only operator-initiated termination is
+  terminal). `SessionResurrectOutput` gains 5 fields:
+  `InheritedConstitution{ID,Ver}`, `ActiveConstitution{ID,Ver}`,
+  `ConstitutionBumped`, `InheritedMods`.
+- **L6 adapter integration** — 3 hooks from
+  `BRIDGE_AND_COEXISTENCE.md` §6 wired:
+  * `startup-recover` → `runStartupRecover()` in main.go
+  * `periodic-heartbeat` → sweeper (5E.iii, doc-only)
+  * `exit-close_clean` → Shutdown default reason = clean
+- **Per-project drift strictness** — `Project.DriftStrictness`
+  field (migration v14). `drift.ResolveStrictness(projectOverride,
+  envValue, warnf)` — empty/'default' → env; valid → override;
+  invalid → warn + env fallback.
+
+### Added (canonical tool count 28 → 29)
+
+- **`dark_memory_recall`** — see "memory-as-policy-gateway
+  pivot" above. CONTEXT namespace: 3 → 4 tools.
+
+### Changed (data plane)
+
+- **Schema migrations v11–v15** (sqlite + postgres):
+  * v11, v12 — frame-related scaffolding (see git log)
+  * v13 — `CREATE UNIQUE INDEX uq_vibe_frames_natural_key ON
+    vibe_frames (project_id, session_id, scope_level, scope_id,
+    frame_kind)` — enables the UPSERT rewrite
+  * v14 — `ALTER TABLE projects ADD COLUMN drift_strictness TEXT
+    NOT NULL DEFAULT 'default'`
+  * v15 — `ALTER TABLE vlp_state ADD COLUMN open_spec_id INTEGER
+    NOT NULL DEFAULT 0`
+- **SaveFrame rewritten as INSERT ... ON CONFLICT DO UPDATE**
+  (sqlite) / `ON CONFLICT ... RETURNING` (postgres). Replaces the
+  SELECT-then-INSERT/UPDATE race in the previous implementation
+  under concurrent SaveFrame calls. Tested with 10-goroutine
+  concurrent upsert → 1 row.
+- **`WriteContext.SessionEvent`** — every `Save*` emits this
+  field in `write_audit`. Closes pre-existing drift where the
+  `session_event` column was INSERTed NULL silently.
+- **`VLPStateRow.OpenSpecID`** — the actual spec_id the session
+  is working on. Previously the recall cache used `vlp_state.ID`
+  as a meaningless proxy.
+- **`Project.DriftStrictness`** — per-project resolver override.
+
+### Notes (constitution + RFC)
+
+- The pivot's design rationale lives in
+  `vibe-flow/main/ACTIVE_MEMORY_RFC.md`, `SCHEMA_v11_v12.md`, and
+  `DRIFT_BURST.md` — these are operator-private planning docs
+  (NOT committed; lives in the operator's local workspace).
+- Public docs updated: `vibe-flow/PLAN.md` v2 (pivoted roadmap),
+  `vibe-flow/main/BRIDGE_AND_COEXISTENCE.md` v2 (cx.v3,
+  policy_gateway, dark-research-mcp demoted, dark-recall
+  cancelled).
+- `DefaultServerVersion` constant bumped from `"1.4.1-dev"` →
+  `"2.0.0-dev"`. Canonical source remains `version.Resolve()`
+  (set by `make release` via `-ldflags`).
+- 9 commits + 1 release (this PR). Pre-merge lint scrub PR #10
+  established the H-4 compliant env-var rename as a separate
+  concern.
+
+---
+
 ## [1.4.1] — 2026-07-18
 
 ### Behavior change (callers MUST verify)

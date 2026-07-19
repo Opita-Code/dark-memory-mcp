@@ -21,7 +21,7 @@
 
 [![MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Go 1.25+](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go&logoColor=white)](go.mod)
-[![MCP tools](https://img.shields.io/badge/MCP-28%20tools-blueviolet)](#los-28-tools)
+[![MCP tools](https://img.shields.io/badge/MCP-29%20tools-blueviolet)](#los-29-tools)
 [![Tests](https://img.shields.io/badge/tests-20%20suites%20passing-brightgreen)](#tests)
 [![Backends](https://img.shields.io/badge/backends-sqlite%20%7C%20postgres-blue)](docs/MIGRATION.md)
 [![Conformant](https://img.shields.io/badge/MCP%20Inspector-passing-success)](tests/conformance/)
@@ -102,7 +102,7 @@ El binario `dark-mem-cli` aplica migraciones explícitas cuando las quieras, y `
 
 ---
 
-## Los 28 tools
+## Los 29 tools
 
 Diez namespaces. El prefijo wire es `dark_memory_` (mandatory por BRIDGE_AND_COEXISTENCE §2.2). El orden canónico es **parte del contrato wire** — harnesses pueden indexar por posición.
 
@@ -346,7 +346,8 @@ Highlights:
 - ✅ **v1.4.0** (release-integrity, 2026-07-18) — [`CONSTITUTION.md`](CONSTITUTION.md) `release-integrity@1.0.0` (5 reglas: single source of truth, archive-not-delete, CHANGELOG authoritative, drift detection on boot, session-bound governance). `internal/version` package — resolver canónico (`-ldflags` → `debug.ReadBuildInfo()` → hardcoded `"dev"`). `Makefile` con `build`/`release`/`drift-check`/`version`/`tag` targets. `dark_memory_health_ping` ahora incluye bloque `git` (`tag`, `commit`, `dirty`, `build_time`, `source`, `is_dev`) + `drift` bool. `scripts/inject-version.{sh,ps1}`. 9 tests del resolver cubren los 3 paths.
 - ✅ **v1.4.1** (vibecase taxonomy, 2026-07-18) — `internal/vibecase` como **single source of truth** para la taxonomía C1..C7 (vibe_case case labels). `dark_memory_vibe_spec` ahora enforza el enum (antes era free string; **ver "Behavior change" en CHANGELOG [1.4.1]**). `dark_memory_vibe_publish` JSON Schema enum deriva de `vibecase.JSONSchemaEnum()`. Ambos orchestrators validan via `vibecase.Parse` (defense in depth). 4 nuevos tests (InvalidVibeCase x2, AcceptsAllCanonicalCases, AcceptsTrimmedVibeCase). 15 nuevos unit tests en `internal/vibecase`. **Behavior change**: callers que pasaban valores no canónicos ahora reciben `ErrInvalidArgument`.
 - ✅ **v1.4.2** (CI follow-ups, 2026-07-18) — 2 PRs separados (#8 + #9) cerrando las fallas de CI pre-existentes que cargó v1.4.1 (merge con `--admin`). PR #8: `redteamModsAbsPath` honra `DARK_REDTEAM_MODS_PATH` primero, fallback `t.Skipf` (no `t.Fatalf`) cuando no hay mods → 6 unit tests pasan/skipped clean. PR #9: drop over-strict `USER` MUST-contain check en `TestWire_HealthPingShape` (redaction sólo aplica a paths bajo `$HOME`). Vendoring guide en `internal/tools/testdata/redteam-vendoring.md`. **Primer release con CI 100% verde desde v1.4.0.**
-- 🚧 **v1.5.x** — Vector recall via sqlite-vec; constitution mod registry v2; L7-REDTEAM integration formal (actualmente en operator-WIP)
+- ✅ **v2.0.0** (memory-as-policy-gateway pivot, 2026-07-19) — **breaking architectural pivot**. Replaces the pull-based CRUD model with a gate-driven active-memory model. Every `tools/call` now traverses `internal/policy.PostCheck` which composes atomic frames (`internal/atomic`), invokes the orchestrator with the frame as input, and drift-checks the response at the write boundary. 13 waves shipped (5A.ii.b.2.a..c, 5A.vi, 5E.iv, 5E.iv.b, 5E.v, 5X.1, 5X.2, 5X.3, 5X.4, 5A.ii.a polish). New: `internal/atomic`, `internal/drift`, `internal/policy`, `internal/recall` packages. New tool: `dark_memory_recall` (29th canonical; CONTEXT 3→4). Schema migrations v11–v15 (frame UPSERT, audit session_event, drift_strictness, open_spec_id). L6 adapter integration: startup-recover + periodic-heartbeat + exit-clean. Shutdown default close_reason `aborted` → `clean` (BREAKING). Operator env contract rename: `DARK_SCRAPPER_URL` → `DARK_DRIFT_JUDGE_DAEMON_URL` (PR #10). 9 commits + release. Tool count: 28 → 29.
+- 🚧 **v2.1.x** — Vector recall via sqlite-vec; constitution mod registry v2; L7-REDTEAM integration formal (actualmente en operator-WIP)
 
 Patches publicados (release artifacts, no en el repo):
 - `dark-memory-mcp-v1.2.0.patch` — superficie 27 tools, ~870 LOC adicionales
