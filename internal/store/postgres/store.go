@@ -577,6 +577,13 @@ func (s *Store) SaveSession(ctx context.Context, wc store.WriteContext, sess *se
 	}
 	var id int64
 	err := s.runInTx(ctx, func(tx pgx.Tx) error {
+		// closed_at must be NULL (not empty string) for open/idle sessions
+		// to satisfy the v12 CHECK constraint
+		// `(status = 'open' AND closed_at IS NULL)`.
+		var closedAt any
+		if sess.ClosedAt != "" {
+			closedAt = sess.ClosedAt
+		}
 		if err := tx.QueryRow(ctx,
 			`INSERT INTO sessions (session_id, status, constitution_id, constitution_ver, active_mods,
 			                     started_at, closed_at, last_heartbeat_at, parent_session_id,
@@ -584,7 +591,7 @@ func (s *Store) SaveSession(ctx context.Context, wc store.WriteContext, sess *se
 			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 			 RETURNING id`,
 			sess.SessionID, sess.Status, sess.ConstitutionID, sess.ConstitutionVer, sess.ActiveMods,
-			sess.StartedAt, sess.ClosedAt, sess.LastHeartbeatAt, sess.ParentSessionID,
+			sess.StartedAt, closedAt, sess.LastHeartbeatAt, sess.ParentSessionID,
 			sess.ResurrectedFrom, sess.Notes, sess.Operator, projectID,
 			sess.StartedAt /* created_at proxy = started_at for new sessions */,
 		).Scan(&id); err != nil {
@@ -795,14 +802,21 @@ func (s *Store) SaveResurrect(ctx context.Context, wc store.WriteContext, origin
 	}
 	err := s.runInTx(ctx, func(tx pgx.Tx) error {
 		var newID int64
+		// closed_at must be NULL (not empty string) for open/idle sessions
+		// to satisfy the v12 CHECK constraint.
+		var closedAt any
+		if newSess.ClosedAt != "" {
+			closedAt = newSess.ClosedAt
+		}
 		if err := tx.QueryRow(ctx,
 			`INSERT INTO sessions (session_id, status, constitution_id, constitution_ver, active_mods,
 			                     started_at, last_heartbeat_at, closed_at, parent_session_id,
 			                     resurrected_from, notes, operator, project_id, created_at)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, NULL, $8, $9, $10, $11, $12, $13)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 			 RETURNING id`,
 			newSess.SessionID, newSess.Status, newSess.ConstitutionID, newSess.ConstitutionVer,
 			newSess.ActiveMods, newSess.StartedAt, newSess.LastHeartbeatAt,
+			closedAt,
 			newSess.ParentSessionID, newSess.ResurrectedFrom, newSess.Notes,
 			newSess.Operator, activeProject,
 			newSess.StartedAt /* created_at proxy = started_at for resurrected sessions */,
