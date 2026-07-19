@@ -248,7 +248,7 @@ func TestParseDecisionFromJudgeJSON(t *testing.T) {
 		{"structured drift_detected", `{"verdict":"drift_detected","confidence":0.85}`, 0.85, "drift_detected"},
 		{"structured needs_human", `{"verdict":"needs_human","confidence":0.7}`, 0.7, "needs_human"},
 		{"structured with reasoning", `{"verdict":"aligned","reasoning":"spec matches","confidence":0.9}`, 0.9, "aligned"},
-		{"bare aligned", `aligned\nreasoning here`, 0.9, "aligned"},
+		{"bare aligned", "aligned\nreasoning here", 0.9, "aligned"},
 		{"bare drift", `drift_detected`, 0.9, "drift_detected"},
 		{"bare needs_human", `needs_human`, 0.9, "needs_human"},
 		{"aligned low conf → needs_human", `{"verdict":"aligned","confidence":0.1}`, 0.1, "needs_human"},

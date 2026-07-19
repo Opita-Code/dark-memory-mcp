@@ -3,6 +3,7 @@
 package drift
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -50,8 +51,9 @@ func TestParseStrictness_InvalidFallsBackToOff(t *testing.T) {
 	// defensive fallback is observable.
 	var warnings []string
 	warnf := func(format string, args ...any) {
-		// fmt.Sprintf into a single message so the test can match.
-		warnings = append(warnings, format)
+		// Format the args into a single message so the test can match
+		// against the resolved value, not the raw %q format placeholder.
+		warnings = append(warnings, fmt.Sprintf(format, args...))
 	}
 	cases := []string{
 		"draconian",     // unknown string

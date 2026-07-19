@@ -531,6 +531,15 @@ CREATE TABLE sessions (
 
 -- Backfill: legacy 'open' (orphan by accident) -> closed_aborted (resurrectable).
 -- Legacy 'closed' (terminal by historical convention) -> closed_clean.
+-- Legacy 'active' (the v5 default before v12) -> closed_clean too (treat as
+-- pre-pivot baseline; any actually-still-open sessions will surface as orphans
+-- via the runtime's startup-recover sweep, which is the canonical resurrection
+-- entry point per BRIDGE_AND_COEXISTENCE.md §6.2).
+-- created_at: legacy schemas (v5–v11) did not track created_at separately
+-- from started_at; use started_at as the proxy value. active_project_id
+-- (added in v7) is intentionally dropped — v12 schema folds that state into
+-- project_id + resurrected_from, and the project_id column already holds
+-- the active value for legacy rows.
 INSERT INTO sessions
   (id, session_id, status,
    constitution_id, constitution_ver, active_mods,
@@ -539,11 +548,19 @@ INSERT INTO sessions
    notes, project_id, created_at)
 SELECT
   id, session_id,
-  CASE WHEN status='open' THEN 'closed_aborted' ELSE 'closed_clean' END,
+  CASE
+    WHEN status='open'           THEN 'closed_aborted'
+    WHEN status='active'         THEN 'closed_clean'
+    WHEN status='closed'         THEN 'closed_clean'
+    WHEN status='closed_clean'   THEN 'closed_clean'
+    WHEN status='closed_aborted' THEN 'closed_aborted'
+    WHEN status='archived'       THEN 'archived'
+    ELSE 'closed_clean'
+  END,
   constitution_id, constitution_ver, active_mods,
   operator, started_at, closed_at,
   NULL, NULL, NULL,
-  notes, project_id, created_at
+  notes, project_id, started_at
 FROM _sessions_old;
 
 DROP TABLE _sessions_old;

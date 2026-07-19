@@ -472,11 +472,19 @@ INSERT INTO sessions
    notes, project_id, created_at)
 SELECT
   id, session_id,
-  CASE WHEN status='open' THEN 'closed_aborted' ELSE 'closed_clean' END,
+  CASE
+    WHEN status='open'           THEN 'closed_aborted'
+    WHEN status='active'         THEN 'closed_clean'
+    WHEN status='closed'         THEN 'closed_clean'
+    WHEN status='closed_clean'   THEN 'closed_clean'
+    WHEN status='closed_aborted' THEN 'closed_aborted'
+    WHEN status='archived'       THEN 'archived'
+    ELSE 'closed_clean'
+  END,
   constitution_id, constitution_ver, active_mods,
   operator, started_at, closed_at,
   NULL, NULL, NULL,
-  notes, project_id, created_at
+  notes, project_id, started_at
 FROM _sessions_old;
 
 DROP TABLE _sessions_old;

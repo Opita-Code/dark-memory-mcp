@@ -89,8 +89,12 @@ func TestDriftFrame_AlignedWithoutTime(t *testing.T) {
 }
 
 func TestDriftFrame_HashDeterminism(t *testing.T) {
-	f1, _ := NewDriftFrame("s", 42, "aligned", time.Now(), nil)
-	f2, _ := NewDriftFrame("s", 42, "aligned", time.Now(), nil)
+	now := time.Now()
+	f1, _ := NewDriftFrame("s", 42, "aligned", now, nil)
+	f2, _ := NewDriftFrame("s", 42, "aligned", now, nil)
+	// ComposedAtValue is set inside the constructor via time.Now(); sync
+	// it explicitly because two distinct time.Now() calls produce different
+	// nanosecond timestamps.
 	f1.ComposedAtValue = f2.ComposedAtValue
 	h1, _ := f1.Hash()
 	h2, _ := f2.Hash()

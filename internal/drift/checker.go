@@ -185,12 +185,23 @@ func (c *Checker) CheckArtifact(ctx context.Context, in ArtifactInput) (*Verdict
 				StrictnessApplied: c.Strictness,
 			}, nil
 		}
-		// No LLM available or transient LLM error → log + skip.
-		// Returning "errored" would make strict mode refuse the save
-		// for the wrong reason; "skipped" tells the caller "drift
-		// check didn't run, but it's not a verdict against the artifact".
+		// Judge unavailable (no API key, network error, transient
+		// failure). The semantics differ by Strictness:
+		//   - off / warn: return "skipped" verdict so the gate allows the
+		//     save (the operator opted into permissive drift policy).
+		//   - strict: propagate the error so the gate's strict-mode
+		//     branch refuses the save. Per the design intent, an
+		//     operator who enabled strict mode must not be able to
+		//     bypass drift by disabling the LLM.
 		if c.Logger != nil {
-			c.Logger.Printf("drift: judge call failed, skipping: %v", err)
+			c.Logger.Printf("drift: judge call failed: %v (strictness=%v)", err, c.Strictness)
+		}
+		if c.Strictness == StrictnessStrict {
+			return &Verdict{
+				Decision:          "errored",
+				Reasoning:         fmt.Sprintf("judge unavailable under strict mode: %v", err),
+				StrictnessApplied: c.Strictness,
+			}, fmt.Errorf("drift: judge unavailable under strict mode: %w", err)
 		}
 		return &Verdict{
 			Decision:          "skipped",
