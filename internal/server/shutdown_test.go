@@ -67,7 +67,7 @@ func TestShutdown_DefaultReasonIsClean(t *testing.T) {
 
 	// Shutdown closes the Store, so we can't read via boot.Store.
 	// Open a fresh sqlite connection to verify the side effect on disk.
-	got, err := readSessionAfterShutdown(t, boot.DBPath, start.SessionID)
+	got, err := readSessionAfterShutdown(t, os.Getenv("DARK_DB"), start.SessionID)
 	if err != nil {
 		t.Fatalf("readSessionAfterShutdown: %v", err)
 	}
@@ -346,17 +346,20 @@ func readSessionAfterShutdown(t *testing.T, dbPath, sessionID string) (*session.
 		return nil, err
 	}
 	defer db.Close()
+	// Read only the columns that map to session.Session fields.
+	// (project_id + created_at are also in the sessions table but
+	// the Session struct doesn't model them as fields.)
 	row := db.QueryRow(
 		`SELECT session_id, status, constitution_id, constitution_ver,
 		        active_mods, operator, started_at, closed_at,
 		        last_heartbeat_at, parent_session_id, resurrected_from,
-		        notes, project_id
+		        notes
 		 FROM sessions WHERE session_id = ?`, sessionID)
 	var s session.Session
 	err = row.Scan(&s.SessionID, &s.Status, &s.ConstitutionID, &s.ConstitutionVer,
 		&s.ActiveMods, &s.Operator, &s.StartedAt, &s.ClosedAt,
 		&s.LastHeartbeatAt, &s.ParentSessionID, &s.ResurrectedFrom,
-		&s.Notes, &s.ProjectID)
+		&s.Notes)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}

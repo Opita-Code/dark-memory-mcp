@@ -265,9 +265,9 @@ func TestBridge7_CallToolErrorPath(t *testing.T) {
 }
 
 // canonicalWireOrder is the wire-format (dark_memory_*) version of
-// the 28-tool canonical order (v1.3.0; was 27 in v1.2.x and 26 in
-// v1.1.x), mirrored from internal/tools/registry.go so this test
-// doesn't depend on the library's internal package (it tests the
+// the 29-tool canonical order (v2.0.0; was 28 in v1.3.x, 27 in v1.2.x
+// and 26 in v1.1.x), mirrored from internal/tools/registry.go so this
+// test doesn't depend on the library's internal package (it tests the
 // wire format, not the library shape).
 func canonicalWireOrder() []string {
 	bare := []string{
@@ -279,8 +279,8 @@ func canonicalWireOrder() []string {
 		"research_topic", "research_recall", "research_resume_thread",
 		// VIBE (4)
 		"vibe_publish", "vibe_spec", "pipeline_status", "resolve_drift",
-		// CONTEXT (3)
-		"artifact_context", "spec_context", "session_context",
+		// CONTEXT (4) — v2.0.0 grew from 3 to 4 with `recall`
+		"artifact_context", "spec_context", "session_context", "recall",
 		// JUDGE (3)
 		"judge", "consensus", "judgment_history",
 		// POLICY (2)
