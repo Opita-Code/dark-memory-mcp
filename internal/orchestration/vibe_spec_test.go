@@ -132,7 +132,10 @@ func TestParseTasksField_UnknownFirstByte(t *testing.T) {
 	if !strings.Contains(msg, "unknown form") {
 		t.Errorf("INFRA-002 fix: unknown-shape error must say so explicitly; got %q", msg)
 	}
-	if !strings.Contains(msg, "'{'") {
+	// The parser emits the first non-whitespace byte via %q, which
+	// wraps it in double quotes (e.g. `"{"`). Accept either double
+	// or single quotes around the offending byte.
+	if !strings.Contains(msg, `"{"`) && !strings.Contains(msg, "'{'") {
 		t.Errorf("INFRA-002 fix: unknown-shape error must name the first byte so the operator can identify the form; got %q", msg)
 	}
 }

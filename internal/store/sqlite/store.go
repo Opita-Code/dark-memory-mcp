@@ -3211,7 +3211,13 @@ func (s *Store) SaveFrame(ctx context.Context, wc store.WriteContext, env *atomi
 	// Replaces the previous SELECT-then-INSERT/UPDATE pattern which
 	// was racy under concurrent writes for the same composite key.
 	err := s.runInTx(ctx, func(tx *sql.Tx) error {
-		res, err := tx.ExecContext(ctx,
+		// Use RETURNING id instead of LastInsertId() — the latter is
+		// unreliable for INSERT ... ON CONFLICT DO UPDATE in some
+		// SQLite versions (can return the rowid of the inserted row
+		// even when an UPDATE branch fired, leading to phantom new
+		// ids for idempotent upserts).
+		var newID int64
+		err := tx.QueryRowContext(ctx,
 			`INSERT INTO vibe_frames (project_id, session_id, scope_level, scope_id,
 			                          frame_kind, composed_at, expires_at, frame_json,
 			                          content_sha256, last_write_id, created_at)
@@ -3223,16 +3229,13 @@ func (s *Store) SaveFrame(ctx context.Context, wc store.WriteContext, env *atomi
 			   expires_at     = excluded.expires_at,
 			   last_write_id  = excluded.last_write_id,
 			   composed_at    = excluded.composed_at,
-			   created_at     = excluded.created_at`,
+			   created_at     = excluded.created_at
+			 RETURNING id`,
 			activeProject, env.SessionID, env.ScopeLevel, env.ScopeID, env.Kind,
 			env.ComposedAt.UTC().Format(time.RFC3339Nano),
 			env.ExpiresAt.UTC().Format(time.RFC3339Nano),
 			string(env.FrameJSON), shaHex, env.LastWriteID,
-			env.CreatedAt.UTC().Format(time.RFC3339Nano))
-		if err != nil {
-			return err
-		}
-		newID, err := res.LastInsertId()
+			env.CreatedAt.UTC().Format(time.RFC3339Nano)).Scan(&newID)
 		if err != nil {
 			return err
 		}
