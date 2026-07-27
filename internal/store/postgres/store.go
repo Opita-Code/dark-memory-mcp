@@ -2338,3 +2338,22 @@ func (s *Store) ListVLPStates(ctx context.Context, stateFilter string, limit int
 func notImpl(name string) error {
 	return fmt.Errorf("%w: %s", store.ErrNotConfigured, name)
 }
+
+// SetActiveSession / GetActiveSession / ClearActiveSession (v17).
+// The Postgres driver is configured-but-unused on this host
+// (production runs SQLite per dark.db). Stubs here match the Store
+// interface so the rest of the package compiles. Activate by
+// porting the SQLite implementations (which use the same SQL
+// statements, modulo TIMESTAMP WITH TIME ZONE for the second
+// column).
+func (s *Store) SetActiveSession(ctx context.Context, projectID, sessionID string) error {
+	return notImpl("SetActiveSession")
+}
+
+func (s *Store) GetActiveSession(ctx context.Context, projectID string) (string, error) {
+	return "", notImpl("GetActiveSession")
+}
+
+func (s *Store) ClearActiveSession(ctx context.Context, projectID, expectedSessionID string) error {
+	return notImpl("ClearActiveSession")
+}

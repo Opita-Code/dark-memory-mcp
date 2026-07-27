@@ -32,6 +32,28 @@ type Project struct {
 	//   "strict" — drift_judge + refuse ErrDriftAtWrite on drift_detected
 	// Empty string is normalized to "default" by the drift package.
 	DriftStrictness string `json:"drift_strictness,omitempty"`
+
+	// ActiveSessionID (v17, v2.0.2 gate fix) is the session_id that
+	// session_start most recently bound to this project. The
+	// StoreBackedActiveSessionResolver (server/middleware) reads
+	// this on every PreCheck so tools that take args.session_id
+	// and tools that rely on the resolver can both find a session
+	// without the orchestrator having to plumb session_id through
+	// every tool call.
+	//
+	// Set by session_start / session_resume, cleared by session_close
+	// (compare-and-set so concurrent session_start for a different
+	// session wins over a stale close).
+	//
+	// Populated only after v17. Pre-v17 rows have empty string
+	// (treated as "no active session").
+	ActiveSessionID string `json:"active_session_id,omitempty"`
+
+	// ActiveSessionSetAt is the wall-clock time ActiveSessionID was
+	// bound. The sweeper (a follow-up) uses it to age out sessions
+	// whose HEARTBEAT_TIMEOUT (5E.iii) has elapsed. Empty when no
+	// active session.
+	ActiveSessionSetAt string `json:"active_session_set_at,omitempty"`
 }
 
 // IsArchived returns true if the project has been soft-deleted.

@@ -665,4 +665,38 @@ ALTER TABLE constitutions ADD COLUMN last_verified_at TEXT;
 ALTER TABLE constitutions ADD COLUMN last_verified_sha256 TEXT;
 `,
 	},
+	{
+		// v17 - projects.active_session_id + active_session_set_at
+		// (v2.0.2 gate fix). v2.0.1 introduced GateMiddleware that
+		// requires SessionID for every tool call, but its
+		// ActiveSessionResolver was an empty StaticSessionResolver
+		// — every call returned "" and the gate refused all calls.
+		// v2.0.2 introduces real per-project active-session tracking:
+		// session_start saves + sets this column; session_close
+		// clears via sessionID match (race-safe); session_resume
+		// overwrites. The StoreBackedActiveSessionResolver (server/)
+		// reads this column on each call (with a short in-process
+		// cache) so PreCheck's SessionID resolution works.
+		//
+		// active_session_set_at is the timestamp for sweeper-style
+		// staleness cleanup (a session older than HEARTBEAT_TIMEOUT
+		// without a heartbeat should be cleared). The sweeper
+		// itself lands in a follow-up; this column is here so the
+		// schema is ready when it does. Pre-v17 rows have both
+		// columns NULL, which the resolver treats as "no active
+		// session" (same behavior as pre-v2.0.1).
+		//
+		// NOT NULL constraints: deliberately omitted. Pre-v17 rows
+		// need to be readable without backfill. The Store impls
+		// treat NULL as the same as "".
+		//
+		// Idempotent: ADD COLUMN with no DEFAULT is safe to re-run on
+		// a DB that already has these columns.
+		Version: 17,
+		Name:    "projects_active_session",
+		Up: `
+ALTER TABLE projects ADD COLUMN active_session_id TEXT;
+ALTER TABLE projects ADD COLUMN active_session_set_at TEXT;
+`,
+	},
 }

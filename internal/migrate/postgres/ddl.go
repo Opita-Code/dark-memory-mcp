@@ -543,4 +543,16 @@ ALTER TABLE constitutions ADD COLUMN last_verified_at TIMESTAMP WITH TIME ZONE;
 ALTER TABLE constitutions ADD COLUMN last_verified_sha256 TEXT;
 `,
 	},
+	{
+		// v17 - projects.active_session_id + active_session_set_at
+		// (v2.0.2 gate fix). See sqlite/ddl.go v17 for full rationale.
+		// Postgres differs from SQLite only in the timestamp type:
+		// TIMESTAMP WITH TIME ZONE here, plain TEXT in sqlite.
+		Version: 17,
+		Name:    "projects_active_session",
+		Up: `
+ALTER TABLE projects ADD COLUMN active_session_id TEXT;
+ALTER TABLE projects ADD COLUMN active_session_set_at TIMESTAMP WITH TIME ZONE;
+`,
+	},
 }

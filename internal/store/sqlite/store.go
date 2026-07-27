@@ -3822,3 +3822,116 @@ func (s *Store) ListVLPStates(ctx context.Context, stateFilter string, limit int
 	}
 	return out, rows.Err()
 }
+
+
+func (s *Store) SetActiveSession(ctx context.Context, projectID, sessionID string) error {
+	if strings.TrimSpace(projectID) == "" || strings.TrimSpace(sessionID) == "" {
+		return fmt.Errorf("sqlite: SetActiveSession: projectID and sessionID required")
+	}
+	if err := s.requireProject(); err != nil {
+		return err
+	}
+	activeProject := s.ActiveProject()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Verify the project exists. We do this under the lock so a
+	// concurrent ArchiveProject can't race us into pointing at a
+	// soft-deleted project.
+	var exists int
+	if err := s.db.QueryRowContext(ctx, `SELECT 1 FROM projects WHERE project_id = ?`, projectID).Scan(&exists); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("%w: project_id=%s", store.ErrProjectNotFound, projectID)
+		}
+		return err
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE projects SET active_session_id = ?, active_session_set_at = ? WHERE project_id = ?`,
+		sessionID, now, projectID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("%w: project_id=%s", store.ErrProjectNotFound, projectID)
+	}
+
+	// Record the write_audit (INV-1). The active-session pointer
+	// flip is a write event even though the row that "lost" the
+	// active pointer isn't a new row.
+	if err := s.recordWriteLocked(ctx, audit.WriteEvent{
+		Actor:          activeProject,
+		ProjectID:      projectID,
+		WritePath:      "SetActiveSession",
+		SessionID:      sessionID,
+		ConstitutionID: "",
+		ConstitutionVer: "",
+		CreatedAt:      now,
+	}, ""); err != nil {
+		// Best-effort. Don't fail the caller — the pointer is set.
+		// (Same policy as SaveDriftReport "log + carry on".)
+		_ = err
+	}
+	return nil
+}
+
+func (s *Store) GetActiveSession(ctx context.Context, projectID string) (string, error) {
+	if strings.TrimSpace(projectID) == "" {
+		return "", nil
+	}
+	if err := s.requireProject(); err != nil {
+		return "", err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var active sql.NullString
+	err := s.db.QueryRowContext(ctx,
+		`SELECT active_session_id FROM projects WHERE project_id = ?`, projectID).Scan(&active)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
+		}
+		return "", err
+	}
+	if !active.Valid {
+		return "", nil
+	}
+	return active.String, nil
+}
+
+func (s *Store) ClearActiveSession(ctx context.Context, projectID, expectedSessionID string) error {
+	if strings.TrimSpace(projectID) == "" || strings.TrimSpace(expectedSessionID) == "" {
+		return fmt.Errorf("sqlite: ClearActiveSession: projectID and expectedSessionID required")
+	}
+	if err := s.requireProject(); err != nil {
+		return err
+	}
+	activeProject := s.ActiveProject()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE projects SET active_session_id = NULL, active_session_set_at = NULL
+		   WHERE project_id = ? AND active_session_id = ?`,
+		projectID, expectedSessionID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		// CAS matched: emit an audit row so the close event is
+		// observable. Stale CAS (n == 0) doesn't emit — the
+		// newer session is the live one and shouldn't be
+		// double-counted.
+		_ = s.recordWriteLocked(ctx, audit.WriteEvent{
+			Actor:          activeProject,
+			ProjectID:      projectID,
+			WritePath:      "ClearActiveSession",
+			SessionID:      expectedSessionID,
+			ConstitutionID: "",
+			ConstitutionVer: "",
+			CreatedAt:      now,
+		}, "")
+	}
+	return nil
+}

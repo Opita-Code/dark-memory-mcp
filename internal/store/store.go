@@ -118,6 +118,7 @@ var (
 	ErrArmedRequired      = errors.New("store: red-team tool requires DARK_REDTEAM=armed")
 	ErrAlreadyExists      = errors.New("store: row already exists")
 	ErrNotFound           = errors.New("store: row not found")
+	ErrProjectNotFound    = errors.New("store: project not found")
 	ErrInvalidArgument    = errors.New("store: invalid argument")
 	// ErrInvalidState: state transition is invalid given the row's
 	// current state (e.g. resolving a drift that was already
@@ -235,6 +236,30 @@ type Store interface {
 	// Maps to {closed_clean, closed_aborted, archived} per INV-8.
 	CloseSession(ctx context.Context, wc WriteContext, sessionID, reason string) error
 	ListSessions(ctx context.Context, limit int) ([]session.Session, error)
+
+	// SetActiveSession writes the current active session_id for the
+	// given project (v17, v2.0.2). Used by session_start and
+	// session_resume after SaveSession succeeds. Overwrites any
+	// previous active session unconditionally — last session_start
+	// wins. Idempotent if called twice with the same session_id.
+	// Returns ErrProjectNotFound if projectID doesn't exist.
+	SetActiveSession(ctx context.Context, projectID, sessionID string) error
+
+	// GetActiveSession returns the currently-active session_id for
+	// the given project, or "" if none. Read-only. Used by
+	// StoreBackedActiveSessionResolver on every PreCheck (with a
+	// short in-process cache) so the gate can resolve session_id
+	// dynamically for tools that don't take it as an arg.
+	GetActiveSession(ctx context.Context, projectID string) (string, error)
+
+	// ClearActiveSession compare-and-set: sets active_session_id
+	// back to NULL ONLY IF the currently-active session matches
+	// expectedSessionID. Returns nil whether or not CAS matched —
+	// a stale close of an older session is a no-op, not an error,
+	// because the newer session is the live one. Used by
+	// session_close so a concurrent session_start for a different
+	// session isn't clobbered by the older session's close.
+	ClearActiveSession(ctx context.Context, projectID, expectedSessionID string) error
 
 	// SaveHeartbeat refreshes last_heartbeat_at on an `open` session.
 	// Returns ErrNotFound if the session doesn't exist OR isn't open/idle.
