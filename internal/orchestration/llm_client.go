@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -130,6 +131,20 @@ func NewSelfHarnessClient() (*SelfHarnessClient, error) {
 			provider: "drift_judge_daemon",
 			model:    os.Getenv("DARK_JUDGE_MODEL_DRIFT_JUDGE_DAEMON"),
 			key:      url,
+		}, nil
+	}
+	// v2.0.1 (follow-up 3 of 3): legacy-env shim for operators who
+	// haven't migrated their `.env` from the v1.x env name. When
+	// DARK_SCRAPPER_URL is set AND DARK_DRIFT_JUDGE_DAEMON_URL is not,
+	// fall through to the legacy value and log a one-line notice at
+	// startup so the operator sees the deprecation in their boot log
+	// without the runtime path having to do the lookup twice.
+	if legacyURL := os.Getenv("DARK_SCRAPPER_URL"); legacyURL != "" {
+		log.Printf("dark-mem-mcp: DARK_SCRAPPER_URL is set but DARK_DRIFT_JUDGE_DAEMON_URL is not — using the legacy env (deprecated, will be removed in v2.1.0). Run `sed -i 's/DARK_SCRAPPER_URL/DARK_DRIFT_JUDGE_DAEMON_URL/g' .env` to migrate.")
+		return &SelfHarnessClient{
+			provider: "drift_judge_daemon",
+			model:    os.Getenv("DARK_JUDGE_MODEL_DRIFT_JUDGE_DAEMON"), // new name; legacy env had no model override
+			key:      legacyURL,
 		}, nil
 	}
 	return nil, ErrNoLLMAvailable
