@@ -778,6 +778,8 @@ func TestJudge_CanaryRejection(t *testing.T) {
 
 // O5: Judge â€” no LLM available returns ErrNoLLMAvailable.
 func TestJudge_NoLLMAvailable(t *testing.T) {
+	t.Setenv("SDD_LLM_BASE_URL", "")
+
 	ctx := context.Background()
 	orch, _ := openOrchestratorTestEnv(t)
 	if err := orch.Store.SetActiveProject(ctx, "default"); err != nil {

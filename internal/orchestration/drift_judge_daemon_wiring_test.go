@@ -208,6 +208,14 @@ func TestJudge_DispatchesDriftJudgeDaemon(t *testing.T) {
 // the original source comment: anthropic/openai/google still return
 // ErrNoLLMAvailable, do NOT silently return fake verdicts.
 func TestJudge_OtherProvidersStillStubs(t *testing.T) {
+	// Force the Wave 4 (anthropic + SDD_LLM_BASE_URL → real LLM call)
+	// branch OFF regardless of the operator's shell env. Without this,
+	// inheriting `SDD_LLM_BASE_URL=https://api.minimax.io/anthropic`
+	// from the harness env (set by opencode.jsonc for the dark-agents
+	// MCP) sends every "anthropic" call to a real HTTP endpoint with
+	// `key: "anything"`, producing HTTP 401 instead of the expected
+	// ErrNoLLMAvailable.
+	t.Setenv("SDD_LLM_BASE_URL", "")
 	for _, provider := range []string{"anthropic", "openai", "google"} {
 		t.Run(provider, func(t *testing.T) {
 			c := &SelfHarnessClient{provider: provider, key: "anything"}
