@@ -24,3 +24,6 @@ docs/INFRA-003.md
 # Operator-private constitutions (cerebro is the operator-side active-memory layer)
 vibe-flow/constitution/dark-memory-mcp-cerebro.constitution.toml
 
+# Local trash directories (reversible file moves, never commit)
+_trash-*/
+
