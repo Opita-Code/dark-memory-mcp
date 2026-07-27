@@ -1173,6 +1173,8 @@ func TestPublishVibe_DriftDetected(t *testing.T) {
 // O7: PublishVibe â€” no LLM available still persists spec + artifact +
 // drift_log with verdict="drift_detected" + reasoning explaining skip.
 func TestPublishVibe_NoLLM(t *testing.T) {
+	t.Setenv("SDD_LLM_BASE_URL", "")
+
 	ctx := context.Background()
 	orch, s := openOrchestratorTestEnv(t)
 	if err := s.SetActiveProject(ctx, "default"); err != nil {
