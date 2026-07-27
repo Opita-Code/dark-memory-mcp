@@ -86,6 +86,16 @@ type GateMiddleware struct {
 	FrameSource         policy.FrameSource
 	DriftChecker        *drift.Checker
 	ActiveSession       ActiveSessionResolver
+	// ActiveProject returns the currently-active project_id (mirrors
+	// bootState.Store.ActiveProject). Used as a fallback by
+	// buildGateInput when args lacks project_id — many session-required
+	// tools (agent_memory_*, session_status, session_close) don't carry
+	// project_id in args and derive it from the active project at the
+	// orchestrator layer (INV-7). v2.1.1 added this field to fix the
+	// regression where these tools refused with ErrFrameStaleTooFar
+	// because buildGateInput was passing projectID="" to the resolver,
+	// which short-circuited without consulting the store.
+	ActiveProject       func() string
 	ActiveConstitution  func() (id, ver string)
 	Now                 func() time.Time
 }
@@ -180,10 +190,28 @@ func (m *GateMiddleware) Wrap(
 }
 
 // buildGateInput assembles the GateInput from the tool name + args.
-// SessionID resolution: args.session_id if present, else ActiveSession
-// resolver. ProjectID resolution: args.project_id if present, else
-// empty (the gate treats empty as "no project scoped" — read-only
-// tools like health_ping pass through, mutating tools refuse).
+//
+// Resolution order (v2.1.1 update):
+//
+//	project_id: args.project_id if present and non-empty,
+//	            else m.ActiveProject() (the bootState.Store.ActiveProject),
+//	            else "" (bootstrap case).
+//	session_id: args.session_id if present and non-empty,
+//	            else m.ActiveSession.ActiveSessionID(ctx, project_id)
+//	            (uses the resolved project_id so the resolver
+//	            doesn't short-circuit on "").
+//
+// The ActiveProject fallback fixes the v2.1.0 regression where
+// session-required tools without project_id in args (agent_memory_*,
+// session_status, session_close) refused with ErrFrameStaleTooFar:
+// the resolver's "projectID == ''" short-circuit returned "" without
+// consulting the store, so GateInput had SessionID="" which PreCheck
+// reads as "no session".
+//
+// The bootstrap case (no args.project_id AND no ActiveProject) is
+// preserved: SessionID="" + ProjectID="" means PreCheck refuses with
+// ReasonFrameStale — which is correct for session_start itself,
+// where the session_id is the OUTPUT, not an input.
 func (m *GateMiddleware) buildGateInput(ctx context.Context, toolName string, args json.RawMessage, now time.Time) policy.GateInput {
 	in := policy.GateInput{
 		ToolName: toolName,
@@ -191,16 +219,22 @@ func (m *GateMiddleware) buildGateInput(ctx context.Context, toolName string, ar
 		Args:     decodeArgsMap(args),
 	}
 
+	// 1. Resolve project_id (args wins, ActiveProject fallback, else "").
+	projectID := ""
+	if pid, ok := in.Args["project_id"].(string); ok && pid != "" {
+		projectID = pid
+	} else if m.ActiveProject != nil {
+		projectID = m.ActiveProject()
+	}
+	in.ProjectID = projectID
+
+	// 2. Resolve session_id (args wins, then resolver using the
+	//    resolved project_id so the resolver doesn't short-circuit
+	//    on an empty projectID).
 	if id, ok := in.Args["session_id"].(string); ok && id != "" {
 		in.SessionID = id
 	} else if m.ActiveSession != nil {
-		// Project-scoped lookup if project_id present; otherwise "".
-		pid, _ := in.Args["project_id"].(string)
-		in.SessionID = m.ActiveSession.ActiveSessionID(ctx, pid)
-	}
-
-	if pid, ok := in.Args["project_id"].(string); ok {
-		in.ProjectID = pid
+		in.SessionID = m.ActiveSession.ActiveSessionID(ctx, projectID)
 	}
 
 	// constitution_id/ver come from the active constitution at the

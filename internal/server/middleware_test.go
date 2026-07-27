@@ -390,3 +390,115 @@ var _ = func() bool {
 	}
 	return true
 }()
+
+// --- v2.1.1 regression tests: ActiveProject fallback ---
+
+// activeProjectGetter returns a fixed project_id. Mirrors the
+// bootState.Store.ActiveProject wiring in main.go.
+type activeProjectGetter func() string
+
+// TestGateMiddleware_BuildGateInput_EmptyArgs_NoActiveProject exercises
+// the bootstrap case: no project context yet (ActiveProject returns
+// ""). SessionID should remain "" — this is the case session_start
+// uses. PreCheck then refuses (no session) which is the expected
+// bootstrap behavior.
+func TestGateMiddleware_BuildGateInput_EmptyArgs_NoActiveProject(t *testing.T) {
+	now := time.Now().UTC()
+	src := happyFrames("agent_memory_save")
+	src.identity.SessionID = ""
+	src.caps.SessionID = ""
+	src.identity.ComposedAtValue = now
+	src.caps.ComposedAtValue = now
+
+	m := &GateMiddleware{
+		FrameSource:        src,
+		ActiveSession:      StaticSessionResolver{SessionID: ""},
+		ActiveProject:      func() string { return "" }, // no active project
+		ActiveConstitution: staticConstitution(),
+		Now:                func() time.Time { return now },
+	}
+	got := m.buildGateInput(context.Background(), "agent_memory_save", json.RawMessage(`{}`), now)
+	if got.SessionID != "" {
+		t.Errorf("expected SessionID=\"\" when no active project; got %q", got.SessionID)
+	}
+	if got.ProjectID != "" {
+		t.Errorf("expected ProjectID=\"\" when no active project; got %q", got.ProjectID)
+	}
+}
+
+// TestGateMiddleware_BuildGateInput_NoProjectIDInArgs_FallsBackToActiveProject
+// is the v2.1.1 regression: tools that don't carry project_id in
+// args (agent_memory_*, session_status, session_close) must still
+// resolve to the active project, so the resolver can return the
+// correct session_id. Pre-fix, buildGateInput passed projectID=""
+// to the resolver, which short-circuited to "" — every session-
+// required tool refused.
+func TestGateMiddleware_BuildGateInput_NoProjectIDInArgs_FallsBackToActiveProject(t *testing.T) {
+	now := time.Now().UTC()
+	m := &GateMiddleware{
+		FrameSource:        happyFrames("agent_memory_save"),
+		ActiveSession:      StaticSessionResolver{SessionID: "sess-active"},
+		ActiveProject:      func() string { return "default" }, // active project set
+		ActiveConstitution: staticConstitution(),
+		Now:                func() time.Time { return now },
+	}
+	// agent_memory_save doesn't take project_id in args.
+	got := m.buildGateInput(context.Background(), "agent_memory_save", json.RawMessage(`{"operator":"op-test","kind":"note","content":"hi"}`), now)
+	if got.SessionID != "sess-active" {
+		t.Errorf("expected SessionID=\"sess-active\" via ActiveProject fallback; got %q", got.SessionID)
+	}
+	if got.ProjectID != "default" {
+		t.Errorf("expected ProjectID=\"default\" via ActiveProject fallback; got %q", got.ProjectID)
+	}
+}
+
+// TestGateMiddleware_BuildGateInput_ArgsProjectID_OverridesActiveProject:
+// when args explicitly carries project_id, it wins over the
+// ActiveProject getter. This preserves operator intent (e.g. cross-
+// project calls) and matches the existing args-first convention
+// used for session_id.
+func TestGateMiddleware_BuildGateInput_ArgsProjectID_OverridesActiveProject(t *testing.T) {
+	now := time.Now().UTC()
+	m := &GateMiddleware{
+		FrameSource:        happyFrames("vibe_publish"),
+		ActiveSession:      StaticSessionResolver{SessionID: "sess-explicit"},
+		ActiveProject:      func() string { return "default" },
+		ActiveConstitution: staticConstitution(),
+		Now:                func() time.Time { return now },
+	}
+	got := m.buildGateInput(context.Background(), "vibe_publish",
+		json.RawMessage(`{"session_id":"sess-explicit","project_id":"acme"}`), now)
+	if got.SessionID != "sess-explicit" {
+		t.Errorf("expected SessionID from args; got %q", got.SessionID)
+	}
+	if got.ProjectID != "acme" {
+		t.Errorf("expected ProjectID from args; got %q", got.ProjectID)
+	}
+}
+
+// TestGateMiddleware_BuildGateInput_ArgsSessionID_NoProjectID: tools
+// that pass session_id but no project_id must resolve project from
+// ActiveProject AND use args.session_id.
+func TestGateMiddleware_BuildGateInput_ArgsSessionID_NoProjectID(t *testing.T) {
+	now := time.Now().UTC()
+	m := &GateMiddleware{
+		FrameSource:        happyFrames("vibe_publish"),
+		ActiveSession:      StaticSessionResolver{SessionID: "sess-from-resolver"},
+		ActiveProject:      func() string { return "default" },
+		ActiveConstitution: staticConstitution(),
+		Now:                func() time.Time { return now },
+	}
+	got := m.buildGateInput(context.Background(), "vibe_publish",
+		json.RawMessage(`{"session_id":"sess-args-explicit"}`), now)
+	if got.SessionID != "sess-args-explicit" {
+		t.Errorf("args.session_id should win; got %q", got.SessionID)
+	}
+	if got.ProjectID != "default" {
+		t.Errorf("ProjectID should fall back to active project; got %q", got.ProjectID)
+	}
+}
+
+// keep activeProjectGetter type referenced to silence unused-decl
+// warnings across refactors (it mirrors the real bootState.Store
+// wiring; kept for tests that want to use it as a typed field).
+var _ activeProjectGetter = func() string { return "" }

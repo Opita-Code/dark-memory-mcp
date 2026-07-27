@@ -6,6 +6,72 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [2.1.1] — 2026-07-27
+
+### Fixed (GateMiddleware empty project_id regression)
+
+**Symptom**: After shipping v2.1.0 (agent_memory), calls to
+`dark_memory_agent_memory_save`, `dark_memory_agent_memory_list`,
+`dark_memory_agent_memory_get`, `dark_memory_agent_memory_update`,
+`dark_memory_agent_memory_archive`, `dark_memory_session_status`, and
+`dark_memory_session_close` returned `ErrFrameStaleTooFar` despite a
+valid active session in the DB. Read-only tools without session
+requirement (`health_ping`, `memory_state`, `active_policy`) worked
+fine — the gate allowlist bypassed the session check for those.
+
+**Root cause** — interaction between two files:
+
+  - `internal/server/middleware.go` `buildGateInput` passed
+    `args.project_id` (empty for tools that don't carry project_id
+    explicitly) directly to `ActiveSessionResolver.ActiveSessionID`.
+  - `internal/server/active_session_resolver.go` short-circuited on
+    `projectID == ""` and returned `""` without consulting the store.
+
+Result: `GateInput.SessionID=""` AND `GateInput.ProjectID=""`, which
+PreCheck treats as "no session" → refusal.
+
+The bug was a v2.0.2 regression that the existing test suite didn't
+catch because all v2.0.2 session-required tool tests pass
+`project_id` explicitly in args. The new `agent_memory_*` tools
+(v2.1.0) intentionally omit `project_id` from args — they derive it
+from the active project internally (INV-7 enforces it at the Store
+layer).
+
+**Fix** — minimal change that localizes the fallback to the
+middleware (avoids changing the resolver's `projectID == ""`
+short-circuit, which is still correct for the bootstrap case where
+`session_start` itself runs without a project context):
+
+  - Added `ActiveProject func() string` field to `GateMiddleware`,
+    mirroring the existing `ActiveConstitution func() (id, ver string)`
+    pattern.
+  - In `buildGateInput`, when args has no `project_id`, call
+    `m.ActiveProject()` (wired to `bootState.Store.ActiveProject`)
+    and use the result as the resolver's `projectID` argument AND
+    as `in.ProjectID`.
+  - 4 new regression tests in `middleware_test.go` covering:
+    bootstrap (no ActiveProject), ActiveProject fallback,
+    args.project_id wins over ActiveProject, args.session_id + no
+    project_id.
+
+**Files touched** (12 LOC production + 80 LOC test):
+
+  - `internal/server/middleware.go` — `ActiveProject` field +
+    fallback logic.
+  - `cmd/dark-mem-mcp/main.go` — wire `ActiveProject:
+    bootState.Store.ActiveProject`.
+  - `internal/server/middleware_test.go` — 4 regression tests.
+  - `internal/server/bootstrap.go` — `DefaultServerVersion` bumped
+    2.1.0-dev → 2.1.1-dev.
+
+**Upgrade notes**: Operators who already restarted opencode against
+v2.1.0 must restart it again to load the v2.1.1 binary. The
+`bin\dark-mem-mcp.exe` swap is the same procedure as the v2.0.2
+fix (Windows holds the inode open across `Move-Item` so opencode
+needs a restart, not a file-replace).
+
+---
+
 ## [2.1.0] — 2026-07-27
 
 ### Added (Mem0-aligned agent-memory data plane)

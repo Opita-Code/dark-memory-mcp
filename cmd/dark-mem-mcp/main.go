@@ -98,10 +98,17 @@ func main() {
 	)
 
 	bootState.Gate = &server.GateMiddleware{
-		FrameSource:         frameSrc,
-		DriftChecker:        nil,
-		ActiveSession:       activeSessionResolver,
-		ActiveConstitution:  func() (string, string) { return bootState.Config.ConstitutionID, bootState.Config.ConstitutionVer },
+		FrameSource:        frameSrc,
+		DriftChecker:       nil,
+		ActiveSession:      activeSessionResolver,
+		// v2.1.1: ActiveProject fallback so session-required tools
+		// without project_id in args (agent_memory_*, session_status,
+		// session_close) can resolve the active project's session_id
+		// via the resolver. Without this, those tools refused with
+		// ErrFrameStaleTooFar because the resolver short-circuited on
+		// projectID == "". See vibe-flow/main/gate_emptypid_fallback_v2_1_1.md.
+		ActiveProject:      bootState.Store.ActiveProject,
+		ActiveConstitution: func() (string, string) { return bootState.Config.ConstitutionID, bootState.Config.ConstitutionVer },
 	}
 
 	// F7 federation peer: opt-in cross-namespace lookup against the
