@@ -189,6 +189,12 @@ func (s *Server) registerOne(t *tools.Tool) error {
 // On error: we emit a single TextContent block with the structured
 // ToolError JSON; the mcp-go IsError marker is set so the harness
 // can branch on it.
+//
+// Gate integration (v2.0.1, follow-up 1): when s.boot.Gate is set,
+// the handler is wrapped with GateMiddleware.Wrap which runs
+// PreCheck before the inner handler and PostCheck (drift-at-write)
+// after, for artifact-creating tools only. When Gate is nil, the
+// legacy direct-dispatch path runs (no policy enforcement).
 func (s *Server) wrapHandler(t *tools.Tool) func(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
 	return func(ctx context.Context, req mcplib.CallToolRequest) (*mcplib.CallToolResult, error) {
 		// mcp-go returns Arguments as map[string]any; we re-marshal
@@ -203,18 +209,46 @@ func (s *Server) wrapHandler(t *tools.Tool) func(ctx context.Context, req mcplib
 			}
 			rawJSON = b
 		}
-		resp, err := t.Handler(ctx, rawJSON)
-		if err != nil {
-			// Handler returned a Go error (shouldn't happen for
-			// BindOrchestrator adapters, which surface errors as
-			// ToolError). Map to a generic internal error.
-			resp = &tools.ToolResponse{
-				Error: &tools.ToolError{
-					Code:    tools.ErrInternal,
-					Message: err.Error(),
-				},
+
+		// Inner handler — runs after PreCheck passes.
+		inner := func(ctx context.Context, raw json.RawMessage) (*tools.ToolResponse, error) {
+			return t.Handler(ctx, raw)
+		}
+
+		// Gate-aware path (v2.0.1+): PreCheck → inner → PostCheck.
+		// Direct path (legacy / Gate == nil): inner only.
+		var resp *tools.ToolResponse
+		if s.boot.Gate != nil {
+			var gErr error
+			resp, gErr = s.boot.Gate.Wrap(ctx, t.Name, rawJSON, inner)
+			if gErr != nil {
+				// Gate.Wrap returns nil error on refusal paths; this
+				// branch only fires on a non-policy error (e.g. ctx
+				// cancelled). Map to ErrInternal for consistency
+				// with the legacy path.
+				resp = &tools.ToolResponse{
+					Error: &tools.ToolError{
+						Code:    tools.ErrInternal,
+						Message: gErr.Error(),
+					},
+				}
+			}
+		} else {
+			var err error
+			resp, err = inner(ctx, rawJSON)
+			if err != nil {
+				// Handler returned a Go error (shouldn't happen for
+				// BindOrchestrator adapters, which surface errors as
+				// ToolError). Map to a generic internal error.
+				resp = &tools.ToolResponse{
+					Error: &tools.ToolError{
+						Code:    tools.ErrInternal,
+						Message: err.Error(),
+					},
+				}
 			}
 		}
+
 		// Marshal the ToolResponse. On error: emit as IsError text.
 		if resp.Error != nil {
 			body, _ := json.Marshal(resp)

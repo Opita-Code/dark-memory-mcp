@@ -79,9 +79,23 @@ func main() {
 		Active:          func() string { return string(bootState.Safety.Active()) },
 		ValidatePayload: func(payload string) error { return bootState.Safety.ValidatePayload(payload) },
 	}
-	if err := tools.RegisterAll(srv.Registry(), bootState.Orchestrator, bootState.Store, safetyFP); err != nil {
+	frameSrc, err := tools.RegisterAll(srv.Registry(), bootState.Orchestrator, bootState.Store, safetyFP)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "dark-mem-mcp: tools.RegisterAll failed: %v\n", err)
 		os.Exit(1)
+	}
+
+	// v2.0.1 (follow-up 1+2 of 3): wire the gate around every tool
+	// call. FrameSource is the singleton built inside tools.RegisterAll
+	// (5A.ii.b.2.c.1) — shared between dark_memory_recall and the gate.
+	// DriftChecker is nil here (strict mode opt-in is a follow-up; the
+	// gate still runs PreCheck unconditionally, refuses tools the LLM
+	// isn't granted, etc.).
+	bootState.Gate = &server.GateMiddleware{
+		FrameSource:         frameSrc,
+		DriftChecker:        nil,
+		ActiveSession:       server.StaticSessionResolver{}, // resolved per-call via recall.IdentityFrame
+		ActiveConstitution:  func() (string, string) { return bootState.Config.ConstitutionID, bootState.Config.ConstitutionVer },
 	}
 
 	// F7 federation peer: opt-in cross-namespace lookup against the

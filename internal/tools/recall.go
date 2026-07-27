@@ -35,13 +35,11 @@ package tools
 import (
 	"context"
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/atomic"
 	"github.com/dark-agents/dark-memory-mcp/internal/audit"
 	"github.com/dark-agents/dark-memory-mcp/internal/policy"
-	"github.com/dark-agents/dark-memory-mcp/internal/recall"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 )
 
@@ -83,12 +81,14 @@ type RecallFrames struct {
 // because it needs to construct a FrameSource at registration time
 // rather than per-call.
 //
-// # Why not per-call?
-// CachedSource is currently stateless; per-call construction is
-// cheap. A future optimization (5A.ii.b.2.c.1) lifts the
-// FrameSource to a singleton with cross-call TTL. For now, per-call
-// keeps the wiring simple.
-func RegisterRecall(reg *Registry, st store.Store, safety *store.SafetyHolder) {
+// 5A.ii.b.2.c.1 (v2.0.1): the FrameSource is now passed in by the
+// caller (built once at Boot via recall.NewSingleton). The recall
+// tool shares the singleton with the gate (server.GateMiddleware)
+// so a single CachedSource instance serves every FrameSource consumer
+// in the server. Pre-2.0.1, recall built a fresh CachedSource per
+// invocation, paying the cost of Store.GetVLPState +
+// Store.ListSDDEvaluations + Store.GetConstitution on every call.
+func RegisterRecall(reg *Registry, st store.Store, safety *store.SafetyHolder, src policy.FrameSource) {
 	reg.Add(BindStore("recall",
 		"Scoped recall: returns the assembled atomic frames for the requested scope plus an incremental delta (write_audit rows since since_token). scope=global|project|session.",
 		MustJSONSchema(map[string]any{
@@ -103,23 +103,22 @@ func RegisterRecall(reg *Registry, st store.Store, safety *store.SafetyHolder) {
 		}),
 		st,
 		func(ctx context.Context, s store.Store, in RecallInput) (*RecallOutput, error) {
-			return runRecall(ctx, s, safety, in)
+			return runRecall(ctx, s, safety, src, in)
 		}))
 }
 
 // runRecall composes the FrameSource, fetches all 5 frames, computes
 // the delta, and returns the bundle.
-func runRecall(ctx context.Context, st store.Store, safety *store.SafetyHolder, in RecallInput) (*RecallOutput, error) {
+//
+// 5A.ii.b.2.c.1 (v2.0.1): src is the boot-time singleton, not a
+// per-call construction. The singleton is shared with the gate.
+func runRecall(ctx context.Context, st store.Store, safety *store.SafetyHolder, src policy.FrameSource, in RecallInput) (*RecallOutput, error) {
 	if in.Scope != "global" && in.Scope != "project" && in.Scope != "session" {
 		return nil, fmt.Errorf("recall: scope must be one of {global, project, session}, got %q", in.Scope)
 	}
 	if in.Scope == "session" && in.SessionID == "" {
 		return nil, fmt.Errorf("recall: scope=session requires session_id")
 	}
-
-	// Build a fresh FrameSource per invocation.
-	inner := recall.NewStoreSource(st, nil)
-	src := policy.FrameSource(recall.NewCachedSource(inner, st, safety, nil, log.Default()))
 
 	out := &RecallOutput{
 		Frames:    RecallFrames{},

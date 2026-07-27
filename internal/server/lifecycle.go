@@ -91,6 +91,14 @@ type BootState struct {
 	// logged errors when ListSessions / CloseSession ran against a
 	// closed Store. sync.Once collapses both into a single execution.
 	shutdownOnce sync.Once
+
+	// Gate is the policy-aware middleware that wraps every tool call
+	// on the transport path (added v2.0.1, follow-up 1 of 3). When
+	// nil, the Server's wrapHandler falls back to the legacy direct
+	// dispatch (no PreCheck / PostCheck). Production wires Gate via
+	// WithGate() at construction time; tests that build a Server
+	// manually can leave it nil.
+	Gate *GateMiddleware
 }
 
 // Boot runs the 6-step boot sequence. Steps 1-4 happen here; step 5

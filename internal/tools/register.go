@@ -8,6 +8,8 @@ import (
 	"fmt"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/orchestration"
+	"github.com/dark-agents/dark-memory-mcp/internal/policy"
+	"github.com/dark-agents/dark-memory-mcp/internal/recall"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 	"github.com/dark-agents/dark-memory-mcp/internal/vlp"
 )
@@ -26,15 +28,20 @@ import (
 // 29 in tools/list).
 //
 // 5A.ii.b.2.c: bumped from 28 → 29 (added dark_memory_recall).
-func RegisterAll(reg *Registry, orch *orchestration.Orchestrator, st store.Store, safety *store.SafetyHolder) error {
+//
+// 5A.ii.b.2.c.1 (v2.0.1): returns the FrameSource singleton so the
+// caller can wire it into the gate (server.GateMiddleware). Both the
+// recall tool and the gate now share the same CachedSource instance;
+// per-call construction is gone.
+func RegisterAll(reg *Registry, orch *orchestration.Orchestrator, st store.Store, safety *store.SafetyHolder) (policy.FrameSource, error) {
 	if reg == nil {
-		return fmt.Errorf("tools: RegisterAll: nil registry")
+		return nil, fmt.Errorf("tools: RegisterAll: nil registry")
 	}
 	if orch == nil {
-		return fmt.Errorf("tools: RegisterAll: nil orchestrator")
+		return nil, fmt.Errorf("tools: RegisterAll: nil orchestrator")
 	}
 	if st == nil {
-		return fmt.Errorf("tools: RegisterAll: nil store")
+		return nil, fmt.Errorf("tools: RegisterAll: nil store")
 	}
 
 	// PROJECT (1) — v1.2.0. Must come before SESSION so that
@@ -50,7 +57,19 @@ func RegisterAll(reg *Registry, orch *orchestration.Orchestrator, st store.Store
 	// CONTEXT (4) — read-only, no orchestrator needed (orchestrator
 	// only used for write paths). 5A.ii.b.2.c adds `recall` (29th tool).
 	RegisterContext(reg, nil, st)
-	RegisterRecall(reg, st, safety)
+	// 5A.ii.b.2.c.1 (v2.0.1): construct the FrameSource ONCE at boot
+	// and share it between the recall tool and the Gate (server.Gate).
+	// Pre-2.0.1, recall built a fresh CachedSource per invocation; that
+	// worked because the cache was stateless, but it paid the cost of
+	// composing a fresh StoreSource each time (one Store.GetVLPState +
+	// one Store.ListSDDEvaluations + one Store.GetConstitution per call).
+	// The singleton construction moves those three reads to boot, so
+	// per-call cost is one GetFrame (or cache hit).
+	src, err := recall.NewSingleton(st, safety, nil)
+	if err != nil {
+		return nil, fmt.Errorf("tools: RegisterAll: recall.NewSingleton: %w", err)
+	}
+	RegisterRecall(reg, st, safety, src)
 	// JUDGE (3)
 	RegisterJudge(reg, orch, st)
 	// POLICY (2)
@@ -67,15 +86,15 @@ func RegisterAll(reg *Registry, orch *orchestration.Orchestrator, st store.Store
 	// the L6 wire tool.
 	persistence, err := vlp.NewPersistence(st)
 	if err != nil {
-		return fmt.Errorf("tools: RegisterAll: vlp.NewPersistence: %w", err)
+		return nil, fmt.Errorf("tools: RegisterAll: vlp.NewPersistence: %w", err)
 	}
 	auditor, err := vlp.NewAuditor(st)
 	if err != nil {
-		return fmt.Errorf("tools: RegisterAll: vlp.NewAuditor: %w", err)
+		return nil, fmt.Errorf("tools: RegisterAll: vlp.NewAuditor: %w", err)
 	}
 	uc, err := vlp.NewUseCase(persistence, auditor)
 	if err != nil {
-		return fmt.Errorf("tools: RegisterAll: vlp.NewUseCase: %w", err)
+		return nil, fmt.Errorf("tools: RegisterAll: vlp.NewUseCase: %w", err)
 	}
 	RegisterVLP(reg, uc)
 
@@ -94,7 +113,7 @@ func RegisterAll(reg *Registry, orch *orchestration.Orchestrator, st store.Store
 		if errors.Is(err, store.ErrArmedRequired) {
 			// not armed — that's fine, surface stays at 28.
 		} else {
-			return fmt.Errorf("tools: RegisterAll: RegisterRedTeam: %w", err)
+			return nil, fmt.Errorf("tools: RegisterAll: RegisterRedTeam: %w", err)
 		}
 	} else {
 		redteamArmed = true
@@ -120,11 +139,11 @@ func RegisterAll(reg *Registry, orch *orchestration.Orchestrator, st store.Store
 	canonical := CanonicalOrder()
 	for _, name := range canonical {
 		if reg.Get(name) == nil {
-			return fmt.Errorf("tools: RegisterAll: missing tool %q (canonical order violation)", name)
+			return nil, fmt.Errorf("tools: RegisterAll: missing tool %q (canonical order violation)", name)
 		}
 	}
 	if got := len(reg.ListCanonical()); got != 29 {
-		return fmt.Errorf("tools: RegisterAll: expected 29 tools, got %d", got)
+		return nil, fmt.Errorf("tools: RegisterAll: expected 29 tools, got %d", got)
 	}
-	return nil
+	return src, nil
 }
