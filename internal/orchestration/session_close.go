@@ -62,6 +62,19 @@ func (o *Orchestrator) SessionClose(ctx context.Context, in SessionCloseInput) (
 		return nil, fmt.Errorf("session_close: close: %w", err)
 	}
 
+	// v2.0.2: clear the active_session_id pointer (compare-and-set
+	// so a concurrent session_start for a DIFFERENT session_id on
+	// the same project wins — the stale close becomes a no-op).
+	// Best-effort: the close itself succeeded; a missed clear
+	// means the resolver returns the just-closed id until the next
+	// session_start overwrites it. Gate middleware treats
+	// close->open transitions as ErrNotFound on the identity
+	// frame, so the stale session_id won't accidentally authorize
+	// writes against the new state.
+	if err := o.Store.ClearActiveSession(ctx, o.Store.ActiveProject(), in.SessionID); err != nil {
+		_ = err
+	}
+
 	// Pull the closed session back to surface ClosedAt + status.
 	closedSess, err := o.Store.GetSession(ctx, in.SessionID)
 	if err != nil {

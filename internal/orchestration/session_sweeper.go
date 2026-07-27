@@ -196,6 +196,24 @@ func (sw *Sweeper) runTick(ctx context.Context) SweeperOutput {
 				out.Errors++
 				continue
 			}
+			// v2.0.2: clear the project's active_session_id pointer
+			// (compare-and-set on session_id). Best-effort: if the
+			// sweeper-aborted session was no longer the active
+			// pointer (operator started a new session meanwhile),
+			// CAS does nothing. No way to log without scanning
+			// the project row; the next session_start will heal.
+			//
+			// The sessions table has no project_id column (project
+			// is per-session via SetActiveProject at start time
+			// and doesn't persist on the row), so we use the
+			// store-wide active project that the sweeper is bound
+			// to. If a multi-project sweeper is added later, this
+			// will need to be parametrised.
+			if projID := sw.st.ActiveProject(); projID != "" {
+				if err := sw.st.ClearActiveSession(ctx, projID, s.SessionID); err != nil {
+					_ = err
+				}
+			}
 			out.IdleToAborted++
 		}
 	}

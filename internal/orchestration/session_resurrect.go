@@ -166,6 +166,26 @@ func (o *Orchestrator) SessionResurrect(ctx context.Context, in SessionResurrect
 		return nil, fmt.Errorf("session_resurrect: SaveResurrect returned an empty session row")
 	}
 
+	// v2.0.2: the new session IS the live one for the project.
+	// Bind it so the gate's ActiveSessionResolver finds it. Same
+	// best-effort semantics as session_start: a failure here means
+	// the resolver won't find the new session (operator calls
+	// session_resurrect again or restarts the harness), but the
+	// resurrection itself persisted.
+	//
+	// The session.Session row carries no project_id (sessions are
+	// scoped per-write via wc.ProjectID, not stored on the row),
+	// so we use the orchestrator's current active project as the
+	// binding target. This matches what the orchestrator already
+	// does for invocation scoping — the operator's
+	// session_resurrect call is implicitly project-scoped by the
+	// active project they set up before calling.
+	if projID := o.Store.ActiveProject(); projID != "" {
+		if err := o.Store.SetActiveSession(ctx, projID, newSess.SessionID); err != nil {
+			_ = err
+		}
+	}
+
 	startedAt, _ := time.Parse(time.RFC3339Nano, newSess.StartedAt)
 	if startedAt.IsZero() {
 		startedAt = o.now()

@@ -78,6 +78,23 @@ func (o *Orchestrator) SessionStart(ctx context.Context, in SessionStartInput) (
 		return nil, fmt.Errorf("session_start: save: %w", err)
 	}
 
+	// v2.0.2: bind the new session as the project's active session so
+	// subsequent tool calls resolve a non-empty SessionID through the
+	// StoreBackedActiveSessionResolver. Best-effort: if the column
+	// pointer write fails (e.g. the project was archived
+	// concurrently), the call still returned a valid session_id —
+	// the resolver just won't find it. The failure is logged at
+	// debug-level by the store, not promoted to an error here.
+	if err := o.Store.SetActiveSession(ctx, in.ProjectID, sess.SessionID); err != nil {
+		// Non-fatal. The session row exists; only the lookup pointer
+		// didn't update. Operationally, the operator will see
+		// session-resolution misses until they retry session_start.
+		// We intentionally don't wrap as a hard error because the
+		// SaveSession succeeded and that's what downstream tools
+		// also need.
+		_ = err
+	}
+
 	// Note: SaveSession itself emits a write_audit row (INV-1). No
 	// second audit row needed here. The orchestrator-level audit
 	// signal is the SaveSession call itself.

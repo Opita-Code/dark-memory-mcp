@@ -85,16 +85,22 @@ func main() {
 		os.Exit(1)
 	}
 
-	// v2.0.1 (follow-up 1+2 of 3): wire the gate around every tool
-	// call. FrameSource is the singleton built inside tools.RegisterAll
-	// (5A.ii.b.2.c.1) — shared between dark_memory_recall and the gate.
-	// DriftChecker is nil here (strict mode opt-in is a follow-up; the
-	// gate still runs PreCheck unconditionally, refuses tools the LLM
-	// isn't granted, etc.).
+	// v2.0.2: real ActiveSessionResolver wired to the projects
+	// table. Replaces the v2.0.1 StaticSessionResolver{} stub (which
+	// returned "" and made the gate refuse every tool call).
+	// The resolver caches each project's active session_id for
+	// ~5s in-process so bursty workloads don't hit the DB on
+	// every tool call; session_start / session_close write to
+	// the projects row directly, the cache picks them up on
+	// TTL expiry (worst-case lag = CacheTTL).
+	activeSessionResolver := server.NewStoreBackedActiveSessionResolver(
+		server.StoreBackedLookup(bootState.Store),
+	)
+
 	bootState.Gate = &server.GateMiddleware{
 		FrameSource:         frameSrc,
 		DriftChecker:        nil,
-		ActiveSession:       server.StaticSessionResolver{}, // resolved per-call via recall.IdentityFrame
+		ActiveSession:       activeSessionResolver,
 		ActiveConstitution:  func() (string, string) { return bootState.Config.ConstitutionID, bootState.Config.ConstitutionVer },
 	}
 

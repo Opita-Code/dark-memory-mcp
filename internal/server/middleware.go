@@ -58,11 +58,15 @@ import (
 // the project scope, or "" if no session is active. Used by
 // GateMiddleware when a tool's args don't carry session_id.
 //
+// v2.0.2 added ctx: the StoreBackedActiveSessionResolver needs a
+// context for its DB read. StaticSessionResolver ignores the
+// context.
+//
 // Implementations live in the server layer (which has access to the
 // per-project active session table); the gate itself only depends
 // on the interface so it can be tested with stubs.
 type ActiveSessionResolver interface {
-	ActiveSessionID(projectID string) string
+	ActiveSessionID(ctx context.Context, projectID string) string
 }
 
 // StaticSessionResolver returns the same session_id for every project.
@@ -72,8 +76,8 @@ type StaticSessionResolver struct {
 	SessionID string
 }
 
-// ActiveSessionID implements ActiveSessionResolver.
-func (s StaticSessionResolver) ActiveSessionID(string) string { return s.SessionID }
+// ActiveSessionID implements ActiveSessionResolver. Ignores ctx.
+func (s StaticSessionResolver) ActiveSessionID(_ context.Context, _ string) string { return s.SessionID }
 
 // GateMiddleware wires PreCheck + PostCheck around a tool handler.
 // One GateMiddleware is constructed per Server (BootState carries it
@@ -122,7 +126,7 @@ func (m *GateMiddleware) Wrap(
 
 	// --- PreCheck ---
 	now := m.now()
-	gateIn := m.buildGateInput(toolName, args, now)
+	gateIn := m.buildGateInput(ctx, toolName, args, now)
 
 	pre, err := policy.PreCheck(ctx, m.FrameSource, gateIn)
 	if err != nil {
@@ -180,7 +184,7 @@ func (m *GateMiddleware) Wrap(
 // resolver. ProjectID resolution: args.project_id if present, else
 // empty (the gate treats empty as "no project scoped" — read-only
 // tools like health_ping pass through, mutating tools refuse).
-func (m *GateMiddleware) buildGateInput(toolName string, args json.RawMessage, now time.Time) policy.GateInput {
+func (m *GateMiddleware) buildGateInput(ctx context.Context, toolName string, args json.RawMessage, now time.Time) policy.GateInput {
 	in := policy.GateInput{
 		ToolName: toolName,
 		Now:      now,
@@ -192,7 +196,7 @@ func (m *GateMiddleware) buildGateInput(toolName string, args json.RawMessage, n
 	} else if m.ActiveSession != nil {
 		// Project-scoped lookup if project_id present; otherwise "".
 		pid, _ := in.Args["project_id"].(string)
-		in.SessionID = m.ActiveSession.ActiveSessionID(pid)
+		in.SessionID = m.ActiveSession.ActiveSessionID(ctx, pid)
 	}
 
 	if pid, ok := in.Args["project_id"].(string); ok {

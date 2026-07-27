@@ -162,7 +162,12 @@ func TestGateMiddleware_PreCheck_RefusesMissingIdentity(t *testing.T) {
 		innerCalled = true
 		return &tools.ToolResponse{Data: "should not happen"}, nil
 	}
-	resp, err := m.Wrap(context.Background(), "health_ping", json.RawMessage(`{"session_id":"sess-test"}`), inner)
+	// v2.0.2 update: previously this test used "health_ping", but
+	// health_ping is now in the session-free allowlist — PreCheck
+	// returns Allowed=true without consulting identity. We use
+	// "vibe_publish" (a session-required artifact-creating tool)
+	// to exercise the missing-identity refusal path.
+	resp, err := m.Wrap(context.Background(), "vibe_publish", json.RawMessage(`{"session_id":"sess-test","project_id":"default"}`), inner)
 	if err != nil {
 		t.Fatalf("Wrap: %v", err)
 	}

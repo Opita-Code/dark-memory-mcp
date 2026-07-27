@@ -62,6 +62,44 @@ const (
 	ReasonDriftAtWrite    Reason = "drift_at_write"
 )
 
+// RequiresActiveSession lists tools that REQUIRE an active session
+// (and therefore a non-empty SessionID/ProjectID from the gate). Tools
+// NOT on this list — bootstrap tools, liveness probes, read-only
+// introspection — are allowed without a session and skip the
+// identity/capabilities lookups that would otherwise be required.
+//
+// Default case is true (most tools need a session). The exceptions
+// listed here are explicit because they must function before and
+// without an active session.
+//
+// Adding a tool here is a wire-contract change for harnesses: a
+// tool that doesn't require a session is reachable by an anonymous
+// caller (no identity, no capability gate). Operators that want to
+// restrict such tools (e.g. only allow health_ping from a known
+// operator) should layer access control upstream of the MCP —
+// the gate's contract is binary.
+//
+// v2.0.2 split: previously every tool called HasSession() → true
+// unconditionally (v2.0.1 regression; "session or project not bound"
+// error broke health_ping, memory_state, and session_start itself).
+// Per-tool requirement is the documented v2.0.2 contract.
+func RequiresActiveSession(toolName string) bool {
+	switch toolName {
+	case "session_start",
+		"session_resume",
+		"health_ping",
+		"memory_state",
+		"project_create",
+		"active_policy",
+		"load_constitution",
+		"admin_schema_status",
+		"admin_vacuum",
+		"admin_migrate":
+		return false
+	}
+	return true
+}
+
 // ErrorKind returns the canonical error_kind string used in the
 // MCP error envelope's `data.error_kind` field. Reverse mapping is
 // defined here so MCP wrappers (4A') don't have to know the Reason
@@ -167,6 +205,23 @@ type ComposedFrames struct {
 // tool doesn't require them (e.g. session_resume needs identity
 // only).
 func PreCheck(ctx context.Context, src FrameSource, in GateInput) (*PreCheckResult, error) {
+	// v2.0.2: tools that don't require an active session are
+	// allowed through without a SessionID/ProjectID. The list lives
+	// in RequiresActiveSession above. For these tools, identity and
+	// capabilities checks are skipped (no identity to look up).
+	// The handler itself still runs whatever project-scope rules
+	// it wants; the gate just doesn't impose session scope.
+	if !RequiresActiveSession(in.ToolName) {
+		if in.Now.IsZero() {
+			in.Now = time.Now()
+		}
+		return &PreCheckResult{
+			Allowed: true,
+			Reason:  ReasonOK,
+			Frames:  &ComposedFrames{},
+		}, nil
+	}
+
 	if in.SessionID == "" || in.ProjectID == "" {
 		return &PreCheckResult{
 			Allowed: false,
