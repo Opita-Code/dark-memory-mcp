@@ -26,17 +26,32 @@ import (
 // 27 → 28). v2.0.0: added dark_memory_recall to CONTEXT (3 → 4;
 // canonical count 28 → 29). The pivot landed as 9 commits; this
 // test guards the wire surface.
+// TestE2E_29ToolsRegistered is the canonical-order sanity check.
+// (Function name kept as TestE2E_29ToolsRegistered for the Go test
+// runner's sake — go test can't easily rename tests across versions.
+// The constant below is the actual version pin.)
+//
+// History:
+//   v1.2.0: added project_create to the PROJECT namespace (canonical
+//           count 26 -> 27).
+//   v1.3.0: added health_ping to OBSERVABILITY (canonical count
+//           27 -> 28).
+//   v2.0.0: added dark_memory_recall to CONTEXT (canonical count
+//           28 -> 29).
+//   v2.1.0: added AGENT_MEMORY namespace (save/list/get/update/
+//           archive; canonical count 29 -> 34, Mem0-aligned).
 func TestE2E_29ToolsRegistered(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.close()
 
+	const wantCount = 34 // v2.1.0: AGENT_MEMORY namespace
 	canonical := tools.CanonicalOrder()
-	if got := len(canonical); got != 29 {
-		t.Fatalf("canonical order length: want 29, got %d", got)
+	if got := len(canonical); got != wantCount {
+		t.Fatalf("canonical order length: want %d, got %d", wantCount, got)
 	}
 	registered := ts.srv.Registry().ListCanonical()
-	if len(registered) != 29 {
-		t.Fatalf("registered: want 29, got %d", len(registered))
+	if len(registered) != wantCount {
+		t.Fatalf("registered: want %d, got %d", wantCount, len(registered))
 	}
 	for i, name := range canonical {
 		if got := registered[i].Name; got != name {

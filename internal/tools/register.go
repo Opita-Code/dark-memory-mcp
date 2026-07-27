@@ -57,6 +57,11 @@ func RegisterAll(reg *Registry, orch *orchestration.Orchestrator, st store.Store
 	// CONTEXT (4) — read-only, no orchestrator needed (orchestrator
 	// only used for write paths). 5A.ii.b.2.c adds `recall` (29th tool).
 	RegisterContext(reg, nil, st)
+	// AGENT_MEMORY (5) — v2.1.0 (Mem0-aligned data plane). All five
+	// tools go through the orchestrator (write paths: save/update/
+	// archive; read paths: list/get). Positioned between CONTEXT and
+	// JUDGE per spec D-12 / BRIDGE_AND_COEXISTENCE.md §3.
+	RegisterAgentMemory(reg, orch, st)
 	// 5A.ii.b.2.c.1 (v2.0.1): construct the FrameSource ONCE at boot
 	// and share it between the recall tool and the Gate (server.Gate).
 	// Pre-2.0.1, recall built a fresh CachedSource per invocation; that
@@ -131,19 +136,21 @@ func RegisterAll(reg *Registry, orch *orchestration.Orchestrator, st store.Store
 		redteamArmed,
 	)
 
-	// Sanity check: registry must contain all 29 canonical tools
+	// Sanity check: registry must contain all 34 canonical tools
 	// after Register*. If a tool was forgotten, fail loudly at boot
 	// rather than at request time.
 	//
 	// 5A.ii.b.2.c: bumped from 28 → 29 (added dark_memory_recall).
+	// v2.1.0: bumped from 29 → 34 (added AGENT_MEMORY namespace:
+	// save, list, get, update, archive).
 	canonical := CanonicalOrder()
 	for _, name := range canonical {
 		if reg.Get(name) == nil {
 			return nil, fmt.Errorf("tools: RegisterAll: missing tool %q (canonical order violation)", name)
 		}
 	}
-	if got := len(reg.ListCanonical()); got != 29 {
-		return nil, fmt.Errorf("tools: RegisterAll: expected 29 tools, got %d", got)
+	if got := len(reg.ListCanonical()); got != 34 {
+		return nil, fmt.Errorf("tools: RegisterAll: expected 34 tools, got %d", got)
 	}
 	return src, nil
 }

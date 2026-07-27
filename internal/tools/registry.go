@@ -181,23 +181,24 @@ func (r *Registry) CountExtras() int {
 	return c
 }
 
-// canonicalToolOrder is the fixed 28-tool order (bare names, no
+// canonicalToolOrder is the fixed tool order (bare names, no
 // "dark_memory_" prefix; the server prepends on wire).
 //
-// Per RFC D-9 + BRIDGE_AND_COEXISTENCE.md §3 (bridge.4), v1.3.0:
+// Per RFC D-9 + BRIDGE_AND_COEXISTENCE.md §3 (bridge.4), v2.1.0:
 //
 //	PROJECT        (1)  → create                              (v1.2.0, INV-7)
 //	SESSION        (4)  → start, resume, status, close
 //	RESEARCH       (3)  → topic, recall, resume_thread
 //	VIBE           (4)  → publish, spec, pipeline_status, resolve_drift
-//	CONTEXT        (3)  → artifact_context, spec_context, session_context
+//	CONTEXT        (4)  → artifact_context, spec_context, session_context, recall
+//	AGENT_MEMORY   (5)  → save, list, get, update, archive   (v2.1.0, Mem0-aligned)
 //	JUDGE          (3)  → judge, consensus, judgment_history
 //	POLICY         (2)  → active_policy, load_constitution
 //	OBSERVABILITY  (4)  → memory_state, writes, anomalies, health_ping (v1.3.0)
 //	ADMIN          (3)  → admin_migrate, admin_schema_status, admin_vacuum
 //	L6-VLP         (1)  → vlp_handle_event          (DMAP v1.1 spec 193)
 //
-// Total: 1+4+3+4+3+3+2+4+3+1 = 28.
+// Total: 1+4+3+4+4+5+3+2+4+3+1 = 34.
 //
 //   - PROJECT was added in v1.2.0 to close the bootstrap loop
 //     (operators can now provision a tenant from inside the MCP
@@ -212,6 +213,13 @@ func (r *Registry) CountExtras() int {
 //     have different latency budgets and different side-effect
 //     profiles (health_ping does not touch the audit bus). See
 //     RFC §C-2 and docs/PRODUCTION_CHECKLIST.md §Health probe.
+//   - AGENT_MEMORY (v2.1.0) sits between CONTEXT (read-only
+//     introspection) and JUDGE (LLM eval). Memory is a read+write
+//     data plane; judge/consensus are evals on top of that data.
+//     Mem0-aligned (arxiv 2504.19413), with dark-memory's INV-7
+//     project isolation layered on. Five tools cover the full
+//     lifecycle (save / list / get / update / archive); retrieval
+//     search ships as a future minor (F48).
 var canonicalToolOrder = []string{
 	// PROJECT (1) — v1.2.0
 	"project_create",
@@ -223,6 +231,8 @@ var canonicalToolOrder = []string{
 	"vibe_publish", "vibe_spec", "pipeline_status", "resolve_drift",
 	// CONTEXT (4) — v2.0.0 (5A.ii.b.2.c): `recall` added.
 	"artifact_context", "spec_context", "session_context", "recall",
+	// AGENT_MEMORY (5) — v2.1.0 (Mem0-aligned)
+	"agent_memory_save", "agent_memory_list", "agent_memory_get", "agent_memory_update", "agent_memory_archive",
 	// JUDGE (3)
 	"judge", "consensus", "judgment_history",
 	// POLICY (2)

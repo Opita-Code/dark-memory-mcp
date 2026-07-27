@@ -158,6 +158,9 @@ func TestMigrate_PartialMigration_RecordsAndContinues_F37(t *testing.T) {
 // refactor — the production migrations use multi-statement bodies with
 // comments and CREATE INDEX IF NOT EXISTS, all of which splitStatements
 // must handle.
+//
+// Schema version pin: bumped at every release. v16 = pre-v2.0.2,
+// v17 = pre-v2.1.0, v18 = current (v2.1.0 agent_memory + FTS5).
 func TestMigrate_RealDriverSQLite_BrandNewDB_F37(t *testing.T) {
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "f37-real.db")
@@ -174,8 +177,9 @@ func TestMigrate_RealDriverSQLite_BrandNewDB_F37(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SchemaVersion: %v", err)
 	}
-if v != 16 {
-		t.Fatalf("expected schema_version=16 after all migrations applied (v2.0.0), got %d", v)
+	const wantSchemaVersion = 18 // v2.1.0: agent_memory + FTS5
+	if v != wantSchemaVersion {
+		t.Fatalf("expected schema_version=%d after all migrations applied, got %d", wantSchemaVersion, v)
 	}
 }
 

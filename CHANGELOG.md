@@ -6,6 +6,101 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [2.1.0] — 2026-07-27
+
+### Added (Mem0-aligned agent-memory data plane)
+
+The agent_memory data plane (5 tools, 34-tool canonical surface) is
+the first cross-session memory primitive in dark-memory. Per the
+research findings in
+`dark-mem-research/2026-07-27-v2.0.1-v2.0.2-research.md` (Mem0 paper
+arXiv 2504.19413, Mem0 docs, Microsoft MCP gateway patterns), it
+follows Mem0's 4-tier model simplified to three scopes (operator /
+project / session) with dark-memory's INV-7 multi-tenancy layered on.
+
+#### Schema (migration v18)
+
+  - `agent_memory` table — 12 columns (id, project_id, session_id,
+    operator, kind, title, content, tags, pinned, created_at,
+    updated_at, archived_at, expires_at).
+  - 4 indexes (project+archived+pinned+created, session+created,
+    operator+archived+created, project+kind+archived).
+  - FTS5 contentless mirror `agent_memory_fts` over content + title +
+    tags (BM25 ranked search).
+  - 4 sync triggers (ai / ad / au1 / au2) keeping the FTS mirror
+    consistent under INSERT / DELETE / UPDATE.
+
+#### New canonical tools (29 → 34)
+
+| Tool | Function |
+|------|----------|
+| `dark_memory_agent_memory_save`    | Create one row; auto-binds session_id if a session is active |
+| `dark_memory_agent_memory_list`    | Filter by scope/kind/tag/pinned/archived; default scope = session-if-active else operator |
+| `dark_memory_agent_memory_get`     | By id; cross-project reads return ErrNotFound (INV-7) |
+| `dark_memory_agent_memory_update`  | Partial update of mutable fields (content/title/tags/pinned/expires_at); operator + project_id immutable |
+| `dark_memory_agent_memory_archive` | Soft-delete; recoverable via list(include_archived=true); idempotent |
+
+Tool namespace ordering (per spec D-12 / BRIDGE_AND_COEXISTENCE.md §3):
+the new AGENT_MEMORY (5) namespace sits between CONTEXT (4) and
+JUDGE (3) — memory is a read+write data plane, judge is eval on top
+of that data.
+
+### Changed
+
+#### Migrate runner upgrade (internal/migrate/split_statements.go)
+
+The naive `strings.Split(body, ";")` is replaced with a small
+SQL-aware state machine that tracks:
+  - Line comments (`--` to end-of-line)
+  - Block comments (`/* ... */`)
+  - Single-quoted string literals with `''` escape
+  - `BEGIN..END` blocks (full nesting depth)
+  - Dollar-quoted strings (`$tag$...$tag$`) — Postgres
+
+Why: agent_memory's FTS5 sync triggers have `BEGIN INSERT ...; END`
+bodies. Without this upgrade the migrations had to be split across
+v18-v22 (5 separate migrations for one logical change), which
+pollutes the version namespace. The upgrade is conservative (no
+behavior change for v1-v17 migrations) and covered by
+`internal/migrate/split_test.go` (table-driven, 26 cases +
+backward-compat guard over 17 existing migrations × 2 drivers).
+
+### Fixed
+
+  - **F47**: agent_memory write paths now emit a write_audit row
+    atomically with the data write (INV-1). The audit row's
+    write_path is the orchestrator method name (e.g.
+    `AgentMemorySave`), so the operator's downstream pipeline can
+    filter agent-memory events specifically.
+  - **F48**: `agent_memory` JSON schemas use `"type": "object"`
+    consistently (one tool had `[]string{"object"}` which the
+    mcp-go wire decoder rejected).
+
+### Tests added
+
+  - `internal/agentmemory/types_test.go` — kind/scope constants,
+    parse helpers, no-driver tests.
+  - `tests/dual_driver/agent_memory_test.go` — 14 integration tests
+    against real SQLite: save/get/update/archive round-trips, INV-7
+    enforcement, FTS5 BM25 search (incl. archived-exclusion and
+    title-field search), write-audit emission.
+  - `internal/migrate/split_test.go` — 26 splitter cases + 34
+    backward-compat guards. All passing.
+
+### Out of scope (follow-ups)
+
+  - F49 — full FTS5 tokenizer-aware escape (current escape is
+    conservative: alpha-numeric + a few safe punctuation, rejects
+    reserved words AND/OR/NOT/NEAR).
+  - F50 — Postgres `tsvector` + GIN mirror (mirrors v18 on the
+    SQLite path; not yet implemented on the Postgres driver).
+  - F51 — sweeper for expired rows (expires_at < now).
+  - F52 — session-scoped authz on update/archive (currently
+    enforces operator match only; cross-session overwrites of
+    another session's memory are out of scope for v2.1.0).
+
+---
+
 ## [2.0.2] — 2026-07-27
 
 ### Fixed (DARK-MEM-v2.0.1-REGRESSION-1)

@@ -555,4 +555,40 @@ ALTER TABLE projects ADD COLUMN active_session_id TEXT;
 ALTER TABLE projects ADD COLUMN active_session_set_at TIMESTAMP WITH TIME ZONE;
 `,
 	},
+	{
+		// v18 - agent_memory table (v2.1.0).
+		//
+		// Mirror of sqlite v18 EXCEPT the FTS5 mirror (Postgres has
+		// no native FTS5; an equivalent would use pg_trgm + tsvector
+		// or a separate tsvector column + GIN index). For v2.1.0 the
+		// Postgres driver is unconfigured on this host (see
+		// internal/store/postgres/store.go stubs), so we mirror just
+		// the row table here. When the Postgres driver is wired up
+		// (post-v2.1.0), v19 should add the FTS-equivalent (likely a
+		// tsvector column + GIN index on it, with a trigger to keep
+		// it in sync, plus to_tsquery in SearchAgentMemory).
+		Version: 18,
+		Name:    "agent_memory_and_fts5",
+		Up: `
+CREATE TABLE IF NOT EXISTS agent_memory (
+    id          BIGSERIAL PRIMARY KEY,
+    project_id  TEXT NOT NULL,
+    session_id  TEXT,
+    operator    TEXT NOT NULL,
+    kind        TEXT NOT NULL,
+    title       TEXT,
+    content     TEXT NOT NULL,
+    tags        TEXT,
+    pinned      BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at  TIMESTAMP WITH TIME ZONE NOT NULL,
+    updated_at  TIMESTAMP WITH TIME ZONE NOT NULL,
+    archived_at TIMESTAMP WITH TIME ZONE,
+    expires_at  TIMESTAMP WITH TIME ZONE
+);
+CREATE INDEX IF NOT EXISTS idx_agent_memory_proj ON agent_memory (project_id, archived_at, pinned DESC, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_memory_sess ON agent_memory (session_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_memory_op   ON agent_memory (operator, archived_at, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_memory_kind ON agent_memory (project_id, kind, archived_at);
+`,
+	},
 }

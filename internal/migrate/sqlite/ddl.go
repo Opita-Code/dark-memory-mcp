@@ -699,4 +699,69 @@ ALTER TABLE projects ADD COLUMN active_session_id TEXT;
 ALTER TABLE projects ADD COLUMN active_session_set_at TEXT;
 `,
 	},
+	{
+		// v18 - agent_memory table + indexes + FTS5 mirror + sync
+		// triggers (v2.1.0).
+		//
+		// Mem0-aligned agent-memory data plane. See
+		// internal/agentmemory/types.go for the canonical kind set
+		// and scope semantics; see
+		// dark-mem-research/2026-07-27-v2.0.1-v2.0.2-research.md for
+		// the research-driven design.
+		//
+		// Why FTS5 in the same migration: BM25 ranked search is a
+		// core retrieval path (cf. Mem0 README "Fuses semantic
+		// similarity, BM25 keyword matching, and entity matching in
+		// parallel"). v2.1.0 ships BM25; semantic / entity matching
+		// follow in v2.1.x once we have an embedding pipeline.
+		//
+		// Trigger strategy: classic FTS5 contentless-table mirror.
+		//   ai  = AFTER INSERT  -> mirror the new row
+		//   ad  = AFTER DELETE  -> remove the old FTS row ('delete'
+		//                          command is the FTS5 idiom for
+		//                          removing from a contentless mirror)
+		//   au1 = BEFORE UPDATE -> delete-old (BEFORE so we can still
+		//                          read old.* values)
+		//   au2 = AFTER UPDATE  -> insert-new (AFTER so we read new.*)
+		// Splitting UPDATE into two triggers lets each trigger body
+		// be a single statement inside BEGIN..END (which the v2.1.0
+		// SQL-aware splitStatements handles cleanly; see
+		// internal/migrate/split_statements.go and
+		// split_test.go for the table-driven coverage).
+		//
+		// Idempotent: every CREATE uses IF NOT EXISTS / IF EXISTS.
+		// No ALTER statements in this migration.
+		Version: 18,
+		Name:    "agent_memory_and_fts5",
+		Up: `
+CREATE TABLE IF NOT EXISTS agent_memory (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id  TEXT NOT NULL,
+    session_id  TEXT,
+    operator    TEXT NOT NULL,
+    kind        TEXT NOT NULL,
+    title       TEXT,
+    content     TEXT NOT NULL,
+    tags        TEXT,
+    pinned      INTEGER NOT NULL DEFAULT 0,
+    created_at  TEXT NOT NULL,
+    updated_at  TEXT NOT NULL,
+    archived_at TEXT,
+    expires_at  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_agent_memory_proj ON agent_memory (project_id, archived_at, pinned DESC, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_memory_sess ON agent_memory (session_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_memory_op   ON agent_memory (operator, archived_at, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_memory_kind ON agent_memory (project_id, kind, archived_at);
+CREATE VIRTUAL TABLE IF NOT EXISTS agent_memory_fts USING fts5(
+    content, title, tags,
+    content='agent_memory', content_rowid='id',
+    tokenize='unicode61'
+);
+CREATE TRIGGER IF NOT EXISTS agent_memory_ai AFTER INSERT ON agent_memory BEGIN INSERT INTO agent_memory_fts(rowid, content, title, tags) VALUES (new.id, new.content, COALESCE(new.title,''), COALESCE(new.tags,'')); END;
+CREATE TRIGGER IF NOT EXISTS agent_memory_ad AFTER DELETE ON agent_memory BEGIN INSERT INTO agent_memory_fts(agent_memory_fts, rowid, content, title, tags) VALUES('delete', old.id, old.content, COALESCE(old.title,''), COALESCE(old.tags,'')); END;
+CREATE TRIGGER IF NOT EXISTS agent_memory_au1 BEFORE UPDATE ON agent_memory BEGIN INSERT INTO agent_memory_fts(agent_memory_fts, rowid, content, title, tags) VALUES('delete', old.id, old.content, COALESCE(old.title,''), COALESCE(old.tags,'')); END;
+CREATE TRIGGER IF NOT EXISTS agent_memory_au2 AFTER UPDATE ON agent_memory BEGIN INSERT INTO agent_memory_fts(rowid, content, title, tags) VALUES (new.id, new.content, COALESCE(new.title,''), COALESCE(new.tags,'')); END;
+`,
+	},
 }

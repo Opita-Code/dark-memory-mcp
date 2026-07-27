@@ -12,6 +12,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/dark-agents/dark-memory-mcp/internal/agentmemory"
 	"github.com/dark-agents/dark-memory-mcp/internal/atomic"
 	"github.com/dark-agents/dark-memory-mcp/internal/audit"
 	"github.com/dark-agents/dark-memory-mcp/internal/constitution"
@@ -533,6 +534,54 @@ type Store interface {
 	// NOT resolved; the internal/vlp.Persistence wrapper handles
 	// State enum → numeric conversion.
 	ListVLPStates(ctx context.Context, stateFilter string, limit int) ([]VLPStateRow, error)
+
+	// --- AGENT MEMORY (v2.1.0) ---------------------------------------
+	//
+	// Mem0-aligned agent memory data plane. Five operations + one
+	// BM25-ranked search (FTS5 on sqlite; tsvector-on-GIN follow-up
+	// for postgres — see internal/store/postgres stubs). All reads
+	// and writes enforce INV-7 (project isolation) and per-operator
+	// ownership (operator column == current actor for write paths;
+	// the active project for read paths).
+
+	// SaveAgentMemory inserts a new row. ProjectID and Operator are
+	// derived from the WriteContext / active project — the caller
+	// (orchestration layer) MUST NOT pass them as args to avoid
+	// cross-tenant injection. Returns the new row id.
+	SaveAgentMemory(ctx context.Context, wc WriteContext, m *agentmemory.AgentMemory) (int64, error)
+
+	// GetAgentMemory returns the row by id, enforcing project
+	// isolation (INV-7): a row from a different project returns
+	// (nil, nil) — same as "not found" — to avoid leaking existence.
+	GetAgentMemory(ctx context.Context, id int64) (*agentmemory.AgentMemory, error)
+
+	// UpdateAgentMemory applies the AgentMemoryUpdate to the row
+	// identified by id. Operator and ProjectID are NOT updatable
+	// (those are identity/tags, not editable content); only the
+	// pointer fields in the update are applied. Returns the
+	// refreshed row. Cross-project update returns ErrNotFound.
+	UpdateAgentMemory(ctx context.Context, wc WriteContext, id int64, u *agentmemory.AgentMemoryUpdate) (*agentmemory.AgentMemory, error)
+
+	// ArchiveAgentMemory is the soft-delete. Sets archived_at to the
+	// current time and removes the row from default List results
+	// (recoverable with IncludeArchived=true). Hard delete is NOT
+	// exposed in v2.1.0; an admin vacuum will sweep rows older than
+	// the retention policy in a follow-up (F46).
+	ArchiveAgentMemory(ctx context.Context, wc WriteContext, id int64) error
+
+	// ListAgentMemory returns rows matching the filters, ordered by
+	// pinned DESC, created_at DESC. The Store implementation must
+	// apply INV-7: only rows where project_id == ActiveProject() are
+	// ever returned, regardless of the filters. The Scope field on
+	// the filters is resolved against the active session/operator.
+	ListAgentMemory(ctx context.Context, f agentmemory.AgentMemoryListFilters) ([]agentmemory.AgentMemory, error)
+
+	// SearchAgentMemory runs an FTS5 BM25-ranked search over
+	// content+title+tags. Returns hits in rank-ascending order
+	// (lower rank = better match; FTS5 bm25 is monotonic). Empty
+	// query returns ErrInvalidArgument. Postgres stubs return
+	// ErrNotConfigured until the FTS-equivalent migration lands.
+	SearchAgentMemory(ctx context.Context, f agentmemory.SearchFilters) ([]agentmemory.SearchHit, error)
 }
 
 // VLPStateRow is the flat row type persisted in vlp_state. State is the

@@ -62,6 +62,7 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/session"
 	"github.com/dark-agents/dark-memory-mcp/internal/ssd"
 	"github.com/dark-agents/dark-memory-mcp/internal/vibeflow"
+	"github.com/dark-agents/dark-memory-mcp/internal/agentmemory"
 )
 
 // openPostgres opens a Postgres 
@@ -2356,4 +2357,37 @@ func (s *Store) GetActiveSession(ctx context.Context, projectID string) (string,
 
 func (s *Store) ClearActiveSession(ctx context.Context, projectID, expectedSessionID string) error {
 	return notImpl("ClearActiveSession")
+}
+
+// --- Agent memory (v2.1.0) --------------------------------------------
+//
+// Postgres path is research-only on this host (the factory in factory.go
+// does not wire DARK_DB_DRIVER=postgres). The migration v18 lands the
+// table; the FTS-equivalent (tsvector + GIN) is a follow-up. Until the
+// driver is enabled and the FTS path lands, the six agent_memory methods
+// below return store.ErrNotConfigured via notImpl so the interface is
+// satisfied without silently dropping calls.
+
+func (s *Store) SaveAgentMemory(ctx context.Context, wc store.WriteContext, m *agentmemory.AgentMemory) (int64, error) {
+	return 0, notImpl("SaveAgentMemory")
+}
+
+func (s *Store) GetAgentMemory(ctx context.Context, id int64) (*agentmemory.AgentMemory, error) {
+	return nil, notImpl("GetAgentMemory")
+}
+
+func (s *Store) UpdateAgentMemory(ctx context.Context, wc store.WriteContext, id int64, u *agentmemory.AgentMemoryUpdate) (*agentmemory.AgentMemory, error) {
+	return nil, notImpl("UpdateAgentMemory")
+}
+
+func (s *Store) ArchiveAgentMemory(ctx context.Context, wc store.WriteContext, id int64) error {
+	return notImpl("ArchiveAgentMemory")
+}
+
+func (s *Store) ListAgentMemory(ctx context.Context, f agentmemory.AgentMemoryListFilters) ([]agentmemory.AgentMemory, error) {
+	return nil, notImpl("ListAgentMemory")
+}
+
+func (s *Store) SearchAgentMemory(ctx context.Context, f agentmemory.SearchFilters) ([]agentmemory.SearchHit, error) {
+	return nil, notImpl("SearchAgentMemory")
 }

@@ -197,21 +197,19 @@ func applyOne(ctx context.Context, db *sql.DB, m Migration) error {
 // drop empty). Comments (lines starting with `--`) are kept
 // in-place because SQLite/Postgres accept them anywhere.
 //
-// This is intentionally simple: it does not understand BEGIN..END
-// blocks (none of our migrations use them) or quoted strings with
-// embedded semicolons (none present). If a future migration needs
-// that, lift to a real SQL lexer.
+// v2.1.0: this is now SQL-aware. The full state-machine impl lives
+// in split_statements.go (separated for review). See
+// vibe-flow/main/agent_memory_v2_1_0_split_statements.md for the spec.
 func splitStatements(body string) []string {
-	raw := strings.Split(body, ";")
-	out := make([]string, 0, len(raw))
-	for _, r := range raw {
-		s := strings.TrimSpace(r)
-		if s == "" {
-			continue
-		}
-		out = append(out, s)
-	}
-	return out
+	return splitSQL(body)
+}
+
+// SplitStatementsForTest is the test-only exported alias. The
+// production code calls the unexported splitStatements so the
+// migration runner's hot path doesn't need an export. The
+// external test package (migrate_test) calls this one.
+func SplitStatementsForTest(body string) []string {
+	return splitStatements(body)
 }
 
 // isToleratedDDLError reports whether err matches an error class

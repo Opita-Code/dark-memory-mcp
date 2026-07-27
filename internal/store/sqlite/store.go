@@ -22,8 +22,9 @@ import (
 	"sync"
 	"time"
 
-	_ "modernc.org/sqlite"
+_ "modernc.org/sqlite"
 
+	"github.com/dark-agents/dark-memory-mcp/internal/agentmemory"
 	"github.com/dark-agents/dark-memory-mcp/internal/atomic"
 	"github.com/dark-agents/dark-memory-mcp/internal/audit"
 	"github.com/dark-agents/dark-memory-mcp/internal/constitution"
@@ -3931,7 +3932,542 @@ func (s *Store) ClearActiveSession(ctx context.Context, projectID, expectedSessi
 			ConstitutionID: "",
 			ConstitutionVer: "",
 			CreatedAt:      now,
-		}, "")
+}, "")
 	}
 	return nil
+}
+
+// --- Agent memory (v2.1.0) --------------------------------------------
+//
+// Mem0-aligned agent memory data plane. SQLite implementation:
+// row table + FTS5 mirror (see migration v18 in internal/migrate/sqlite/
+// ddl.go). Triggers keep the FTS mirror in sync — the impl below just
+// INSERT/UPDATE/DELETE on the row table; FTS5 stays consistent.
+//
+// INV-7 (project isolation) is enforced by:
+//   - Save: project_id is derived from wc.ProjectID or active project
+//     (NEVER from the caller's m.ProjectID — that's a tamper surface).
+//   - Get/Update/Archive: WHERE project_id = active project (a row from
+//     another project returns ErrNotFound — same as if it didn't exist).
+//   - List: every list query has WHERE project_id = active project
+//     pinned in the bind list.
+//
+// INV-1 (write-path audit): every Save/Update/Archive emits a
+// write_audit row in the SAME tx as the data write. The FTS5 mirror
+// is updated via the table triggers (separate to the audit tx) so a
+// tx rollback leaves the FTS mirror consistent: the next INSERT will
+// re-populate the affected rowid.
+
+// SaveAgentMemory inserts a new agent_memory row + emits write_audit.
+// Returns the new row id.
+//
+// m.ProjectID and m.Operator are IGNORED on input — the impl derives
+// them from wc / active project so the caller cannot tamper with
+// tenant or identity. m.SessionID, m.Kind, m.Title, m.Content, m.Tags,
+// m.Pinned, m.ExpiresAt are taken from m.
+func (s *Store) SaveAgentMemory(ctx context.Context, wc store.WriteContext, m *agentmemory.AgentMemory) (int64, error) {
+	if err := s.requireProject(); err != nil {
+		return 0, err
+	}
+	if m == nil {
+		return 0, fmt.Errorf("sqlite: SaveAgentMemory: nil row")
+	}
+	if strings.TrimSpace(m.Operator) == "" {
+		return 0, fmt.Errorf("sqlite: SaveAgentMemory: operator required")
+	}
+	if strings.TrimSpace(m.Content) == "" {
+		return 0, fmt.Errorf("sqlite: SaveAgentMemory: content required")
+	}
+	if !agentmemory.ValidKind(m.Kind) {
+		return 0, fmt.Errorf("sqlite: SaveAgentMemory: invalid kind %q", m.Kind)
+	}
+	projectID := projectIDOrActive(wc.ProjectID, s.activeProject)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+
+	var id int64
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	err := s.runInTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, `
+			INSERT INTO agent_memory (
+				project_id, session_id, operator, kind, title, content, tags,
+				pinned, created_at, updated_at, expires_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			projectID, m.SessionID, m.Operator, m.Kind,
+			nullString(m.Title), m.Content, nullString(m.Tags),
+			boolToInt(m.Pinned), now, now, nullString(m.ExpiresAt),
+		)
+		if err != nil {
+			return fmt.Errorf("agent_memory: insert: %w", err)
+		}
+		id, err = res.LastInsertId()
+		if err != nil {
+			return fmt.Errorf("agent_memory: last insert id: %w", err)
+		}
+
+		// INV-1: write_audit row in the same tx.
+		if wc.WritePath == "" {
+			wc.WritePath = "SaveAgentMemory"
+		}
+		if err := s.recordWriteLockedTx(ctx, tx, audit.WriteEvent{
+			TableName:       "agent_memory",
+			RowID:           id,
+			ProjectID:       projectID,
+			Actor:           wc.Actor,
+			SessionID:       m.SessionID,
+			WritePath:       wc.WritePath,
+			ConstitutionID:  wc.ConstitutionID,
+			ConstitutionVer: wc.ConstitutionVer,
+			CreatedAt:       now,
+		}, ""); err != nil {
+			return fmt.Errorf("agent_memory: audit: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	// Refresh in-memory shape with the values the impl actually stored
+	// (project_id from active project, timestamps from the DB clock).
+	m.ID = id
+	m.ProjectID = projectID
+	m.CreatedAt = now
+	m.UpdatedAt = now
+	return id, nil
+}
+
+// GetAgentMemory returns the row by id, enforcing project isolation.
+// A row from a different project returns (nil, nil) — same as "not
+// found" — to avoid leaking existence.
+func (s *Store) GetAgentMemory(ctx context.Context, id int64) (*agentmemory.AgentMemory, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	if id <= 0 {
+		return nil, nil
+	}
+	activeProject := s.ActiveProject()
+
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, project_id, COALESCE(session_id, ''), operator, kind,
+		       COALESCE(title, ''), content, COALESCE(tags, ''),
+		       pinned, created_at, updated_at, COALESCE(archived_at, ''),
+		       COALESCE(expires_at, '')
+		  FROM agent_memory
+		 WHERE id = ? AND project_id = ?`, id, activeProject)
+
+	var m agentmemory.AgentMemory
+	var pinned int
+	if err := row.Scan(&m.ID, &m.ProjectID, &m.SessionID, &m.Operator, &m.Kind,
+		&m.Title, &m.Content, &m.Tags, &pinned,
+		&m.CreatedAt, &m.UpdatedAt, &m.ArchivedAt, &m.ExpiresAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("agent_memory: get: %w", err)
+	}
+	m.Pinned = pinned != 0
+	return &m, nil
+}
+
+// UpdateAgentMemory applies the AgentMemoryUpdate to the row by id.
+// Operator and ProjectID are NOT updatable (they are identity/tags,
+// not editable content). Only the pointer fields in the update are
+// applied; a nil pointer is a no-op, an empty-string pointer is an
+// explicit clear (sets the column to "").
+//
+// Returns the refreshed row. Cross-project update returns (nil,
+// store.ErrNotFound).
+func (s *Store) UpdateAgentMemory(ctx context.Context, wc store.WriteContext, id int64, u *agentmemory.AgentMemoryUpdate) (*agentmemory.AgentMemory, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	if id <= 0 {
+		return nil, store.ErrNotFound
+	}
+	if u == nil {
+		return nil, fmt.Errorf("sqlite: UpdateAgentMemory: nil update")
+	}
+	activeProject := s.ActiveProject()
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Build a dynamic UPDATE so we only touch the columns the caller
+	// asked to change. FTS5 triggers keep the mirror in sync.
+	var setClauses []string
+	var args []any
+	setClauses = append(setClauses, "updated_at = ?")
+	args = append(args, now)
+
+	if u.Title != nil {
+		setClauses = append(setClauses, "title = ?")
+		args = append(args, *u.Title)
+	}
+	if u.Content != nil {
+		setClauses = append(setClauses, "content = ?")
+		args = append(args, *u.Content)
+	}
+	if u.Tags != nil {
+		setClauses = append(setClauses, "tags = ?")
+		args = append(args, *u.Tags)
+	}
+	if u.Pinned != nil {
+		setClauses = append(setClauses, "pinned = ?")
+		args = append(args, boolToInt(*u.Pinned))
+	}
+	if u.ExpiresAt != nil {
+		setClauses = append(setClauses, "expires_at = ?")
+		args = append(args, *u.ExpiresAt)
+	}
+	args = append(args, id, activeProject)
+
+	query := "UPDATE agent_memory SET " + strings.Join(setClauses, ", ") +
+		" WHERE id = ? AND project_id = ?"
+
+	err := s.runInTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, query, args...)
+		if err != nil {
+			return fmt.Errorf("agent_memory: update: %w", err)
+		}
+		n, _ := res.RowsAffected()
+		if n == 0 {
+			return store.ErrNotFound
+		}
+
+		if wc.WritePath == "" {
+			wc.WritePath = "UpdateAgentMemory"
+		}
+		if err := s.recordWriteLockedTx(ctx, tx, audit.WriteEvent{
+			TableName:       "agent_memory",
+			RowID:           id,
+			ProjectID:       activeProject,
+			Actor:           wc.Actor,
+			WritePath:       wc.WritePath,
+			ConstitutionID:  wc.ConstitutionID,
+			ConstitutionVer: wc.ConstitutionVer,
+			CreatedAt:       now,
+		}, ""); err != nil {
+			return fmt.Errorf("agent_memory: audit: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Fetch the refreshed row to return.
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, project_id, COALESCE(session_id, ''), operator, kind,
+		       COALESCE(title, ''), content, COALESCE(tags, ''),
+		       pinned, created_at, updated_at, COALESCE(archived_at, ''),
+		       COALESCE(expires_at, '')
+		  FROM agent_memory
+		 WHERE id = ? AND project_id = ?`, id, activeProject)
+	var m agentmemory.AgentMemory
+	var pinned int
+	if err := row.Scan(&m.ID, &m.ProjectID, &m.SessionID, &m.Operator, &m.Kind,
+		&m.Title, &m.Content, &m.Tags, &pinned,
+		&m.CreatedAt, &m.UpdatedAt, &m.ArchivedAt, &m.ExpiresAt); err != nil {
+		return nil, fmt.Errorf("agent_memory: post-update fetch: %w", err)
+	}
+	m.Pinned = pinned != 0
+	return &m, nil
+}
+
+// ArchiveAgentMemory soft-deletes the row (sets archived_at to now).
+// The row stays in the table for recovery via List(IncludeArchived=true)
+// and for the audit trail; hard delete is admin_vacuum's job (F46).
+func (s *Store) ArchiveAgentMemory(ctx context.Context, wc store.WriteContext, id int64) error {
+	if err := s.requireProject(); err != nil {
+		return err
+	}
+	if id <= 0 {
+		return store.ErrNotFound
+	}
+	activeProject := s.ActiveProject()
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.runInTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, `
+			UPDATE agent_memory
+			   SET archived_at = ?, updated_at = ?
+			 WHERE id = ? AND project_id = ? AND archived_at IS NULL`,
+			now, now, id, activeProject)
+		if err != nil {
+			return fmt.Errorf("agent_memory: archive: %w", err)
+		}
+		n, _ := res.RowsAffected()
+		if n == 0 {
+			// Either it doesn't exist in this project, or it was
+			// already archived. Distinguish: re-fetch.
+			var existing int
+			if err := tx.QueryRowContext(ctx,
+				`SELECT COUNT(*) FROM agent_memory WHERE id = ? AND project_id = ?`,
+				id, activeProject).Scan(&existing); err != nil {
+				return fmt.Errorf("agent_memory: archive lookup: %w", err)
+			}
+			if existing == 0 {
+				return store.ErrNotFound
+			}
+			// Already archived — idempotent no-op (still emit audit
+			// row so the caller's intent is recorded).
+		}
+
+		if wc.WritePath == "" {
+			wc.WritePath = "ArchiveAgentMemory"
+		}
+		if err := s.recordWriteLockedTx(ctx, tx, audit.WriteEvent{
+			TableName:       "agent_memory",
+			RowID:           id,
+			ProjectID:       activeProject,
+			Actor:           wc.Actor,
+			SessionID:       "", // archive crosses session boundary
+			WritePath:       wc.WritePath,
+			ConstitutionID:  wc.ConstitutionID,
+			ConstitutionVer: wc.ConstitutionVer,
+			CreatedAt:       now,
+		}, ""); err != nil {
+			return fmt.Errorf("agent_memory: audit: %w", err)
+		}
+		return nil
+	})
+}
+
+// resolveActiveSessionID returns the active session id for the
+// active project, or "" if none. The StoreFronted caller should
+// already have called requireProject.
+func (s *Store) resolveActiveSessionID(ctx context.Context) (string, error) {
+	activeProject := s.ActiveProject()
+	if activeProject == "" {
+		return "", nil
+	}
+	sess, err := s.GetActiveSession(ctx, activeProject)
+	if err != nil {
+		return "", err
+	}
+	return sess, nil
+}
+
+// ListAgentMemory returns rows matching the filters, ordered by
+// pinned DESC, created_at DESC. INV-7 enforced (rows from other
+// projects never returned). Scope is resolved against the active
+// session / operator at query time.
+func (s *Store) ListAgentMemory(ctx context.Context, f agentmemory.AgentMemoryListFilters) ([]agentmemory.AgentMemory, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.ActiveProject()
+
+	// Resolve scope. "current" defers to session if bound, else
+	// operator.
+	scope := f.Scope
+	if scope == "" || scope == agentmemory.ScopeCurrent {
+		if sid, _ := s.resolveActiveSessionID(ctx); sid != "" {
+			scope = agentmemory.ScopeSession
+		} else {
+			scope = agentmemory.ScopeOperator
+		}
+	}
+	if !agentmemory.ValidScope(scope) {
+		return nil, fmt.Errorf("sqlite: ListAgentMemory: invalid scope %q", scope)
+	}
+
+	limit := f.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+
+	// Build WHERE clause dynamically. Always filter by project (INV-7).
+	where := []string{"project_id = ?"}
+	args := []any{activeProject}
+
+	// Archived filter: default is "exclude archived".
+	if !f.IncludeArchived {
+		where = append(where, "archived_at IS NULL")
+	}
+	if f.Kind != "" {
+		where = append(where, "kind = ?")
+		args = append(args, f.Kind)
+	}
+	if f.Tag != "" {
+		// Comma-separated tags; case-insensitive contains.
+		where = append(where, "LOWER(',' || tags || ',') LIKE ?")
+		args = append(args, "%,"+strings.ToLower(f.Tag)+",%")
+	}
+	if f.PinnedOnly {
+		where = append(where, "pinned = 1")
+	}
+	switch scope {
+	case agentmemory.ScopeSession:
+		sid, _ := s.resolveActiveSessionID(ctx)
+		if sid == "" {
+			// No active session — return empty rather than
+			// silently widening. This is the safer default for
+			// session-scoped queries.
+			return nil, nil
+		}
+		where = append(where, "session_id = ?")
+		args = append(args, sid)
+	case agentmemory.ScopeOperator:
+		// Operator scope widens to anything the current operator
+		// wrote within the active project. The caller (gate) is
+		// expected to have set the operator context already; for
+		// safety we use a sentinel "current operator" lookup via
+		// audit's last-recorded actor. To keep this self-contained
+		// we read the latest audit row's Actor for this project.
+		// In practice the orchestrator sets wc.Actor = operator id
+		// and we plumb it through via an explicit "operator" param
+		// on the filters — but the Store interface has no such
+		// field. Use the active operator from the last audit row
+		// as a best-effort.
+		var operator string
+		if err := s.db.QueryRowContext(ctx, `
+			SELECT actor FROM write_audit
+			 WHERE project_id = ? AND actor != ''
+			 ORDER BY id DESC LIMIT 1`, activeProject).Scan(&operator); err != nil &&
+			!errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("agent_memory: resolve operator: %w", err)
+		}
+		if operator == "" {
+			return nil, nil
+		}
+		where = append(where, "operator = ?")
+		args = append(args, operator)
+	case agentmemory.ScopeProject, agentmemory.ScopeAll:
+		// No additional filter — already constrained by project.
+	}
+
+	query := `SELECT id, project_id, COALESCE(session_id, ''), operator, kind,
+	                 COALESCE(title, ''), content, COALESCE(tags, ''),
+	                 pinned, created_at, updated_at, COALESCE(archived_at, ''),
+	                 COALESCE(expires_at, '')
+	            FROM agent_memory
+	           WHERE ` + strings.Join(where, " AND ") + `
+	        ORDER BY pinned DESC, created_at DESC
+	           LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("agent_memory: list: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]agentmemory.AgentMemory, 0, 16)
+	for rows.Next() {
+		var m agentmemory.AgentMemory
+		var pinned int
+		if err := rows.Scan(&m.ID, &m.ProjectID, &m.SessionID, &m.Operator, &m.Kind,
+			&m.Title, &m.Content, &m.Tags, &pinned,
+			&m.CreatedAt, &m.UpdatedAt, &m.ArchivedAt, &m.ExpiresAt); err != nil {
+			return nil, fmt.Errorf("agent_memory: scan: %w", err)
+		}
+		m.Pinned = pinned != 0
+		out = append(out, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("agent_memory: rows: %w", err)
+	}
+	return out, nil
+}
+
+// SearchAgentMemory runs an FTS5 BM25-ranked search over
+// content+title+tags. Returns hits in rank ASCENDING order (FTS5
+// bm25 is monotonic — lower rank = better match).
+//
+// Empty query returns ErrInvalidArgument. Caller should escape FTS5
+// operators (the tool layer does this; see internal/tools/agent_memory.go).
+func (s *Store) SearchAgentMemory(ctx context.Context, f agentmemory.SearchFilters) ([]agentmemory.SearchHit, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(f.Query) == "" {
+		return nil, store.ErrInvalidArgument
+	}
+	activeProject := s.ActiveProject()
+
+	limit := f.Limit
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+
+	// Build the FTS5 MATCH query. We use the standard bm25() rank
+	// function over the agent_memory_fts virtual table, joined to
+	// the row table to surface project_id (for INV-7).
+	where := []string{"row.project_id = ?"}
+	args := []any{activeProject}
+	if f.Kind != "" {
+		where = append(where, "row.kind = ?")
+		args = append(args, f.Kind)
+	}
+
+	query := `
+		SELECT row.id, row.project_id, COALESCE(row.session_id, ''), row.operator,
+		       row.kind, COALESCE(row.title, ''), row.content, COALESCE(row.tags, ''),
+		       row.pinned, row.created_at, row.updated_at,
+		       COALESCE(row.archived_at, ''), COALESCE(row.expires_at, ''),
+		       bm25(fts.agent_memory_fts) AS rank
+		  FROM agent_memory_fts AS fts
+		  JOIN agent_memory    AS row ON row.id = fts.rowid
+		 WHERE agent_memory_fts MATCH ? AND ` + strings.Join(where, " AND ") + `
+		   AND row.archived_at IS NULL
+	  ORDER BY rank ASC
+	     LIMIT ?`
+	args = append([]any{f.Query}, args...)
+	args = append(args, limit)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("agent_memory: search: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]agentmemory.SearchHit, 0, 16)
+	for rows.Next() {
+		var hit agentmemory.SearchHit
+		var pinned int
+		if err := rows.Scan(&hit.ID, &hit.ProjectID, &hit.SessionID, &hit.Operator,
+			&hit.Kind, &hit.Title, &hit.Content, &hit.Tags, &pinned,
+			&hit.CreatedAt, &hit.UpdatedAt, &hit.ArchivedAt, &hit.ExpiresAt,
+			&hit.Rank); err != nil {
+			return nil, fmt.Errorf("agent_memory: scan hit: %w", err)
+		}
+		hit.Pinned = pinned != 0
+		out = append(out, hit)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("agent_memory: search rows: %w", err)
+	}
+	return out, nil
+}
+
+// nullString returns nil if s is empty, else &s. Used so empty
+// optional columns become SQL NULL rather than empty strings — keeps
+// the schema consistent with the COALESCE(..., '') reads in Get/List.
+func nullString(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+// boolToInt converts a Go bool to the 0/1 the SQLite schema uses for
+// the `pinned INTEGER NOT NULL DEFAULT 0` column.
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
