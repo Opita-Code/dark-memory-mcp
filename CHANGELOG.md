@@ -6,6 +6,74 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [2.0.1] — 2026-07-27
+
+### Added (gate promoted to the transport layer)
+
+The v2.0.0 pivot put the policy-gateway into the orchestrator layer.
+v2.0.1 promotes it to the transport layer so every `dark_memory_*`
+tool call now flows through `internal/policy.PostCheck` via the new
+`GateMiddleware`, *before* the inner handler runs.
+
+- **`internal/server/middleware.go` (new) — `GateMiddleware.Wrap`**.
+  PreCheck (capability grant + intent-in-scope) before the inner
+  handler; PostCheck (drift-at-write, when `DriftChecker` is non-nil)
+  after, for artifact-creating tools only. When `Gate` is nil, the
+  legacy direct-dispatch path runs (no policy enforcement), keeping
+  the existing test harness ergonomic.
+- **`internal/server/middleware_test.go` (new)** — 387 lines covering
+  3 categories: capability mismatch, scope mismatch, drift verdict
+  refusal at write boundary.
+- **`internal/server/server.go`** — `wrapHandler` routes through `Gate`
+  when set.
+- **`internal/server/lifecycle.go`** — `BootState.Gate` field.
+- **`cmd/dark-mem-mcp/main.go`** — wires the Gate from the returned
+  `FrameSource` at boot.
+
+### Changed (FrameSource singleton, 5A.ii.b.2.c.1)
+
+The per-call `FrameSource` construction in `dark_memory_recall` is
+lifted to a boot-time singleton. Both the recall tool and the gate
+now share the same `CachedSource` instance.
+
+- **`internal/recall/singleton.go` (new)** — boot-time `FrameSource`
+  construction. Singleton contract tested in `singleton_test.go`.
+- **`internal/tools/register.go`** — `RegisterAll` signature changes
+  from returning `error` to returning `(policy.FrameSource, error)` so
+  the caller can wire it into the gate.
+- **`internal/tools/recall.go`** — uses the passed-in singleton;
+  per-call construction is gone.
+- **`tests/e2e/server_test.go`** — updated for the new `RegisterAll`
+  signature.
+
+### Added (operator ergonomics)
+
+- **Legacy `DARK_SCRAPPER_URL` env shim** (H-4 follow-up). PR #10
+  dropped the v1.x env name without a backward-compat alias, which
+  broke unmigrated operators' drift-judge path on first boot. v2.0.1
+  closes the gap: when `DARK_SCRAPPER_URL` is set AND
+  `DARK_DRIFT_JUDGE_DAEMON_URL` is not, `NewSelfHarnessClient` falls
+  through to the legacy value and logs a one-line deprecation notice
+  at startup. The legacy env will be removed in v2.1.0.
+  Migration: `sed -i 's/DARK_SCRAPPER_URL/DARK_DRIFT_JUDGE_DAEMON_URL/g' .env`
+- **`internal/orchestration/llm_client_scrapper_alias_test.go` (new)**
+  pins the fallback contract end-to-end against the live binary.
+
+### Notes
+
+- **`DriftChecker` is intentionally `nil`** in the gate wiring. The
+  strict-mode opt-in is a separate follow-up (or a v2.0.2 if needed).
+  The gate still runs PreCheck unconditionally and refuses tools the
+  LLM isn't granted.
+- **`DefaultServerVersion` bumped** from `2.0.0-dev` →
+  `2.0.1-dev` in `internal/server/bootstrap.go` for the legacy
+  hardcoded fallback. Canonical version resolution flows through
+  `version.Resolve()` (set by `make release` via `-ldflags`).
+- `git describe --tags --always --dirty` on a fresh v2.0.1 tag will
+  print `v2.0.1` cleanly (no `+dirty` suffix).
+
+---
+
 ## [2.0.0] — 2026-07-19
 
 ### Breaking (operator env contract — ships in PR #10)
