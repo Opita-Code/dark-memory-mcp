@@ -90,12 +90,22 @@ func main() {
 	// returned "" and made the gate refuse every tool call).
 	// The resolver caches each project's active session_id for
 	// ~5s in-process so bursty workloads don't hit the DB on
-	// every tool call; session_start / session_close write to
-	// the projects row directly, the cache picks them up on
-	// TTL expiry (worst-case lag = CacheTTL).
+	// every tool call.
+	//
+	// v2.1.3: wire the resolver's Invalidate to the orchestrator's
+	// OnActiveSessionChanged callback. session_start's wire path
+	// pre-warms the cache with a stale value (the pre-SetActiveSession
+	// state, which is "" on a fresh boot) BEFORE the inner writes the
+	// new session_id. Without write-through invalidation, the next
+	// tool call within the 5s TTL hits cache and returns "" →
+	// ErrFrameStaleTooFar. By flushing the cache synchronously after
+	// SetActiveSession / ClearActiveSession writes, the next call
+	// always does a fresh DB lookup and gets the correct value.
+	// See vibe-flow/main/cache_invalidation_v2_1_3.md.
 	activeSessionResolver := server.NewStoreBackedActiveSessionResolver(
 		server.StoreBackedLookup(bootState.Store),
 	)
+	bootState.Orchestrator.OnActiveSessionChanged = activeSessionResolver.Invalidate
 
 	bootState.Gate = &server.GateMiddleware{
 		FrameSource:        frameSrc,

@@ -184,6 +184,12 @@ func (o *Orchestrator) SessionResurrect(ctx context.Context, in SessionResurrect
 		if err := o.Store.SetActiveSession(ctx, projID, newSess.SessionID); err != nil {
 			_ = err
 		}
+		// v2.1.3 cache-invalidation: same race as session_start. The
+		// resurrected session replaces a closed/aborted session that
+		// may still be cached in the resolver.
+		if o.OnActiveSessionChanged != nil {
+			o.OnActiveSessionChanged(projID)
+		}
 	}
 
 	startedAt, _ := time.Parse(time.RFC3339Nano, newSess.StartedAt)

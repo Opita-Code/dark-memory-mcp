@@ -6,6 +6,126 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [2.1.3] — 2026-07-27
+
+### Fixed (Resolver cache invalidation on session state change)
+
+The **first** tool call after `session_start` (or `session_close`)
+returned `ErrFrameStaleTooFar` ("session or project not bound")
+within the `StoreBackedActiveSessionResolver`'s 5s TTL window on
+fresh opencode boots.
+
+**Reproduction** (deterministic):
+
+1. Operator restarts opencode. Fresh process: `s.activeProject = ""`,
+   `projects.active_session_id = NULL`, resolver cache empty.
+2. Operator calls `session_start(operator, project_id="default")`.
+3. Wire path: `wrapHandler → GateMiddleware.Wrap → buildGateInput →
+   resolver.ActiveSessionID("default")`.
+   - Cache miss.
+   - DB lookup: `SELECT active_session_id FROM projects WHERE
+     project_id = 'default'` returns NULL → returns `""`.
+   - Cache filled with entry `{sessionID: "", expires: now+5s}`.
+4. Inner runs (session_start is in the `RequiresActiveSession`
+   allowlist, so the gate doesn't refuse on empty SessionID).
+   Orchestrator writes the new session_id to the DB via
+   `SetActiveSession`. **Cache is NOT invalidated.**
+5. Operator calls `agent_memory_save(...)` immediately. `buildGateInput`
+   reads the resolver: cache HIT (still warm with `""` from step 3).
+   Returns `""`. Gate refuses with `ErrFrameStaleTooFar`.
+
+The v2.1.1 ActiveProject fallback fixed this for the
+"explicit args" path. The "no args" path was still broken because
+the cache was pre-warmed with a stale value by the very tool that
+was supposed to populate the real one.
+
+**Root cause**: the resolver is TTL-only (`internal/server/active_session_resolver.go:31-45`).
+`session_start` writes to the projects table but does not push to
+the resolver's cache. The pre-inner `buildGateInput` call in step 3
+populated the cache with the pre-write state (`""`), and subsequent
+calls within the TTL hit the cache instead of the DB.
+
+**Fix**: synchronous cache-invalidation callback.
+
+`Orchestrator` now exposes `OnActiveSessionChanged func(projectID string)`.
+The orchestrator invokes it after every successful `SetActiveSession`
+or `ClearActiveSession` write (in `session_start.go`, `session_close.go`,
+`session_resurrect.go`). `main.go` wires it to
+`resolver.Invalidate(projectID)`, which deletes the cached entry.
+The next tool call does a fresh DB lookup and gets the right value.
+
+```go
+// internal/orchestration/orchestrator.go
+type Orchestrator struct {
+    // ...
+    // OnActiveSessionChanged (v2.1.3 cache-invalidation fix) is invoked
+    // after every successful SetActiveSession / ClearActiveSession write
+    // so external caches (specifically the gate's
+    // StoreBackedActiveSessionResolver) can invalidate their stale
+    // entries synchronously. nil is safe — the orchestrator skips the call.
+    OnActiveSessionChanged func(projectID string)
+}
+
+// cmd/dark-mem-mcp/main.go
+activeSessionResolver := server.NewStoreBackedActiveSessionResolver(
+    server.StoreBackedLookup(bootState.Store),
+)
+bootState.Orchestrator.OnActiveSessionChanged = activeSessionResolver.Invalidate
+```
+
+**New tests** (`tests/dual_driver/cache_invalidation_test.go`):
+
+- `TestSessionStart_InvokesOnActiveSessionChanged` — hook fires on
+  start.
+- `TestSessionClose_InvokesOnActiveSessionChanged` — hook fires on
+  close.
+- `TestSessionStart_NilHookIsSafe` — nil callback doesn't crash
+  SessionStart (alternative harnesses that don't wire the hook).
+- `TestResolverCacheInvalidatedAfterSessionStart` — **the
+  regression test**: pre-warm the resolver cache with `""`, call
+  SessionStart, then verify the next ActiveSessionID returns the
+  new session_id (not the stale `""`). Pre-fix: fails. Post-fix:
+  passes.
+- `TestResolverCacheInvalidatedAfterSessionClose` — same for close:
+  pre-warm with the session id, call SessionClose, verify the
+  cache is flushed.
+
+**Files touched** (~80 LOC production + 220 LOC test):
+
+- `internal/orchestration/orchestrator.go` — `OnActiveSessionChanged`
+  field on `Orchestrator`.
+- `internal/orchestration/session_start.go` — call hook after
+  `SetActiveSession`.
+- `internal/orchestration/session_close.go` — call hook after
+  `ClearActiveSession`.
+- `internal/orchestration/session_resurrect.go` — call hook after
+  `SetActiveSession`.
+- `cmd/dark-mem-mcp/main.go` — wire `resolver.Invalidate` to the hook.
+- `tests/dual_driver/cache_invalidation_test.go` — NEW.
+- `vibe-flow/main/cache_invalidation_v2_1_3.md` — spec.
+- `internal/server/bootstrap.go` — `DefaultServerVersion` bumped
+  2.1.2-dev → 2.1.3-dev.
+
+**What this fix does NOT change**:
+
+- The resolver cache itself (5s TTL, same shape).
+- The e2e gate tests (they pass either way; the bug only manifested
+  in production where the cache starts empty and gets pre-warmed
+  by the same tool that's supposed to write the real value).
+- Any tool wire contract (callers see the same behavior — the only
+  change is that the FIRST call after session_start/session_close
+  now succeeds).
+- `session_sweeper`'s `ClearActiveSession` — the sweeper runs in a
+  background goroutine, doesn't have access to the resolver. The
+  sweeper clears idle sessions that the operator wasn't actively
+  using, so the cache staleness window (5s) is not user-visible.
+  Left for a future cleanup if it ever matters.
+
+**Upgrade notes**: Operators on v2.1.2 must restart opencode to
+load the v2.1.3 binary. Same `Move-Item` swap procedure as before.
+
+---
+
 ## [2.1.2] — 2026-07-27
 
 ### Fixed (DefaultToolGrants wire prefix + SaveAgentMemory session binding)

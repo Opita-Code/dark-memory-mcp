@@ -95,6 +95,15 @@ func (o *Orchestrator) SessionStart(ctx context.Context, in SessionStartInput) (
 		_ = err
 	}
 
+	// v2.1.3 cache-invalidation: flush the resolver cache so the next
+	// tool call (within the 5s TTL) sees the new session_id, not the
+	// stale empty value the gate's pre-inner buildGateInput cached.
+	// See orchestrator.go OnActiveSessionChanged doc for the race
+	// timeline. Best-effort: nil-safe, doesn't fail the call.
+	if o.OnActiveSessionChanged != nil {
+		o.OnActiveSessionChanged(in.ProjectID)
+	}
+
 	// Note: SaveSession itself emits a write_audit row (INV-1). No
 	// second audit row needed here. The orchestrator-level audit
 	// signal is the SaveSession call itself.

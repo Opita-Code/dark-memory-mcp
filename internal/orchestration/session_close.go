@@ -75,6 +75,13 @@ func (o *Orchestrator) SessionClose(ctx context.Context, in SessionCloseInput) (
 		_ = err
 	}
 
+	// v2.1.3 cache-invalidation: flush the resolver cache so the next
+	// session_start (within the 5s TTL) doesn't see the just-closed
+	// session_id. Same race as session_start's pre-inner buildGateInput.
+	if o.OnActiveSessionChanged != nil {
+		o.OnActiveSessionChanged(o.Store.ActiveProject())
+	}
+
 	// Pull the closed session back to surface ClosedAt + status.
 	closedSess, err := o.Store.GetSession(ctx, in.SessionID)
 	if err != nil {

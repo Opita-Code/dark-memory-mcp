@@ -43,6 +43,31 @@ type Orchestrator struct {
 	now      func() time.Time // injectable for tests
 	backends []ResearchBackend // registered research backends (O3)
 	selector LLMSelector       // LLM selector for O5 Judge
+
+	// OnActiveSessionChanged (v2.1.3 cache-invalidation fix) is invoked
+	// after every successful SetActiveSession / ClearActiveSession write
+	// so external caches (specifically the gate's
+	// StoreBackedActiveSessionResolver) can invalidate their stale
+	// entries synchronously.
+	//
+	// Background: the resolver caches the lookup result for
+	// DefaultActiveSessionCacheTTL (5s). The cache is keyed by
+	// project_id. session_start's wire path is
+	//   wrapHandler → GateMiddleware.Wrap → buildGateInput
+	//   → resolver.ActiveSessionID → cache miss → DB lookup
+	//   → Cache filled with whatever was in projects.active_session_id
+	//     BEFORE SetActiveSession wrote the new value (i.e. empty
+	//     for a fresh boot, or the previous session_id otherwise)
+	//   → inner → orch.SessionStart → SetActiveSession writes the
+	//     new value to DB → cache NOT invalidated.
+	// The next tool call within the 5s TTL returns the stale value
+	// (empty or wrong session_id) and the gate refuses with
+	// ErrFrameStaleTooFar / ErrSessionNotFound.
+	//
+	// main.go wires this to resolver.Invalidate so the cache is
+	// flushed synchronously after each write. nil is safe — the
+	// orchestrator skips the call.
+	OnActiveSessionChanged func(projectID string)
 }
 
 // New constructs an Orchestrator with the given Store and Safety
