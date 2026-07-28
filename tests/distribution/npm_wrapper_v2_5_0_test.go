@@ -266,7 +266,7 @@ func TestV250_PlatformPackagesHaveOSAndCPU(t *testing.T) {
 // versions + server.json version + go binary ldflags version are
 // identical. This is the canonical "version drift" check.
 func TestV250_AllPackageVersionsMatch(t *testing.T) {
-	want := "2.6.1"
+	want := "2.6.2"
 
 	// npm packages
 	dirs := append([]string{npmWrapperDir(t)}, platformDirs(t)...)
@@ -352,8 +352,8 @@ func TestV250_ServerJSONSchema(t *testing.T) {
 
 	// version
 	version, _ := srv["version"].(string)
-	if version != "2.6.1" {
-		t.Errorf("server.json version = %q, want 2.6.1", version)
+	if version != "2.6.2" {
+		t.Errorf("server.json version = %q, want 2.6.2", version)
 	}
 
 	// packages array
