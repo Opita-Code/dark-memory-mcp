@@ -195,7 +195,7 @@ Pin in your host config:
   "mcpServers": {
     "dark-memory": {
       "command": "npx",
-      "args": ["-y", "@opitacode/dark-memory-mcp@2.5.0"]
+      "args": ["-y", "@opitacode/dark-memory-mcp@2.5.2"]
     }
   }
 }
