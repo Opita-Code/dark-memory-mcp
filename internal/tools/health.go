@@ -172,7 +172,13 @@ type healthPingResult struct {
 		Name              string `json:"name"`
 		Version           string `json:"version"`
 		CoexistenceGroup  string `json:"coexistence_group"`
-		RedTeamArmed      bool   `json:"redteam_armed"`
+		// PolicyGateway is always true on dark-memory-mcp per
+		// BRIDGE_AND_COEXISTENCE.md v2.0.0 §2.1 (cx.v3). Harness
+		// tooling can branch on this to decide whether to route
+		// dark-* calls through dark-memory (gateway) or directly
+		// to backings (legacy fallback).
+		PolicyGateway    bool `json:"policy_gateway"`
+		RedTeamArmed     bool `json:"redteam_armed"`
 	} `json:"server"`
 	DB struct {
 		Driver        string `json:"driver"`
@@ -232,6 +238,11 @@ func RegisterHealth(reg *Registry, st storeBridge) {
 			if v := coexistenceGroup.Load(); v != nil {
 				out.Server.CoexistenceGroup = *v
 			}
+			// PolicyGateway is always true on dark-memory-mcp per
+			// BRIDGE_AND_COEXISTENCE.md v2.0.0 §2.1 (cx.v3).
+			// Hard-coded rather than reading from an atomic so
+			// harnesses can rely on it never flipping.
+			out.Server.PolicyGateway = true
 			out.Server.RedTeamArmed = redteamArmedFlag.Load()
 
 			// --- db (live ping) ---

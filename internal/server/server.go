@@ -90,21 +90,50 @@ func New(ctx context.Context) (*Server, error) {
 		server.WithToolCapabilities(true),
 		server.WithRecovery(),
 		server.WithToolFilter(canonicalOrderFilter),
-		// coexistence_group baked into the standard MCP instructions
-		// field. mcp-go v0.40.0's Implementation struct doesn't carry
-		// custom fields, so we use the instructions channel (visible
-		// to all MCP-native harnesses that read initialize response).
-		// The exact string is documented in BRIDGE_AND_COEXISTENCE.md §3.
-		server.WithInstructions(fmt.Sprintf(
-			"dark-memory-mcp server. coexistence_group=%s (spec 164 bridge.2). Canonical 26-tool order preserved per spec 164 bridge.4 + DMAP v1.1 spec 193 Layer 6. This server is part of the dark-agents/memory coexistence group; harnesses detecting another dark-agents/* server should prefer the local dark_memory_* tools over dark_mem_*.",
-			boot.Config.CoexistenceGroup,
-		)),
+		// coexistence_group + policy_gateway baked into the standard
+		// MCP instructions field. mcp-go v0.56.0's Implementation
+		// struct doesn't carry custom fields, so we use the
+		// instructions channel (visible to all MCP-native harnesses
+		// that read the initialize response). The exact string is
+		// documented in BRIDGE_AND_COEXISTENCE.md v2.0.0 §2.1 + §3.
+		//
+		// policy_gateway=true declares dark-memory as the policy
+		// authority for the dark-agents coexistence group. Under
+		// cx.v3, harnesses route dark-* tool calls through this
+		// server for persona shaping, capability checks, and
+		// drift-at-write. dark-research-mcp v0.8.0+ is demoted to
+		// a backing (policy_gateway=false); see its RELEASE_NOTES
+		// and BRIDGE §3.2.
+		server.WithInstructions(BuildInstructions(boot.Config.CoexistenceGroup, boot.Config.ServerVersion)),
 	)
 
 	return &Server{
 		boot:   boot,
 		mcpSrv: mcpSrv,
 	}, nil
+}
+
+// BuildInstructions returns the MCP `instructions` string baked into
+// the initialize response. Exported so server_test.go can assert the
+// cx.v3 metadata without reflection. mcp-go v0.56.0's MCPServer struct
+// holds `instructions` as an unexported field; the only public surface
+// for the wire format is this helper.
+//
+// The string is the conformance contract per
+// BRIDGE_AND_COEXISTENCE.md v2.0.0 §2.1:
+//
+//	coexistence_group=dark-agents/memory
+//	policy_gateway=true
+//
+// Tests in server_test.go assert these substrings. dark-research-mcp
+// v0.8.0+ reads this string to detect that dark-memory is the gateway
+// and route dark-* calls through it (or fall back to direct calls in
+// legacy mode).
+func BuildInstructions(coexistenceGroup, version string) string {
+	return fmt.Sprintf(
+		"dark-memory-mcp server. coexistence_group=%s policy_gateway=true (spec 164 bridge.2 cx.v3). Canonical 34-tool order preserved per spec 164 bridge.4 + DMAP v1.1 spec 193 Layer 6. This server is the policy gateway for the dark-agents/memory coexistence group; harnesses detecting another dark-agents/* peer (dark-research-mcp with coexistence_group=dark-agents/research, policy_gateway=false) should route dark_* calls through this gateway for persona shaping, capability checks, and drift-at-write. Version=%s.",
+		coexistenceGroup, version,
+	)
 }
 
 // RegisterAll iterates the canonical 26-tool list and registers each
