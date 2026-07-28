@@ -160,12 +160,24 @@ func (s *StoreSource) IdentityFrame(ctx context.Context, sessionID string) (*ato
 	if sess == nil {
 		return nil, nil
 	}
+	// Constitution resolution. SessionStartInput makes constitution_id +
+	// constitution_ver optional (omitempty), so a session may carry empty
+	// constitution fields. PersonaFrame (below) already mirrors this
+	// fallback to s.Store.ActiveConstitution(); IdentityFrame must do
+	// the same or NewIdentityFrame returns ErrEmptyConstitutionID and
+	// the gate refuses every session-bound tool call with "identity
+	// unavailable for this session".
+	constitutionID := sess.ConstitutionID
+	constitutionVer := sess.ConstitutionVer
+	if constitutionID == "" || constitutionVer == "" {
+		constitutionID, constitutionVer, _ = s.Store.ActiveConstitution(ctx)
+	}
 	return atomic.NewIdentityFrame(
 		sess.Operator, // actor (the user-facing principal)
 		sess.Operator, // operator (same field — distinct semantic, same value)
 		sessionID,
-		sess.ConstitutionID,
-		sess.ConstitutionVer,
+		constitutionID,
+		constitutionVer,
 		false, // canary — see comment above
 	)
 }
