@@ -49,7 +49,13 @@ jobs:
 
       - name: Extract version from git tag
         id: version
-        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
+          # Commit timestamp (deterministic per tag) for SOURCE_DATE_EPOCH
+          # so PE/Mach-O/ELF header timestamps match across all publish
+          # workflows (npm + GitHub Release) -> reproducible SHAs.
+          echo "EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_OUTPUT"
 
       - name: Verify package.json version matches tag
         working-directory: npm/platform-${{ matrix.npm-platform }}
@@ -64,7 +70,14 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.25"
+          # Pin exact Go patch version (not just "1.25") so publish-npm
+          # and build-mcpb produce byte-identical binaries. With "1.25"
+          # setup-go resolves to whatever 1.25.x.y is the latest at the
+          # time of each runner's install; if those resolve differently
+          # on the two parallel runners, the SHA256 of the same source
+          # built with the same ldflags will drift. Pinning to 1.25.12
+          # guarantees both runners get the exact same toolchain.
+          go-version: "1.25.12"
 
       - name: Cross-compile dark-mem-mcp binary for ${{ matrix.npm-platform }}
         working-directory: cmd/dark-mem-mcp
@@ -72,6 +85,12 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
+          # SOURCE_DATE_EPOCH pins the PE/Mach-O/ELF header timestamp to
+          # the commit timestamp (deterministic). Without this, each build
+          # embeds the current wall clock time, causing cross-publish SHA
+          # drift even when Go version + ldflags match.
+          # https://reproducible-builds.org/docs/source-date-epoch/
+          SOURCE_DATE_EPOCH: ${{ steps.version.outputs.EPOCH }}
         run: |
           set -euo pipefail
           mkdir -p ../../npm/platform-${{ matrix.npm-platform }}/bin
