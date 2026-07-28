@@ -2981,9 +2981,20 @@ func (s *Store) CreateProject(ctx context.Context, p *project.Project) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// v2.4.1: default_agent_id added (column from migration v20).
+	// ON CONFLICT DO UPDATE preserves the existing default_agent_id if
+	// the caller passes "" (empty string means "don't change"), so
+	// re-creating a project doesn't blow away the agent config. To
+	// explicitly clear, pass a sentinel — for v2.4.1 we accept "" as
+	// "leave unchanged" on replay; clearing via tool layer is a
+	// v2.4.x follow-up if needed.
+	var defaultAgent sql.NullString
+	if p.DefaultAgentID != "" {
+		defaultAgent = sql.NullString{String: p.DefaultAgentID, Valid: true}
+	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO projects (project_id, display_name, description, constitution_id, constitution_ver, created_at, archived_at, parent_project_id, drift_strictness)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO projects (project_id, display_name, description, constitution_id, constitution_ver, created_at, archived_at, parent_project_id, drift_strictness, default_agent_id)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(project_id) DO UPDATE SET
 		   display_name = excluded.display_name,
 		   description = excluded.description,
@@ -2991,10 +3002,11 @@ func (s *Store) CreateProject(ctx context.Context, p *project.Project) error {
 		   constitution_ver = excluded.constitution_ver,
 		   parent_project_id = excluded.parent_project_id,
 		   drift_strictness = excluded.drift_strictness,
+		   default_agent_id = COALESCE(excluded.default_agent_id, projects.default_agent_id),
 		   archived_at = NULL`,
 		p.ProjectID, p.DisplayName, nullStr(p.Description), nullStr(p.ConstitutionID), nullStr(p.ConstitutionVer),
 		p.CreatedAt, nullStr(p.ArchivedAt), nullStr(p.ParentProjectID),
-		nullStr(driftStrictnessOrDefault(p.DriftStrictness)))
+		nullStr(driftStrictnessOrDefault(p.DriftStrictness)), defaultAgent)
 	if err != nil {
 		return err
 	}
@@ -3014,11 +3026,11 @@ func (s *Store) GetProject(ctx context.Context, projectID string) (*project.Proj
 		return nil, err
 	}
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, project_id, display_name, description, constitution_id, constitution_ver, created_at, archived_at, parent_project_id, drift_strictness
+		`SELECT id, project_id, display_name, description, constitution_id, constitution_ver, created_at, archived_at, parent_project_id, drift_strictness, default_agent_id
 		 FROM projects WHERE project_id = ?`, projectID)
 	var p project.Project
-	var desc, consID, consVer, archived, parent, drift sql.NullString
-	if err := row.Scan(&p.ID, &p.ProjectID, &p.DisplayName, &desc, &consID, &consVer, &p.CreatedAt, &archived, &parent, &drift); err != nil {
+	var desc, consID, consVer, archived, parent, drift, defaultAgent sql.NullString
+	if err := row.Scan(&p.ID, &p.ProjectID, &p.DisplayName, &desc, &consID, &consVer, &p.CreatedAt, &archived, &parent, &drift, &defaultAgent); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
@@ -3042,6 +3054,9 @@ func (s *Store) GetProject(ctx context.Context, projectID string) (*project.Proj
 	if drift.Valid {
 		p.DriftStrictness = drift.String
 	}
+	if defaultAgent.Valid {
+		p.DefaultAgentID = defaultAgent.String
+	}
 	return &p, nil
 }
 
@@ -3050,7 +3065,7 @@ func (s *Store) ListProjects(ctx context.Context, limit int) ([]project.Project,
 		limit = 100
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, project_id, display_name, description, constitution_id, constitution_ver, created_at, archived_at, parent_project_id, drift_strictness
+		`SELECT id, project_id, display_name, description, constitution_id, constitution_ver, created_at, archived_at, parent_project_id, drift_strictness, default_agent_id
 		 FROM projects
 		 WHERE archived_at IS NULL
 		 ORDER BY created_at DESC, project_id ASC
@@ -3062,8 +3077,8 @@ func (s *Store) ListProjects(ctx context.Context, limit int) ([]project.Project,
 	out := []project.Project{}
 	for rows.Next() {
 		var p project.Project
-		var desc, consID, consVer, archived, parent, drift sql.NullString
-		if err := rows.Scan(&p.ID, &p.ProjectID, &p.DisplayName, &desc, &consID, &consVer, &p.CreatedAt, &archived, &parent, &drift); err != nil {
+		var desc, consID, consVer, archived, parent, drift, defaultAgent sql.NullString
+		if err := rows.Scan(&p.ID, &p.ProjectID, &p.DisplayName, &desc, &consID, &consVer, &p.CreatedAt, &archived, &parent, &drift, &defaultAgent); err != nil {
 			return nil, err
 		}
 		if desc.Valid {
@@ -3083,6 +3098,9 @@ func (s *Store) ListProjects(ctx context.Context, limit int) ([]project.Project,
 		}
 		if drift.Valid {
 			p.DriftStrictness = drift.String
+		}
+		if defaultAgent.Valid {
+			p.DefaultAgentID = defaultAgent.String
 		}
 		out = append(out, p)
 	}
@@ -4395,6 +4413,15 @@ func (s *Store) ListAgentMemory(ctx context.Context, f agentmemory.AgentMemoryLi
 		args = append(args, f.AgentID)
 	case agentmemory.ScopeProject, agentmemory.ScopeAll:
 		// No additional filter — already constrained by project.
+	}
+	// v2.4.1: AgentID is an ADDITIONAL filter that composes with
+	// any scope. When set, narrows the result set to that agent's
+	// rows regardless of scope (ScopeProject, ScopeAll, ScopeSession,
+	// ScopeOperator). For ScopeAgent the filter is already added in
+	// the switch above; we skip the duplicate here.
+	if f.AgentID != "" && scope != agentmemory.ScopeAgent {
+		where = append(where, "agent_id = ?")
+		args = append(args, f.AgentID)
 	}
 
 	query := `SELECT id, project_id, COALESCE(session_id, ''), operator,

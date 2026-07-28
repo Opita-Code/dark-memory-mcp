@@ -47,6 +47,12 @@ import (
 // RegisterProject is a no-op for un-provisioned stores that pre-date
 // the migrations/v7 projects table — Store.CreateProject itself
 // surfaces the migration error, and we propagate it verbatim.
+//
+// v2.4.1: gained `default_agent_id` (optional). When set, session_start
+// and publish_vibe resolve agent_id with priority (caller input >
+// project default > empty). Multi-agent projects should set this to
+// the primary agent_id; per-call overrides are accepted on session_start
+// and publish_vibe.
 func RegisterProject(reg *Registry, orch *orchestration.Orchestrator, st store.Store) {
 	reg.Add(BindStore("project_create",
 		"Create a new project (INV-7 tenant primitive). Idempotent on project_id — re-creating an existing project returns the existing row. The 'default' project is seeded on Open and cannot be re-created (returns ErrAlreadyExists).",
@@ -79,6 +85,11 @@ func RegisterProject(reg *Registry, orch *orchestration.Orchestrator, st store.S
 					"type":        "string",
 					"description": "Optional constitution version (paired with constitution_id).",
 				},
+				"default_agent_id": map[string]any{
+					"type":        "string",
+					"maxLength":   128,
+					"description": "Optional v2.4.1 Mem0 agent_id (LLM identity) that owns the project. session_start and publish_vibe resolve agent_id with priority (caller input > this default > empty). Empty = no default agent (v2.4.0 behavior). Set this for multi-agent projects so each LLM's ContextRecap and drift_judge enrichment filter to its own memories.",
+				},
 			},
 		}),
 		st,
@@ -94,6 +105,10 @@ type ProjectCreateInput struct {
 	Description     string `json:"description,omitempty"`
 	ConstitutionID  string `json:"constitution_id,omitempty"`
 	ConstitutionVer string `json:"constitution_ver,omitempty"`
+	// DefaultAgentID (v2.4.1) is the Mem0 agent_id (LLM identity)
+	// that owns the project. See internal/project/types.go for the
+	// resolution priority. Optional; empty = no default agent.
+	DefaultAgentID string `json:"default_agent_id,omitempty"`
 }
 
 // ProjectCreateResult is the output for project_create. On idempotent
@@ -107,6 +122,11 @@ type ProjectCreateResult struct {
 	ConstitutionVer  string `json:"constitution_ver,omitempty"`
 	CreatedAt        string `json:"created_at"`
 	IdempotentReplay bool   `json:"idempotent_replay"` // true when (project_id) already existed
+	// DefaultAgentID (v2.4.1) echoes the resolved project-level
+	// default_agent_id. On idempotent replay, this is the existing
+	// row's value (the caller's input is treated as "leave unchanged"
+	// when empty per the Store impl).
+	DefaultAgentID string `json:"default_agent_id,omitempty"`
 }
 
 // runProjectCreate validates input, dispatches to Store.CreateProject,
@@ -124,6 +144,7 @@ func runProjectCreate(ctx context.Context, s store.Store, in ProjectCreateInput)
 		Description:     in.Description,
 		ConstitutionID:  in.ConstitutionID,
 		ConstitutionVer: in.ConstitutionVer,
+		DefaultAgentID:  in.DefaultAgentID,
 		CreatedAt:       now,
 	}
 
@@ -131,7 +152,9 @@ func runProjectCreate(ctx context.Context, s store.Store, in ProjectCreateInput)
 	// created_at on idempotent replay instead of overwriting it with
 	// "now". CreateProject itself is idempotent (INSERT OR IGNORE on
 	// the unique index), so this read-before-write is purely a UX
-	// concern, not a correctness one.
+	// concern, not a correctness one. v2.4.1: also surface the
+	// existing default_agent_id on idempotent replay so callers can
+	// verify what was already configured.
 	if existing, err := s.GetProject(ctx, in.ProjectID); err == nil && existing != nil {
 		return &ProjectCreateResult{
 			ProjectID:        existing.ProjectID,
@@ -139,6 +162,7 @@ func runProjectCreate(ctx context.Context, s store.Store, in ProjectCreateInput)
 			Description:      existing.Description,
 			ConstitutionID:   existing.ConstitutionID,
 			ConstitutionVer:  existing.ConstitutionVer,
+			DefaultAgentID:   existing.DefaultAgentID,
 			CreatedAt:        existing.CreatedAt,
 			IdempotentReplay: true,
 		}, nil
@@ -153,6 +177,7 @@ func runProjectCreate(ctx context.Context, s store.Store, in ProjectCreateInput)
 		Description:      p.Description,
 		ConstitutionID:   p.ConstitutionID,
 		ConstitutionVer:  p.ConstitutionVer,
+		DefaultAgentID:   p.DefaultAgentID,
 		CreatedAt:        p.CreatedAt,
 		IdempotentReplay: false,
 	}, nil
@@ -177,6 +202,14 @@ func validateProjectCreateInput(in ProjectCreateInput) error {
 		return store.ErrInvalidArgument
 	}
 	if len(in.Description) > 512 {
+		return store.ErrInvalidArgument
+	}
+	// v2.4.1: default_agent_id length matches the JSON Schema's
+	// maxLength (128). Free-form string otherwise — no character
+	// class restriction since LLM model names contain dots, dashes,
+	// colons, and version numbers (e.g. "claude-sonnet-4.5",
+	// "gpt-4o-2024-08-06").
+	if len(in.DefaultAgentID) > 128 {
 		return store.ErrInvalidArgument
 	}
 	// The JSON Schema's `pattern` is the primary validator; this is

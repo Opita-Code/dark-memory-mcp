@@ -140,6 +140,157 @@ across project-wide scope, not session scope).
 
 ---
 
+## [2.4.1] - 2026-07-28
+
+### Added - agent_id plumbing end-to-end (closes v2.3.0 cross-agent leakage)
+
+The `agent_memory` table gained an `agent_id` column in v2.3.0 (the
+Mem0 agent_id semantic — the LLM that owns each memory). v2.4.0
+wired `agent_memory` into the vibe-loop (ContextRecap on
+`session_start`, drift_judge enrichment on `publish_vibe`) but used
+**project-wide scope**: when multiple LLMs shared a project, each
+LLM's recap and judge enrichment surfaced the OTHER LLM's decisions
+and findings — exactly the cross-agent leakage the `agent_id` column
+was designed to prevent.
+
+**v2.4.1 fixes this end-to-end.** The same `agent_id` resolution
+chain is now applied uniformly to all VLP integration points.
+
+### Resolution priority (canonical chain)
+
+For any VLP operation that consults `agent_memory`:
+
+1. **Caller input** — `session_start.AgentID` or `publish_vibe.AgentID`.
+   Per-call override. Empty = fall through.
+2. **`projects.default_agent_id`** — project-level default set at
+   tenant provisioning via
+   `dark_memory_project_create(default_agent_id="...")`. v2.4.1 NEW
+   column (migration v20). Empty = fall through.
+3. **Empty string** — no agent filter; project-wide scope (v2.4.0
+   backward compat).
+
+### Schema migration v20
+
+```sql
+ALTER TABLE projects ADD COLUMN default_agent_id TEXT;
+```
+
+Idempotent (SQLite ADD COLUMN without DEFAULT is a no-op on
+re-apply; Postgres uses `ADD COLUMN IF NOT EXISTS`). No index needed
+— read once per session_start / publish_vibe, low cardinality.
+
+### Wire contract (additive only)
+
+```jsonc
+// dark_memory_project_create gained a default_agent_id input
+{
+  "project_id": "acme",
+  "display_name": "ACME",
+  "default_agent_id": "claude-sonnet-4.5"   // v2.4.1 NEW
+}
+
+// dark_memory_session_start gained an agent_id input +
+// active_agent_id output
+{
+  "operator": "alice",
+  "project_id": "acme",
+  "agent_id": "gpt-4o"                      // v2.4.1 NEW (optional)
+}
+// Response now echoes the resolved agent_id:
+{
+  "session_id": "sess-...",
+  "active_agent_id": "gpt-4o",              // v2.4.1 NEW
+  "context_recap": {
+    "pinned_memories": [...],               // filtered by active_agent_id
+    "open_todos": [...]                     // filtered by active_agent_id
+  }
+}
+
+// dark_memory_publish_vibe gained an agent_id input +
+// active_agent_id output
+{
+  "spec": {...},
+  "artifact": {...},
+  "agent_id": "claude-sonnet-4.5"           // v2.4.1 NEW (optional)
+}
+// Response now echoes the resolved agent_id used for drift_judge
+// enrichment:
+{
+  "spec_id": 42,
+  "artifact_id": 17,
+  "active_agent_id": "claude-sonnet-4.5",   // v2.4.1 NEW
+  "verdict": "drift_detected",
+  ...
+}
+```
+
+### What changed under the hood
+
+- **Store.ListAgentMemory** — `agent_id` is now an ADDITIVE filter
+  that composes with any scope (Project, Session, Operator, Agent).
+  Previously only applied when `scope=agent`; v2.4.1 also applies it
+  as an additional filter when scope=project with non-empty
+  agent_id, so callers can scope project-wide queries by agent
+  without flipping scope semantics.
+- **Orchestrator.resolveActiveAgentID** (NEW) — applies the
+  resolution priority chain (caller > project default > empty).
+  Best-effort: Store errors swallowed, falls back to empty string.
+  Lives in `internal/orchestration/agent_id.go`.
+- **session_start** — accepts `AgentID` input, emits `ActiveAgentID`
+  output, plumbs resolved agent_id into `recapSessionStartMemory` →
+  `listPinnedForVibe` + `listOpenTodosForVibe` filters.
+- **publish_vibe** — accepts `AgentID` input, emits `ActiveAgentID`
+  output, plumbs resolved agent_id into `enrichWithAgentMemory` →
+  `recallForVibe` filter.
+- **project_create** — accepts `default_agent_id` input (max 128
+  chars), echoes it on idempotent replay.
+- **Project struct** — gained `DefaultAgentID string` field
+  (json tag `default_agent_id,omitempty`).
+- **Store.CreateProject / GetProject / ListProjects** — handle the
+  new column. ON CONFLICT DO UPDATE preserves the existing
+  `default_agent_id` on idempotent replay (COALESCE pattern; empty
+  string in caller input = "leave unchanged").
+
+### Tests
+
+4 new defensive tests in
+`tests/orchestration/agent_memory_v2_4_1_test.go`:
+
+- `TestV241_ContextRecap_RespectsAgentID` — two agents in same
+  project, session_start with `AgentID="gpt-4o"`, verifies recap
+  surfaces only gpt-4o's pinned + todos. Verifies claude's rows
+  do NOT leak in (cross-agent isolation).
+- `TestV241_ContextRecap_NoAgentID_FallsBackToProjectWide` —
+  no `AgentID`, no project default; recap falls back to
+  project-wide (v2.4.0 backward compat).
+- `TestV241_DriftJudge_EnrichesByActiveAgentID` — `publish_vibe`
+  with no `AgentID`, project has `default_agent_id="gpt-4o"`;
+  verifies `ActiveAgentID="gpt-4o"` echoes on result.
+- `TestV241_DefaultAgentID_ResolvesOnSessionStart` — verifies
+  the resolution priority chain: `default_agent_id` used when
+  `session_start.AgentID` empty.
+
+Full test suite green (492 tests across 13 packages).
+
+### Drift governance
+
+Pre-flight evaluation pending. (See drift_judge result below.)
+
+### Wire-stable notes
+
+- All changes are additive. Existing callers see no behavioral change
+  unless they set `AgentID` / `default_agent_id` (then their
+  ContextRecap + drift_judge enrichment gets scoped).
+- v2.4.0's `context_recap` field remains — only its rows get
+  filtered now. Operators without an `agent_id` see the same
+  v2.4.0 behavior they had.
+- The `bind_session` + `scope=session` semantics from v2.3.0 are
+  unchanged. `agent_id` and `session_id` are independent axes:
+  `session_id` = ephemeral lifecycle, `agent_id` = persistent LLM
+  identity.
+
+---
+
 ## [2.3.0] — 2026-07-28
 
 ### Added — agent_memory save-decouple + Mem0 alignment + recall tool

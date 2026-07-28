@@ -54,6 +54,29 @@ type Project struct {
 	// whose HEARTBEAT_TIMEOUT (5E.iii) has elapsed. Empty when no
 	// active session.
 	ActiveSessionSetAt string `json:"active_session_set_at,omitempty"`
+
+	// DefaultAgentID (v20, v2.4.1) is the Mem0 agent_id (LLM
+	// identity) that owns the project. session_start and publish_vibe
+	// resolve agent_id with priority:
+	//   1. caller-supplied AgentID on the request (per-call override)
+	//   2. projects.default_agent_id (this field, per-project default)
+	//   3. empty string (no agent filter; project-wide scope — v2.4.0
+	//      behavior)
+	//
+	// Set at tenant provisioning via
+	// dark_memory_project_create(default_agent_id="claude-sonnet-4.5").
+	// Distinct from Operator (human/agent identity per INV-1 audit).
+	// Single-agent flows may use the same value for both; multi-agent
+	// flows (e.g. a project used by both claude-sonnet-4.5 and
+	// gpt-4o) set this to one and override per-call.
+	//
+	// Wired into ContextRecap (session_start) and drift_judge
+	// enrichment (publish_vibe). When set, VLP integrations filter
+	// agent_memory by this agent_id so each LLM sees only its own
+	// decisions / findings, not those of other LLMs writing to the
+	// same project — closing the cross-agent leakage that v2.4.0
+	// introduced when it integrated agent_memory project-wide.
+	DefaultAgentID string `json:"default_agent_id,omitempty"`
 }
 
 // IsArchived returns true if the project has been soft-deleted.

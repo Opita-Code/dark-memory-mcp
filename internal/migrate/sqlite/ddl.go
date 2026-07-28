@@ -804,4 +804,48 @@ CREATE INDEX IF NOT EXISTS idx_agent_memory_agent ON agent_memory (project_id, a
 CREATE INDEX IF NOT EXISTS idx_agent_memory_mtype ON agent_memory (project_id, memory_type, archived_at, created_at DESC) WHERE memory_type IS NOT NULL;
 `,
 	},
+	{
+		// v20 — projects.default_agent_id (v2.4.1)
+		// Closes the agent_id plumbing debt that v2.3.0 introduced:
+		// the agent_memory table gained an `agent_id` column (the LLM
+		// that owns each memory per Mem0 semantics), and v2.4.0 wired
+		// agent_memory into session_start (ContextRecap) and
+		// publish_vibe (drift_judge enrichment). v2.4.0 used a
+		// project-wide scope, which conflates memories from different
+		// agents (LLMs) writing to the same project — exactly the
+		// cross-leakage the agent_id column was designed to prevent.
+		//
+		// v2.4.1 fixes this by:
+		//   1. Adding projects.default_agent_id — the project-level
+		//      default that session_start / publish_vibe resolve when
+		//      the caller doesn't pass an explicit agent_id.
+		//   2. Threading agent_id through session_start (optional
+		//      input param) and publish_vibe (optional input param).
+		//   3. Plumbing agent_id into the VLP integrations: ContextRecap
+		//      (listPinnedForVibe, listOpenTodosForVibe) and the
+		//      drift_judge enrichment (recallForVibe).
+		//
+		// Schema:
+		//   default_agent_id   TEXT NULL
+		//     Mem0 agent_id (LLM identity). Distinct from operator
+		//     (human/agent audit identity). Empty = unconfigured =
+		//     project-wide scope (backward compatible with v2.4.0).
+		//     Set by project_create(default_agent_id=...) at tenant
+		//     provisioning; resolved by session_start / publish_vibe.
+		//
+		// Idempotent: ALTER TABLE ADD COLUMN with no DEFAULT is a
+		// no-op if the column already exists (SQLite semantics).
+		// No index needed — default_agent_id is read at session_start
+		// (low-frequency, single-row lookup by primary key) and never
+		// used as a hot query prefix.
+		//
+		// Postgres parity: see internal/migrate/postgres/ddl.go where
+		// the same ALTER TABLE statement is mirrored with the IF NOT
+		// EXISTS pattern (Postgres requires it for idempotency).
+		Version: 20,
+		Name:    "projects_default_agent_id",
+		Up: `
+ALTER TABLE projects ADD COLUMN default_agent_id TEXT;
+`,
+	},
 }

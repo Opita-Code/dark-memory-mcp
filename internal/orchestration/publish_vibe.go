@@ -71,6 +71,13 @@ type PublishVibeInput struct {
 	// callers who don't set the field.
 	AutoDriftCheck *bool                `json:"auto_drift_check,omitempty"`
 	SessionID      string               `json:"session_id,omitempty"` // recorded on the artifact for INV-2
+	// AgentID (v2.4.1) is the Mem0 agent_id (LLM identity) that
+	// owns this artifact. Optional; resolved with priority
+	// (caller input > projects.default_agent_id > ""). When set,
+	// the drift_judge enrichment prepends only agent_memory rows
+	// authored by this agent_id (cross-agent leakage prevention;
+	// see v2.4.0 -> v2.4.1 changelog).
+	AgentID string `json:"agent_id,omitempty"`
 }
 
 // PublishResult is what PublishVibe returns. Every ID is the row ID in
@@ -87,6 +94,9 @@ type PublishResult struct {
 	Confidence       float32 `json:"confidence"`     // 0..1; 0 if skipped or no-LLM
 	NextAction       string  `json:"next_action"`    // publish | reconcile | human_gate
 	Reasoning        string  `json:"reasoning"`      // human-readable explanation
+	// ActiveAgentID (v2.4.1) echoes the resolved agent_id used for
+	// drift_judge enrichment. Empty when no agent_id is configured.
+	ActiveAgentID string `json:"active_agent_id,omitempty"`
 }
 
 // PublishVibe is the canonical publish entry point. See package doc.
@@ -157,6 +167,15 @@ func (o *Orchestrator) PublishVibe(ctx context.Context, in PublishVibeInput) (*P
 		Reasoning:  "drift check pending",
 	}
 
+	// v2.4.1: resolve the active agent_id for drift_judge enrichment.
+	// Priority: caller input > projects.default_agent_id > "".
+	// Empty agent_id means "no agent filter" — drift_judge sees
+	// agent_memory rows across all agents in the project (v2.4.0
+	// behavior). Best-effort: resolver swallows errors and falls
+	// back to "" on Store failure.
+	activeAgentID := o.resolveActiveAgentID(ctx, in.AgentID)
+	result.ActiveAgentID = activeAgentID
+
 	// 4. Optional brand_match. Only runs if both BrandID and Text are
 	// set. Judge failures (incl. canary rejection) are recorded in
 	// the drift reasoning but do not abort publish — the artifact is
@@ -219,12 +238,15 @@ func (o *Orchestrator) PublishVibe(ctx context.Context, in PublishVibeInput) (*P
 	} else {
 		// v2.4.0 memory-RAG: prepend agent_memory hits to the
 		// drift_judge content so the judge sees relevant prior
-		// decisions / findings when scoring the artifact. Best-
-		// effort: errors are swallowed — drift_judge runs even if
-		// agent_memory is broken (the data-plane should never
+		// decisions / findings when scoring the artifact. v2.4.1:
+		// filtered by activeAgentID so the judge only sees prior
+		// context authored by the same agent (no cross-agent
+		// leakage when multiple LLMs share a project).
+		// Best-effort: errors are swallowed — drift_judge runs even
+		// if agent_memory is broken (the data-plane should never
 		// break the judge path; that's the principle that keeps
 		// the VLP integration non-blocking).
-		enriched := o.enrichWithAgentMemory(ctx, in.Artifact.Text, []string{"decision", "finding"}, 5)
+		enriched := o.enrichWithAgentMemory(ctx, in.Artifact.Text, []string{"decision", "finding"}, activeAgentID, 5)
 		judgeOut, jerr := o.Judge(ctx, JudgeInput{
 			EvalType:   "drift_judge",
 			TargetType: "artifact",
@@ -385,12 +407,18 @@ func nextActionForVerdict(v string) string {
 
 // enrichWithAgentMemory is the v2.4.0 memory-RAG prepend helper.
 // Takes a base text + a list of kinds to filter on (defaults to
-// "decision" + "finding" when len(kinds)==0) + a limit (defaults to
-// 5, max 50). Returns the base text with the formatted hit block
-// prepended, OR the base text unchanged if (a) agent_memory is
-// broken, (b) no project is active, or (c) no hits. Errors are
+// "decision" + "finding" when len(kinds)==0) + an agent_id
+// (v2.4.1; empty = project-wide — v2.4.0 behavior) + a limit
+// (defaults to 5, max 50). Returns the base text with the formatted
+// hit block prepended, OR the base text unchanged if (a) agent_memory
+// is broken, (b) no project is active, or (c) no hits. Errors are
 // swallowed — the caller should never see an error from this path.
-func (o *Orchestrator) enrichWithAgentMemory(ctx context.Context, base string, kinds []string, limit int) string {
+//
+// v2.4.1: agent_id is forwarded to recallForVibe so the judge only
+// sees prior context from the same agent. When multiple LLMs share
+// a project, this prevents drift_judge from being misled by another
+// agent's unrelated decisions / findings.
+func (o *Orchestrator) enrichWithAgentMemory(ctx context.Context, base string, kinds []string, agentID string, limit int) string {
 	if strings.TrimSpace(base) == "" {
 		return base
 	}
@@ -399,8 +427,9 @@ func (o *Orchestrator) enrichWithAgentMemory(ctx context.Context, base string, k
 	}
 	// Filter hits across the supplied kinds; in practice we run the
 	// search once with no kind filter and re-filter the hits
-	// in-process (cheaper than N round trips).
-	hits, err := o.recallForVibe(ctx, base, "", "", "", limit*len(kinds))
+	// in-process (cheaper than N round trips). v2.4.1: agentID
+	// forwarded to SearchAgentMemory for per-agent filtering.
+	hits, err := o.recallForVibe(ctx, base, "", "", agentID, limit*len(kinds))
 	if err != nil || len(hits) == 0 {
 		return base
 	}

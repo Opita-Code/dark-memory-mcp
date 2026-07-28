@@ -289,9 +289,11 @@ func (o *Orchestrator) recallForVibe(ctx context.Context, query, kind, memoryTyp
 }
 
 // listPinnedForVibe returns the most recent pinned rows in the active
-// project (no operator filter — intent is "show me what's pinned, by
-// anyone, in this project"). limit defaults to 10, max 50.
-func (o *Orchestrator) listPinnedForVibe(ctx context.Context, kind string, limit int) ([]agentmemory.AgentMemory, error) {
+// project, optionally filtered by kind + agent_id. v2.4.1: added
+// agentID parameter so SessionStart can scope the recap to the
+// resolved agent (per Mem0 agent_id semantics). Empty agentID =
+// project-wide (v2.4.0 backward compat). limit defaults to 10, max 50.
+func (o *Orchestrator) listPinnedForVibe(ctx context.Context, kind, agentID string, limit int) ([]agentmemory.AgentMemory, error) {
 	if limit <= 0 {
 		limit = 10
 	}
@@ -301,6 +303,7 @@ func (o *Orchestrator) listPinnedForVibe(ctx context.Context, kind string, limit
 	rows, err := o.Store.ListAgentMemory(ctx, agentmemory.AgentMemoryListFilters{
 		Scope:      agentmemory.ScopeProject,
 		Kind:       kind,
+		AgentID:    agentID,
 		PinnedOnly: true,
 		Limit:      limit,
 	})
@@ -323,10 +326,10 @@ func (o *Orchestrator) listOpenTodosForVibe(ctx context.Context, agentID string,
 		limit = 50
 	}
 	rows, err := o.Store.ListAgentMemory(ctx, agentmemory.AgentMemoryListFilters{
-		Scope:  agentmemory.ScopeProject,
-		Kind:   "todo",
+		Scope:   agentmemory.ScopeProject,
+		Kind:    "todo",
 		AgentID: agentID,
-		Limit:  limit,
+		Limit:   limit,
 	})
 	if err != nil {
 		return nil, err

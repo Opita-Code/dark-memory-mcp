@@ -591,4 +591,16 @@ CREATE INDEX IF NOT EXISTS idx_agent_memory_op   ON agent_memory (operator, arch
 CREATE INDEX IF NOT EXISTS idx_agent_memory_kind ON agent_memory (project_id, kind, archived_at);
 `,
 	},
+	{
+		// v20 — projects.default_agent_id (v2.4.1).
+		// Mirror of sqlite v20. See internal/migrate/sqlite/ddl.go for
+		// the full rationale. Postgres requires IF NOT EXISTS on
+		// ADD COLUMN for idempotency; SQLite is idempotent without it
+		// (we keep the explicit IF NOT EXISTS for parity).
+		Version: 20,
+		Name:    "projects_default_agent_id",
+		Up: `
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS default_agent_id TEXT;
+`,
+	},
 }

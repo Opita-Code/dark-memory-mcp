@@ -1513,9 +1513,13 @@ func (s *Store) CreateProject(ctx context.Context, p *project.Project) error {
 	if p.CreatedAt == "" {
 		p.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
+	// v2.4.1: default_agent_id added (column from migration v20).
+	// NULLIF($10, '') maps empty string -> NULL so the COALESCE
+	// below preserves the existing value on idempotent re-create.
+	defaultAgent := p.DefaultAgentID
 	_, err := s.pool.Exec(ctx,
-		`INSERT INTO projects (project_id, display_name, description, constitution_id, constitution_ver, created_at, archived_at, parent_project_id, drift_strictness)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		`INSERT INTO projects (project_id, display_name, description, constitution_id, constitution_ver, created_at, archived_at, parent_project_id, drift_strictness, default_agent_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULLIF($10, ''))
 		 ON CONFLICT(project_id) DO UPDATE SET
 		   display_name = EXCLUDED.display_name,
 		   description = EXCLUDED.description,
@@ -1523,9 +1527,10 @@ func (s *Store) CreateProject(ctx context.Context, p *project.Project) error {
 		   constitution_ver = EXCLUDED.constitution_ver,
 		   parent_project_id = EXCLUDED.parent_project_id,
 		   drift_strictness = EXCLUDED.drift_strictness,
+		   default_agent_id = COALESCE(EXCLUDED.default_agent_id, projects.default_agent_id),
 		   archived_at = NULL`,
 		p.ProjectID, p.DisplayName, p.Description, p.ConstitutionID, p.ConstitutionVer,
-		p.CreatedAt, p.ArchivedAt, p.ParentProjectID, driftStrictnessOrDefault(p.DriftStrictness))
+		p.CreatedAt, p.ArchivedAt, p.ParentProjectID, driftStrictnessOrDefault(p.DriftStrictness), defaultAgent)
 	if err != nil {
 		return err
 	}
@@ -1545,11 +1550,11 @@ func (s *Store) CreateProject(ctx context.Context, p *project.Project) error {
 
 func (s *Store) GetProject(ctx context.Context, projectID string) (*project.Project, error) {
 	var p project.Project
-	var desc, consID, consVer, archived, parent, drift *string
+	var desc, consID, consVer, archived, parent, drift, defaultAgent *string
 	err := s.pool.QueryRow(ctx,
-		`SELECT id, project_id, display_name, description, constitution_id, constitution_ver, created_at, archived_at, parent_project_id, drift_strictness
+		`SELECT id, project_id, display_name, description, constitution_id, constitution_ver, created_at, archived_at, parent_project_id, drift_strictness, default_agent_id
 		 FROM projects WHERE project_id = $1`, projectID).Scan(
-		&p.ID, &p.ProjectID, &p.DisplayName, &desc, &consID, &consVer, &p.CreatedAt, &archived, &parent, &drift)
+		&p.ID, &p.ProjectID, &p.DisplayName, &desc, &consID, &consVer, &p.CreatedAt, &archived, &parent, &drift, &defaultAgent)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -1574,6 +1579,9 @@ func (s *Store) GetProject(ctx context.Context, projectID string) (*project.Proj
 	if drift != nil {
 		p.DriftStrictness = *drift
 	}
+	if defaultAgent != nil {
+		p.DefaultAgentID = *defaultAgent
+	}
 	return &p, nil
 }
 
@@ -1582,7 +1590,7 @@ func (s *Store) ListProjects(ctx context.Context, limit int) ([]project.Project,
 		limit = 100
 	}
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, project_id, display_name, description, constitution_id, constitution_ver, created_at, archived_at, parent_project_id, drift_strictness
+		`SELECT id, project_id, display_name, description, constitution_id, constitution_ver, created_at, archived_at, parent_project_id, drift_strictness, default_agent_id
 		 FROM projects
 		 WHERE archived_at IS NULL
 		 ORDER BY created_at DESC, project_id ASC
@@ -1594,8 +1602,8 @@ func (s *Store) ListProjects(ctx context.Context, limit int) ([]project.Project,
 	out := []project.Project{}
 	for rows.Next() {
 		var p project.Project
-		var desc, consID, consVer, archived, parent, drift *string
-		if err := rows.Scan(&p.ID, &p.ProjectID, &p.DisplayName, &desc, &consID, &consVer, &p.CreatedAt, &archived, &parent, &drift); err != nil {
+		var desc, consID, consVer, archived, parent, drift, defaultAgent *string
+		if err := rows.Scan(&p.ID, &p.ProjectID, &p.DisplayName, &desc, &consID, &consVer, &p.CreatedAt, &archived, &parent, &drift, &defaultAgent); err != nil {
 			return nil, err
 		}
 		if desc != nil {
@@ -1615,6 +1623,9 @@ func (s *Store) ListProjects(ctx context.Context, limit int) ([]project.Project,
 		}
 		if drift != nil {
 			p.DriftStrictness = *drift
+		}
+		if defaultAgent != nil {
+			p.DefaultAgentID = *defaultAgent
 		}
 		out = append(out, p)
 	}
