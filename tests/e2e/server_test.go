@@ -43,7 +43,7 @@ func TestE2E_29ToolsRegistered(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.close()
 
-	const wantCount = 38 // v2.6.0: AGENT_BOOTSTRAP (3); was 35 in v2.3.0+5.
+	const wantCount = 39 // v2.7.0-alpha: MINDSET (1) mindset_apply; was 38 in v2.6.0+3, 35 in v2.3.0+5.
 	canonical := tools.CanonicalOrder()
 	if got := len(canonical); got != wantCount {
 		t.Fatalf("canonical order length: want %d, got %d", wantCount, got)
