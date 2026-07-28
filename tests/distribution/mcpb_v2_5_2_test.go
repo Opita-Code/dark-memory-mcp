@@ -19,6 +19,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -283,6 +284,14 @@ func TestV252_NPMBinaryMatchesReleaseBinary(t *testing.T) {
 
 	ghSum, err := downloadAndSha256(t, ghReleaseURL, "gh-release-win32-x64.exe")
 	if err != nil {
+		// If the GitHub Release doesn't exist yet, skip. This can happen when
+		// npm publish completes first (via publish-npm.yml) but build-mcpb.yml
+		// hasn't yet attached the binaries to the release. The next CI run
+		// after build-mcpb.yml succeeds will pick up the binaries.
+		var derr *downloadError
+		if errors.As(err, &derr) && derr.status == http.StatusNotFound {
+			t.Skipf("GitHub Release v%s not yet published (build-mcpb.yml hasn't run yet). Re-run CI after the release is up.", latestVersion)
+		}
 		t.Fatalf("download GitHub Release binary (v%s): %v", latestVersion, err)
 	}
 

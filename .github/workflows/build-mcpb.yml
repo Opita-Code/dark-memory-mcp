@@ -190,6 +190,12 @@ jobs:
           # Inside that dir is the binary itself (e.g. dark-mem-mcp-amd64).
           # Flatten to `release-binaries/<binary>-<bundle-name>` so the
           # attach-to-release files: glob matches.
+          #
+          # IMPORTANT: cwd is `release-binaries/` (set by working-directory),
+          # so paths in this script are RELATIVE to that. The files glob in
+          # the attach-to-release step is resolved relative to the JOB root
+          # (workspace), so files end up at `release-binaries/<binary>-<bundle>`
+          # from the workspace root.
           shopt -s globstar nullglob
           for src in **/*; do
             [ -f "$src" ] || continue
@@ -200,14 +206,18 @@ jobs:
             # e.g. binary-darwin-amd64 -> darwin
             if [[ "$bundle_arch" =~ ^binary-([^-]+)-.+$ ]]; then
               bundle_name="${BASH_REMATCH[1]}"
-              target="release-binaries/${base}-${bundle_name}"
+              # target is RELATIVE to cwd (which is release-binaries/).
+              # From the workspace root, the file ends up at
+              # `release-binaries/<binary>-<bundle>` which matches the
+              # attach-to-release files: glob.
+              target="${base}-${bundle_name}"
               [ -e "$target" ] && continue
               mv "$src" "$target"
             fi
           done
           # Emit summary
           echo "=== Binaries ready for release ==="
-          ls -la release-binaries/
+          ls -la
 
       - name: Find or create GitHub Release
         uses: softprops/action-gh-release@v2
