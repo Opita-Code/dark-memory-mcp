@@ -21,7 +21,7 @@
 
 [![MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Go 1.25+](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go&logoColor=white)](go.mod)
-[![MCP tools](https://img.shields.io/badge/MCP-35%20canonical%20tools-blueviolet)](#las-35-herramientas)
+[![MCP tools](https://img.shields.io/badge/MCP-38%20canonical%20tools-blueviolet)](#las-38-herramientas)
 [![Schema](https://img.shields.io/badge/schema-v20-success)](#la-base-de-datos)
 [![Tests](https://img.shields.io/badge/tests-27%20suites%20verdes-brightgreen)](#tests)
 [![Install](https://img.shields.io/badge/install-npx%20%40opita--code%2Fdark--memory--mcp-cc3534)](docs/npm-install.md)
@@ -234,10 +234,10 @@ de correrlo.
 
 ---
 
-## Las 35 herramientas
+## Las 38 herramientas
 
-dark-memory expone 35 acciones que tu agente puede invocar. Todas empiezan
-con el prefijo `dark_memory_`. Están agrupadas en 11 oficios:
+dark-memory expone 38 acciones que tu agente puede invocar. Todas empiezan
+con el prefijo `dark_memory_`. Están agrupadas en 12 oficios:
 
 ### 🧭 Empezar y cerrar sesión (PROJECT + SESSION — 5 tools)
 
@@ -256,6 +256,45 @@ con el prefijo `dark_memory_`. Están agrupadas en 11 oficios:
 | `dark_memory_research_topic` | "Investiga X y dame un resumen" |
 | `dark_memory_research_recall` | "¿Qué investigué antes sobre X?" |
 | `dark_memory_research_resume_thread` | "Continúa esa investigación de la semana pasada" |
+
+### 🪜 Self-Bootstrapping (AGENT_BOOTSTRAP — 3 tools, v2.6.0)
+
+> **Nuevo en v2.6.0.** El servidor se enseña a sí mismo cómo usarse. Publica
+> el manual canónico (8.9 KB), la matriz de compatibilidad por harness, 6
+> guías de instalación y 2 docs de MCPs companions como **resources MCP**.
+> Cualquier harness (Claude Desktop/Code, opencode, Cline, Cursor, Continue)
+> puede descubrirlas sin docs externos.
+
+El `instructions` field que muchos harnesses descartan (opencode [#32856](https://github.com/opencode-ai/opencode/issues/32856))
+es **best-effort**; los **resources son el camino canónico** porque todos
+los harnesses spec-compliant los soportan. Las 3 tools de abajo le dan al
+LLM acceso programático a ese contenido.
+
+| Herramienta | Cuándo se usa |
+|---|---|
+| `dark_memory_agent_bootstrap` | "Carga el manual canónico" — `surface`: `system_prompt` \| `compatibility_matrix` \| `install_guide` \| `companion` \| `all`. Para `install_guide` y `companion` pasá `target` (ej. `target=opencode`). |
+| `dark_memory_agent_recommend_companions` | "¿Qué MCPs companions me faltan?" — siempre recomienda `dark-research` y `dark-copilot` con snippet de install. |
+| `dark_memory_agent_detect_environment` | "¿Qué spec estás negociando? ¿Quién eres tú como harness?" — devuelve `SpecVersionDetected` (2025-06-18 / 2026-07-28), harness info y capacidades negociadas. |
+
+Si querés customizar el contenido sin esperar un release, exportá
+`DARK_AGENT_BOOTSTRAP_DIR=/ruta/a/tu/dir` con los 10 archivos esperados
+(`SYSTEM_PROMPT.md`, `COMPATIBILITY_MATRIX.md`, 6 guides en `install/`,
+2 docs en `companions/`). El servidor valida al arrancar y hace fallback
+al contenido embebido si falta algo.
+
+**Detalles técnicos**:
+
+- **Dual-spec clientInfo**: legacy `initialize.clientInfo` (2025-06-18) +
+  nuevo `_meta.clientInfo` per-request (2026-07-28) convergen en una sola
+  store `ClientInfoRecord`. Las tools leen de ahí.
+- **Audience `assistant` priority `0.9`**: el bootstrap content va al
+  LLM, no al usuario. Harness puede demotarlo si tiene context budget
+  apretado.
+- **URI scheme `dark-memory://`**: no-routable, marca claro de "owned
+  by this MCP" (no es `https://`, no es `file://`).
+
+Para la arquitectura completa (5 capas, decision tree, override env var),
+ver [`docs/agent-bootstrap.md`](docs/agent-bootstrap.md).
 
 ### 🌊 Hacer vibe-loop (VIBE — 4 tools)
 
@@ -498,7 +537,7 @@ de estado):
 
 - **Versión**: v2.5.2 (Sprint 3 roadmap: MCPB bundles + carry-forward tests)
 - **Schema DB**: v20 (zero migrations across v2.4.x and v2.5.x)
-- **Tools canónicos**: 35 (+ 3 en modo armed)
+- **Tools canónicos**: 38 (+ 3 en modo armed)
 - **Backends**: SQLite (default) + Postgres (research only en este host)
 - **Paquetes internos**: 27
 - **Suites de test**: 29 distribution tests + 27 total packages
