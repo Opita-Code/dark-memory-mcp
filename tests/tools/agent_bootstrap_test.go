@@ -26,6 +26,7 @@ import (
 	"testing"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/agentbootstrap"
+	"github.com/dark-agents/dark-memory-mcp/internal/migrate/sqlite"
 	"github.com/dark-agents/dark-memory-mcp/internal/tools"
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -364,8 +365,9 @@ func TestDetectEnvironment_NoClientInfo(t *testing.T) {
 	if out.Server.ResourcesTotal != agentbootstrap.TotalResources() {
 		t.Errorf("server.resources_total = %d, want %d", out.Server.ResourcesTotal, agentbootstrap.TotalResources())
 	}
-	if out.Server.SchemaVersion != 20 {
-		t.Errorf("server.schema_version = %d, want 20", out.Server.SchemaVersion)
+	if out.Server.SchemaVersion != sqlite.CurrentVersion() {
+		t.Errorf("server.schema_version = %d, want %d (sqlite.CurrentVersion())",
+			out.Server.SchemaVersion, sqlite.CurrentVersion())
 	}
 }
 

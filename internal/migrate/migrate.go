@@ -92,6 +92,27 @@ func SchemaVersion(ctx context.Context, db *sql.DB) (int, error) {
 	return int(v.Int64), nil
 }
 
+// CurrentSchemaVersion returns the highest migration VERSION available in
+// the provided migration slice, or 0 if the slice is empty. This is
+// distinct from SchemaVersion above: SchemaVersion queries the DB for
+// what has been APPLIED at runtime; CurrentSchemaVersion reports what
+// this binary's compiled-in migrations support. The two are equal on
+// a freshly-migrated DB but may differ on a DB that has not yet
+// caught up to the latest migration.
+//
+// Use this when reporting the server's capabilities to harnesses
+// (e.g., the AGENT_BOOTSTRAP namespace's detect_environment tool).
+// Use SchemaVersion when reporting the DB's actual state.
+func CurrentSchemaVersion(migs []Migration) int {
+	max := 0
+	for _, m := range migs {
+		if m.Version > max {
+			max = m.Version
+		}
+	}
+	return max
+}
+
 // MigrationStatus describes every registered migration and whether it
 // has been applied to this DB.
 func MigrationStatus(ctx context.Context, db *sql.DB, migs []Migration) ([]Status, error) {

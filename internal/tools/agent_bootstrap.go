@@ -26,6 +26,7 @@ import (
 	"os"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/agentbootstrap"
+	"github.com/dark-agents/dark-memory-mcp/internal/migrate/sqlite"
 	"github.com/dark-agents/dark-memory-mcp/internal/version"
 )
 
@@ -489,12 +490,11 @@ func handlerDetectEnvironment(ctx context.Context, raw json.RawMessage) (*ToolRe
 			// between this tool's report and the actual binary version
 			// is impossible.
 			Version: version.Resolve().Version,
-			// SchemaVersion is the SQLite migration ledger's current
-			// version. Hardcoded for now because there is no exported
-			// constant; bumped manually whenever a new migration lands.
-			// Follow-up: expose as `migrate.CurrentSchemaVersion()` in
-			// a later patch.
-			SchemaVersion: 20,
+			// SchemaVersion is read from the compiled-in migration
+			// slice via sqlite.CurrentVersion(), so adding a new
+			// migration automatically updates this report (no manual
+			// sync needed). Tests guard against accidental rollback.
+			SchemaVersion: sqlite.CurrentVersion(),
 			// ToolsTotal and ResourcesTotal are derived from the live
 			// registry + bootstrap resource counts so the report can
 			// never drift from the actual server surface.
