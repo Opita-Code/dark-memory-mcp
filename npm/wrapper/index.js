@@ -5,7 +5,7 @@
  * dark-memory-mcp npm wrapper (Microsoft pattern).
  *
  * Architecture:
- *   npx -y @opita-code/dark-memory-mcp
+ *   npx -y @opitacode/dark-memory-mcp
  *     -> main wrapper index.js (this file)
  *        -> platform-package index.js (spawn node, stdio: inherit)
  *           -> dark-mem-mcp[.exe] (spawn, stdio: inherit)
@@ -25,12 +25,12 @@ const { spawn } = require('child_process');
  * Keep in sync with the `optionalDependencies` block of package.json.
  */
 const PLATFORM_MAP = Object.freeze({
-  'darwin-x64':    '@opita-code/dark-memory-mcp-darwin-x64',
-  'darwin-arm64':  '@opita-code/dark-memory-mcp-darwin-arm64',
-  'linux-x64':     '@opita-code/dark-memory-mcp-linux-x64',
-  'linux-arm64':   '@opita-code/dark-memory-mcp-linux-arm64',
-  'win32-x64':     '@opita-code/dark-memory-mcp-win32-x64',
-  'win32-arm64':   '@opita-code/dark-memory-mcp-win32-arm64',
+  'darwin-x64':    '@opitacode/dark-memory-mcp-darwin-x64',
+  'darwin-arm64':  '@opitacode/dark-memory-mcp-darwin-arm64',
+  'linux-x64':     '@opitacode/dark-memory-mcp-linux-x64',
+  'linux-arm64':   '@opitacode/dark-memory-mcp-linux-arm64',
+  'win32-x64':     '@opitacode/dark-memory-mcp-win32-x64',
+  'win32-arm64':   '@opitacode/dark-memory-mcp-win32-arm64',
 });
 
 function detectPlatform() {
@@ -50,7 +50,7 @@ function loadPlatformEntry(platformPkg) {
   } catch (err) {
     console.error(`dark-memory-mcp: could not resolve ${platformPkg}/index.js`);
     console.error(`This usually means the platform-specific optional dependency failed to install.`);
-    console.error(`Try: npm install -g @opita-code/dark-memory-mcp`);
+    console.error(`Try: npm install -g @opitacode/dark-memory-mcp`);
     console.error(`Underlying error: ${err.message}`);
     process.exit(1);
   }

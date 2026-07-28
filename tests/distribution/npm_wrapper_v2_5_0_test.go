@@ -1,6 +1,6 @@
 // Package distribution contains tests that validate the npm wrapper
 // packaging + Official MCP Registry manifest that ships with
-// dark-memory-mcp v2.5.0. These tests are pure static analysis —
+// dark-memory-mcp v2.5.0. These tests are pure static analysis Ã¢â‚¬â€
 // they do not require the live MCP binary, so they run in any CI
 // environment.
 //
@@ -109,10 +109,10 @@ func TestV250_AllPackageJSONsParse(t *testing.T) {
 				t.Errorf("%s: missing or non-string `license`", path)
 			}
 
-			// Scope: every package name must start with @opita-code/
+			// Scope: every package name must start with @opitacode/
 			name, _ := pkg["name"].(string)
-			if !strings.HasPrefix(name, "@opita-code/dark-memory-mcp") {
-				t.Errorf("%s: name %q must start with @opita-code/dark-memory-mcp", path, name)
+			if !strings.HasPrefix(name, "@opitacode/dark-memory-mcp") {
+				t.Errorf("%s: name %q must start with @opitacode/dark-memory-mcp", path, name)
 			}
 		})
 	}
@@ -138,12 +138,12 @@ func TestV250_WrapperPackageHasOptionalDependencies(t *testing.T) {
 	}
 
 	expected := []string{
-		"@opita-code/dark-memory-mcp-darwin-x64",
-		"@opita-code/dark-memory-mcp-darwin-arm64",
-		"@opita-code/dark-memory-mcp-linux-x64",
-		"@opita-code/dark-memory-mcp-linux-arm64",
-		"@opita-code/dark-memory-mcp-win32-x64",
-		"@opita-code/dark-memory-mcp-win32-arm64",
+		"@opitacode/dark-memory-mcp-darwin-x64",
+		"@opitacode/dark-memory-mcp-darwin-arm64",
+		"@opitacode/dark-memory-mcp-linux-x64",
+		"@opitacode/dark-memory-mcp-linux-arm64",
+		"@opitacode/dark-memory-mcp-win32-x64",
+		"@opitacode/dark-memory-mcp-win32-arm64",
 	}
 
 	wrapperVersion, _ := pkg["version"].(string)
@@ -176,7 +176,7 @@ func TestV250_WrapperPackageHasMCPName(t *testing.T) {
 	if !ok {
 		t.Fatal("wrapper package.json missing `mcpName` field")
 	}
-	const want = "io.github.opita-code/dark-memory-mcp"
+	const want = "io.github.Opita-Code/dark-memory-mcp"
 	if mcpName != want {
 		t.Errorf("mcpName = %q, want %q", mcpName, want)
 	}
@@ -184,7 +184,7 @@ func TestV250_WrapperPackageHasMCPName(t *testing.T) {
 
 // TestV250_WrapperPackageHasBinEntry verifies the wrapper's package.json
 // has a bin entry pointing to index.js. Without this, `npx
-// @opita-code/dark-memory-mcp` won't know what to invoke.
+// @opitacode/dark-memory-mcp` won't know what to invoke.
 func TestV250_WrapperPackageHasBinEntry(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join(npmWrapperDir(t), "package.json"))
 	if err != nil {
@@ -343,11 +343,11 @@ func TestV250_ServerJSONSchema(t *testing.T) {
 
 	// name
 	name, _ := srv["name"].(string)
-	if !strings.HasPrefix(name, "io.github.opita-code/") {
-		t.Errorf("server.json name = %q, want prefix io.github.opita-code/", name)
+	if !strings.HasPrefix(name, "io.github.Opita-Code/") {
+		t.Errorf("server.json name = %q, want prefix io.github.Opita-Code/", name)
 	}
-	if name != "io.github.opita-code/dark-memory-mcp" {
-		t.Errorf("server.json name = %q, want io.github.opita-code/dark-memory-mcp", name)
+	if name != "io.github.Opita-Code/dark-memory-mcp" {
+		t.Errorf("server.json name = %q, want io.github.Opita-Code/dark-memory-mcp", name)
 	}
 
 	// version
@@ -376,8 +376,8 @@ func TestV250_ServerJSONSchema(t *testing.T) {
 			t.Errorf("server.json: packages[%d].registryType = %q, want npm", i, registryType)
 		}
 		identifier, _ := pkg["identifier"].(string)
-		if identifier != "@opita-code/dark-memory-mcp" {
-			t.Errorf("server.json: packages[%d].identifier = %q, want @opita-code/dark-memory-mcp", i, identifier)
+		if identifier != "@opitacode/dark-memory-mcp" {
+			t.Errorf("server.json: packages[%d].identifier = %q, want @opitacode/dark-memory-mcp", i, identifier)
 		}
 		pkgVersion, _ := pkg["version"].(string)
 		if pkgVersion != version {
@@ -468,7 +468,7 @@ func TestV250_PlatformDetectionMapConsistent(t *testing.T) {
 		const src = fs.readFileSync(path.join(dir, 'index.js'), 'utf8');
 		const m = src.match(/const PLATFORM_MAP = Object\.freeze\(\{([\s\S]+?)\}\)/);
 		if (!m) { console.error('PLATFORM_MAP not found in ' + dir + '/index.js'); process.exit(2); }
-		// Parse the entries: 'darwin-x64':    '@opita-code/...',
+		// Parse the entries: 'darwin-x64':    '@opitacode/...',
 		const entries = {};
 		const re = /'([a-z0-9-]+)':\s*'([^']+)'/g;
 		let r;
@@ -489,12 +489,12 @@ func TestV250_PlatformDetectionMapConsistent(t *testing.T) {
 	}
 
 	want := map[string]string{
-		"darwin-x64":   "@opita-code/dark-memory-mcp-darwin-x64",
-		"darwin-arm64": "@opita-code/dark-memory-mcp-darwin-arm64",
-		"linux-x64":    "@opita-code/dark-memory-mcp-linux-x64",
-		"linux-arm64":  "@opita-code/dark-memory-mcp-linux-arm64",
-		"win32-x64":    "@opita-code/dark-memory-mcp-win32-x64",
-		"win32-arm64":  "@opita-code/dark-memory-mcp-win32-arm64",
+		"darwin-x64":   "@opitacode/dark-memory-mcp-darwin-x64",
+		"darwin-arm64": "@opitacode/dark-memory-mcp-darwin-arm64",
+		"linux-x64":    "@opitacode/dark-memory-mcp-linux-x64",
+		"linux-arm64":  "@opitacode/dark-memory-mcp-linux-arm64",
+		"win32-x64":    "@opitacode/dark-memory-mcp-win32-x64",
+		"win32-arm64":  "@opitacode/dark-memory-mcp-win32-arm64",
 	}
 	if len(got) != len(want) {
 		t.Errorf("PLATFORM_MAP has %d entries, want %d (%v)", len(got), len(want), got)

@@ -1,4 +1,4 @@
-﻿<div align="center">
+<div align="center">
 
 ```
 ╔════════════════════════════════════════════════════════════════════════════════════╗
@@ -163,7 +163,7 @@ Pega esto en tu config de MCP host:
   "mcpServers": {
     "dark-memory": {
       "command": "npx",
-      "args": ["-y", "@opita-code/dark-memory-mcp"]
+      "args": ["-y", "@opitacode/dark-memory-mcp"]
     }
   }
 }

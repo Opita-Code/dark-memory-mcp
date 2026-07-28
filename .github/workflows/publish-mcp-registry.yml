@@ -37,7 +37,7 @@ jobs:
           # packages array, and each package must have identifier.
           node -e "
             const s = require('./server.json');
-            if (!s.name || !s.name.startsWith('io.github.opita-code/')) {
+            if (!s.name || !s.name.startsWith('io.github.Opita-Code/')) {
               console.error('server.json: invalid name: ' + s.name);
               process.exit(1);
             }
@@ -81,5 +81,5 @@ jobs:
       - name: Confirm registry entry is live
         run: |
           sleep 5  # Allow registry to propagate
-          curl -sf "https://registry.modelcontextprotocol.io/v0/servers?search=io.github.opita-code/dark-memory-mcp" | head -c 500
+          curl -sf "https://registry.modelcontextprotocol.io/v0/servers?search=io.github.Opita-Code/dark-memory-mcp" | head -c 500
           echo

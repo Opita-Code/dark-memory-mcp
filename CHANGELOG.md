@@ -1,4 +1,4 @@
-﻿# Changelog
+# Changelog
 
 All notable changes to dark-memory-mcp are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
@@ -6,9 +6,33 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
-## [2.5.0] — 2026-07-28
+## [2.5.0] â€” 2026-07-28
 
-### Added — npm wrapper (cross-platform one-line install) + Official MCP Registry entry
+
+
+### Correction — npm scope @opita-code → @opitacode (operator feedback, before first publish)
+
+The initial commit of v2.5.0 assumed the npm scope would be
+@opita-code (a kebab-case variant of the GitHub org Opita-Code).
+The operator caught this before the irreversible first npm publish and
+corrected it: the actual npm scope is @opitacode (no hyphen, all
+together), which already hosts the package @opitacode/ocais v3.0.1.
+
+The MCP Registry namespace is independent of the npm scope; it uses
+the GitHub org's actual case for OAuth verification:
+io.github.Opita-Code/dark-memory-mcp.
+
+| Identifier | Value |
+|---|---|
+| npm scope (publishes here) | @opitacode |
+| npm package (full) | @opitacode/dark-memory-mcp |
+| GitHub org | Opita-Code |
+| MCP Registry namespace | io.github.Opita-Code/dark-memory-mcp |
+
+The design is unchanged: same 7-package matrix, same Microsoft-pattern
+npm wrapper, same cross-compile matrix in CI. Only the identifier
+strings are corrected. No drift on the wire contract or schema.
+### Added â€” npm wrapper (cross-platform one-line install) + Official MCP Registry entry
 
 Until v2.4.x, dark-memory-mcp was distributed only as raw Go binaries
 in GitHub Releases. Vibe-coder install path was:
@@ -31,7 +55,7 @@ so the install path is the only thing the user has to figure out.
   "mcpServers": {
     "dark-memory": {
       "command": "npx",
-      "args": ["-y", "@opita-code/dark-memory-mcp"]
+      "args": ["-y", "@opitacode/dark-memory-mcp"]
     }
   }
 }
@@ -39,21 +63,21 @@ so the install path is the only thing the user has to figure out.
 
 ### What v2.5.0 ships
 
-1. **npm wrapper** (`@opita-code/dark-memory-mcp`). Microsoft-pattern
+1. **npm wrapper** (`@opitacode/dark-memory-mcp`). Microsoft-pattern
    cross-platform wrapper: detects `process.platform + process.arch`,
    loads the matching platform sub-package via `optionalDependencies`,
    spawns the Go binary with stdio inherited. Pattern documented at
    https://github.com/microsoft/mcp/blob/main/eng/npm/wrapperBinariesArchitecture.md
-2. **6 platform sub-packages** (`@opita-code/dark-memory-mcp-{platform}-{arch}`):
-   - `@opita-code/dark-memory-mcp-darwin-x64` (macOS Intel)
-   - `@opita-code/dark-memory-mcp-darwin-arm64` (macOS Apple Silicon)
-   - `@opita-code/dark-memory-mcp-linux-x64` (Linux x86_64)
-   - `@opita-code/dark-memory-mcp-linux-arm64` (Linux ARM64 / Graviton / Raspberry Pi)
-   - `@opita-code/dark-memory-mcp-win32-x64` (Windows x86_64)
-   - `@opita-code/dark-memory-mcp-win32-arm64` (Windows ARM64 / Surface Pro X)
+2. **6 platform sub-packages** (`@opitacode/dark-memory-mcp-{platform}-{arch}`):
+   - `@opitacode/dark-memory-mcp-darwin-x64` (macOS Intel)
+   - `@opitacode/dark-memory-mcp-darwin-arm64` (macOS Apple Silicon)
+   - `@opitacode/dark-memory-mcp-linux-x64` (Linux x86_64)
+   - `@opitacode/dark-memory-mcp-linux-arm64` (Linux ARM64 / Graviton / Raspberry Pi)
+   - `@opitacode/dark-memory-mcp-win32-x64` (Windows x86_64)
+   - `@opitacode/dark-memory-mcp-win32-arm64` (Windows ARM64 / Surface Pro X)
 3. **`server.json`** at repo root: Official MCP Registry manifest. Once
    published, the server shows up at
-   `io.github.opita-code/dark-memory-mcp` in
+   `io.github.Opita-Code/dark-memory-mcp` in
    [registry.modelcontextprotocol.io](https://registry.modelcontextprotocol.io)
    AND auto-syncs to PulseMCP, Glama, mcp.so, Smithery,
    mcpservers.org (per the [OpenHelm MCP registry guide](https://openhelm.ai/blog/mcp-registry-directory-guide)).
@@ -79,7 +103,7 @@ so the install path is the only thing the user has to figure out.
 ### Wire contract (unchanged)
 
 The Go binary, MCP wire protocol, all 35 canonical tools, schema v20
-— everything the binary does — is unchanged. v2.5.0 adds a packaging
+â€” everything the binary does â€” is unchanged. v2.5.0 adds a packaging
 layer; it does not modify the binary or its protocol.
 
 ### Distribution channels now active
@@ -87,8 +111,8 @@ layer; it does not modify the binary or its protocol.
 | Channel | Status | Coverage |
 |---------|--------|----------|
 | GitHub Releases binary download | still works (unchanged) | all OSes |
-| npm wrapper (`npx -y @opita-code/dark-memory-mcp`) | ready, needs `NODE_AUTH_TOKEN` secret | all 6 platforms |
-| Official MCP Registry (`io.github.opita-code/dark-memory-mcp`) | ready, needs OIDC configured | indexed by 5+ directories on publish |
+| npm wrapper (`npx -y @opitacode/dark-memory-mcp`) | ready, needs `NODE_AUTH_TOKEN` secret | all 6 platforms |
+| Official MCP Registry (`io.github.Opita-Code/dark-memory-mcp`) | ready, needs OIDC configured | indexed by 5+ directories on publish |
 | Auto-sync to Glama / PulseMCP / mcp.so / Smithery | automatic post-registry-publish | all 5+ directories |
 | Homebrew tap (macOS) | deferred to v2.5.1 | n/a |
 | Scoop bucket (Windows) | deferred to v2.5.1 | n/a |
@@ -114,8 +138,8 @@ two secrets on the GitHub repo:**
 1. `NODE_AUTH_TOKEN`: An npm automation token. Create at
    https://www.npmjs.com/settings/<your-org>/tokens with "Automation"
    type. Required by publish-npm.yml.
-2. **npm org must exist**: `npm view @opita-code/dark-memory-mcp`
-   returns 404 today. The operator must create the `@opita-code` org
+2. **npm org must exist**: `npm view @opitacode/dark-memory-mcp`
+   returns 404 today. The operator must create the `@opitacode` org
    on npmjs.com before the first publish.
 
 For the Official MCP Registry publish: no token required (uses GitHub
@@ -135,9 +159,9 @@ OIDC, configured automatically when the workflow has
 
 ---
 
-## [2.4.0] — 2026-07-28
+## [2.4.0] â€” 2026-07-28
 
-### Added — memory RAG into the vibe-loop (closes v2.3.0 data-plane orphan debt)
+### Added â€” memory RAG into the vibe-loop (closes v2.3.0 data-plane orphan debt)
 
 The v2.1.0 + v2.3.0 `agent_memory` data plane shipped with producers
 (save / list / get / update / archive) and one consumer (recall), but
@@ -152,21 +176,21 @@ gaps but knowingly left the integration to v2.4.0.
 best-effort (a broken agent_memory store MUST NOT block any VLP
 path):
 
-1. **`SessionStart` → `ContextRecap`** (output field). After
+1. **`SessionStart` â†’ `ContextRecap`** (output field). After
    `SaveSession`, the orchestrator fetches top-10 pinned rows
    project-wide + top-20 kind=todo rows. Emitted as a new field on
-   `SessionStartOutput`. Empty recap → JSON omits the field
+   `SessionStartOutput`. Empty recap â†’ JSON omits the field
    (backward compatible).
-2. **`PublishVibe` → `drift_judge` enrichment**. Before calling the
+2. **`PublishVibe` â†’ `drift_judge` enrichment**. Before calling the
    LLM judge, the artifact text is prepended with a formatted block
    of relevant prior decisions + findings (BM25-ranked, top 5). The
    enrichment is invisible at the wire level (the artifact is what
-   gets persisted — not the enriched prompt).
-3. **`ResearchTopic` → `PriorFindings`** (output field). Top-5
+   gets persisted â€” not the enriched prompt).
+3. **`ResearchTopic` â†’ `PriorFindings`** (output field). Top-5
    kind=finding rows relevant to the query, surfaced alongside
    fresh research items.
 4. **Helper layer**: `recallForVibe`, `listPinnedForVibe`,
-   `listOpenTodosForVibe`, `formatHitsForContext`, `firstLine` —
+   `listOpenTodosForVibe`, `formatHitsForContext`, `firstLine` â€”
    `internal/orchestration/agent_memory.go`. Each helper swallows
    errors and returns best-effort empty results; callers never need
    to error-handle them.
@@ -213,7 +237,7 @@ tool was an island. After v2.4.0 the workflow IS the consumer:
 
 This is the canonical Mem0 / Letta "memory RAG" pattern applied to
 our own vibe-loop. Equivalent to Zylos AI's 2026-04 observation that
-"the production consensus in 2025-2026 is a three-tier hierarchy" —
+"the production consensus in 2025-2026 is a three-tier hierarchy" â€”
 v2.4.0 implements the long-term tier that v2.1.0 was missing in
 the workflow.
 
@@ -231,13 +255,13 @@ across project-wide scope, not session scope).
 4 new defensive tests in
 `tests/orchestration/agent_memory_v2_4_0_integration_test.go`:
 
-- `TestV240_SessionStart_SurfacesContextRecap` — pinned + todos
+- `TestV240_SessionStart_SurfacesContextRecap` â€” pinned + todos
   surface in the recap; INV-1 audit row still emitted.
-- `TestV240_SessionStart_NoRecapWhenProjectEmpty` — empty recap
+- `TestV240_SessionStart_NoRecapWhenProjectEmpty` â€” empty recap
   is nil (backward compatible).
-- `TestV240_ResearchTopic_EmitsPriorFindings` — BM25-ranked
+- `TestV240_ResearchTopic_EmitsPriorFindings` â€” BM25-ranked
   in-project findings surface.
-- `TestV240_DriftJudge_BestEffortContract` — a broken store
+- `TestV240_DriftJudge_BestEffortContract` â€” a broken store
   returns ErrSessionRequired cleanly, no panic / no half-state.
 
 `go test ./...` **all green** post-merge.
@@ -263,8 +287,8 @@ across project-wide scope, not session scope).
 - VLP state machine: not formally cycled (the vibe_spec + vibe_publish
   MCP tools remained broken on the wrapper layer; pre-flight
   proceeded via `dark_memory_judge` directly per the v2.3.0
-  workaround — see CHANGELOG v2.3.0 Process note).
-- drift_judge evaluation 416 verdict=aligned confidence=0.95 →
+  workaround â€” see CHANGELOG v2.3.0 Process note).
+- drift_judge evaluation 416 verdict=aligned confidence=0.95 â†’
   release approved.
 
 ---
@@ -274,12 +298,12 @@ across project-wide scope, not session scope).
 ### Added - agent_id plumbing end-to-end (closes v2.3.0 cross-agent leakage)
 
 The `agent_memory` table gained an `agent_id` column in v2.3.0 (the
-Mem0 agent_id semantic — the LLM that owns each memory). v2.4.0
+Mem0 agent_id semantic â€” the LLM that owns each memory). v2.4.0
 wired `agent_memory` into the vibe-loop (ContextRecap on
 `session_start`, drift_judge enrichment on `publish_vibe`) but used
 **project-wide scope**: when multiple LLMs shared a project, each
 LLM's recap and judge enrichment surfaced the OTHER LLM's decisions
-and findings — exactly the cross-agent leakage the `agent_id` column
+and findings â€” exactly the cross-agent leakage the `agent_id` column
 was designed to prevent.
 
 **v2.4.1 fixes this end-to-end.** The same `agent_id` resolution
@@ -289,13 +313,13 @@ chain is now applied uniformly to all VLP integration points.
 
 For any VLP operation that consults `agent_memory`:
 
-1. **Caller input** — `session_start.AgentID` or `publish_vibe.AgentID`.
+1. **Caller input** â€” `session_start.AgentID` or `publish_vibe.AgentID`.
    Per-call override. Empty = fall through.
-2. **`projects.default_agent_id`** — project-level default set at
+2. **`projects.default_agent_id`** â€” project-level default set at
    tenant provisioning via
    `dark_memory_project_create(default_agent_id="...")`. v2.4.1 NEW
    column (migration v20). Empty = fall through.
-3. **Empty string** — no agent filter; project-wide scope (v2.4.0
+3. **Empty string** â€” no agent filter; project-wide scope (v2.4.0
    backward compat).
 
 ### Schema migration v20
@@ -306,7 +330,7 @@ ALTER TABLE projects ADD COLUMN default_agent_id TEXT;
 
 Idempotent (SQLite ADD COLUMN without DEFAULT is a no-op on
 re-apply; Postgres uses `ADD COLUMN IF NOT EXISTS`). No index needed
-— read once per session_start / publish_vibe, low cardinality.
+â€” read once per session_start / publish_vibe, low cardinality.
 
 ### Wire contract (additive only)
 
@@ -355,27 +379,27 @@ re-apply; Postgres uses `ADD COLUMN IF NOT EXISTS`). No index needed
 
 ### What changed under the hood
 
-- **Store.ListAgentMemory** — `agent_id` is now an ADDITIVE filter
+- **Store.ListAgentMemory** â€” `agent_id` is now an ADDITIVE filter
   that composes with any scope (Project, Session, Operator, Agent).
   Previously only applied when `scope=agent`; v2.4.1 also applies it
   as an additional filter when scope=project with non-empty
   agent_id, so callers can scope project-wide queries by agent
   without flipping scope semantics.
-- **Orchestrator.resolveActiveAgentID** (NEW) — applies the
+- **Orchestrator.resolveActiveAgentID** (NEW) â€” applies the
   resolution priority chain (caller > project default > empty).
   Best-effort: Store errors swallowed, falls back to empty string.
   Lives in `internal/orchestration/agent_id.go`.
-- **session_start** — accepts `AgentID` input, emits `ActiveAgentID`
-  output, plumbs resolved agent_id into `recapSessionStartMemory` →
+- **session_start** â€” accepts `AgentID` input, emits `ActiveAgentID`
+  output, plumbs resolved agent_id into `recapSessionStartMemory` â†’
   `listPinnedForVibe` + `listOpenTodosForVibe` filters.
-- **publish_vibe** — accepts `AgentID` input, emits `ActiveAgentID`
-  output, plumbs resolved agent_id into `enrichWithAgentMemory` →
+- **publish_vibe** â€” accepts `AgentID` input, emits `ActiveAgentID`
+  output, plumbs resolved agent_id into `enrichWithAgentMemory` â†’
   `recallForVibe` filter.
-- **project_create** — accepts `default_agent_id` input (max 128
+- **project_create** â€” accepts `default_agent_id` input (max 128
   chars), echoes it on idempotent replay.
-- **Project struct** — gained `DefaultAgentID string` field
+- **Project struct** â€” gained `DefaultAgentID string` field
   (json tag `default_agent_id,omitempty`).
-- **Store.CreateProject / GetProject / ListProjects** — handle the
+- **Store.CreateProject / GetProject / ListProjects** â€” handle the
   new column. ON CONFLICT DO UPDATE preserves the existing
   `default_agent_id` on idempotent replay (COALESCE pattern; empty
   string in caller input = "leave unchanged").
@@ -385,17 +409,17 @@ re-apply; Postgres uses `ADD COLUMN IF NOT EXISTS`). No index needed
 4 new defensive tests in
 `tests/orchestration/agent_memory_v2_4_1_test.go`:
 
-- `TestV241_ContextRecap_RespectsAgentID` — two agents in same
+- `TestV241_ContextRecap_RespectsAgentID` â€” two agents in same
   project, session_start with `AgentID="gpt-4o"`, verifies recap
   surfaces only gpt-4o's pinned + todos. Verifies claude's rows
   do NOT leak in (cross-agent isolation).
-- `TestV241_ContextRecap_NoAgentID_FallsBackToProjectWide` —
+- `TestV241_ContextRecap_NoAgentID_FallsBackToProjectWide` â€”
   no `AgentID`, no project default; recap falls back to
   project-wide (v2.4.0 backward compat).
-- `TestV241_DriftJudge_EnrichesByActiveAgentID` — `publish_vibe`
+- `TestV241_DriftJudge_EnrichesByActiveAgentID` â€” `publish_vibe`
   with no `AgentID`, project has `default_agent_id="gpt-4o"`;
   verifies `ActiveAgentID="gpt-4o"` echoes on result.
-- `TestV241_DefaultAgentID_ResolvesOnSessionStart` — verifies
+- `TestV241_DefaultAgentID_ResolvesOnSessionStart` â€” verifies
   the resolution priority chain: `default_agent_id` used when
   `session_start.AgentID` empty.
 
@@ -410,7 +434,7 @@ Pre-flight evaluation pending. (See drift_judge result below.)
 - All changes are additive. Existing callers see no behavioral change
   unless they set `AgentID` / `default_agent_id` (then their
   ContextRecap + drift_judge enrichment gets scoped).
-- v2.4.0's `context_recap` field remains — only its rows get
+- v2.4.0's `context_recap` field remains â€” only its rows get
   filtered now. Operators without an `agent_id` see the same
   v2.4.0 behavior they had.
 - The `bind_session` + `scope=session` semantics from v2.3.0 are
@@ -420,9 +444,9 @@ Pre-flight evaluation pending. (See drift_judge result below.)
 
 ---
 
-## [2.4.2] — 2026-07-28
+## [2.4.2] â€” 2026-07-28
 
-### Added — judge-side memory-RAG for brand_match + compliance_check
+### Added â€” judge-side memory-RAG for brand_match + compliance_check
 
 v2.4.0 wired `agent_memory` into `drift_judge` via `PublishVibe`, but
 left `brand_match`, `compliance_check`, and the direct
@@ -469,8 +493,8 @@ artifact text. v2.4.2 uses **pinned memories** instead, because:
 {
   "eval_type": "brand_match" | "compliance_check" | ...,  // existing
   "content": "...",                                        // existing
-  "agent_id": "...",                // NEW v2.4.2 — same priority chain as v2.4.1
-  "no_enrich": false,               // NEW v2.4.2 — opt-out escape hatch
+  "agent_id": "...",                // NEW v2.4.2 â€” same priority chain as v2.4.1
+  "no_enrich": false,               // NEW v2.4.2 â€” opt-out escape hatch
   // ... rest unchanged
 }
 
@@ -478,7 +502,7 @@ artifact text. v2.4.2 uses **pinned memories** instead, because:
 {
   "eval_type": "...",
   "content": "...",
-  "agent_id": "...",                // NEW v2.4.2 — forwarded to all N samples
+  "agent_id": "...",                // NEW v2.4.2 â€” forwarded to all N samples
   "n": 3,
   // ... rest unchanged
 }
@@ -501,53 +525,53 @@ raw content unchanged. Verified by
 
 1. Caller-supplied `AgentID` on the Judge call.
 2. `projects.default_agent_id` (set at tenant provisioning).
-3. Empty string — no agent filter; v2.4.0 backward compat.
+3. Empty string â€” no agent filter; v2.4.0 backward compat.
 
 #### Tests (8 new defensive tests)
 
 **Orchestrator-level** (in `tests/orchestration/agent_memory_v2_4_2_test.go`):
 
-- `TestV242_BrandMatch_EnrichesWithBrandDecisions` — kind=decision
+- `TestV242_BrandMatch_EnrichesWithBrandDecisions` â€” kind=decision
   surfaces in LLM prompt; kind=finding + kind=link are filtered
   out (all three rows PINNED to isolate the kind filter from the
   pinned filter).
-- `TestV242_ComplianceCheck_EnrichesWithDecisionsAndFindings` —
+- `TestV242_ComplianceCheck_EnrichesWithDecisionsAndFindings` â€”
   both decision + finding surface; note is filtered out.
-- `TestV242_BrandMatch_NoEnrich_RespectsOptOut` — `no_enrich=true`
-  → LLM sees raw content unchanged (verifies the escape hatch).
-- `TestV242_PIIDetect_NoEnrichment` — pii_detect is not enriched
+- `TestV242_BrandMatch_NoEnrich_RespectsOptOut` â€” `no_enrich=true`
+  â†’ LLM sees raw content unchanged (verifies the escape hatch).
+- `TestV242_PIIDetect_NoEnrichment` â€” pii_detect is not enriched
   (pattern-matching eval_type stays blind to memory-RAG).
-- `TestV242_Consensus_PassesAgentIDToAllSamples` — N=3 brand_match
+- `TestV242_Consensus_PassesAgentIDToAllSamples` â€” N=3 brand_match
   consensus: each of the 3 samples sees the same enrichment
   (AgentID forwarded to all N).
-- `TestV242_AgentID_PriorityChain_ResolvesInJudge` — Judge
+- `TestV242_AgentID_PriorityChain_ResolvesInJudge` â€” Judge
   resolves AgentID via the v2.4.1 priority chain (caller >
   projects.default_agent_id > ""). Same `resolveActiveAgentID`
   helper used by SessionStart and PublishVibe.
-- `TestV242_DriftJudge_EnrichmentUnchangedInPublishVibe` —
+- `TestV242_DriftJudge_EnrichmentUnchangedInPublishVibe` â€”
   **regression guard**: drift_judge enrichment still lives in
   PublishVibe (NOT moved to Judge in v2.4.2). Direct Judge callers
-  of drift_judge do NOT get enriched — deliberate scope boundary.
+  of drift_judge do NOT get enriched â€” deliberate scope boundary.
 
 **Store-level** (in `tests/dual_driver/agent_memory_v2_4_2_test.go`):
 
 - `TestV242_Store_SearchAgentMemory_FilterByKind_DefenseInDepth`
-  — verifies the Store's `SearchAgentMemory` Kind filter actually
+  â€” verifies the Store's `SearchAgentMemory` Kind filter actually
   filters at the data plane (defense in depth in case future
   refactors change the orchestrator helper).
 
 #### What v2.4.2 does NOT do (deliberate scope)
 
-1. **Does not touch drift_judge enrichment** — it still lives in
+1. **Does not touch drift_judge enrichment** â€” it still lives in
    `PublishVibe` (auditable since v2.4.0). Operators using
    `dark_memory_judge(eval_type=drift_judge)` directly without
-   `PublishVibe` get NO enrichment — they must go through
+   `PublishVibe` get NO enrichment â€” they must go through
    `PublishVibe` for enriched prompts. This is **deliberate scope**,
    not oversight.
 2. **Does not enrich pii_detect, prompt_injection_scan, or
    grounding_check.** Pattern-matching judges don't benefit from
    RAG; grounding_check is out-of-scope for v2.4.2.
-3. **The enriched prompt is NOT persisted** in the audit trail —
+3. **The enriched prompt is NOT persisted** in the audit trail â€”
    only the LLM response (`SDDEvaluation.VerdictJSON`) is. This is
    consistent with v2.4.0 INV-1 contract (writes are audited, not
    prompts). Operators needing prompt-level audit get it in v2.4.4+.
@@ -572,19 +596,19 @@ raw content unchanged. Verified by
 
 ---
 
-## [2.4.3] — 2026-07-28
+## [2.4.3] â€” 2026-07-28
 
-### Fixed — wire-layer MCP audit + 3 contract-drift fixes
+### Fixed â€” wire-layer MCP audit + 3 contract-drift fixes
 
 v2.4.3 is the wire-layer hygiene audit that the operator-approved
 roadmap originally scoped as "vibe_spec/vibe_publish MCP wrapper
 fix". The audit found that **the original Form B bug was already
-fixed in F36 (v1.2.1)** — verified by the F36 wire tests passing
+fixed in F36 (v1.2.1)** â€” verified by the F36 wire tests passing
 today. v2.4.3 ships the actual hygiene fixes the audit revealed.
 
 #### Three wire-layer bugs fixed
 
-**Bug A — `TestWire_F37F38F39F40_BootAgainstDirtyDB` schema drift**
+**Bug A â€” `TestWire_F37F38F39F40_BootAgainstDirtyDB` schema drift**
 
 The dirty-boot test seeded a `constitutions` table with the OLDER
 schema (`is_active` column instead of `enabled`). Production
@@ -597,10 +621,10 @@ production schema (sqlite/ddl.go v2: `constitution_id`, `version`,
 `label`, `source`, `file_path`, `parsed_json`, `sha256`, `enabled`,
 `created_at`, `activated_at`). The test still validates F37/F38/
 F39/F40 (boot resilience, missing tables self-heal, vec0 trigger
-tolerance, table-already-exists) — only the spurious column-name
+tolerance, table-already-exists) â€” only the spurious column-name
 drift was removed.
 
-**Bug B — `TestWire_HealthPingShape` canonical count contract drift**
+**Bug B â€” `TestWire_HealthPingShape` canonical count contract drift**
 
 The health_ping wire test asserted `registry.canonical_tools == 29`,
 frozen at the v2.0.0 contract. v2.1.0 added the AGENT_MEMORY
@@ -610,14 +634,14 @@ Current canonical is 35. Test was failing on every run.
 Fix: updated the assertion to expect 35 (matches the current
 contract). The contract documentation was already updated in v2.3.0
 (see `bridge7_mcp_inspector_test.go` line 154: "the canonical count
-is now 35") — this just propagates the contract update to the
+is now 35") â€” this just propagates the contract update to the
 remaining test.
 
-**Bug C — `TestWire_RuntimeToolEnumeration` tools/list contract drift**
+**Bug C â€” `TestWire_RuntimeToolEnumeration` tools/list contract drift**
 
 The runtime tool-enumeration wire test asserted `tools/list` returns
 29 (un-armed) or 32 (armed), frozen at the v2.0.0 contract. Current
-is 35 (un-armed) or 38 (armed) — the contract drift from Bug B.
+is 35 (un-armed) or 38 (armed) â€” the contract drift from Bug B.
 
 Fix: updated `wantUnarmed = 35` and `wantArmed = 38`. Test now
 passes against the v2.4.x binary. The contract documentation in the
@@ -645,7 +669,7 @@ namespace history.
 Updated the v2.3.0 "Process note" (describing the pre-F36 Form B
 workaround) to reflect that F36 fixed it in v1.2.1 and the
 workaround is no longer needed. The workaround note was
-documentation drift, not actual drift — operators reading the
+documentation drift, not actual drift â€” operators reading the
 CHANGELOG would have wondered why we documented an unfixed bug.
 
 #### Tests
@@ -670,7 +694,7 @@ All wire tests pass against the v2.4.x binary:
 `TestBridge7_CallToolMemoryState` + `TestBridge7_CallToolErrorPath`
 flaky under load (transport timeout when cold-booting stdio
 subprocess + full suite in flight). All 4 pass in isolation. Same
-flake as v2.4.0/1/2 — not related to v2.4.3.
+flake as v2.4.0/1/2 â€” not related to v2.4.3.
 
 Full test suite green (with the noted Bridge7 flake).
 
@@ -685,25 +709,25 @@ drift_judge artifact (rev1) explains:
 - Wire tests green post-fix = regression guard against future
   contract drift on the same paths.
 - The audit found (and verified) that the original Form B bug is
-  already fixed — the v2.4.3 release note explicitly notes this so
+  already fixed â€” the v2.4.3 release note explicitly notes this so
   future operators don't re-investigate the historical workaround.
 
 #### Upgrade notes
 
 - Wire contract unchanged. Tool count remains 35.
-- Zero schema migration (additive integration only — well, this
+- Zero schema migration (additive integration only â€” well, this
   isn't even additive, it's just test cleanup).
 - Existing v2.4.2 callers see no behavioral change.
 
 ---
 
-## [2.3.0] — 2026-07-28
+## [2.3.0] â€” 2026-07-28
 
 ---
 
-## [2.3.0] — 2026-07-28
+## [2.3.0] â€” 2026-07-28
 
-### Added — agent_memory save-decouple + Mem0 alignment + recall tool
+### Added â€” agent_memory save-decouple + Mem0 alignment + recall tool
 
 Two bugs closed in the v2.1.0 `agent_memory` data plane:
 
@@ -727,9 +751,9 @@ consulted it. The data plane had producers but no consumers.
 - **`agent_memory_save` no longer auto-binds `session_id`.** Caller
   MUST explicitly opt in via the new `bind_session: bool` flag
   (default `false`). INV-10: rows survive session close.
-  (`internal/store/sqlite/store.go::SaveAgentMemory` — auto-bind
+  (`internal/store/sqlite/store.go::SaveAgentMemory` â€” auto-bind
   removed; `internal/orchestration/agent_memory.go::AgentMemorySave`
-  — explicit bind only.)
+  â€” explicit bind only.)
 - **`scope=operator` now uses caller-provided `Operator` filter
   field**, NOT `write_audit.actor`. The pre-v2.3.0 audit lookup
   was unreliable (typically returned the sweeper, not the real
@@ -742,24 +766,24 @@ consulted it. The data plane had producers but no consumers.
   Returns rows where `row.agent_id == filter.AgentID`. Requires the
   new `agent_id` column (migration v19). Empty `AgentID` returns
   empty (fail-safe).
-- **New column `agent_id`** — Mem0 agent_id (the LLM that owns
+- **New column `agent_id`** â€” Mem0 agent_id (the LLM that owns
   the memory). Distinct from `operator` (which is the human/agent
   identity per INV-1 audit). Filterable via `scope=agent`.
   (`internal/store/sqlite/store.go::SaveAgentMemory` writes it;
   migration v19 adds the column.)
-- **New column `memory_type`** — Mem0 three-class taxonomy:
+- **New column `memory_type`** â€” Mem0 three-class taxonomy:
   `episodic` (event-anchored), `semantic` (atemporal facts),
   `procedural` (learned workflows). Independent of `kind`
   (operator's tool filter, 10 values). NULL = unclassified.
   Optional on save, filterable on list/search. Updateable via
   `agent_memory_update` (empty string = clear).
-- **New tool `agent_memory_recall`** — BM25-ranked search over
+- **New tool `agent_memory_recall`** â€” BM25-ranked search over
   `content+title+tags`. Wraps `SearchAgentMemory` with FTS5 escape
   centralized; callers don't re-implement FTS5 quirks. Accepts
   `query`, `operator` (required for INV-1 audit attribution),
   `agent_id`, `kind`, `memory_type`, `limit` filters.
-  (`internal/tools/agent_memory.go::RegisterAgentMemory` — new tool,
-  canonical count 34 → 35.)
+  (`internal/tools/agent_memory.go::RegisterAgentMemory` â€” new tool,
+  canonical count 34 â†’ 35.)
 - **New invariant INV-10** in `docs/INVARIANTS.md`. Defensive
   tests: `tests/dual_driver/agent_memory_v2_3_0_test.go` (6 new
   tests covering the regressions + the new path).
@@ -774,7 +798,7 @@ verdict 414, confidence 0.82):
 1. `scope=current` default: was `scope=session` when a session was
    bound; v2.3.0 default is `scope=project`. Callers that relied on
    the implicit session scope now see the project's full memory
-   (which is the v2.3.0 intended behavior — see INV-10 — but is
+   (which is the v2.3.0 intended behavior â€” see INV-10 â€” but is
    nonetheless a behavioral change for code that didn't pin scope).
 2. `bind_session` default: was implicitly `true` (auto-bind);
    v2.3.0 default is `false` (no auto-bind). Callers that relied on
@@ -838,11 +862,11 @@ dark_memory_agent_memory_recall({
   Pre-v2.3.0 rows have `agent_id = NULL` and `memory_type = NULL`;
   that's the expected behaviour for the new filters (NULL =
   unfiltered).
-- Schema version bumps from **18 → 19**. Pre-v2.3.0 callers that
+- Schema version bumps from **18 â†’ 19**. Pre-v2.3.0 callers that
   hard-coded `wantSchemaVersion = 18` in tests (e.g. `tests/migrate/
   migrate_f37_test.go::TestMigrate_RealDriverSQLite_BrandNewDB_F37`)
   must update to `19`. Hard-coded canonical tool counts must update
-  from `34` → `35` for the same reason.
+  from `34` â†’ `35` for the same reason.
 
 ### Design rationale (OSINT 2026-07-27)
 
@@ -858,8 +882,8 @@ Synthesis from 6 sources:
 
 Industry convergence: 3 memory kinds (episodic/semantic/procedural),
 3-tier hierarchy (working/session/long-term), hybrid storage
-(vector + BM25 + graph). The Mem0 wire model — `user_id` persistent,
-`run_id` optional ephemeral, `agent_id` for LLM identity — maps
+(vector + BM25 + graph). The Mem0 wire model â€” `user_id` persistent,
+`run_id` optional ephemeral, `agent_id` for LLM identity â€” maps
 cleanly to our `project_id` + optional `session_id` + new
 `agent_id`. v2.3.0 ships the read-side persistence; v2.4.0 will
 plug the data plane into the consumer tools via memory RAG
@@ -868,21 +892,21 @@ plug the data plane into the consumer tools via memory RAG
 
 ### Roadmap beyond v2.3.0
 
-- **v2.4.0** — Memory RAG wired into `vibe_publish`, `drift_judge`,
+- **v2.4.0** â€” Memory RAG wired into `vibe_publish`, `drift_judge`,
   `research_topic`, `judge`, `session_start` (5 consumer tools).
   Vector index (`DARK_EMBED=1`, default off) for hybrid retrieval.
   LoCoMo regression corpus.
-- **v2.5.0** — `quarantined_until` enforcement + memory-poisoning
+- **v2.5.0** â€” `quarantined_until` enforcement + memory-poisoning
   audits + A-MemGuard-style anomaly detection (zylos.ai 2026-04
-  §6: MINJA 95% injection success; LLM-only detection misses 66%).
-- **v2.6.0** — Bitemporal modeling (Zep Graphiti) + conflict
+  Â§6: MINJA 95% injection success; LLM-only detection misses 66%).
+- **v2.6.0** â€” Bitemporal modeling (Zep Graphiti) + conflict
   resolution (Mem0g-style graph variant).
 
 ### Known limitations of v2.3.0
 
 - **No FTS5 schema migration in v2.3.0.** The `agent_memory_fts`
   mirror still indexes content+title+tags only. New `memory_type`
-  is filterable via SQL but not yet FTS5-indexed (deferred —
+  is filterable via SQL but not yet FTS5-indexed (deferred â€”
   re-indexing cost would have ballooned v2.3.0; we keep the FTS5
   mirror unchanged for backward compat with pre-v2.3.0 queries).
 - **Lexical-only recall.** Vector search is v2.4.0+
@@ -899,11 +923,11 @@ plug the data plane into the consumer tools via memory RAG
 
 ### Deprecated behavior (still works, log a warning if you see them)
 
-- **`scope=operator` without `Operator` filter** — returns empty
+- **`scope=operator` without `Operator` filter** â€” returns empty
   post-v2.3.0. Pre-v2.3.0 it returned whatever the audit lookup
   resolved to (typically the sweeper). Migration: set
   `operator` in the call to match the actual identity.
-- **Pre-v2.3.0 implicit session_id on save** — caller must pass
+- **Pre-v2.3.0 implicit session_id on save** â€” caller must pass
   `bind_session: true` to get this. Migration: update save call.
 
 ### Process note
@@ -921,7 +945,7 @@ are usable directly from any MCP harness.
 
 ---
 
-## [2.1.3] — 2026-07-27
+## [2.1.3] â€” 2026-07-27
 
 ### Fixed (Resolver cache invalidation on session state change)
 
@@ -935,11 +959,11 @@ fresh opencode boots.
 1. Operator restarts opencode. Fresh process: `s.activeProject = ""`,
    `projects.active_session_id = NULL`, resolver cache empty.
 2. Operator calls `session_start(operator, project_id="default")`.
-3. Wire path: `wrapHandler → GateMiddleware.Wrap → buildGateInput →
+3. Wire path: `wrapHandler â†’ GateMiddleware.Wrap â†’ buildGateInput â†’
    resolver.ActiveSessionID("default")`.
    - Cache miss.
    - DB lookup: `SELECT active_session_id FROM projects WHERE
-     project_id = 'default'` returns NULL → returns `""`.
+     project_id = 'default'` returns NULL â†’ returns `""`.
    - Cache filled with entry `{sessionID: "", expires: now+5s}`.
 4. Inner runs (session_start is in the `RequiresActiveSession`
    allowlist, so the gate doesn't refuse on empty SessionID).
@@ -977,7 +1001,7 @@ type Orchestrator struct {
     // after every successful SetActiveSession / ClearActiveSession write
     // so external caches (specifically the gate's
     // StoreBackedActiveSessionResolver) can invalidate their stale
-    // entries synchronously. nil is safe — the orchestrator skips the call.
+    // entries synchronously. nil is safe â€” the orchestrator skips the call.
     OnActiveSessionChanged func(projectID string)
 }
 
@@ -990,36 +1014,36 @@ bootState.Orchestrator.OnActiveSessionChanged = activeSessionResolver.Invalidate
 
 **New tests** (`tests/dual_driver/cache_invalidation_test.go`):
 
-- `TestSessionStart_InvokesOnActiveSessionChanged` — hook fires on
+- `TestSessionStart_InvokesOnActiveSessionChanged` â€” hook fires on
   start.
-- `TestSessionClose_InvokesOnActiveSessionChanged` — hook fires on
+- `TestSessionClose_InvokesOnActiveSessionChanged` â€” hook fires on
   close.
-- `TestSessionStart_NilHookIsSafe` — nil callback doesn't crash
+- `TestSessionStart_NilHookIsSafe` â€” nil callback doesn't crash
   SessionStart (alternative harnesses that don't wire the hook).
-- `TestResolverCacheInvalidatedAfterSessionStart` — **the
+- `TestResolverCacheInvalidatedAfterSessionStart` â€” **the
   regression test**: pre-warm the resolver cache with `""`, call
   SessionStart, then verify the next ActiveSessionID returns the
   new session_id (not the stale `""`). Pre-fix: fails. Post-fix:
   passes.
-- `TestResolverCacheInvalidatedAfterSessionClose` — same for close:
+- `TestResolverCacheInvalidatedAfterSessionClose` â€” same for close:
   pre-warm with the session id, call SessionClose, verify the
   cache is flushed.
 
 **Files touched** (~80 LOC production + 220 LOC test):
 
-- `internal/orchestration/orchestrator.go` — `OnActiveSessionChanged`
+- `internal/orchestration/orchestrator.go` â€” `OnActiveSessionChanged`
   field on `Orchestrator`.
-- `internal/orchestration/session_start.go` — call hook after
+- `internal/orchestration/session_start.go` â€” call hook after
   `SetActiveSession`.
-- `internal/orchestration/session_close.go` — call hook after
+- `internal/orchestration/session_close.go` â€” call hook after
   `ClearActiveSession`.
-- `internal/orchestration/session_resurrect.go` — call hook after
+- `internal/orchestration/session_resurrect.go` â€” call hook after
   `SetActiveSession`.
-- `cmd/dark-mem-mcp/main.go` — wire `resolver.Invalidate` to the hook.
-- `tests/dual_driver/cache_invalidation_test.go` — NEW.
-- `vibe-flow/main/cache_invalidation_v2_1_3.md` — spec.
-- `internal/server/bootstrap.go` — `DefaultServerVersion` bumped
-  2.1.2-dev → 2.1.3-dev.
+- `cmd/dark-mem-mcp/main.go` â€” wire `resolver.Invalidate` to the hook.
+- `tests/dual_driver/cache_invalidation_test.go` â€” NEW.
+- `vibe-flow/main/cache_invalidation_v2_1_3.md` â€” spec.
+- `internal/server/bootstrap.go` â€” `DefaultServerVersion` bumped
+  2.1.2-dev â†’ 2.1.3-dev.
 
 **What this fix does NOT change**:
 
@@ -1027,10 +1051,10 @@ bootState.Orchestrator.OnActiveSessionChanged = activeSessionResolver.Invalidate
 - The e2e gate tests (they pass either way; the bug only manifested
   in production where the cache starts empty and gets pre-warmed
   by the same tool that's supposed to write the real value).
-- Any tool wire contract (callers see the same behavior — the only
+- Any tool wire contract (callers see the same behavior â€” the only
   change is that the FIRST call after session_start/session_close
   now succeeds).
-- `session_sweeper`'s `ClearActiveSession` — the sweeper runs in a
+- `session_sweeper`'s `ClearActiveSession` â€” the sweeper runs in a
   background goroutine, doesn't have access to the resolver. The
   sweeper clears idle sessions that the operator wasn't actively
   using, so the cache staleness window (5s) is not user-visible.
@@ -1041,16 +1065,16 @@ load the v2.1.3 binary. Same `Move-Item` swap procedure as before.
 
 ---
 
-## [2.1.2] — 2026-07-27
+## [2.1.2] â€” 2026-07-27
 
 ### Fixed (DefaultToolGrants wire prefix + SaveAgentMemory session binding)
 
 Two more bugs surfaced by the v2.1.1 end-to-end smoke test on the
-live MCP. Both were **pre-existing** — neither regression test
+live MCP. Both were **pre-existing** â€” neither regression test
 exercised the gate end-to-end (e2e + dual_driver suites call
 `t.Handler` directly, bypassing GateMiddleware entirely).
 
-**Bug A — DefaultToolGrants has wire-format prefix on every entry
+**Bug A â€” DefaultToolGrants has wire-format prefix on every entry
 (caused every session-required tool to refuse with
 `ErrCapabilityNotGranted`)**:
 
@@ -1065,46 +1089,46 @@ const DefaultToolGrants = "dark_memory_active_policy," +
 The list had the `dark_memory_` wire prefix on every entry. The gate's
 `CapabilitiesFrame.HasGrant` (`internal/atomic/capabilities_frame.go:154`)
 performs case-sensitive exact match against `in.ToolName` from
-`GateInput.ToolName` — which is the **bare** name (e.g.
+`GateInput.ToolName` â€” which is the **bare** name (e.g.
 `"session_status"`, not `"dark_memory_session_status"`; see
 `internal/tools/registry.go:37`). Every entry mismatched, so the
 fallback granted **zero** tools.
 
 This bug went unnoticed because every test that touches a tool bypasses
 the gate:
-- `tests/e2e/server_test.go:304` — `resp, err := t.Handler(ctx, raw)`
-- `tests/dual_driver/*.go` — same direct-handler pattern
+- `tests/e2e/server_test.go:304` â€” `resp, err := t.Handler(ctx, raw)`
+- `tests/dual_driver/*.go` â€” same direct-handler pattern
 
 Fix: strip `dark_memory_` from every entry, add the 5 new
 `agent_memory_*` tools (which were missing from v2.1.0 anyway).
 
-**Bug B — `SaveAgentMemory` did not bind the row to the active
+**Bug B â€” `SaveAgentMemory` did not bind the row to the active
 session**:
 
 The orchestrator-level contract
 (`internal/orchestration/agent_memory.go:81`):
 > `// SessionID resolved by SaveAgentMemory from active project.`
 
-…but the Store's `SaveAgentMemory` impl inserted `m.SessionID`
+â€¦but the Store's `SaveAgentMemory` impl inserted `m.SessionID`
 verbatim, and the orchestrator never set it. Result: every saved row
 had `session_id=""`, so `agent_memory_list(scope="session")` returned
 zero rows even immediately after a save.
 
 Fix: in `SaveAgentMemory`, if `m.SessionID == ""`, populate from
 `s.resolveActiveSessionID(ctx)` before the INSERT. Operator-scoped
-saves (no active session) still work — the row stays with
+saves (no active session) still work â€” the row stays with
 `session_id=""` and the `scope="operator"` list path finds it via
 write_audit.
 
 **New tests**:
 
-- `internal/recall/assemble_test.go` (external test pkg) —
+- `internal/recall/assemble_test.go` (external test pkg) â€”
   `TestDefaultToolGrants_CoversCanonicalOrder` enforces the
   invariant that every tool in `tools.CanonicalOrder()` is in
   `DefaultToolGrants`, AND that every entry uses bare names. The
-  `tools.CanonicalOrder` set is the source of truth — adding a tool
+  `tools.CanonicalOrder` set is the source of truth â€” adding a tool
   there without updating `DefaultToolGrants` now fails CI.
-- `tests/e2e/gate_test.go` — `TestE2E_Gate_BareNameGrant` and
+- `tests/e2e/gate_test.go` â€” `TestE2E_Gate_BareNameGrant` and
   `TestE2E_Gate_SessionStatus` exercise the gate end-to-end via
   `GateMiddleware.Wrap` (not just `t.Handler`). Both would have
   caught v2.1.0's DefaultToolGrants bug AND v2.1.1's empty-
@@ -1113,18 +1137,18 @@ write_audit.
 
 **Files touched** (84 LOC production + 220 LOC test):
 
-- `internal/recall/assemble.go` — `DefaultToolGrants` constant
+- `internal/recall/assemble.go` â€” `DefaultToolGrants` constant
   (strip prefix + add 5 agent_memory_*).
-- `internal/recall/assemble_test.go` — NEW external test pkg
+- `internal/recall/assemble_test.go` â€” NEW external test pkg
   enforcing the invariant.
-- `internal/store/sqlite/store.go` — `SaveAgentMemory` binds
+- `internal/store/sqlite/store.go` â€” `SaveAgentMemory` binds
   session_id from active project.
-- `internal/atomic/capabilities_frame_test.go` — test names
+- `internal/atomic/capabilities_frame_test.go` â€” test names
   updated from `dark_memory_*` prefix to bare.
-- `tests/dual_driver/recall_test.go`, `cache_test.go` — same.
-- `tests/e2e/gate_test.go` — NEW gate end-to-end tests.
-- `internal/server/bootstrap.go` — `DefaultServerVersion` bumped
-  2.1.1-dev → 2.1.2-dev.
+- `tests/dual_driver/recall_test.go`, `cache_test.go` â€” same.
+- `tests/e2e/gate_test.go` â€” NEW gate end-to-end tests.
+- `internal/server/bootstrap.go` â€” `DefaultServerVersion` bumped
+  2.1.1-dev â†’ 2.1.2-dev.
 
 **Upgrade notes**: Operators on v2.1.0 or v2.1.1 must restart
 opencode to load the v2.1.2 binary. The `bin\dark-mem-mcp.exe`
@@ -1134,7 +1158,7 @@ file-replace).
 
 ---
 
-## [2.1.1] — 2026-07-27
+## [2.1.1] â€” 2026-07-27
 
 ### Fixed (GateMiddleware empty project_id regression)
 
@@ -1145,9 +1169,9 @@ file-replace).
 `dark_memory_session_close` returned `ErrFrameStaleTooFar` despite a
 valid active session in the DB. Read-only tools without session
 requirement (`health_ping`, `memory_state`, `active_policy`) worked
-fine — the gate allowlist bypassed the session check for those.
+fine â€” the gate allowlist bypassed the session check for those.
 
-**Root cause** — interaction between two files:
+**Root cause** â€” interaction between two files:
 
   - `internal/server/middleware.go` `buildGateInput` passed
     `args.project_id` (empty for tools that don't carry project_id
@@ -1156,16 +1180,16 @@ fine — the gate allowlist bypassed the session check for those.
     `projectID == ""` and returned `""` without consulting the store.
 
 Result: `GateInput.SessionID=""` AND `GateInput.ProjectID=""`, which
-PreCheck treats as "no session" → refusal.
+PreCheck treats as "no session" â†’ refusal.
 
 The bug was a v2.0.2 regression that the existing test suite didn't
 catch because all v2.0.2 session-required tool tests pass
 `project_id` explicitly in args. The new `agent_memory_*` tools
-(v2.1.0) intentionally omit `project_id` from args — they derive it
+(v2.1.0) intentionally omit `project_id` from args â€” they derive it
 from the active project internally (INV-7 enforces it at the Store
 layer).
 
-**Fix** — minimal change that localizes the fallback to the
+**Fix** â€” minimal change that localizes the fallback to the
 middleware (avoids changing the resolver's `projectID == ""`
 short-circuit, which is still correct for the bootstrap case where
 `session_start` itself runs without a project context):
@@ -1184,13 +1208,13 @@ short-circuit, which is still correct for the bootstrap case where
 
 **Files touched** (12 LOC production + 80 LOC test):
 
-  - `internal/server/middleware.go` — `ActiveProject` field +
+  - `internal/server/middleware.go` â€” `ActiveProject` field +
     fallback logic.
-  - `cmd/dark-mem-mcp/main.go` — wire `ActiveProject:
+  - `cmd/dark-mem-mcp/main.go` â€” wire `ActiveProject:
     bootState.Store.ActiveProject`.
-  - `internal/server/middleware_test.go` — 4 regression tests.
-  - `internal/server/bootstrap.go` — `DefaultServerVersion` bumped
-    2.1.0-dev → 2.1.1-dev.
+  - `internal/server/middleware_test.go` â€” 4 regression tests.
+  - `internal/server/bootstrap.go` â€” `DefaultServerVersion` bumped
+    2.1.0-dev â†’ 2.1.1-dev.
 
 **Upgrade notes**: Operators who already restarted opencode against
 v2.1.0 must restart it again to load the v2.1.1 binary. The
@@ -1200,7 +1224,7 @@ needs a restart, not a file-replace).
 
 ---
 
-## [2.1.0] — 2026-07-27
+## [2.1.0] â€” 2026-07-27
 
 ### Added (Mem0-aligned agent-memory data plane)
 
@@ -1214,7 +1238,7 @@ project / session) with dark-memory's INV-7 multi-tenancy layered on.
 
 #### Schema (migration v18)
 
-  - `agent_memory` table — 12 columns (id, project_id, session_id,
+  - `agent_memory` table â€” 12 columns (id, project_id, session_id,
     operator, kind, title, content, tags, pinned, created_at,
     updated_at, archived_at, expires_at).
   - 4 indexes (project+archived+pinned+created, session+created,
@@ -1224,7 +1248,7 @@ project / session) with dark-memory's INV-7 multi-tenancy layered on.
   - 4 sync triggers (ai / ad / au1 / au2) keeping the FTS mirror
     consistent under INSERT / DELETE / UPDATE.
 
-#### New canonical tools (29 → 34)
+#### New canonical tools (29 â†’ 34)
 
 | Tool | Function |
 |------|----------|
@@ -1234,9 +1258,9 @@ project / session) with dark-memory's INV-7 multi-tenancy layered on.
 | `dark_memory_agent_memory_update`  | Partial update of mutable fields (content/title/tags/pinned/expires_at); operator + project_id immutable |
 | `dark_memory_agent_memory_archive` | Soft-delete; recoverable via list(include_archived=true); idempotent |
 
-Tool namespace ordering (per spec D-12 / BRIDGE_AND_COEXISTENCE.md §3):
+Tool namespace ordering (per spec D-12 / BRIDGE_AND_COEXISTENCE.md Â§3):
 the new AGENT_MEMORY (5) namespace sits between CONTEXT (4) and
-JUDGE (3) — memory is a read+write data plane, judge is eval on top
+JUDGE (3) â€” memory is a read+write data plane, judge is eval on top
 of that data.
 
 ### Changed
@@ -1249,7 +1273,7 @@ SQL-aware state machine that tracks:
   - Block comments (`/* ... */`)
   - Single-quoted string literals with `''` escape
   - `BEGIN..END` blocks (full nesting depth)
-  - Dollar-quoted strings (`$tag$...$tag$`) — Postgres
+  - Dollar-quoted strings (`$tag$...$tag$`) â€” Postgres
 
 Why: agent_memory's FTS5 sync triggers have `BEGIN INSERT ...; END`
 bodies. Without this upgrade the migrations had to be split across
@@ -1257,7 +1281,7 @@ v18-v22 (5 separate migrations for one logical change), which
 pollutes the version namespace. The upgrade is conservative (no
 behavior change for v1-v17 migrations) and covered by
 `internal/migrate/split_test.go` (table-driven, 26 cases +
-backward-compat guard over 17 existing migrations × 2 drivers).
+backward-compat guard over 17 existing migrations Ã— 2 drivers).
 
 ### Fixed
 
@@ -1272,30 +1296,30 @@ backward-compat guard over 17 existing migrations × 2 drivers).
 
 ### Tests added
 
-  - `internal/agentmemory/types_test.go` — kind/scope constants,
+  - `internal/agentmemory/types_test.go` â€” kind/scope constants,
     parse helpers, no-driver tests.
-  - `tests/dual_driver/agent_memory_test.go` — 14 integration tests
+  - `tests/dual_driver/agent_memory_test.go` â€” 14 integration tests
     against real SQLite: save/get/update/archive round-trips, INV-7
     enforcement, FTS5 BM25 search (incl. archived-exclusion and
     title-field search), write-audit emission.
-  - `internal/migrate/split_test.go` — 26 splitter cases + 34
+  - `internal/migrate/split_test.go` â€” 26 splitter cases + 34
     backward-compat guards. All passing.
 
 ### Out of scope (follow-ups)
 
-  - F49 — full FTS5 tokenizer-aware escape (current escape is
+  - F49 â€” full FTS5 tokenizer-aware escape (current escape is
     conservative: alpha-numeric + a few safe punctuation, rejects
     reserved words AND/OR/NOT/NEAR).
-  - F50 — Postgres `tsvector` + GIN mirror (mirrors v18 on the
+  - F50 â€” Postgres `tsvector` + GIN mirror (mirrors v18 on the
     SQLite path; not yet implemented on the Postgres driver).
-  - F51 — sweeper for expired rows (expires_at < now).
-  - F52 — session-scoped authz on update/archive (currently
+  - F51 â€” sweeper for expired rows (expires_at < now).
+  - F52 â€” session-scoped authz on update/archive (currently
     enforces operator match only; cross-session overwrites of
     another session's memory are out of scope for v2.1.0).
 
 ---
 
-## [2.0.2] — 2026-07-27
+## [2.0.2] â€” 2026-07-27
 
 ### Fixed (DARK-MEM-v2.0.1-REGRESSION-1)
 
@@ -1304,7 +1328,7 @@ StaticSessionResolver stub. Every call returned an empty
 session_id, and the gate refused all tool calls with
 ErrFrameStaleTooFar. v2.0.2 fixes this in three layers.
 
-#### Schema (v17 — commit e16b2b7)
+#### Schema (v17 â€” commit e16b2b7)
 
 projects.active_session_id + active_session_set_at columns
 added by migration v17 (sqlite + postgres). Set by session_start
@@ -1314,9 +1338,9 @@ and session_resume; cleared (compare-and-set) by session_close.
 
 Three new methods on store.Store:
 
-- SetActiveSession(ctx, projectID, sessionID) — overwrite; idempotent
-- GetActiveSession(ctx, projectID) (string, error) — empty string if none
-- ClearActiveSession(ctx, projectID, expectedSessionID) — CAS clear
+- SetActiveSession(ctx, projectID, sessionID) â€” overwrite; idempotent
+- GetActiveSession(ctx, projectID) (string, error) â€” empty string if none
+- ClearActiveSession(ctx, projectID, expectedSessionID) â€” CAS clear
 
 SQLite implements all three. Postgres has stubs (driver unused
 on this host).
@@ -1336,7 +1360,7 @@ restores the v2.0.0 contract for them.
 
 #### Real ActiveSessionResolver
 
-internal/server/active_session_resolver.go — the
+internal/server/active_session_resolver.go â€” the
 StoreBackedActiveSessionResolver queries the projects row
 through a pluggable ActiveSessionLookup (main.go adapts via
 StoreBackedLookup). Short in-process TTL cache (default 5s)
@@ -1359,13 +1383,13 @@ implementations must adapt.
 
 ### Tests (regression guards for v2.0.1's failure)
 
-- internal/policy/gate_v2_0_2_test.go — pins the
+- internal/policy/gate_v2_0_2_test.go â€” pins the
   RequiresActiveSession contract AND a direct guard that
   PreCheck on a session-free tool returns Allowed=true.
-- internal/server/active_session_resolver_test.go — 6 tests
+- internal/server/active_session_resolver_test.go â€” 6 tests
   covering cache hit, expiry, empty projectID no-op,
   lookup-error handling, Invalidate, CacheTTL=0 disable.
-- tests/dual_driver/active_session_test.go — 4 tests covering
+- tests/dual_driver/active_session_test.go â€” 4 tests covering
   Set/Get/Clear roundtrip, CAS semantics, race-new-session-wins,
   ErrProjectNotFound.
 
@@ -1376,8 +1400,8 @@ session-free and would not exercise the refusal path).
 
 ---
 
-## [2.0.1] — 2026-07-27
- — 2026-07-27
+## [2.0.1] â€” 2026-07-27
+ â€” 2026-07-27
 
 ### Added (gate promoted to the transport layer)
 
@@ -1386,19 +1410,19 @@ v2.0.1 promotes it to the transport layer so every `dark_memory_*`
 tool call now flows through `internal/policy.PostCheck` via the new
 `GateMiddleware`, *before* the inner handler runs.
 
-- **`internal/server/middleware.go` (new) — `GateMiddleware.Wrap`**.
+- **`internal/server/middleware.go` (new) â€” `GateMiddleware.Wrap`**.
   PreCheck (capability grant + intent-in-scope) before the inner
   handler; PostCheck (drift-at-write, when `DriftChecker` is non-nil)
   after, for artifact-creating tools only. When `Gate` is nil, the
   legacy direct-dispatch path runs (no policy enforcement), keeping
   the existing test harness ergonomic.
-- **`internal/server/middleware_test.go` (new)** — 387 lines covering
+- **`internal/server/middleware_test.go` (new)** â€” 387 lines covering
   3 categories: capability mismatch, scope mismatch, drift verdict
   refusal at write boundary.
-- **`internal/server/server.go`** — `wrapHandler` routes through `Gate`
+- **`internal/server/server.go`** â€” `wrapHandler` routes through `Gate`
   when set.
-- **`internal/server/lifecycle.go`** — `BootState.Gate` field.
-- **`cmd/dark-mem-mcp/main.go`** — wires the Gate from the returned
+- **`internal/server/lifecycle.go`** â€” `BootState.Gate` field.
+- **`cmd/dark-mem-mcp/main.go`** â€” wires the Gate from the returned
   `FrameSource` at boot.
 
 ### Changed (FrameSource singleton, 5A.ii.b.2.c.1)
@@ -1407,14 +1431,14 @@ The per-call `FrameSource` construction in `dark_memory_recall` is
 lifted to a boot-time singleton. Both the recall tool and the gate
 now share the same `CachedSource` instance.
 
-- **`internal/recall/singleton.go` (new)** — boot-time `FrameSource`
+- **`internal/recall/singleton.go` (new)** â€” boot-time `FrameSource`
   construction. Singleton contract tested in `singleton_test.go`.
-- **`internal/tools/register.go`** — `RegisterAll` signature changes
+- **`internal/tools/register.go`** â€” `RegisterAll` signature changes
   from returning `error` to returning `(policy.FrameSource, error)` so
   the caller can wire it into the gate.
-- **`internal/tools/recall.go`** — uses the passed-in singleton;
+- **`internal/tools/recall.go`** â€” uses the passed-in singleton;
   per-call construction is gone.
-- **`tests/e2e/server_test.go`** — updated for the new `RegisterAll`
+- **`tests/e2e/server_test.go`** â€” updated for the new `RegisterAll`
   signature.
 
 ### Added (operator ergonomics)
@@ -1436,7 +1460,7 @@ now share the same `CachedSource` instance.
   strict-mode opt-in is a separate follow-up (or a v2.0.2 if needed).
   The gate still runs PreCheck unconditionally and refuses tools the
   LLM isn't granted.
-- **`DefaultServerVersion` bumped** from `2.0.0-dev` →
+- **`DefaultServerVersion` bumped** from `2.0.0-dev` â†’
   `2.0.1-dev` in `internal/server/bootstrap.go` for the legacy
   hardcoded fallback. Canonical version resolution flows through
   `version.Resolve()` (set by `make release` via `-ldflags`).
@@ -1445,23 +1469,23 @@ now share the same `CachedSource` instance.
 
 ---
 
-## [2.0.0] — 2026-07-19
+## [2.0.0] â€” 2026-07-19
 
-### Breaking (operator env contract — ships in PR #10)
+### Breaking (operator env contract â€” ships in PR #10)
 
-- **`DARK_SCRAPPER_URL` → `DARK_DRIFT_JUDGE_DAEMON_URL`**.
+- **`DARK_SCRAPPER_URL` â†’ `DARK_DRIFT_JUDGE_DAEMON_URL`**.
   SelfHarnessClient provider renamed from `"dark_scrapper"` to
-  `"drift_judge_daemon"`. Function `judgeViaScrapper` →
-  `judgeViaDriftJudgeDaemon`. **No backward-compat alias** —
+  `"drift_judge_daemon"`. Function `judgeViaScrapper` â†’
+  `judgeViaDriftJudgeDaemon`. **No backward-compat alias** â€”
   operators must update their env.
   Migration: `sed -i 's/DARK_SCRAPPER_URL/DARK_DRIFT_JUDGE_DAEMON_URL/g' .env`.
-- **`DARK_JUDGE_MODEL_SCRAPPER` → `DARK_JUDGE_MODEL_DRIFT_JUDGE_DAEMON`**.
-- Test file `internal/orchestration/scrapper_wiring_test.go` →
+- **`DARK_JUDGE_MODEL_SCRAPPER` â†’ `DARK_JUDGE_MODEL_DRIFT_JUDGE_DAEMON`**.
+- Test file `internal/orchestration/scrapper_wiring_test.go` â†’
   `internal/orchestration/drift_judge_daemon_wiring_test.go`.
 
 ### Breaking (server lifecycle default)
 
-- **Shutdown default `close_reason` `aborted` → `clean`** in
+- **Shutdown default `close_reason` `aborted` â†’ `clean`** in
   `internal/server/lifecycle.go`. Operators who relied on the
   legacy `aborted` default for crash-recovery workflows can opt
   back via `DARK_SHUTDOWN_CLOSE_REASON=aborted`.
@@ -1471,7 +1495,7 @@ now share the same `CachedSource` instance.
 
 ### Fixed
 
-- **INFRA-002 — `dark_memory_vibe_spec` now surfaces WHICH form and WHY
+- **INFRA-002 â€” `dark_memory_vibe_spec` now surfaces WHICH form and WHY
   on tasks parse failure.** Pre-fix, `parseTasksField` in
   `internal/orchestration/vibe_spec.go` discarded the underlying
   `json.Unmarshal` error and returned only
@@ -1485,7 +1509,7 @@ now share the same `CachedSource` instance.
   - Wrapped with `fmt.Errorf("%w: rejected by parser (Form A/B
     step N/unknown form ...): %v", fe, cause)` so the operator
     sees which form was attempted AND the underlying json
-    diagnostic (e.g. "invalid character '·' after top-level
+    diagnostic (e.g. "invalid character 'Â·' after top-level
     value").
   - The unknown-first-byte path explicitly names the offending
     byte (`first non-whitespace byte='{'`) and the expected
@@ -1493,12 +1517,12 @@ now share the same `CachedSource` instance.
     `classifyUnknown`'s no-payload-leak policy).
 - Concrete reproductions covered by:
   - `internal/orchestration/vibe_spec_test.go` (orchestrator-level):
-    - `[{...}]·` (trailing garbage byte after close-bracket, Form A)
+    - `[{...}]Â·` (trailing garbage byte after close-bracket, Form A)
     - `"[not-an-array]"` (outer string but inner not parseable, Form B)
-    - `{...}` (object-shaped payload — neither Form applies)
+    - `{...}` (object-shaped payload â€” neither Form applies)
   - `tests/wire/infra002_vibe_spec_diagnostic_test.go` (H-3 wire
     conformance): pins the contract end-to-end against the running
-    binary over JSON-RPC — the same envelope shape production
+    binary over JSON-RPC â€” the same envelope shape production
     harnesses see.
 
 ### Added (memory-as-policy-gateway pivot)
@@ -1515,86 +1539,86 @@ now traverses `internal/policy.PostCheck` which:
 4. **Drift-checks the response at the write boundary** before
    returning to the LLM (`internal/drift.Checker`).
 
-- **`dark_memory_recall` (29th canonical tool, CONTEXT 3 → 4)** —
+- **`dark_memory_recall` (29th canonical tool, CONTEXT 3 â†’ 4)** â€”
   the canonical scoped-replay orchestrator. Inputs: scope
   (global|project|session), project_id, session_id, since_token.
   Outputs: per-kind atomic frames (Identity, Scope, Capabilities,
   Drift, Persona) + delta write_audit rows since since_token +
-  new_token cursor. RFC §3 M1 + §6.1.
-- **`internal/atomic` package (NEW)** — Frame interface + 6
+  new_token cursor. RFC Â§3 M1 + Â§6.1.
+- **`internal/atomic` package (NEW)** â€” Frame interface + 6
   concrete types: IdentityFrame, ScopeFrame, CapabilitiesFrame,
   PersonaFrame, DriftFrame, EvidenceFrame. FrameSource interface.
-  Wave 5X.2: `Frame.Hash` signature `Hash() [32]byte` →
+  Wave 5X.2: `Frame.Hash` signature `Hash() [32]byte` â†’
   `Hash() ([32]byte, error)` (defense against previous
   interface/type mismatch that was silently swallowed).
-- **`internal/drift` package (NEW)** — `Strictness` enum
+- **`internal/drift` package (NEW)** â€” `Strictness` enum
   (off|warn|strict), `Checker` type with `CheckArtifact(ctx,
-  ArtifactInput) → Verdict`, `JudgeCaller` interface. Replaces
+  ArtifactInput) â†’ Verdict`, `JudgeCaller` interface. Replaces
   the previous `policy.PostCheck` stub. Decision tree for judge
   errors: strict refuses, warn allows.
-- **`internal/policy` package (NEW)** — gate.PostCheckInput
+- **`internal/policy` package (NEW)** â€” gate.PostCheckInput
   gains `DriftChecker + DriftArtifact` optional fields.
   `PostCheck` now calls `drift.Checker` when `Strictness != off`.
-- **`internal/recall` package (NEW)** — `StoreSource` (reads
+- **`internal/recall` package (NEW)** â€” `StoreSource` (reads
   from `store.Store`) + `CachedSource` (INV-5 cache re-hash on
   Get + audit emission on cache_mismatch). 9 tests.
-- **Session lifecycle resilience** — `session_resurrect`,
+- **Session lifecycle resilience** â€” `session_resurrect`,
   `session_recover`, `session_heartbeat`, `session_sweeper`,
   `boot_reconcile`. Closed-due-to-crash sessions are now
   resurrectable (only operator-initiated termination is
   terminal). `SessionResurrectOutput` gains 5 fields:
   `InheritedConstitution{ID,Ver}`, `ActiveConstitution{ID,Ver}`,
   `ConstitutionBumped`, `InheritedMods`.
-- **L6 adapter integration** — 3 hooks from
-  `BRIDGE_AND_COEXISTENCE.md` §6 wired:
-  * `startup-recover` → `runStartupRecover()` in main.go
-  * `periodic-heartbeat` → sweeper (5E.iii, doc-only)
-  * `exit-close_clean` → Shutdown default reason = clean
-- **Per-project drift strictness** — `Project.DriftStrictness`
+- **L6 adapter integration** â€” 3 hooks from
+  `BRIDGE_AND_COEXISTENCE.md` Â§6 wired:
+  * `startup-recover` â†’ `runStartupRecover()` in main.go
+  * `periodic-heartbeat` â†’ sweeper (5E.iii, doc-only)
+  * `exit-close_clean` â†’ Shutdown default reason = clean
+- **Per-project drift strictness** â€” `Project.DriftStrictness`
   field (migration v14). `drift.ResolveStrictness(projectOverride,
-  envValue, warnf)` — empty/'default' → env; valid → override;
-  invalid → warn + env fallback.
+  envValue, warnf)` â€” empty/'default' â†’ env; valid â†’ override;
+  invalid â†’ warn + env fallback.
 
-### Added (canonical tool count 28 → 29)
+### Added (canonical tool count 28 â†’ 29)
 
-- **`dark_memory_recall`** — see "memory-as-policy-gateway
-  pivot" above. CONTEXT namespace: 3 → 4 tools.
+- **`dark_memory_recall`** â€” see "memory-as-policy-gateway
+  pivot" above. CONTEXT namespace: 3 â†’ 4 tools.
 
 ### Changed (data plane)
 
-- **Schema migrations v11–v15** (sqlite + postgres):
-  * v11, v12 — frame-related scaffolding (see git log)
-  * v13 — `CREATE UNIQUE INDEX uq_vibe_frames_natural_key ON
+- **Schema migrations v11â€“v15** (sqlite + postgres):
+  * v11, v12 â€” frame-related scaffolding (see git log)
+  * v13 â€” `CREATE UNIQUE INDEX uq_vibe_frames_natural_key ON
     vibe_frames (project_id, session_id, scope_level, scope_id,
-    frame_kind)` — enables the UPSERT rewrite
-  * v14 — `ALTER TABLE projects ADD COLUMN drift_strictness TEXT
+    frame_kind)` â€” enables the UPSERT rewrite
+  * v14 â€” `ALTER TABLE projects ADD COLUMN drift_strictness TEXT
     NOT NULL DEFAULT 'default'`
-  * v15 — `ALTER TABLE vlp_state ADD COLUMN open_spec_id INTEGER
+  * v15 â€” `ALTER TABLE vlp_state ADD COLUMN open_spec_id INTEGER
     NOT NULL DEFAULT 0`
 - **SaveFrame rewritten as INSERT ... ON CONFLICT DO UPDATE**
   (sqlite) / `ON CONFLICT ... RETURNING` (postgres). Replaces the
   SELECT-then-INSERT/UPDATE race in the previous implementation
   under concurrent SaveFrame calls. Tested with 10-goroutine
-  concurrent upsert → 1 row.
-- **`WriteContext.SessionEvent`** — every `Save*` emits this
+  concurrent upsert â†’ 1 row.
+- **`WriteContext.SessionEvent`** â€” every `Save*` emits this
   field in `write_audit`. Closes pre-existing drift where the
   `session_event` column was INSERTed NULL silently.
-- **`VLPStateRow.OpenSpecID`** — the actual spec_id the session
+- **`VLPStateRow.OpenSpecID`** â€” the actual spec_id the session
   is working on. Previously the recall cache used `vlp_state.ID`
   as a meaningless proxy.
-- **`Project.DriftStrictness`** — per-project resolver override.
+- **`Project.DriftStrictness`** â€” per-project resolver override.
 
 ### Notes (constitution + RFC)
 
 - The pivot's design rationale lives in
   `vibe-flow/main/ACTIVE_MEMORY_RFC.md`, `SCHEMA_v11_v12.md`, and
-  `DRIFT_BURST.md` — these are operator-private planning docs
+  `DRIFT_BURST.md` â€” these are operator-private planning docs
   (NOT committed; lives in the operator's local workspace).
 - Public docs updated: `vibe-flow/PLAN.md` v2 (pivoted roadmap),
   `vibe-flow/main/BRIDGE_AND_COEXISTENCE.md` v2 (cx.v3,
   policy_gateway, dark-research-mcp demoted, dark-recall
   cancelled).
-- `DefaultServerVersion` constant bumped from `"1.4.1-dev"` →
+- `DefaultServerVersion` constant bumped from `"1.4.1-dev"` â†’
   `"2.0.0-dev"`. Canonical source remains `version.Resolve()`
   (set by `make release` via `-ldflags`).
 - 9 commits + 1 release (this PR). Pre-merge lint scrub PR #10
@@ -1603,7 +1627,7 @@ now traverses `internal/policy.PostCheck` which:
 
 ---
 
-## [1.4.1] — 2026-07-18
+## [1.4.1] â€” 2026-07-18
 
 ### Behavior change (callers MUST verify)
 
@@ -1633,7 +1657,7 @@ stability promise at v1.x), a PATCH bump is appropriate.
 
 ### Added (canonical C1..C7 taxonomy)
 
-- **`internal/vibecase` package** — single source of truth for the
+- **`internal/vibecase` package** â€” single source of truth for the
   C1..C7 case taxonomy. Replaces a JSON Schema enum fragment that
   was duplicated across `vibe_publish` and (asymmetrically) absent
   from `vibe_spec`. Exports:
@@ -1642,11 +1666,11 @@ stability promise at v1.x), a PATCH bump is appropriate.
   - `Parse(s)` (strict, trims, rejects empty + unknown + mixed-case),
     `MustParse(s)` (panic-on-error for startup constants),
     `IsValid(s)` (boolean shortcut).
-  - `All()` and `JSONSchemaEnum()` — stable, ordered, defensively
+  - `All()` and `JSONSchemaEnum()` â€” stable, ordered, defensively
     copied.
-  - `Description(c)` — human-facing one-liner per case (for LLM
+  - `Description(c)` â€” human-facing one-liner per case (for LLM
     context projections).
-  - `ErrInvalidCase` — exported sentinel for `errors.Is` checks.
+  - `ErrInvalidCase` â€” exported sentinel for `errors.Is` checks.
   - 15 unit tests covering ordering, defensive copy, trim, empty,
     unknown, mixed-case, error message contents, panic, boolean
     shortcut, round-trip, description, cardinality.
@@ -1679,7 +1703,7 @@ the package doc on `internal/vibecase` for the full contract.
 
 ---
 
-## [1.4.0] — 2026-07-18
+## [1.4.0] â€” 2026-07-18
 
 ### Added (release-integrity release)
 
@@ -1689,19 +1713,19 @@ the package doc on `internal/vibecase` for the full contract.
   authoritative, (4) drift detection on every boot, (5) session-bound
   governance. Cross-cutting reference for every `vibe_publish` artifact
   in the dark-memory-mcp project.
-- **`internal/version` package** — single-source version resolver.
+- **`internal/version` package** â€” single-source version resolver.
   Replaces the hardcoded `DefaultServerVersion = "1.3.0"` constant in
   `internal/server/bootstrap.go` and the `var Version = "1.1.0-dev"`
   in `cmd/dark-mem-cli/main.go` and `cmd/dark-mem-inspect/main.go`.
   Resolution priority: `-ldflags` injection (canonical, set by
-  `make release`) → `debug.ReadBuildInfo()` (dev) → hardcoded
+  `make release`) â†’ `debug.ReadBuildInfo()` (dev) â†’ hardcoded
   `"dev"` sentinel (emergency). 9 unit tests cover all three paths.
 - **`Makefile`** with `build` / `release` / `drift-check` /
   `version` / `version-json` / `inspect` / `tag` / `clean` targets.
   Handles the multi-module `cmd/*` layout (each cmd is its own Go
   module; the Makefile `cd`s into each before `go build`).
 - **`scripts/inject-version.sh`** (bash) and
-  **`scripts/inject-version.ps1`** (PowerShell) — resolve the canonical
+  **`scripts/inject-version.ps1`** (PowerShell) â€” resolve the canonical
   version from `git describe` and emit the `-ldflags` expression that
   feeds `make release`. Same resolution rules, same output formats
   (`--raw` / `--json` / default), same `--strict` flag.
@@ -1711,7 +1735,7 @@ the package doc on `internal/vibecase` for the full contract.
 - **`dark_memory_health_ping` response grew a `git` block.**
   New fields: `git.tag`, `git.commit`, `git.dirty`, `git.build_time`,
   `git.source` (one of `ldflags|buildinfo|dev`), `git.is_dev`.
-- **Top-level `drift` bool** — true iff the resolver fell back to the
+- **Top-level `drift` bool** â€” true iff the resolver fell back to the
   dev path OR the working tree was dirty at build time. Per
   `CONSTITUTION.md` Rule 4, a release binary MUST report
   `drift=false`. Operators can monitor the single-bit signal directly.
@@ -1725,7 +1749,7 @@ the package doc on `internal/vibecase` for the full contract.
   is now a deprecated string (`"1.4.0-dev"`) for any external
   callers; the canonical default flows through `version.Resolve()`.
 - `cmd/e2e/main.go` relaxed the hardcoded `"1.3.0"` health_ping
-  version assertion to "non-empty" — the value is now driven by the
+  version assertion to "non-empty" â€” the value is now driven by the
   resolver, not by source code.
 
 ### Notes
@@ -1739,7 +1763,7 @@ the package doc on `internal/vibecase` for the full contract.
 
 ---
 
-## [1.3.2] — 2026-07-16
+## [1.3.2] â€” 2026-07-16
 
 ### Fixed
 
@@ -1770,7 +1794,7 @@ the package doc on `internal/vibecase` for the full contract.
 
 ---
 
-## [1.3.1] — 2026-07-16
+## [1.3.1] â€” 2026-07-16
 
 ### Note (release plumbing)
 
@@ -1778,7 +1802,7 @@ the package doc on `internal/vibecase` for the full contract.
   commit message reads `release: v1.3.1 -- sync unreleased work to origin/main
   (squashed)`. The squash landed in the repo on 2026-07-16 but no annotated
   tag was created at the time; the v1.3.1 entry exists to give that squash
-  a canonical reference and to keep the tag chain (v1.3.0 → v1.3.1 → v1.3.2)
+  a canonical reference and to keep the tag chain (v1.3.0 â†’ v1.3.1 â†’ v1.3.2)
   consistent with the commit graph.
 - No standalone code changes between v1.3.0 and v1.3.2: v1.3.1 is a
   release-plumbing tag only. The substantive changes in this window are
@@ -1786,12 +1810,12 @@ the package doc on `internal/vibecase` for the full contract.
 
 ---
 
-## [1.3.0] — 2026-07-16
+## [1.3.0] â€” 2026-07-16
 
 ### Added (production-readiness release)
 
-- **`dark_memory_health_ping` — operator-facing liveness probe.**
-  The canonical surface grew 27 → 28 tools (OBSERVABILITY 3 → 4).
+- **`dark_memory_health_ping` â€” operator-facing liveness probe.**
+  The canonical surface grew 27 â†’ 28 tools (OBSERVABILITY 3 â†’ 4).
   health_ping is a strict, documented-shape probe distinct from
   `memory_state`:
     - **Latency budget:** <500ms round-trip (target <50ms on warm cache);
@@ -1805,27 +1829,27 @@ the package doc on `internal/vibecase` for the full contract.
   Wire conformance: `tests/wire/health_ping_test.go::TestWire_HealthPingShape`
   (verifies all fields) and `::TestWire_HealthPingLatency` (verifies the
   500ms ceiling). Tool count: `tests/wire/zz_toolenum_test.go`.
-- **`tests/wire/wire_session_test.go::waitForBootMarker`** — eliminates
+- **`tests/wire/wire_session_test.go::waitForBootMarker`** â€” eliminates
   the startup race that previously caused intermittent "tool not found"
   failures when `initialize` arrived before the binary's mcp-go loop
   started. The harness now waits up to 5s for the `registered N tools`
   boot marker on stderr before sending `initialize`.
-- **`internal/tools/health.go::unwrapToolResponse` helper** — single
+- **`internal/tools/health.go::unwrapToolResponse` helper** â€” single
   point of edit for the mcp-go `content:[{type:"text",text:"..."}]`
   envelope shape that wraps every tool response.
-- **`Config.BootedAt`** field — wall-clock time captured at config load;
+- **`Config.BootedAt`** field â€” wall-clock time captured at config load;
   `SetRuntimeContext` propagates it into `health_ping` so uptime is
   accurate from the very first call.
-- **`.github/workflows/ci.yml`** — operator-reproducible CI recipe:
+- **`.github/workflows/ci.yml`** â€” operator-reproducible CI recipe:
   builds, runs lint, runs `go test ./...`, runs `go test ./tests/wire`
   with `DARK_MEM_MCP_BIN` set. The never-push policy is preserved
   (this file lives in-repo for transparency; CI is local-only).
-- **`docs/PRODUCTION_CHECKLIST.md` §Health Probe** — wiring guide for
+- **`docs/PRODUCTION_CHECKLIST.md` Â§Health Probe** â€” wiring guide for
   the new `dark_memory_health_ping` including a sample K8s liveness
   probe YAML and a Prometheus `up{job="dark-mem-mcp"}` snippet.
 
 ### Changed
-- **Canonical tool count 27 → 28.** README, DECISION_MATRIX,
+- **Canonical tool count 27 â†’ 28.** README, DECISION_MATRIX,
   bridge.7 conformance test, e2e canonical-order test, and the
   sanity check inside `tools.RegisterAll` all bumped to 28.
 - **`DARK_SERVER_VERSION` default** bumped from `1.2.3` to `1.3.0`
@@ -1836,14 +1860,14 @@ the package doc on `internal/vibecase` for the full contract.
   freshly-built binary is picked up automatically.
 
 ### Documented
-- **`docs/PRODUCTION_CHECKLIST.md` §Race detector availability** —
+- **`docs/PRODUCTION_CHECKLIST.md` Â§Race detector availability** â€”
   the operator's `go test -race` requires a C compiler; on this host
   no gcc is installed and the race detector is therefore unavailable.
   Workaround: validate via the wire suite (10 tests, including
   TestWire_HealthPingLatency which exercises 5 sequential calls and
   catches perf regressions) and the e2e suite (`tests/e2e/server_test.go`
   fires 1000 concurrent calls).
-- **`docs/PRODUCTION_CHECKLIST.md` §Stale-binary gotcha** — if a
+- **`docs/PRODUCTION_CHECKLIST.md` Â§Stale-binary gotcha** â€” if a
   previous binary is left at `dark-mem-mcp.exe` in the repo root
   (or in `PATH` before `cmd/dark-mem-mcp/`), the wire harness's
   fallback resolution picks it up. Always rebuild into
@@ -1871,7 +1895,7 @@ the package doc on `internal/vibecase` for the full contract.
 
 ---
 
-## [1.2.5] — 2026-07-16
+## [1.2.5] â€” 2026-07-16
 
 ### Added
 - **`tests/wire/` end-to-end JSON-RPC suite.** Wire-conformance tests
@@ -1942,26 +1966,26 @@ the package doc on `internal/vibecase` for the full contract.
 
 ---
 
-## [1.2.3] — 2026-07-16
+## [1.2.3] â€” 2026-07-16
 
 ### Added
-- **INV-8 (per-MCP database isolation).** Each MCP server in the dark-agents family owns its **own SQLite file** by convention. dark-memory-mcp now defaults to `dark-memory.db` instead of `dark.db`; dark-research-mcp continues to use `dark.db`. Sharing `dark.db` was the root cause of the v1.2.2 boot crashes (schema_migrations name collisions in the shared bookkeeping table). The principle is documented in `docs/INVARIANTS.md` (new `INV-8` section, with rationale, defence test, operator signal, and applicability to all future dark-* servers). Defensive test: `tests/invariants/inv8_test.go::TestServer_DefaultDSN_DoesNotCollideWithDarkResearch_INV8` — asserts the default DSN (a) is not `dark.db`, (b) doesn't contain `dark-research`, (c) contains `dark-memory`. Operators who want the legacy shared-DB behaviour can opt in via `DARK_DB=dark.db` env var.
+- **INV-8 (per-MCP database isolation).** Each MCP server in the dark-agents family owns its **own SQLite file** by convention. dark-memory-mcp now defaults to `dark-memory.db` instead of `dark.db`; dark-research-mcp continues to use `dark.db`. Sharing `dark.db` was the root cause of the v1.2.2 boot crashes (schema_migrations name collisions in the shared bookkeeping table). The principle is documented in `docs/INVARIANTS.md` (new `INV-8` section, with rationale, defence test, operator signal, and applicability to all future dark-* servers). Defensive test: `tests/invariants/inv8_test.go::TestServer_DefaultDSN_DoesNotCollideWithDarkResearch_INV8` â€” asserts the default DSN (a) is not `dark.db`, (b) doesn't contain `dark-research`, (c) contains `dark-memory`. Operators who want the legacy shared-DB behaviour can opt in via `DARK_DB=dark.db` env var.
 
 ### Changed
-- **`defaultDSN()` → `"dark-memory.db"`** (was `"dark.db"`). Backward-compatible override via `DARK_DB=` env var. Affects `internal/server/bootstrap.go` only. New public accessor `server.DefaultDSN()` so tests/invariants can assert without reflection. No DB migration needed; the change only affects the default path.
+- **`defaultDSN()` â†’ `"dark-memory.db"`** (was `"dark.db"`). Backward-compatible override via `DARK_DB=` env var. Affects `internal/server/bootstrap.go` only. New public accessor `server.DefaultDSN()` so tests/invariants can assert without reflection. No DB migration needed; the change only affects the default path.
 
 ### Future directions
 - **`[FUTURE-MCP-1]`** (the next dark-* project, see session notes) MUST default to a project-specific filename (`harvest.db` or per-project variant) and pass the `INV-8 defaultDSN uniqueness` lint. The lint is informal today (a grep in CI) but will become a go-vet rule in v1.3.0. Documented in `docs/INVARIANTS.md` under INV-8.
 
 ---
 
-## [1.2.2] — 2026-07-16
+## [1.2.2] â€” 2026-07-16
 
 ### Fixed
-- **F37 — migration runner now tolerates "duplicate column name" errors.** applyOne in `internal/migrate/migrate.go` was running every statement in `m.Up` via a single `tx.ExecContext` inside one transaction. Any failure (including benign "duplicate column name: project_id" when a v7-style ALTER TABLE ADD COLUMN had partially completed during a prior boot crash) rolled back the WHOLE migration and aborted the daemon. The runner now splits multi-statement migration bodies on `;`, runs each statement separately, and treats the duplicate-column error class (SQLite `duplicate column name: X` + Postgres `column X already exists`) as already-satisfied. Regression tests cover the recovery flow (`TestMigrate_TolerantOfDuplicateColumn_F37`) plus a regression guard against over-broad catch (`TestMigrate_StillFailsOnNonDuplicateErrors_F37`).
-- **F38 — `EnsureCoreTables` self-heals missing core tables on boot.** The dark.db at `C:\Users\Nico\AppData\Local\dark-agents\dark.db` is shared with dark-research-mcp, whose bookkeeping table uses the same `schema_migrations` rows. When dark-research-mcp's v1-v3 were applied with overlapping version names (initial_schema, constitutions_and_mods, sdd_evaluations_constitution_audit), dark-memory-mcp's v5+ (`sessions_table`, `project_namespace`, `vibe_brands_composite_unique`, `vlp_state_table`, `audit_project_index`) appeared "already applied" without having actually run against the schema — leaving `sessions` and `projects` tables physically absent from the DB. New helper `migrate.EnsureCoreTables(ctx, db)` issues `CREATE TABLE IF NOT EXISTS` for the four core tables v5/v6/v7 expect to find, called once from the sqlite Store's `Open` before `Migrate` so the migration runner sees the correct schema state. Tests: `TestEnsureCoreTables_FreshDB_F38`, `_Idempotent_F38`, `_RecoveryFromHalfMigratedDarkDB_F38` (the exact 6-step crash repro from today's session).
-- **F39 — migration runner tolerates "no such module: <ext>" errors.** Orphan sqlite-vec triggers (`trg_research_items_vec_delete`, etc.) referencing the unloadable `vec0` virtual-table module were causing `ALTER TABLE vibe_brands RENAME TO vibe_brands_old` (in v8) to surface `SQL logic error: error in trigger trg_research_items_vec_delete: no such module: vec0`. Same `applyOne` extension; the "no such module" substring is now treated as already-satisfied at the per-statement level. Tests in `tests/migrate/tolerate_ddl_errors_f39_f40_test.go::TestMigrate_ToleratesNoSuchModule_F39`.
-- **F40 — migration runner tolerates "table X already exists" errors.** The same per-statement loop now also handles the rare case where a `CREATE TABLE` in a migration's `Up` is called against a table that already exists (e.g. `EnsureCoreTables` + `Migrate` both try to create the same table at boot, or a v8-style rename-and-recreate pattern). The existing table is preserved as-is. Test in `tests/migrate/tolerate_ddl_errors_f39_f40_test.go::TestMigrate_ToleratesTableAlreadyExists_F40`.
+- **F37 â€” migration runner now tolerates "duplicate column name" errors.** applyOne in `internal/migrate/migrate.go` was running every statement in `m.Up` via a single `tx.ExecContext` inside one transaction. Any failure (including benign "duplicate column name: project_id" when a v7-style ALTER TABLE ADD COLUMN had partially completed during a prior boot crash) rolled back the WHOLE migration and aborted the daemon. The runner now splits multi-statement migration bodies on `;`, runs each statement separately, and treats the duplicate-column error class (SQLite `duplicate column name: X` + Postgres `column X already exists`) as already-satisfied. Regression tests cover the recovery flow (`TestMigrate_TolerantOfDuplicateColumn_F37`) plus a regression guard against over-broad catch (`TestMigrate_StillFailsOnNonDuplicateErrors_F37`).
+- **F38 â€” `EnsureCoreTables` self-heals missing core tables on boot.** The dark.db at `C:\Users\Nico\AppData\Local\dark-agents\dark.db` is shared with dark-research-mcp, whose bookkeeping table uses the same `schema_migrations` rows. When dark-research-mcp's v1-v3 were applied with overlapping version names (initial_schema, constitutions_and_mods, sdd_evaluations_constitution_audit), dark-memory-mcp's v5+ (`sessions_table`, `project_namespace`, `vibe_brands_composite_unique`, `vlp_state_table`, `audit_project_index`) appeared "already applied" without having actually run against the schema â€” leaving `sessions` and `projects` tables physically absent from the DB. New helper `migrate.EnsureCoreTables(ctx, db)` issues `CREATE TABLE IF NOT EXISTS` for the four core tables v5/v6/v7 expect to find, called once from the sqlite Store's `Open` before `Migrate` so the migration runner sees the correct schema state. Tests: `TestEnsureCoreTables_FreshDB_F38`, `_Idempotent_F38`, `_RecoveryFromHalfMigratedDarkDB_F38` (the exact 6-step crash repro from today's session).
+- **F39 â€” migration runner tolerates "no such module: <ext>" errors.** Orphan sqlite-vec triggers (`trg_research_items_vec_delete`, etc.) referencing the unloadable `vec0` virtual-table module were causing `ALTER TABLE vibe_brands RENAME TO vibe_brands_old` (in v8) to surface `SQL logic error: error in trigger trg_research_items_vec_delete: no such module: vec0`. Same `applyOne` extension; the "no such module" substring is now treated as already-satisfied at the per-statement level. Tests in `tests/migrate/tolerate_ddl_errors_f39_f40_test.go::TestMigrate_ToleratesNoSuchModule_F39`.
+- **F40 â€” migration runner tolerates "table X already exists" errors.** The same per-statement loop now also handles the rare case where a `CREATE TABLE` in a migration's `Up` is called against a table that already exists (e.g. `EnsureCoreTables` + `Migrate` both try to create the same table at boot, or a v8-style rename-and-recreate pattern). The existing table is preserved as-is. Test in `tests/migrate/tolerate_ddl_errors_f39_f40_test.go::TestMigrate_ToleratesTableAlreadyExists_F40`.
 
 ### Operator notes
 - v1.2.2 is a **drop-in replacement** for v1.2.1. No migrations required. The 27-tool canonical surface is unchanged. No DB schema change.
@@ -1972,58 +1996,58 @@ the package doc on `internal/vibecase` for the full contract.
   - **Risky path C (do not try):** manually drop `vibe_brands` before booting v1.2.2 so v8 can recreate it. The F37/F39 tolerance will then drop the rename/recreate loop back into a clean state. Only do this if you've back-vacuumed data.
 
 ### Known issue
-- The dark.db shared schema_migrations bookkeeping between dark-research-mcp and dark-memory-mcp is fragile by design (both projects use `version INTEGER, applied_at TEXT` rows but the version numbers are NAME-aligned, not ID-aligned). Future directions to consider: namespace dark-memory-mcp's bookkeeping to `dark_memory_schema_migrations`; or partition the schema_migrations table by namespace. Not addressed in v1.2.2 — separate PR if you want to take it on.
+- The dark.db shared schema_migrations bookkeeping between dark-research-mcp and dark-memory-mcp is fragile by design (both projects use `version INTEGER, applied_at TEXT` rows but the version numbers are NAME-aligned, not ID-aligned). Future directions to consider: namespace dark-memory-mcp's bookkeeping to `dark_memory_schema_migrations`; or partition the schema_migrations table by namespace. Not addressed in v1.2.2 â€” separate PR if you want to take it on.
 
 ---
 
-## [1.2.1] — 2026-07-16
+## [1.2.1] â€” 2026-07-16
 
 ### Fixed
-- **F36 — `vibe_spec` rejects payloads from MCP harnesses that stringify arrays.** The gemela tool `dark_research_spec_create` (separate server, same `vibe_specs` table) declares `tasks` as `type: "string"` and persists the value as opaque text. `dark_memory_vibe_spec` declared `tasks` as `type: "array"` and required `Tasks []VibeSpecTask`. Some MCP harnesses serialise array arguments as JSON-encoded strings under either schema; in that case `BindOrchestrator`'s `json.Unmarshal` fails with `*json.UnmarshalTypeError: cannot unmarshal string into Go struct field VibeSpecInput.tasks of type []orchestration.VibeSpecTask`, and the operator-visible error surfaced as a generic `ErrInvalidArgument` (without a precise field hint) — F35's structured-field reporting kicked in only on successful unmarshal-then-orchestrator failure paths, not on raw unmarshal failures. Symptom: every `dark_memory_vibe_spec` call from certain harnesses returned `{"code":"ErrInvalidArgument","message":"One or more arguments failed validation..."}` regardless of payload validity.
-  - `internal/orchestration/vibe_spec.go` — `Tasks` is now `json.RawMessage`; new helper `parseTasksField` accepts both forms (leading-byte dispatch on `[` vs `"`) and returns a typed `[]VibeSpecTask`. The validation graph (unique ids, non-empty description, depends_on consistency, cycle detection) is unchanged.
-  - `internal/tools/vibe.go` — schema for `tasks` widened from `type: "array"` to `anyOf: [{...array, items: vibeSpecTaskSchema}, {type: "string"}]`. Both forms now advertise at the wire layer so harnesses can pick whichever shape they prefer.
-  - `tests/orchestration/orchestrator_test.go` — added `mustMarshalTasks` helper bridging the old typed-slice test bodies; added 2 new tests: `TestVibeSpec_AcceptsStringifiedTasks` (round-trip: raw string in, parsed array in storage) and `TestVibeSpec_StringifiedTasks_MalformedRejected` (precise error mentions "stringified" plus `ErrInvalidArgument`). The 8 pre-existing VibeSpec tests updated from `Tasks: []orchestration.VibeSpecTask{...}` to `Tasks: mustMarshalTasks(t, []orchestration.VibeSpecTask{...})`.
+- **F36 â€” `vibe_spec` rejects payloads from MCP harnesses that stringify arrays.** The gemela tool `dark_research_spec_create` (separate server, same `vibe_specs` table) declares `tasks` as `type: "string"` and persists the value as opaque text. `dark_memory_vibe_spec` declared `tasks` as `type: "array"` and required `Tasks []VibeSpecTask`. Some MCP harnesses serialise array arguments as JSON-encoded strings under either schema; in that case `BindOrchestrator`'s `json.Unmarshal` fails with `*json.UnmarshalTypeError: cannot unmarshal string into Go struct field VibeSpecInput.tasks of type []orchestration.VibeSpecTask`, and the operator-visible error surfaced as a generic `ErrInvalidArgument` (without a precise field hint) â€” F35's structured-field reporting kicked in only on successful unmarshal-then-orchestrator failure paths, not on raw unmarshal failures. Symptom: every `dark_memory_vibe_spec` call from certain harnesses returned `{"code":"ErrInvalidArgument","message":"One or more arguments failed validation..."}` regardless of payload validity.
+  - `internal/orchestration/vibe_spec.go` â€” `Tasks` is now `json.RawMessage`; new helper `parseTasksField` accepts both forms (leading-byte dispatch on `[` vs `"`) and returns a typed `[]VibeSpecTask`. The validation graph (unique ids, non-empty description, depends_on consistency, cycle detection) is unchanged.
+  - `internal/tools/vibe.go` â€” schema for `tasks` widened from `type: "array"` to `anyOf: [{...array, items: vibeSpecTaskSchema}, {type: "string"}]`. Both forms now advertise at the wire layer so harnesses can pick whichever shape they prefer.
+  - `tests/orchestration/orchestrator_test.go` â€” added `mustMarshalTasks` helper bridging the old typed-slice test bodies; added 2 new tests: `TestVibeSpec_AcceptsStringifiedTasks` (round-trip: raw string in, parsed array in storage) and `TestVibeSpec_StringifiedTasks_MalformedRejected` (precise error mentions "stringified" plus `ErrInvalidArgument`). The 8 pre-existing VibeSpec tests updated from `Tasks: []orchestration.VibeSpecTask{...}` to `Tasks: mustMarshalTasks(t, []orchestration.VibeSpecTask{...})`.
 
 ### Operator notes
 - v1.2.1 is a **drop-in replacement** for v1.2.0. No migrations required. The 27-tool canonical surface is unchanged (no new tools, no deprecations). No DB schema change.
-- Restart the running `dark-mem-mcp.exe` (PIDs currently running the pre-v1.2.1 binary are tagged in the process list) to pick up the new code. Until restart, `dark_memory_vibe_spec` calls that pass `tasks` as a raw array will continue to fail — pass them as a JSON-encoded string in the meantime.
+- Restart the running `dark-mem-mcp.exe` (PIDs currently running the pre-v1.2.1 binary are tagged in the process list) to pick up the new code. Until restart, `dark_memory_vibe_spec` calls that pass `tasks` as a raw array will continue to fail â€” pass them as a JSON-encoded string in the meantime.
 
 ---
 
-## [1.2.0] — 2026-07-16
+## [1.2.0] â€” 2026-07-16
 
 ### Added
-- **`dark_memory_project_create`** (F33 / Bug C) — new PROJECT namespace tool (1 tool) that closes the bootstrap loop for INV-7 multi-tenancy. Prior to v1.2.0, the only way to provision a non-`default` project was to insert into the `projects` table out of band; now operators can create tenants from inside the MCP surface, then immediately call `dark_memory_session_start` with the new `project_id`. Idempotent on `project_id` — re-creating an existing project returns the existing row with `idempotent_replay: true` and the original `created_at`.
-  - `internal/tools/project.go` — new file (RegisterProject + ProjectCreateInput/Result + validation)
+- **`dark_memory_project_create`** (F33 / Bug C) â€” new PROJECT namespace tool (1 tool) that closes the bootstrap loop for INV-7 multi-tenancy. Prior to v1.2.0, the only way to provision a non-`default` project was to insert into the `projects` table out of band; now operators can create tenants from inside the MCP surface, then immediately call `dark_memory_session_start` with the new `project_id`. Idempotent on `project_id` â€” re-creating an existing project returns the existing row with `idempotent_replay: true` and the original `created_at`.
+  - `internal/tools/project.go` â€” new file (RegisterProject + ProjectCreateInput/Result + validation)
   - Kebab-case pattern enforced: `^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$`
   - Placed at canonical index 0 (before `session_start`) so tools/list discovery order matches the natural bootstrap flow
-- **F35 structured error reporting** — `ToolError` extended with `Field`, `ExpectedType`, `ActualType`, and `SchemaHintURL`. `BindOrchestrator` now promotes `*json.UnmarshalTypeError` paths into discrete fields instead of hiding them in `Message`. Callers (LLM-driven or operator-driven) can render targeted fix-up hints without parsing free-form strings. All new fields are `omitempty` so the legacy shape is preserved for non-type-mismatch errors.
-- **`vibeSpecTaskSchema`** (F33 / Bug B) — extracted shared strict schema for `vibe_spec` / `vibe_publish` task items. `additionalProperties: false` + explicit property list (`id`, `description`, `depends_on`, `owner`). Stops the silent-drop / type-coerce behavior that made calls fail with `cannot unmarshal string into ... depends_on of type []string` when callers passed `title`/`status`/`priority`.
-- **`tests/tools/project_tool_test.go`** — 7 sub-tests covering happy path, idempotent replay, schema rejection (uppercase project_id, empty display_name, missing fields, unknown field) and the BindStore error envelope shape.
+- **F35 structured error reporting** â€” `ToolError` extended with `Field`, `ExpectedType`, `ActualType`, and `SchemaHintURL`. `BindOrchestrator` now promotes `*json.UnmarshalTypeError` paths into discrete fields instead of hiding them in `Message`. Callers (LLM-driven or operator-driven) can render targeted fix-up hints without parsing free-form strings. All new fields are `omitempty` so the legacy shape is preserved for non-type-mismatch errors.
+- **`vibeSpecTaskSchema`** (F33 / Bug B) â€” extracted shared strict schema for `vibe_spec` / `vibe_publish` task items. `additionalProperties: false` + explicit property list (`id`, `description`, `depends_on`, `owner`). Stops the silent-drop / type-coerce behavior that made calls fail with `cannot unmarshal string into ... depends_on of type []string` when callers passed `title`/`status`/`priority`.
+- **`tests/tools/project_tool_test.go`** â€” 7 sub-tests covering happy path, idempotent replay, schema rejection (uppercase project_id, empty display_name, missing fields, unknown field) and the BindStore error envelope shape.
 
 ### Fixed
-- **F33 / Bug A — `vibe_publish` JSON Schema is wrong.** Schema declared `spec`, `constitution`, `tasks`, `artifact_url`, `artifact_type`, `text` as flat top-level strings, but the Go struct `PublishVibeInput` (internal/orchestration/publish_vibe.go:42-72) nests them under `Spec PublishSpecInput` and `Artifact PublishArtifactInput`. Result: every harness call failed with `cannot unmarshal string into Go struct field PublishVibeInput.spec of type orchestration.PublishSpecInput`. Schema is now nested-correct with `additionalProperties: false` on both sub-objects.
-- **F33 / Bug C — `dark_memory_project_create` was documented but not implemented.** `internal/project/types.go:9` advertised the tool, but no `tools/project.go` existed. Closed by adding the tool in this release.
+- **F33 / Bug A â€” `vibe_publish` JSON Schema is wrong.** Schema declared `spec`, `constitution`, `tasks`, `artifact_url`, `artifact_type`, `text` as flat top-level strings, but the Go struct `PublishVibeInput` (internal/orchestration/publish_vibe.go:42-72) nests them under `Spec PublishSpecInput` and `Artifact PublishArtifactInput`. Result: every harness call failed with `cannot unmarshal string into Go struct field PublishVibeInput.spec of type orchestration.PublishSpecInput`. Schema is now nested-correct with `additionalProperties: false` on both sub-objects.
+- **F33 / Bug C â€” `dark_memory_project_create` was documented but not implemented.** `internal/project/types.go:9` advertised the tool, but no `tools/project.go` existed. Closed by adding the tool in this release.
 
 ### Changed
-- **Canonical tool surface: 26 → 27** (F33). New PROJECT namespace (1 tool) inserted at index 0. `NewRegistry`, `CanonicalOrder`, and the boot-time sanity check in `RegisterAll` updated to expect 27.
+- **Canonical tool surface: 26 â†’ 27** (F33). New PROJECT namespace (1 tool) inserted at index 0. `NewRegistry`, `CanonicalOrder`, and the boot-time sanity check in `RegisterAll` updated to expect 27.
 - **Tool surface layout**:
-  - `PROJECT (1) → create`
-  - `SESSION (4) → start, resume, status, close`
-  - `RESEARCH (3) → topic, recall, resume_thread`
-  - `VIBE (4) → publish, spec, pipeline_status, resolve_drift`
-  - `CONTEXT (3) → artifact_context, spec_context, session_context`
-  - `JUDGE (3) → judge, consensus, judgment_history`
-  - `POLICY (2) → active_policy, load_constitution`
-  - `OBSERVABILITY (3) → memory_state, writes, anomalies`
-  - `ADMIN (3) → admin_migrate, admin_schema_status, admin_vacuum`
-  - `L6-VLP (1) → vlp_handle_event` (DMAP v1.1 spec 193)
+  - `PROJECT (1) â†’ create`
+  - `SESSION (4) â†’ start, resume, status, close`
+  - `RESEARCH (3) â†’ topic, recall, resume_thread`
+  - `VIBE (4) â†’ publish, spec, pipeline_status, resolve_drift`
+  - `CONTEXT (3) â†’ artifact_context, spec_context, session_context`
+  - `JUDGE (3) â†’ judge, consensus, judgment_history`
+  - `POLICY (2) â†’ active_policy, load_constitution`
+  - `OBSERVABILITY (3) â†’ memory_state, writes, anomalies`
+  - `ADMIN (3) â†’ admin_migrate, admin_schema_status, admin_vacuum`
+  - `L6-VLP (1) â†’ vlp_handle_event` (DMAP v1.1 spec 193)
   - Total: 1+4+3+4+3+3+2+3+3+1 = 27.
 - Schema strictness: `vibe_publish`, `vibe_spec`, `project_create` now use `additionalProperties: false` on their nested objects so the harness rejects unknown fields at parse time instead of silently dropping or coercing them.
 
 ### Migration notes
-- **No DB migration.** `dark_memory_project_create` writes to the existing `projects` table (migrations/v7) — no schema change. Existing operators running v1.1.x keep their data; the new tool just provides an in-band path to provision what previously required `INSERT INTO projects (...)`.
-- **Backwards compatibility for `vibe_publish` callers.** The schema fix is breaking for callers that built payloads against the old (broken) flat-string shape — those payloads were never valid against the Go struct and would have failed unmarshal at runtime. New payloads use the nested shape. See `docs/PR-v1.2.0.md` (added in this release) for a before/after payload diff.
+- **No DB migration.** `dark_memory_project_create` writes to the existing `projects` table (migrations/v7) â€” no schema change. Existing operators running v1.1.x keep their data; the new tool just provides an in-band path to provision what previously required `INSERT INTO projects (...)`.
+- **Backwards compatibility for `vibe_publish` callers.** The schema fix is breaking for callers that built payloads against the old (broken) flat-string shape â€” those payloads were never valid against the Go struct and would have failed unmarshal at runtime. New payloads use the nested shape. See `docs/PR-v1.2.0.md` (added in this release) for a before/after payload diff.
 - **Backwards compatibility for `ToolError` consumers.** The four new fields (`Field`, `ExpectedType`, `ActualType`, `SchemaHintURL`) are `omitempty`, so existing JSON consumers that ignore unknown fields keep working. Consumers that strictly validate the response shape should add the new fields to their allow-list.
 
 ### Tests
@@ -2034,50 +2058,50 @@ the package doc on `internal/vibecase` for the full contract.
 
 ---
 
-## [1.1.0] — 2026-07-16
+## [1.1.0] â€” 2026-07-16
 
 ### Added
-- **DMAP v1.1 (Dark Memory Agent Protocol)** — 6-layer architecture, 26 atomic specs
+- **DMAP v1.1 (Dark Memory Agent Protocol)** â€” 6-layer architecture, 26 atomic specs
   - Layer 2 (loop coordinator) closed with 5 atomic specs:
-    - 2.1 SessionState — pure state-machine logic
-    - 2.2 VLPPackage — 4 typed primitives (Brief/Propose/Record/Complete)
-    - 2.3 VLPPersistence — Store-backed state with audit
-    - 2.4 VLPAuditor — transition-level audit
-    - 2.5 VLPLoopUseCase — end-to-end loop driver
-- `Store.SaveVLPStateWithTransition` — atomic combo: UPSERT + row-level audit + transition-level audit in one DB transaction
-- `audit.WriteEvent.ProjectID` field — INV-7 multi-tenancy at the audit layer
-- `audit.ListFilters.ProjectID` — read-side tenant filtering
+    - 2.1 SessionState â€” pure state-machine logic
+    - 2.2 VLPPackage â€” 4 typed primitives (Brief/Propose/Record/Complete)
+    - 2.3 VLPPersistence â€” Store-backed state with audit
+    - 2.4 VLPAuditor â€” transition-level audit
+    - 2.5 VLPLoopUseCase â€” end-to-end loop driver
+- `Store.SaveVLPStateWithTransition` â€” atomic combo: UPSERT + row-level audit + transition-level audit in one DB transaction
+- `audit.WriteEvent.ProjectID` field â€” INV-7 multi-tenancy at the audit layer
+- `audit.ListFilters.ProjectID` â€” read-side tenant filtering
 - 2 new dual-driver sub-tests: `write_audit_project_isolation` (F33), `vlp_state_roundtrip` enhancements (F33 cross-project)
 
 ### Changed
 - **INV-1 hardening (F32)**: 21 SQLite Save*/Update*/Delete*/Close*/Link* methods now wrapped in `BeginTx` + `Commit` + `defer Rollback`
   - New helpers: `runInTx`, `recordWriteLockedTx` (SQLite); `runInTx`, `recordWriteTx` (Postgres)
   - Data row + audit row now atomic; partial failure rolls back both
-  - **Critical**: helpers read `s.activeProject` without re-locking (deadlock avoidance — caller already holds `s.mu`)
+  - **Critical**: helpers read `s.activeProject` without re-locking (deadlock avoidance â€” caller already holds `s.mu`)
 - `UseCase.HandleEvent` (spec 2.5) refactored to use `Store.SaveVLPStateWithTransition` instead of two separate calls
 - Default version bumped from `0.1.0-dev` to `1.1.0-dev` in `cmd/dark-mem-cli` + `cmd/dark-mem-inspect`
 
 ### Database
-- **Migration v9** (`vlp_state_table`) — vlp_state per-session state row
-  - `UNIQUE INDEX (project_id, session_id)` — multi-tenancy at vlp layer (INV-7)
-- **Migration v10** (`audit_project_index`) — composite index on `write_audit(project_id, session_id)` for ListWrites filtering efficiency
-  - **No column changes** — `write_audit.project_id` was already added in v7 (`project_namespace`)
-  - **Idempotent** — `CREATE INDEX IF NOT EXISTS`
+- **Migration v9** (`vlp_state_table`) â€” vlp_state per-session state row
+  - `UNIQUE INDEX (project_id, session_id)` â€” multi-tenancy at vlp layer (INV-7)
+- **Migration v10** (`audit_project_index`) â€” composite index on `write_audit(project_id, session_id)` for ListWrites filtering efficiency
+  - **No column changes** â€” `write_audit.project_id` was already added in v7 (`project_namespace`)
+  - **Idempotent** â€” `CREATE INDEX IF NOT EXISTS`
   - **Backwards compatible**
 
 ### Tests
-- `internal/vlp` — 12 tests including new `TestVLP_E2E_AtomicSaveEmitsTwoAuditRows`
-- `tests/dual_driver` — 11 sub-tests including F33 isolation
+- `internal/vlp` â€” 12 tests including new `TestVLP_E2E_AtomicSaveEmitsTwoAuditRows`
+- `tests/dual_driver` â€” 11 sub-tests including F33 isolation
 - 10 packages, all PASS (374s full suite)
 
 ### Known v2 follow-ups (not blocking)
 - Postgres `notImpl` stubs need same F32 wrapping when real impls land (~30 methods)
-- No meta-test verifying "every Save* rolls back its audit row on data-write failure" — only VLP has this
+- No meta-test verifying "every Save* rolls back its audit row on data-write failure" â€” only VLP has this
 - `usecaseTransitionNotes` and `auditor.marshalTransitionNotes` produce byte-identical JSON but are duplicated; trivial refactor when v2 reorganizes vlp package
 
 ---
 
-## [1.0.0] — 2026-07-12
+## [1.0.0] â€” 2026-07-12
 
 ### Added
 - **Initial release**: 25 MCP tools, dual-driver SQLite + Postgres, 7 operational invariants
@@ -2085,29 +2109,29 @@ the package doc on `internal/vibecase` for the full contract.
 - Migrations v1-v8 establishing core schema (sessions, research, vibe_specs, vibe_artifacts, vibe_brands, vibe_compliance, vibe_drift_reports, sdd_evaluations, write_audit, constitutions, mods, projects, mod_loads)
 - CLI tools: `dark-mem-mcp` (MCP server), `dark-mem-cli` (admin), `dark-mem-inspect` (read-only observability)
 - 9 test suites: cli, conformance, context, dual_driver, e2e, economy, invariants, orchestration, project
-- Constitution watchdog (INV-4) — `constitutions` table + `Store.VerifyConstitutionHash`
-- Canary protection (INV-3) — `SafetyHolder` rejects payloads containing canary
-- Mod sanitization (INV-6) — content loader refuses unsafe content
-- Multi-tenancy foundation (INV-7) — projects table + project_id column on every tenant-scoped table
+- Constitution watchdog (INV-4) â€” `constitutions` table + `Store.VerifyConstitutionHash`
+- Canary protection (INV-3) â€” `SafetyHolder` rejects payloads containing canary
+- Mod sanitization (INV-6) â€” content loader refuses unsafe content
+- Multi-tenancy foundation (INV-7) â€” projects table + project_id column on every tenant-scoped table
 - Bridge documentation: 5/7 bridges complete (bridge.3 + bridge.5 deferred per spec 164)
 - MCP Inspector conformance test (`tests/conformance/`)
 
 ### License
-- MIT — see [LICENSE](LICENSE)
+- MIT â€” see [LICENSE](LICENSE)
 
 [1.1.0]: https://github.com/Opita-Code/dark-memory-mcp/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/Opita-Code/dark-memory-mcp/releases/tag/v1.0.0
 
-## [2.0.2] — 2026-07-27
+## [2.0.2] â€” 2026-07-27
 
 ### Fixed (DARK-MEM-v2.0.1-REGRESSION-1)
 
 The v2.0.1 GateMiddleware (commit 09390d9) was wired with an empty
-\StaticSessionResolver{}\ — every call returned \""\ and the gate
+\StaticSessionResolver{}\ â€” every call returned \""\ and the gate
 refused all tool calls (\ErrFrameStaleTooFar\). v2.0.2 fixes this
 in three layers:
 
-#### Schema (v17 — commit e16b2b7)
+#### Schema (v17 â€” commit e16b2b7)
 
 \projects.active_session_id\ + \ctive_session_set_at\ columns
 added by migration v17 (sqlite + postgres). Set by session_start
@@ -2117,9 +2141,9 @@ added by migration v17 (sqlite + postgres). Set by session_start
 
 Three new methods on \store.Store\:
 
-- \SetActiveSession(ctx, projectID, sessionID)\ — overwrite; idempotent
-- \GetActiveSession(ctx, projectID) (string, error)\ — \""\ if none
-- \ClearActiveSession(ctx, projectID, expectedSessionID)\ — CAS clear
+- \SetActiveSession(ctx, projectID, sessionID)\ â€” overwrite; idempotent
+- \GetActiveSession(ctx, projectID) (string, error)\ â€” \""\ if none
+- \ClearActiveSession(ctx, projectID, expectedSessionID)\ â€” CAS clear
 
 SQLite implements all three. Postgres has stubs (driver unused
 on this host).
@@ -2140,7 +2164,7 @@ restores the v2.0.0 contract for them.
 
 #### Real ActiveSessionResolver
 
-\internal/server/active_session_resolver.go\ —
+\internal/server/active_session_resolver.go\ â€”
 \StoreBackedActiveSessionResolver\ queries the projects row
 through a pluggable \ActiveSessionLookup\ (main.go adapts via
 \StoreBackedLookup\). Short in-process TTL cache (default 5s)
@@ -2163,13 +2187,13 @@ updated. Third-party implementations must adapt.
 
 ### Tests (regression guards for v2.0.1's failure)
 
-- \internal/policy/gate_v2_0_2_test.go\ — pins the
+- \internal/policy/gate_v2_0_2_test.go\ â€” pins the
   \RequiresActiveSession\ contract AND a direct guard that
   \PreCheck\ on a session-free tool returns \Allowed=true\.
-- \internal/server/active_session_resolver_test.go\ — 6 tests
+- \internal/server/active_session_resolver_test.go\ â€” 6 tests
   covering cache hit, expiry, empty projectID no-op,
   lookup-error handling, Invalidate, CacheTTL=0 disable.
-- \	ests/dual_driver/active_session_test.go\ — 4 tests covering
+- \	ests/dual_driver/active_session_test.go\ â€” 4 tests covering
   Set/Get/Clear roundtrip, CAS semantics, race-new-session-wins,
   ErrProjectNotFound.
 
@@ -2183,7 +2207,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
-## [2.0.1] — 2026-07-27
+## [2.0.1] â€” 2026-07-27
 
 ### Added (gate promoted to the transport layer)
 
@@ -2192,19 +2216,19 @@ v2.0.1 promotes it to the transport layer so every `dark_memory_*`
 tool call now flows through `internal/policy.PostCheck` via the new
 `GateMiddleware`, *before* the inner handler runs.
 
-- **`internal/server/middleware.go` (new) — `GateMiddleware.Wrap`**.
+- **`internal/server/middleware.go` (new) â€” `GateMiddleware.Wrap`**.
   PreCheck (capability grant + intent-in-scope) before the inner
   handler; PostCheck (drift-at-write, when `DriftChecker` is non-nil)
   after, for artifact-creating tools only. When `Gate` is nil, the
   legacy direct-dispatch path runs (no policy enforcement), keeping
   the existing test harness ergonomic.
-- **`internal/server/middleware_test.go` (new)** — 387 lines covering
+- **`internal/server/middleware_test.go` (new)** â€” 387 lines covering
   3 categories: capability mismatch, scope mismatch, drift verdict
   refusal at write boundary.
-- **`internal/server/server.go`** — `wrapHandler` routes through `Gate`
+- **`internal/server/server.go`** â€” `wrapHandler` routes through `Gate`
   when set.
-- **`internal/server/lifecycle.go`** — `BootState.Gate` field.
-- **`cmd/dark-mem-mcp/main.go`** — wires the Gate from the returned
+- **`internal/server/lifecycle.go`** â€” `BootState.Gate` field.
+- **`cmd/dark-mem-mcp/main.go`** â€” wires the Gate from the returned
   `FrameSource` at boot.
 
 ### Changed (FrameSource singleton, 5A.ii.b.2.c.1)
@@ -2213,14 +2237,14 @@ The per-call `FrameSource` construction in `dark_memory_recall` is
 lifted to a boot-time singleton. Both the recall tool and the gate
 now share the same `CachedSource` instance.
 
-- **`internal/recall/singleton.go` (new)** — boot-time `FrameSource`
+- **`internal/recall/singleton.go` (new)** â€” boot-time `FrameSource`
   construction. Singleton contract tested in `singleton_test.go`.
-- **`internal/tools/register.go`** — `RegisterAll` signature changes
+- **`internal/tools/register.go`** â€” `RegisterAll` signature changes
   from returning `error` to returning `(policy.FrameSource, error)` so
   the caller can wire it into the gate.
-- **`internal/tools/recall.go`** — uses the passed-in singleton;
+- **`internal/tools/recall.go`** â€” uses the passed-in singleton;
   per-call construction is gone.
-- **`tests/e2e/server_test.go`** — updated for the new `RegisterAll`
+- **`tests/e2e/server_test.go`** â€” updated for the new `RegisterAll`
   signature.
 
 ### Added (operator ergonomics)
@@ -2242,7 +2266,7 @@ now share the same `CachedSource` instance.
   strict-mode opt-in is a separate follow-up (or a v2.0.2 if needed).
   The gate still runs PreCheck unconditionally and refuses tools the
   LLM isn't granted.
-- **`DefaultServerVersion` bumped** from `2.0.0-dev` →
+- **`DefaultServerVersion` bumped** from `2.0.0-dev` â†’
   `2.0.1-dev` in `internal/server/bootstrap.go` for the legacy
   hardcoded fallback. Canonical version resolution flows through
   `version.Resolve()` (set by `make release` via `-ldflags`).
@@ -2251,23 +2275,23 @@ now share the same `CachedSource` instance.
 
 ---
 
-## [2.0.0] — 2026-07-19
+## [2.0.0] â€” 2026-07-19
 
-### Breaking (operator env contract — ships in PR #10)
+### Breaking (operator env contract â€” ships in PR #10)
 
-- **`DARK_SCRAPPER_URL` → `DARK_DRIFT_JUDGE_DAEMON_URL`**.
+- **`DARK_SCRAPPER_URL` â†’ `DARK_DRIFT_JUDGE_DAEMON_URL`**.
   SelfHarnessClient provider renamed from `"dark_scrapper"` to
-  `"drift_judge_daemon"`. Function `judgeViaScrapper` →
-  `judgeViaDriftJudgeDaemon`. **No backward-compat alias** —
+  `"drift_judge_daemon"`. Function `judgeViaScrapper` â†’
+  `judgeViaDriftJudgeDaemon`. **No backward-compat alias** â€”
   operators must update their env.
   Migration: `sed -i 's/DARK_SCRAPPER_URL/DARK_DRIFT_JUDGE_DAEMON_URL/g' .env`.
-- **`DARK_JUDGE_MODEL_SCRAPPER` → `DARK_JUDGE_MODEL_DRIFT_JUDGE_DAEMON`**.
-- Test file `internal/orchestration/scrapper_wiring_test.go` →
+- **`DARK_JUDGE_MODEL_SCRAPPER` â†’ `DARK_JUDGE_MODEL_DRIFT_JUDGE_DAEMON`**.
+- Test file `internal/orchestration/scrapper_wiring_test.go` â†’
   `internal/orchestration/drift_judge_daemon_wiring_test.go`.
 
 ### Breaking (server lifecycle default)
 
-- **Shutdown default `close_reason` `aborted` → `clean`** in
+- **Shutdown default `close_reason` `aborted` â†’ `clean`** in
   `internal/server/lifecycle.go`. Operators who relied on the
   legacy `aborted` default for crash-recovery workflows can opt
   back via `DARK_SHUTDOWN_CLOSE_REASON=aborted`.
@@ -2277,7 +2301,7 @@ now share the same `CachedSource` instance.
 
 ### Fixed
 
-- **INFRA-002 — `dark_memory_vibe_spec` now surfaces WHICH form and WHY
+- **INFRA-002 â€” `dark_memory_vibe_spec` now surfaces WHICH form and WHY
   on tasks parse failure.** Pre-fix, `parseTasksField` in
   `internal/orchestration/vibe_spec.go` discarded the underlying
   `json.Unmarshal` error and returned only
@@ -2291,7 +2315,7 @@ now share the same `CachedSource` instance.
   - Wrapped with `fmt.Errorf("%w: rejected by parser (Form A/B
     step N/unknown form ...): %v", fe, cause)` so the operator
     sees which form was attempted AND the underlying json
-    diagnostic (e.g. "invalid character '·' after top-level
+    diagnostic (e.g. "invalid character 'Â·' after top-level
     value").
   - The unknown-first-byte path explicitly names the offending
     byte (`first non-whitespace byte='{'`) and the expected
@@ -2299,12 +2323,12 @@ now share the same `CachedSource` instance.
     `classifyUnknown`'s no-payload-leak policy).
 - Concrete reproductions covered by:
   - `internal/orchestration/vibe_spec_test.go` (orchestrator-level):
-    - `[{...}]·` (trailing garbage byte after close-bracket, Form A)
+    - `[{...}]Â·` (trailing garbage byte after close-bracket, Form A)
     - `"[not-an-array]"` (outer string but inner not parseable, Form B)
-    - `{...}` (object-shaped payload — neither Form applies)
+    - `{...}` (object-shaped payload â€” neither Form applies)
   - `tests/wire/infra002_vibe_spec_diagnostic_test.go` (H-3 wire
     conformance): pins the contract end-to-end against the running
-    binary over JSON-RPC — the same envelope shape production
+    binary over JSON-RPC â€” the same envelope shape production
     harnesses see.
 
 ### Added (memory-as-policy-gateway pivot)
@@ -2321,86 +2345,86 @@ now traverses `internal/policy.PostCheck` which:
 4. **Drift-checks the response at the write boundary** before
    returning to the LLM (`internal/drift.Checker`).
 
-- **`dark_memory_recall` (29th canonical tool, CONTEXT 3 → 4)** —
+- **`dark_memory_recall` (29th canonical tool, CONTEXT 3 â†’ 4)** â€”
   the canonical scoped-replay orchestrator. Inputs: scope
   (global|project|session), project_id, session_id, since_token.
   Outputs: per-kind atomic frames (Identity, Scope, Capabilities,
   Drift, Persona) + delta write_audit rows since since_token +
-  new_token cursor. RFC §3 M1 + §6.1.
-- **`internal/atomic` package (NEW)** — Frame interface + 6
+  new_token cursor. RFC Â§3 M1 + Â§6.1.
+- **`internal/atomic` package (NEW)** â€” Frame interface + 6
   concrete types: IdentityFrame, ScopeFrame, CapabilitiesFrame,
   PersonaFrame, DriftFrame, EvidenceFrame. FrameSource interface.
-  Wave 5X.2: `Frame.Hash` signature `Hash() [32]byte` →
+  Wave 5X.2: `Frame.Hash` signature `Hash() [32]byte` â†’
   `Hash() ([32]byte, error)` (defense against previous
   interface/type mismatch that was silently swallowed).
-- **`internal/drift` package (NEW)** — `Strictness` enum
+- **`internal/drift` package (NEW)** â€” `Strictness` enum
   (off|warn|strict), `Checker` type with `CheckArtifact(ctx,
-  ArtifactInput) → Verdict`, `JudgeCaller` interface. Replaces
+  ArtifactInput) â†’ Verdict`, `JudgeCaller` interface. Replaces
   the previous `policy.PostCheck` stub. Decision tree for judge
   errors: strict refuses, warn allows.
-- **`internal/policy` package (NEW)** — gate.PostCheckInput
+- **`internal/policy` package (NEW)** â€” gate.PostCheckInput
   gains `DriftChecker + DriftArtifact` optional fields.
   `PostCheck` now calls `drift.Checker` when `Strictness != off`.
-- **`internal/recall` package (NEW)** — `StoreSource` (reads
+- **`internal/recall` package (NEW)** â€” `StoreSource` (reads
   from `store.Store`) + `CachedSource` (INV-5 cache re-hash on
   Get + audit emission on cache_mismatch). 9 tests.
-- **Session lifecycle resilience** — `session_resurrect`,
+- **Session lifecycle resilience** â€” `session_resurrect`,
   `session_recover`, `session_heartbeat`, `session_sweeper`,
   `boot_reconcile`. Closed-due-to-crash sessions are now
   resurrectable (only operator-initiated termination is
   terminal). `SessionResurrectOutput` gains 5 fields:
   `InheritedConstitution{ID,Ver}`, `ActiveConstitution{ID,Ver}`,
   `ConstitutionBumped`, `InheritedMods`.
-- **L6 adapter integration** — 3 hooks from
-  `BRIDGE_AND_COEXISTENCE.md` §6 wired:
-  * `startup-recover` → `runStartupRecover()` in main.go
-  * `periodic-heartbeat` → sweeper (5E.iii, doc-only)
-  * `exit-close_clean` → Shutdown default reason = clean
-- **Per-project drift strictness** — `Project.DriftStrictness`
+- **L6 adapter integration** â€” 3 hooks from
+  `BRIDGE_AND_COEXISTENCE.md` Â§6 wired:
+  * `startup-recover` â†’ `runStartupRecover()` in main.go
+  * `periodic-heartbeat` â†’ sweeper (5E.iii, doc-only)
+  * `exit-close_clean` â†’ Shutdown default reason = clean
+- **Per-project drift strictness** â€” `Project.DriftStrictness`
   field (migration v14). `drift.ResolveStrictness(projectOverride,
-  envValue, warnf)` — empty/'default' → env; valid → override;
-  invalid → warn + env fallback.
+  envValue, warnf)` â€” empty/'default' â†’ env; valid â†’ override;
+  invalid â†’ warn + env fallback.
 
-### Added (canonical tool count 28 → 29)
+### Added (canonical tool count 28 â†’ 29)
 
-- **`dark_memory_recall`** — see "memory-as-policy-gateway
-  pivot" above. CONTEXT namespace: 3 → 4 tools.
+- **`dark_memory_recall`** â€” see "memory-as-policy-gateway
+  pivot" above. CONTEXT namespace: 3 â†’ 4 tools.
 
 ### Changed (data plane)
 
-- **Schema migrations v11–v15** (sqlite + postgres):
-  * v11, v12 — frame-related scaffolding (see git log)
-  * v13 — `CREATE UNIQUE INDEX uq_vibe_frames_natural_key ON
+- **Schema migrations v11â€“v15** (sqlite + postgres):
+  * v11, v12 â€” frame-related scaffolding (see git log)
+  * v13 â€” `CREATE UNIQUE INDEX uq_vibe_frames_natural_key ON
     vibe_frames (project_id, session_id, scope_level, scope_id,
-    frame_kind)` — enables the UPSERT rewrite
-  * v14 — `ALTER TABLE projects ADD COLUMN drift_strictness TEXT
+    frame_kind)` â€” enables the UPSERT rewrite
+  * v14 â€” `ALTER TABLE projects ADD COLUMN drift_strictness TEXT
     NOT NULL DEFAULT 'default'`
-  * v15 — `ALTER TABLE vlp_state ADD COLUMN open_spec_id INTEGER
+  * v15 â€” `ALTER TABLE vlp_state ADD COLUMN open_spec_id INTEGER
     NOT NULL DEFAULT 0`
 - **SaveFrame rewritten as INSERT ... ON CONFLICT DO UPDATE**
   (sqlite) / `ON CONFLICT ... RETURNING` (postgres). Replaces the
   SELECT-then-INSERT/UPDATE race in the previous implementation
   under concurrent SaveFrame calls. Tested with 10-goroutine
-  concurrent upsert → 1 row.
-- **`WriteContext.SessionEvent`** — every `Save*` emits this
+  concurrent upsert â†’ 1 row.
+- **`WriteContext.SessionEvent`** â€” every `Save*` emits this
   field in `write_audit`. Closes pre-existing drift where the
   `session_event` column was INSERTed NULL silently.
-- **`VLPStateRow.OpenSpecID`** — the actual spec_id the session
+- **`VLPStateRow.OpenSpecID`** â€” the actual spec_id the session
   is working on. Previously the recall cache used `vlp_state.ID`
   as a meaningless proxy.
-- **`Project.DriftStrictness`** — per-project resolver override.
+- **`Project.DriftStrictness`** â€” per-project resolver override.
 
 ### Notes (constitution + RFC)
 
 - The pivot's design rationale lives in
   `vibe-flow/main/ACTIVE_MEMORY_RFC.md`, `SCHEMA_v11_v12.md`, and
-  `DRIFT_BURST.md` — these are operator-private planning docs
+  `DRIFT_BURST.md` â€” these are operator-private planning docs
   (NOT committed; lives in the operator's local workspace).
 - Public docs updated: `vibe-flow/PLAN.md` v2 (pivoted roadmap),
   `vibe-flow/main/BRIDGE_AND_COEXISTENCE.md` v2 (cx.v3,
   policy_gateway, dark-research-mcp demoted, dark-recall
   cancelled).
-- `DefaultServerVersion` constant bumped from `"1.4.1-dev"` →
+- `DefaultServerVersion` constant bumped from `"1.4.1-dev"` â†’
   `"2.0.0-dev"`. Canonical source remains `version.Resolve()`
   (set by `make release` via `-ldflags`).
 - 9 commits + 1 release (this PR). Pre-merge lint scrub PR #10
@@ -2409,7 +2433,7 @@ now traverses `internal/policy.PostCheck` which:
 
 ---
 
-## [1.4.1] — 2026-07-18
+## [1.4.1] â€” 2026-07-18
 
 ### Behavior change (callers MUST verify)
 
@@ -2439,7 +2463,7 @@ stability promise at v1.x), a PATCH bump is appropriate.
 
 ### Added (canonical C1..C7 taxonomy)
 
-- **`internal/vibecase` package** — single source of truth for the
+- **`internal/vibecase` package** â€” single source of truth for the
   C1..C7 case taxonomy. Replaces a JSON Schema enum fragment that
   was duplicated across `vibe_publish` and (asymmetrically) absent
   from `vibe_spec`. Exports:
@@ -2448,11 +2472,11 @@ stability promise at v1.x), a PATCH bump is appropriate.
   - `Parse(s)` (strict, trims, rejects empty + unknown + mixed-case),
     `MustParse(s)` (panic-on-error for startup constants),
     `IsValid(s)` (boolean shortcut).
-  - `All()` and `JSONSchemaEnum()` — stable, ordered, defensively
+  - `All()` and `JSONSchemaEnum()` â€” stable, ordered, defensively
     copied.
-  - `Description(c)` — human-facing one-liner per case (for LLM
+  - `Description(c)` â€” human-facing one-liner per case (for LLM
     context projections).
-  - `ErrInvalidCase` — exported sentinel for `errors.Is` checks.
+  - `ErrInvalidCase` â€” exported sentinel for `errors.Is` checks.
   - 15 unit tests covering ordering, defensive copy, trim, empty,
     unknown, mixed-case, error message contents, panic, boolean
     shortcut, round-trip, description, cardinality.
@@ -2485,7 +2509,7 @@ the package doc on `internal/vibecase` for the full contract.
 
 ---
 
-## [1.4.0] — 2026-07-18
+## [1.4.0] â€” 2026-07-18
 
 ### Added (release-integrity release)
 
@@ -2495,19 +2519,19 @@ the package doc on `internal/vibecase` for the full contract.
   authoritative, (4) drift detection on every boot, (5) session-bound
   governance. Cross-cutting reference for every `vibe_publish` artifact
   in the dark-memory-mcp project.
-- **`internal/version` package** — single-source version resolver.
+- **`internal/version` package** â€” single-source version resolver.
   Replaces the hardcoded `DefaultServerVersion = "1.3.0"` constant in
   `internal/server/bootstrap.go` and the `var Version = "1.1.0-dev"`
   in `cmd/dark-mem-cli/main.go` and `cmd/dark-mem-inspect/main.go`.
   Resolution priority: `-ldflags` injection (canonical, set by
-  `make release`) → `debug.ReadBuildInfo()` (dev) → hardcoded
+  `make release`) â†’ `debug.ReadBuildInfo()` (dev) â†’ hardcoded
   `"dev"` sentinel (emergency). 9 unit tests cover all three paths.
 - **`Makefile`** with `build` / `release` / `drift-check` /
   `version` / `version-json` / `inspect` / `tag` / `clean` targets.
   Handles the multi-module `cmd/*` layout (each cmd is its own Go
   module; the Makefile `cd`s into each before `go build`).
 - **`scripts/inject-version.sh`** (bash) and
-  **`scripts/inject-version.ps1`** (PowerShell) — resolve the canonical
+  **`scripts/inject-version.ps1`** (PowerShell) â€” resolve the canonical
   version from `git describe` and emit the `-ldflags` expression that
   feeds `make release`. Same resolution rules, same output formats
   (`--raw` / `--json` / default), same `--strict` flag.
@@ -2517,7 +2541,7 @@ the package doc on `internal/vibecase` for the full contract.
 - **`dark_memory_health_ping` response grew a `git` block.**
   New fields: `git.tag`, `git.commit`, `git.dirty`, `git.build_time`,
   `git.source` (one of `ldflags|buildinfo|dev`), `git.is_dev`.
-- **Top-level `drift` bool** — true iff the resolver fell back to the
+- **Top-level `drift` bool** â€” true iff the resolver fell back to the
   dev path OR the working tree was dirty at build time. Per
   `CONSTITUTION.md` Rule 4, a release binary MUST report
   `drift=false`. Operators can monitor the single-bit signal directly.
@@ -2531,7 +2555,7 @@ the package doc on `internal/vibecase` for the full contract.
   is now a deprecated string (`"1.4.0-dev"`) for any external
   callers; the canonical default flows through `version.Resolve()`.
 - `cmd/e2e/main.go` relaxed the hardcoded `"1.3.0"` health_ping
-  version assertion to "non-empty" — the value is now driven by the
+  version assertion to "non-empty" â€” the value is now driven by the
   resolver, not by source code.
 
 ### Notes
@@ -2545,7 +2569,7 @@ the package doc on `internal/vibecase` for the full contract.
 
 ---
 
-## [1.3.2] — 2026-07-16
+## [1.3.2] â€” 2026-07-16
 
 ### Fixed
 
@@ -2576,7 +2600,7 @@ the package doc on `internal/vibecase` for the full contract.
 
 ---
 
-## [1.3.1] — 2026-07-16
+## [1.3.1] â€” 2026-07-16
 
 ### Note (release plumbing)
 
@@ -2584,7 +2608,7 @@ the package doc on `internal/vibecase` for the full contract.
   commit message reads `release: v1.3.1 -- sync unreleased work to origin/main
   (squashed)`. The squash landed in the repo on 2026-07-16 but no annotated
   tag was created at the time; the v1.3.1 entry exists to give that squash
-  a canonical reference and to keep the tag chain (v1.3.0 → v1.3.1 → v1.3.2)
+  a canonical reference and to keep the tag chain (v1.3.0 â†’ v1.3.1 â†’ v1.3.2)
   consistent with the commit graph.
 - No standalone code changes between v1.3.0 and v1.3.2: v1.3.1 is a
   release-plumbing tag only. The substantive changes in this window are
@@ -2592,12 +2616,12 @@ the package doc on `internal/vibecase` for the full contract.
 
 ---
 
-## [1.3.0] — 2026-07-16
+## [1.3.0] â€” 2026-07-16
 
 ### Added (production-readiness release)
 
-- **`dark_memory_health_ping` — operator-facing liveness probe.**
-  The canonical surface grew 27 → 28 tools (OBSERVABILITY 3 → 4).
+- **`dark_memory_health_ping` â€” operator-facing liveness probe.**
+  The canonical surface grew 27 â†’ 28 tools (OBSERVABILITY 3 â†’ 4).
   health_ping is a strict, documented-shape probe distinct from
   `memory_state`:
     - **Latency budget:** <500ms round-trip (target <50ms on warm cache);
@@ -2611,27 +2635,27 @@ the package doc on `internal/vibecase` for the full contract.
   Wire conformance: `tests/wire/health_ping_test.go::TestWire_HealthPingShape`
   (verifies all fields) and `::TestWire_HealthPingLatency` (verifies the
   500ms ceiling). Tool count: `tests/wire/zz_toolenum_test.go`.
-- **`tests/wire/wire_session_test.go::waitForBootMarker`** — eliminates
+- **`tests/wire/wire_session_test.go::waitForBootMarker`** â€” eliminates
   the startup race that previously caused intermittent "tool not found"
   failures when `initialize` arrived before the binary's mcp-go loop
   started. The harness now waits up to 5s for the `registered N tools`
   boot marker on stderr before sending `initialize`.
-- **`internal/tools/health.go::unwrapToolResponse` helper** — single
+- **`internal/tools/health.go::unwrapToolResponse` helper** â€” single
   point of edit for the mcp-go `content:[{type:"text",text:"..."}]`
   envelope shape that wraps every tool response.
-- **`Config.BootedAt`** field — wall-clock time captured at config load;
+- **`Config.BootedAt`** field â€” wall-clock time captured at config load;
   `SetRuntimeContext` propagates it into `health_ping` so uptime is
   accurate from the very first call.
-- **`.github/workflows/ci.yml`** — operator-reproducible CI recipe:
+- **`.github/workflows/ci.yml`** â€” operator-reproducible CI recipe:
   builds, runs lint, runs `go test ./...`, runs `go test ./tests/wire`
   with `DARK_MEM_MCP_BIN` set. The never-push policy is preserved
   (this file lives in-repo for transparency; CI is local-only).
-- **`docs/PRODUCTION_CHECKLIST.md` §Health Probe** — wiring guide for
+- **`docs/PRODUCTION_CHECKLIST.md` Â§Health Probe** â€” wiring guide for
   the new `dark_memory_health_ping` including a sample K8s liveness
   probe YAML and a Prometheus `up{job="dark-mem-mcp"}` snippet.
 
 ### Changed
-- **Canonical tool count 27 → 28.** README, DECISION_MATRIX,
+- **Canonical tool count 27 â†’ 28.** README, DECISION_MATRIX,
   bridge.7 conformance test, e2e canonical-order test, and the
   sanity check inside `tools.RegisterAll` all bumped to 28.
 - **`DARK_SERVER_VERSION` default** bumped from `1.2.3` to `1.3.0`
@@ -2642,14 +2666,14 @@ the package doc on `internal/vibecase` for the full contract.
   freshly-built binary is picked up automatically.
 
 ### Documented
-- **`docs/PRODUCTION_CHECKLIST.md` §Race detector availability** —
+- **`docs/PRODUCTION_CHECKLIST.md` Â§Race detector availability** â€”
   the operator's `go test -race` requires a C compiler; on this host
   no gcc is installed and the race detector is therefore unavailable.
   Workaround: validate via the wire suite (10 tests, including
   TestWire_HealthPingLatency which exercises 5 sequential calls and
   catches perf regressions) and the e2e suite (`tests/e2e/server_test.go`
   fires 1000 concurrent calls).
-- **`docs/PRODUCTION_CHECKLIST.md` §Stale-binary gotcha** — if a
+- **`docs/PRODUCTION_CHECKLIST.md` Â§Stale-binary gotcha** â€” if a
   previous binary is left at `dark-mem-mcp.exe` in the repo root
   (or in `PATH` before `cmd/dark-mem-mcp/`), the wire harness's
   fallback resolution picks it up. Always rebuild into
@@ -2677,7 +2701,7 @@ the package doc on `internal/vibecase` for the full contract.
 
 ---
 
-## [1.2.5] — 2026-07-16
+## [1.2.5] â€” 2026-07-16
 
 ### Added
 - **`tests/wire/` end-to-end JSON-RPC suite.** Wire-conformance tests
@@ -2748,26 +2772,26 @@ the package doc on `internal/vibecase` for the full contract.
 
 ---
 
-## [1.2.3] — 2026-07-16
+## [1.2.3] â€” 2026-07-16
 
 ### Added
-- **INV-8 (per-MCP database isolation).** Each MCP server in the dark-agents family owns its **own SQLite file** by convention. dark-memory-mcp now defaults to `dark-memory.db` instead of `dark.db`; dark-research-mcp continues to use `dark.db`. Sharing `dark.db` was the root cause of the v1.2.2 boot crashes (schema_migrations name collisions in the shared bookkeeping table). The principle is documented in `docs/INVARIANTS.md` (new `INV-8` section, with rationale, defence test, operator signal, and applicability to all future dark-* servers). Defensive test: `tests/invariants/inv8_test.go::TestServer_DefaultDSN_DoesNotCollideWithDarkResearch_INV8` — asserts the default DSN (a) is not `dark.db`, (b) doesn't contain `dark-research`, (c) contains `dark-memory`. Operators who want the legacy shared-DB behaviour can opt in via `DARK_DB=dark.db` env var.
+- **INV-8 (per-MCP database isolation).** Each MCP server in the dark-agents family owns its **own SQLite file** by convention. dark-memory-mcp now defaults to `dark-memory.db` instead of `dark.db`; dark-research-mcp continues to use `dark.db`. Sharing `dark.db` was the root cause of the v1.2.2 boot crashes (schema_migrations name collisions in the shared bookkeeping table). The principle is documented in `docs/INVARIANTS.md` (new `INV-8` section, with rationale, defence test, operator signal, and applicability to all future dark-* servers). Defensive test: `tests/invariants/inv8_test.go::TestServer_DefaultDSN_DoesNotCollideWithDarkResearch_INV8` â€” asserts the default DSN (a) is not `dark.db`, (b) doesn't contain `dark-research`, (c) contains `dark-memory`. Operators who want the legacy shared-DB behaviour can opt in via `DARK_DB=dark.db` env var.
 
 ### Changed
-- **`defaultDSN()` → `"dark-memory.db"`** (was `"dark.db"`). Backward-compatible override via `DARK_DB=` env var. Affects `internal/server/bootstrap.go` only. New public accessor `server.DefaultDSN()` so tests/invariants can assert without reflection. No DB migration needed; the change only affects the default path.
+- **`defaultDSN()` â†’ `"dark-memory.db"`** (was `"dark.db"`). Backward-compatible override via `DARK_DB=` env var. Affects `internal/server/bootstrap.go` only. New public accessor `server.DefaultDSN()` so tests/invariants can assert without reflection. No DB migration needed; the change only affects the default path.
 
 ### Future directions
 - **`[FUTURE-MCP-1]`** (the next dark-* project, see session notes) MUST default to a project-specific filename (`harvest.db` or per-project variant) and pass the `INV-8 defaultDSN uniqueness` lint. The lint is informal today (a grep in CI) but will become a go-vet rule in v1.3.0. Documented in `docs/INVARIANTS.md` under INV-8.
 
 ---
 
-## [1.2.2] — 2026-07-16
+## [1.2.2] â€” 2026-07-16
 
 ### Fixed
-- **F37 — migration runner now tolerates "duplicate column name" errors.** applyOne in `internal/migrate/migrate.go` was running every statement in `m.Up` via a single `tx.ExecContext` inside one transaction. Any failure (including benign "duplicate column name: project_id" when a v7-style ALTER TABLE ADD COLUMN had partially completed during a prior boot crash) rolled back the WHOLE migration and aborted the daemon. The runner now splits multi-statement migration bodies on `;`, runs each statement separately, and treats the duplicate-column error class (SQLite `duplicate column name: X` + Postgres `column X already exists`) as already-satisfied. Regression tests cover the recovery flow (`TestMigrate_TolerantOfDuplicateColumn_F37`) plus a regression guard against over-broad catch (`TestMigrate_StillFailsOnNonDuplicateErrors_F37`).
-- **F38 — `EnsureCoreTables` self-heals missing core tables on boot.** The dark.db at `C:\Users\Nico\AppData\Local\dark-agents\dark.db` is shared with dark-research-mcp, whose bookkeeping table uses the same `schema_migrations` rows. When dark-research-mcp's v1-v3 were applied with overlapping version names (initial_schema, constitutions_and_mods, sdd_evaluations_constitution_audit), dark-memory-mcp's v5+ (`sessions_table`, `project_namespace`, `vibe_brands_composite_unique`, `vlp_state_table`, `audit_project_index`) appeared "already applied" without having actually run against the schema — leaving `sessions` and `projects` tables physically absent from the DB. New helper `migrate.EnsureCoreTables(ctx, db)` issues `CREATE TABLE IF NOT EXISTS` for the four core tables v5/v6/v7 expect to find, called once from the sqlite Store's `Open` before `Migrate` so the migration runner sees the correct schema state. Tests: `TestEnsureCoreTables_FreshDB_F38`, `_Idempotent_F38`, `_RecoveryFromHalfMigratedDarkDB_F38` (the exact 6-step crash repro from today's session).
-- **F39 — migration runner tolerates "no such module: <ext>" errors.** Orphan sqlite-vec triggers (`trg_research_items_vec_delete`, etc.) referencing the unloadable `vec0` virtual-table module were causing `ALTER TABLE vibe_brands RENAME TO vibe_brands_old` (in v8) to surface `SQL logic error: error in trigger trg_research_items_vec_delete: no such module: vec0`. Same `applyOne` extension; the "no such module" substring is now treated as already-satisfied at the per-statement level. Tests in `tests/migrate/tolerate_ddl_errors_f39_f40_test.go::TestMigrate_ToleratesNoSuchModule_F39`.
-- **F40 — migration runner tolerates "table X already exists" errors.** The same per-statement loop now also handles the rare case where a `CREATE TABLE` in a migration's `Up` is called against a table that already exists (e.g. `EnsureCoreTables` + `Migrate` both try to create the same table at boot, or a v8-style rename-and-recreate pattern). The existing table is preserved as-is. Test in `tests/migrate/tolerate_ddl_errors_f39_f40_test.go::TestMigrate_ToleratesTableAlreadyExists_F40`.
+- **F37 â€” migration runner now tolerates "duplicate column name" errors.** applyOne in `internal/migrate/migrate.go` was running every statement in `m.Up` via a single `tx.ExecContext` inside one transaction. Any failure (including benign "duplicate column name: project_id" when a v7-style ALTER TABLE ADD COLUMN had partially completed during a prior boot crash) rolled back the WHOLE migration and aborted the daemon. The runner now splits multi-statement migration bodies on `;`, runs each statement separately, and treats the duplicate-column error class (SQLite `duplicate column name: X` + Postgres `column X already exists`) as already-satisfied. Regression tests cover the recovery flow (`TestMigrate_TolerantOfDuplicateColumn_F37`) plus a regression guard against over-broad catch (`TestMigrate_StillFailsOnNonDuplicateErrors_F37`).
+- **F38 â€” `EnsureCoreTables` self-heals missing core tables on boot.** The dark.db at `C:\Users\Nico\AppData\Local\dark-agents\dark.db` is shared with dark-research-mcp, whose bookkeeping table uses the same `schema_migrations` rows. When dark-research-mcp's v1-v3 were applied with overlapping version names (initial_schema, constitutions_and_mods, sdd_evaluations_constitution_audit), dark-memory-mcp's v5+ (`sessions_table`, `project_namespace`, `vibe_brands_composite_unique`, `vlp_state_table`, `audit_project_index`) appeared "already applied" without having actually run against the schema â€” leaving `sessions` and `projects` tables physically absent from the DB. New helper `migrate.EnsureCoreTables(ctx, db)` issues `CREATE TABLE IF NOT EXISTS` for the four core tables v5/v6/v7 expect to find, called once from the sqlite Store's `Open` before `Migrate` so the migration runner sees the correct schema state. Tests: `TestEnsureCoreTables_FreshDB_F38`, `_Idempotent_F38`, `_RecoveryFromHalfMigratedDarkDB_F38` (the exact 6-step crash repro from today's session).
+- **F39 â€” migration runner tolerates "no such module: <ext>" errors.** Orphan sqlite-vec triggers (`trg_research_items_vec_delete`, etc.) referencing the unloadable `vec0` virtual-table module were causing `ALTER TABLE vibe_brands RENAME TO vibe_brands_old` (in v8) to surface `SQL logic error: error in trigger trg_research_items_vec_delete: no such module: vec0`. Same `applyOne` extension; the "no such module" substring is now treated as already-satisfied at the per-statement level. Tests in `tests/migrate/tolerate_ddl_errors_f39_f40_test.go::TestMigrate_ToleratesNoSuchModule_F39`.
+- **F40 â€” migration runner tolerates "table X already exists" errors.** The same per-statement loop now also handles the rare case where a `CREATE TABLE` in a migration's `Up` is called against a table that already exists (e.g. `EnsureCoreTables` + `Migrate` both try to create the same table at boot, or a v8-style rename-and-recreate pattern). The existing table is preserved as-is. Test in `tests/migrate/tolerate_ddl_errors_f39_f40_test.go::TestMigrate_ToleratesTableAlreadyExists_F40`.
 
 ### Operator notes
 - v1.2.2 is a **drop-in replacement** for v1.2.1. No migrations required. The 27-tool canonical surface is unchanged. No DB schema change.
@@ -2778,58 +2802,58 @@ the package doc on `internal/vibecase` for the full contract.
   - **Risky path C (do not try):** manually drop `vibe_brands` before booting v1.2.2 so v8 can recreate it. The F37/F39 tolerance will then drop the rename/recreate loop back into a clean state. Only do this if you've back-vacuumed data.
 
 ### Known issue
-- The dark.db shared schema_migrations bookkeeping between dark-research-mcp and dark-memory-mcp is fragile by design (both projects use `version INTEGER, applied_at TEXT` rows but the version numbers are NAME-aligned, not ID-aligned). Future directions to consider: namespace dark-memory-mcp's bookkeeping to `dark_memory_schema_migrations`; or partition the schema_migrations table by namespace. Not addressed in v1.2.2 — separate PR if you want to take it on.
+- The dark.db shared schema_migrations bookkeeping between dark-research-mcp and dark-memory-mcp is fragile by design (both projects use `version INTEGER, applied_at TEXT` rows but the version numbers are NAME-aligned, not ID-aligned). Future directions to consider: namespace dark-memory-mcp's bookkeeping to `dark_memory_schema_migrations`; or partition the schema_migrations table by namespace. Not addressed in v1.2.2 â€” separate PR if you want to take it on.
 
 ---
 
-## [1.2.1] — 2026-07-16
+## [1.2.1] â€” 2026-07-16
 
 ### Fixed
-- **F36 — `vibe_spec` rejects payloads from MCP harnesses that stringify arrays.** The gemela tool `dark_research_spec_create` (separate server, same `vibe_specs` table) declares `tasks` as `type: "string"` and persists the value as opaque text. `dark_memory_vibe_spec` declared `tasks` as `type: "array"` and required `Tasks []VibeSpecTask`. Some MCP harnesses serialise array arguments as JSON-encoded strings under either schema; in that case `BindOrchestrator`'s `json.Unmarshal` fails with `*json.UnmarshalTypeError: cannot unmarshal string into Go struct field VibeSpecInput.tasks of type []orchestration.VibeSpecTask`, and the operator-visible error surfaced as a generic `ErrInvalidArgument` (without a precise field hint) — F35's structured-field reporting kicked in only on successful unmarshal-then-orchestrator failure paths, not on raw unmarshal failures. Symptom: every `dark_memory_vibe_spec` call from certain harnesses returned `{"code":"ErrInvalidArgument","message":"One or more arguments failed validation..."}` regardless of payload validity.
-  - `internal/orchestration/vibe_spec.go` — `Tasks` is now `json.RawMessage`; new helper `parseTasksField` accepts both forms (leading-byte dispatch on `[` vs `"`) and returns a typed `[]VibeSpecTask`. The validation graph (unique ids, non-empty description, depends_on consistency, cycle detection) is unchanged.
-  - `internal/tools/vibe.go` — schema for `tasks` widened from `type: "array"` to `anyOf: [{...array, items: vibeSpecTaskSchema}, {type: "string"}]`. Both forms now advertise at the wire layer so harnesses can pick whichever shape they prefer.
-  - `tests/orchestration/orchestrator_test.go` — added `mustMarshalTasks` helper bridging the old typed-slice test bodies; added 2 new tests: `TestVibeSpec_AcceptsStringifiedTasks` (round-trip: raw string in, parsed array in storage) and `TestVibeSpec_StringifiedTasks_MalformedRejected` (precise error mentions "stringified" plus `ErrInvalidArgument`). The 8 pre-existing VibeSpec tests updated from `Tasks: []orchestration.VibeSpecTask{...}` to `Tasks: mustMarshalTasks(t, []orchestration.VibeSpecTask{...})`.
+- **F36 â€” `vibe_spec` rejects payloads from MCP harnesses that stringify arrays.** The gemela tool `dark_research_spec_create` (separate server, same `vibe_specs` table) declares `tasks` as `type: "string"` and persists the value as opaque text. `dark_memory_vibe_spec` declared `tasks` as `type: "array"` and required `Tasks []VibeSpecTask`. Some MCP harnesses serialise array arguments as JSON-encoded strings under either schema; in that case `BindOrchestrator`'s `json.Unmarshal` fails with `*json.UnmarshalTypeError: cannot unmarshal string into Go struct field VibeSpecInput.tasks of type []orchestration.VibeSpecTask`, and the operator-visible error surfaced as a generic `ErrInvalidArgument` (without a precise field hint) â€” F35's structured-field reporting kicked in only on successful unmarshal-then-orchestrator failure paths, not on raw unmarshal failures. Symptom: every `dark_memory_vibe_spec` call from certain harnesses returned `{"code":"ErrInvalidArgument","message":"One or more arguments failed validation..."}` regardless of payload validity.
+  - `internal/orchestration/vibe_spec.go` â€” `Tasks` is now `json.RawMessage`; new helper `parseTasksField` accepts both forms (leading-byte dispatch on `[` vs `"`) and returns a typed `[]VibeSpecTask`. The validation graph (unique ids, non-empty description, depends_on consistency, cycle detection) is unchanged.
+  - `internal/tools/vibe.go` â€” schema for `tasks` widened from `type: "array"` to `anyOf: [{...array, items: vibeSpecTaskSchema}, {type: "string"}]`. Both forms now advertise at the wire layer so harnesses can pick whichever shape they prefer.
+  - `tests/orchestration/orchestrator_test.go` â€” added `mustMarshalTasks` helper bridging the old typed-slice test bodies; added 2 new tests: `TestVibeSpec_AcceptsStringifiedTasks` (round-trip: raw string in, parsed array in storage) and `TestVibeSpec_StringifiedTasks_MalformedRejected` (precise error mentions "stringified" plus `ErrInvalidArgument`). The 8 pre-existing VibeSpec tests updated from `Tasks: []orchestration.VibeSpecTask{...}` to `Tasks: mustMarshalTasks(t, []orchestration.VibeSpecTask{...})`.
 
 ### Operator notes
 - v1.2.1 is a **drop-in replacement** for v1.2.0. No migrations required. The 27-tool canonical surface is unchanged (no new tools, no deprecations). No DB schema change.
-- Restart the running `dark-mem-mcp.exe` (PIDs currently running the pre-v1.2.1 binary are tagged in the process list) to pick up the new code. Until restart, `dark_memory_vibe_spec` calls that pass `tasks` as a raw array will continue to fail — pass them as a JSON-encoded string in the meantime.
+- Restart the running `dark-mem-mcp.exe` (PIDs currently running the pre-v1.2.1 binary are tagged in the process list) to pick up the new code. Until restart, `dark_memory_vibe_spec` calls that pass `tasks` as a raw array will continue to fail â€” pass them as a JSON-encoded string in the meantime.
 
 ---
 
-## [1.2.0] — 2026-07-16
+## [1.2.0] â€” 2026-07-16
 
 ### Added
-- **`dark_memory_project_create`** (F33 / Bug C) — new PROJECT namespace tool (1 tool) that closes the bootstrap loop for INV-7 multi-tenancy. Prior to v1.2.0, the only way to provision a non-`default` project was to insert into the `projects` table out of band; now operators can create tenants from inside the MCP surface, then immediately call `dark_memory_session_start` with the new `project_id`. Idempotent on `project_id` — re-creating an existing project returns the existing row with `idempotent_replay: true` and the original `created_at`.
-  - `internal/tools/project.go` — new file (RegisterProject + ProjectCreateInput/Result + validation)
+- **`dark_memory_project_create`** (F33 / Bug C) â€” new PROJECT namespace tool (1 tool) that closes the bootstrap loop for INV-7 multi-tenancy. Prior to v1.2.0, the only way to provision a non-`default` project was to insert into the `projects` table out of band; now operators can create tenants from inside the MCP surface, then immediately call `dark_memory_session_start` with the new `project_id`. Idempotent on `project_id` â€” re-creating an existing project returns the existing row with `idempotent_replay: true` and the original `created_at`.
+  - `internal/tools/project.go` â€” new file (RegisterProject + ProjectCreateInput/Result + validation)
   - Kebab-case pattern enforced: `^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$`
   - Placed at canonical index 0 (before `session_start`) so tools/list discovery order matches the natural bootstrap flow
-- **F35 structured error reporting** — `ToolError` extended with `Field`, `ExpectedType`, `ActualType`, and `SchemaHintURL`. `BindOrchestrator` now promotes `*json.UnmarshalTypeError` paths into discrete fields instead of hiding them in `Message`. Callers (LLM-driven or operator-driven) can render targeted fix-up hints without parsing free-form strings. All new fields are `omitempty` so the legacy shape is preserved for non-type-mismatch errors.
-- **`vibeSpecTaskSchema`** (F33 / Bug B) — extracted shared strict schema for `vibe_spec` / `vibe_publish` task items. `additionalProperties: false` + explicit property list (`id`, `description`, `depends_on`, `owner`). Stops the silent-drop / type-coerce behavior that made calls fail with `cannot unmarshal string into ... depends_on of type []string` when callers passed `title`/`status`/`priority`.
-- **`tests/tools/project_tool_test.go`** — 7 sub-tests covering happy path, idempotent replay, schema rejection (uppercase project_id, empty display_name, missing fields, unknown field) and the BindStore error envelope shape.
+- **F35 structured error reporting** â€” `ToolError` extended with `Field`, `ExpectedType`, `ActualType`, and `SchemaHintURL`. `BindOrchestrator` now promotes `*json.UnmarshalTypeError` paths into discrete fields instead of hiding them in `Message`. Callers (LLM-driven or operator-driven) can render targeted fix-up hints without parsing free-form strings. All new fields are `omitempty` so the legacy shape is preserved for non-type-mismatch errors.
+- **`vibeSpecTaskSchema`** (F33 / Bug B) â€” extracted shared strict schema for `vibe_spec` / `vibe_publish` task items. `additionalProperties: false` + explicit property list (`id`, `description`, `depends_on`, `owner`). Stops the silent-drop / type-coerce behavior that made calls fail with `cannot unmarshal string into ... depends_on of type []string` when callers passed `title`/`status`/`priority`.
+- **`tests/tools/project_tool_test.go`** â€” 7 sub-tests covering happy path, idempotent replay, schema rejection (uppercase project_id, empty display_name, missing fields, unknown field) and the BindStore error envelope shape.
 
 ### Fixed
-- **F33 / Bug A — `vibe_publish` JSON Schema is wrong.** Schema declared `spec`, `constitution`, `tasks`, `artifact_url`, `artifact_type`, `text` as flat top-level strings, but the Go struct `PublishVibeInput` (internal/orchestration/publish_vibe.go:42-72) nests them under `Spec PublishSpecInput` and `Artifact PublishArtifactInput`. Result: every harness call failed with `cannot unmarshal string into Go struct field PublishVibeInput.spec of type orchestration.PublishSpecInput`. Schema is now nested-correct with `additionalProperties: false` on both sub-objects.
-- **F33 / Bug C — `dark_memory_project_create` was documented but not implemented.** `internal/project/types.go:9` advertised the tool, but no `tools/project.go` existed. Closed by adding the tool in this release.
+- **F33 / Bug A â€” `vibe_publish` JSON Schema is wrong.** Schema declared `spec`, `constitution`, `tasks`, `artifact_url`, `artifact_type`, `text` as flat top-level strings, but the Go struct `PublishVibeInput` (internal/orchestration/publish_vibe.go:42-72) nests them under `Spec PublishSpecInput` and `Artifact PublishArtifactInput`. Result: every harness call failed with `cannot unmarshal string into Go struct field PublishVibeInput.spec of type orchestration.PublishSpecInput`. Schema is now nested-correct with `additionalProperties: false` on both sub-objects.
+- **F33 / Bug C â€” `dark_memory_project_create` was documented but not implemented.** `internal/project/types.go:9` advertised the tool, but no `tools/project.go` existed. Closed by adding the tool in this release.
 
 ### Changed
-- **Canonical tool surface: 26 → 27** (F33). New PROJECT namespace (1 tool) inserted at index 0. `NewRegistry`, `CanonicalOrder`, and the boot-time sanity check in `RegisterAll` updated to expect 27.
+- **Canonical tool surface: 26 â†’ 27** (F33). New PROJECT namespace (1 tool) inserted at index 0. `NewRegistry`, `CanonicalOrder`, and the boot-time sanity check in `RegisterAll` updated to expect 27.
 - **Tool surface layout**:
-  - `PROJECT (1) → create`
-  - `SESSION (4) → start, resume, status, close`
-  - `RESEARCH (3) → topic, recall, resume_thread`
-  - `VIBE (4) → publish, spec, pipeline_status, resolve_drift`
-  - `CONTEXT (3) → artifact_context, spec_context, session_context`
-  - `JUDGE (3) → judge, consensus, judgment_history`
-  - `POLICY (2) → active_policy, load_constitution`
-  - `OBSERVABILITY (3) → memory_state, writes, anomalies`
-  - `ADMIN (3) → admin_migrate, admin_schema_status, admin_vacuum`
-  - `L6-VLP (1) → vlp_handle_event` (DMAP v1.1 spec 193)
+  - `PROJECT (1) â†’ create`
+  - `SESSION (4) â†’ start, resume, status, close`
+  - `RESEARCH (3) â†’ topic, recall, resume_thread`
+  - `VIBE (4) â†’ publish, spec, pipeline_status, resolve_drift`
+  - `CONTEXT (3) â†’ artifact_context, spec_context, session_context`
+  - `JUDGE (3) â†’ judge, consensus, judgment_history`
+  - `POLICY (2) â†’ active_policy, load_constitution`
+  - `OBSERVABILITY (3) â†’ memory_state, writes, anomalies`
+  - `ADMIN (3) â†’ admin_migrate, admin_schema_status, admin_vacuum`
+  - `L6-VLP (1) â†’ vlp_handle_event` (DMAP v1.1 spec 193)
   - Total: 1+4+3+4+3+3+2+3+3+1 = 27.
 - Schema strictness: `vibe_publish`, `vibe_spec`, `project_create` now use `additionalProperties: false` on their nested objects so the harness rejects unknown fields at parse time instead of silently dropping or coercing them.
 
 ### Migration notes
-- **No DB migration.** `dark_memory_project_create` writes to the existing `projects` table (migrations/v7) — no schema change. Existing operators running v1.1.x keep their data; the new tool just provides an in-band path to provision what previously required `INSERT INTO projects (...)`.
-- **Backwards compatibility for `vibe_publish` callers.** The schema fix is breaking for callers that built payloads against the old (broken) flat-string shape — those payloads were never valid against the Go struct and would have failed unmarshal at runtime. New payloads use the nested shape. See `docs/PR-v1.2.0.md` (added in this release) for a before/after payload diff.
+- **No DB migration.** `dark_memory_project_create` writes to the existing `projects` table (migrations/v7) â€” no schema change. Existing operators running v1.1.x keep their data; the new tool just provides an in-band path to provision what previously required `INSERT INTO projects (...)`.
+- **Backwards compatibility for `vibe_publish` callers.** The schema fix is breaking for callers that built payloads against the old (broken) flat-string shape â€” those payloads were never valid against the Go struct and would have failed unmarshal at runtime. New payloads use the nested shape. See `docs/PR-v1.2.0.md` (added in this release) for a before/after payload diff.
 - **Backwards compatibility for `ToolError` consumers.** The four new fields (`Field`, `ExpectedType`, `ActualType`, `SchemaHintURL`) are `omitempty`, so existing JSON consumers that ignore unknown fields keep working. Consumers that strictly validate the response shape should add the new fields to their allow-list.
 
 ### Tests
@@ -2840,50 +2864,50 @@ the package doc on `internal/vibecase` for the full contract.
 
 ---
 
-## [1.1.0] — 2026-07-16
+## [1.1.0] â€” 2026-07-16
 
 ### Added
-- **DMAP v1.1 (Dark Memory Agent Protocol)** — 6-layer architecture, 26 atomic specs
+- **DMAP v1.1 (Dark Memory Agent Protocol)** â€” 6-layer architecture, 26 atomic specs
   - Layer 2 (loop coordinator) closed with 5 atomic specs:
-    - 2.1 SessionState — pure state-machine logic
-    - 2.2 VLPPackage — 4 typed primitives (Brief/Propose/Record/Complete)
-    - 2.3 VLPPersistence — Store-backed state with audit
-    - 2.4 VLPAuditor — transition-level audit
-    - 2.5 VLPLoopUseCase — end-to-end loop driver
-- `Store.SaveVLPStateWithTransition` — atomic combo: UPSERT + row-level audit + transition-level audit in one DB transaction
-- `audit.WriteEvent.ProjectID` field — INV-7 multi-tenancy at the audit layer
-- `audit.ListFilters.ProjectID` — read-side tenant filtering
+    - 2.1 SessionState â€” pure state-machine logic
+    - 2.2 VLPPackage â€” 4 typed primitives (Brief/Propose/Record/Complete)
+    - 2.3 VLPPersistence â€” Store-backed state with audit
+    - 2.4 VLPAuditor â€” transition-level audit
+    - 2.5 VLPLoopUseCase â€” end-to-end loop driver
+- `Store.SaveVLPStateWithTransition` â€” atomic combo: UPSERT + row-level audit + transition-level audit in one DB transaction
+- `audit.WriteEvent.ProjectID` field â€” INV-7 multi-tenancy at the audit layer
+- `audit.ListFilters.ProjectID` â€” read-side tenant filtering
 - 2 new dual-driver sub-tests: `write_audit_project_isolation` (F33), `vlp_state_roundtrip` enhancements (F33 cross-project)
 
 ### Changed
 - **INV-1 hardening (F32)**: 21 SQLite Save*/Update*/Delete*/Close*/Link* methods now wrapped in `BeginTx` + `Commit` + `defer Rollback`
   - New helpers: `runInTx`, `recordWriteLockedTx` (SQLite); `runInTx`, `recordWriteTx` (Postgres)
   - Data row + audit row now atomic; partial failure rolls back both
-  - **Critical**: helpers read `s.activeProject` without re-locking (deadlock avoidance — caller already holds `s.mu`)
+  - **Critical**: helpers read `s.activeProject` without re-locking (deadlock avoidance â€” caller already holds `s.mu`)
 - `UseCase.HandleEvent` (spec 2.5) refactored to use `Store.SaveVLPStateWithTransition` instead of two separate calls
 - Default version bumped from `0.1.0-dev` to `1.1.0-dev` in `cmd/dark-mem-cli` + `cmd/dark-mem-inspect`
 
 ### Database
-- **Migration v9** (`vlp_state_table`) — vlp_state per-session state row
-  - `UNIQUE INDEX (project_id, session_id)` — multi-tenancy at vlp layer (INV-7)
-- **Migration v10** (`audit_project_index`) — composite index on `write_audit(project_id, session_id)` for ListWrites filtering efficiency
-  - **No column changes** — `write_audit.project_id` was already added in v7 (`project_namespace`)
-  - **Idempotent** — `CREATE INDEX IF NOT EXISTS`
+- **Migration v9** (`vlp_state_table`) â€” vlp_state per-session state row
+  - `UNIQUE INDEX (project_id, session_id)` â€” multi-tenancy at vlp layer (INV-7)
+- **Migration v10** (`audit_project_index`) â€” composite index on `write_audit(project_id, session_id)` for ListWrites filtering efficiency
+  - **No column changes** â€” `write_audit.project_id` was already added in v7 (`project_namespace`)
+  - **Idempotent** â€” `CREATE INDEX IF NOT EXISTS`
   - **Backwards compatible**
 
 ### Tests
-- `internal/vlp` — 12 tests including new `TestVLP_E2E_AtomicSaveEmitsTwoAuditRows`
-- `tests/dual_driver` — 11 sub-tests including F33 isolation
+- `internal/vlp` â€” 12 tests including new `TestVLP_E2E_AtomicSaveEmitsTwoAuditRows`
+- `tests/dual_driver` â€” 11 sub-tests including F33 isolation
 - 10 packages, all PASS (374s full suite)
 
 ### Known v2 follow-ups (not blocking)
 - Postgres `notImpl` stubs need same F32 wrapping when real impls land (~30 methods)
-- No meta-test verifying "every Save* rolls back its audit row on data-write failure" — only VLP has this
+- No meta-test verifying "every Save* rolls back its audit row on data-write failure" â€” only VLP has this
 - `usecaseTransitionNotes` and `auditor.marshalTransitionNotes` produce byte-identical JSON but are duplicated; trivial refactor when v2 reorganizes vlp package
 
 ---
 
-## [1.0.0] — 2026-07-12
+## [1.0.0] â€” 2026-07-12
 
 ### Added
 - **Initial release**: 25 MCP tools, dual-driver SQLite + Postgres, 7 operational invariants
@@ -2891,29 +2915,29 @@ the package doc on `internal/vibecase` for the full contract.
 - Migrations v1-v8 establishing core schema (sessions, research, vibe_specs, vibe_artifacts, vibe_brands, vibe_compliance, vibe_drift_reports, sdd_evaluations, write_audit, constitutions, mods, projects, mod_loads)
 - CLI tools: `dark-mem-mcp` (MCP server), `dark-mem-cli` (admin), `dark-mem-inspect` (read-only observability)
 - 9 test suites: cli, conformance, context, dual_driver, e2e, economy, invariants, orchestration, project
-- Constitution watchdog (INV-4) — `constitutions` table + `Store.VerifyConstitutionHash`
-- Canary protection (INV-3) — `SafetyHolder` rejects payloads containing canary
-- Mod sanitization (INV-6) — content loader refuses unsafe content
-- Multi-tenancy foundation (INV-7) — projects table + project_id column on every tenant-scoped table
+- Constitution watchdog (INV-4) â€” `constitutions` table + `Store.VerifyConstitutionHash`
+- Canary protection (INV-3) â€” `SafetyHolder` rejects payloads containing canary
+- Mod sanitization (INV-6) â€” content loader refuses unsafe content
+- Multi-tenancy foundation (INV-7) â€” projects table + project_id column on every tenant-scoped table
 - Bridge documentation: 5/7 bridges complete (bridge.3 + bridge.5 deferred per spec 164)
 - MCP Inspector conformance test (`tests/conformance/`)
 
 ### License
-- MIT — see [LICENSE](LICENSE)
+- MIT â€” see [LICENSE](LICENSE)
 
 [1.1.0]: https://github.com/Opita-Code/dark-memory-mcp/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/Opita-Code/dark-memory-mcp/releases/tag/v1.0.0All notable changes to dark-memory-mcp are documented here.
 
-## [2.0.2] — 2026-07-27
+## [2.0.2] â€” 2026-07-27
 
 ### Fixed (DARK-MEM-v2.0.1-REGRESSION-1)
 
 The v2.0.1 GateMiddleware (commit 09390d9) was wired with an empty
-\StaticSessionResolver{}\ — every call returned \""\ and the gate
+\StaticSessionResolver{}\ â€” every call returned \""\ and the gate
 refused all tool calls (\ErrFrameStaleTooFar\). v2.0.2 fixes this
 in three layers:
 
-#### Schema (v17 — commit e16b2b7)
+#### Schema (v17 â€” commit e16b2b7)
 
 \projects.active_session_id\ + \ctive_session_set_at\ columns
 added by migration v17 (sqlite + postgres). Set by session_start
@@ -2923,9 +2947,9 @@ added by migration v17 (sqlite + postgres). Set by session_start
 
 Three new methods on \store.Store\:
 
-- \SetActiveSession(ctx, projectID, sessionID)\ — overwrite; idempotent
-- \GetActiveSession(ctx, projectID) (string, error)\ — \""\ if none
-- \ClearActiveSession(ctx, projectID, expectedSessionID)\ — CAS clear
+- \SetActiveSession(ctx, projectID, sessionID)\ â€” overwrite; idempotent
+- \GetActiveSession(ctx, projectID) (string, error)\ â€” \""\ if none
+- \ClearActiveSession(ctx, projectID, expectedSessionID)\ â€” CAS clear
 
 SQLite implements all three. Postgres has stubs (driver unused
 on this host).
@@ -2946,7 +2970,7 @@ restores the v2.0.0 contract for them.
 
 #### Real ActiveSessionResolver
 
-\internal/server/active_session_resolver.go\ —
+\internal/server/active_session_resolver.go\ â€”
 \StoreBackedActiveSessionResolver\ queries the projects row
 through a pluggable \ActiveSessionLookup\ (main.go adapts via
 \StoreBackedLookup\). Short in-process TTL cache (default 5s)
@@ -2969,13 +2993,13 @@ updated. Third-party implementations must adapt.
 
 ### Tests (regression guards for v2.0.1's failure)
 
-- \internal/policy/gate_v2_0_2_test.go\ — pins the
+- \internal/policy/gate_v2_0_2_test.go\ â€” pins the
   \RequiresActiveSession\ contract AND a direct guard that
   \PreCheck\ on a session-free tool returns \Allowed=true\.
-- \internal/server/active_session_resolver_test.go\ — 6 tests
+- \internal/server/active_session_resolver_test.go\ â€” 6 tests
   covering cache hit, expiry, empty projectID no-op,
   lookup-error handling, Invalidate, CacheTTL=0 disable.
-- \	ests/dual_driver/active_session_test.go\ — 4 tests covering
+- \	ests/dual_driver/active_session_test.go\ â€” 4 tests covering
   Set/Get/Clear roundtrip, CAS semantics, race-new-session-wins,
   ErrProjectNotFound.
 
@@ -2989,7 +3013,7 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
-## [2.0.1] — 2026-07-27
+## [2.0.1] â€” 2026-07-27
 
 ### Added (gate promoted to the transport layer)
 
@@ -2998,19 +3022,19 @@ v2.0.1 promotes it to the transport layer so every `dark_memory_*`
 tool call now flows through `internal/policy.PostCheck` via the new
 `GateMiddleware`, *before* the inner handler runs.
 
-- **`internal/server/middleware.go` (new) — `GateMiddleware.Wrap`**.
+- **`internal/server/middleware.go` (new) â€” `GateMiddleware.Wrap`**.
   PreCheck (capability grant + intent-in-scope) before the inner
   handler; PostCheck (drift-at-write, when `DriftChecker` is non-nil)
   after, for artifact-creating tools only. When `Gate` is nil, the
   legacy direct-dispatch path runs (no policy enforcement), keeping
   the existing test harness ergonomic.
-- **`internal/server/middleware_test.go` (new)** — 387 lines covering
+- **`internal/server/middleware_test.go` (new)** â€” 387 lines covering
   3 categories: capability mismatch, scope mismatch, drift verdict
   refusal at write boundary.
-- **`internal/server/server.go`** — `wrapHandler` routes through `Gate`
+- **`internal/server/server.go`** â€” `wrapHandler` routes through `Gate`
   when set.
-- **`internal/server/lifecycle.go`** — `BootState.Gate` field.
-- **`cmd/dark-mem-mcp/main.go`** — wires the Gate from the returned
+- **`internal/server/lifecycle.go`** â€” `BootState.Gate` field.
+- **`cmd/dark-mem-mcp/main.go`** â€” wires the Gate from the returned
   `FrameSource` at boot.
 
 ### Changed (FrameSource singleton, 5A.ii.b.2.c.1)
@@ -3019,14 +3043,14 @@ The per-call `FrameSource` construction in `dark_memory_recall` is
 lifted to a boot-time singleton. Both the recall tool and the gate
 now share the same `CachedSource` instance.
 
-- **`internal/recall/singleton.go` (new)** — boot-time `FrameSource`
+- **`internal/recall/singleton.go` (new)** â€” boot-time `FrameSource`
   construction. Singleton contract tested in `singleton_test.go`.
-- **`internal/tools/register.go`** — `RegisterAll` signature changes
+- **`internal/tools/register.go`** â€” `RegisterAll` signature changes
   from returning `error` to returning `(policy.FrameSource, error)` so
   the caller can wire it into the gate.
-- **`internal/tools/recall.go`** — uses the passed-in singleton;
+- **`internal/tools/recall.go`** â€” uses the passed-in singleton;
   per-call construction is gone.
-- **`tests/e2e/server_test.go`** — updated for the new `RegisterAll`
+- **`tests/e2e/server_test.go`** â€” updated for the new `RegisterAll`
   signature.
 
 ### Added (operator ergonomics)
@@ -3048,7 +3072,7 @@ now share the same `CachedSource` instance.
   strict-mode opt-in is a separate follow-up (or a v2.0.2 if needed).
   The gate still runs PreCheck unconditionally and refuses tools the
   LLM isn't granted.
-- **`DefaultServerVersion` bumped** from `2.0.0-dev` →
+- **`DefaultServerVersion` bumped** from `2.0.0-dev` â†’
   `2.0.1-dev` in `internal/server/bootstrap.go` for the legacy
   hardcoded fallback. Canonical version resolution flows through
   `version.Resolve()` (set by `make release` via `-ldflags`).
@@ -3057,23 +3081,23 @@ now share the same `CachedSource` instance.
 
 ---
 
-## [2.0.0] — 2026-07-19
+## [2.0.0] â€” 2026-07-19
 
-### Breaking (operator env contract — ships in PR #10)
+### Breaking (operator env contract â€” ships in PR #10)
 
-- **`DARK_SCRAPPER_URL` → `DARK_DRIFT_JUDGE_DAEMON_URL`**.
+- **`DARK_SCRAPPER_URL` â†’ `DARK_DRIFT_JUDGE_DAEMON_URL`**.
   SelfHarnessClient provider renamed from `"dark_scrapper"` to
-  `"drift_judge_daemon"`. Function `judgeViaScrapper` →
-  `judgeViaDriftJudgeDaemon`. **No backward-compat alias** —
+  `"drift_judge_daemon"`. Function `judgeViaScrapper` â†’
+  `judgeViaDriftJudgeDaemon`. **No backward-compat alias** â€”
   operators must update their env.
   Migration: `sed -i 's/DARK_SCRAPPER_URL/DARK_DRIFT_JUDGE_DAEMON_URL/g' .env`.
-- **`DARK_JUDGE_MODEL_SCRAPPER` → `DARK_JUDGE_MODEL_DRIFT_JUDGE_DAEMON`**.
-- Test file `internal/orchestration/scrapper_wiring_test.go` →
+- **`DARK_JUDGE_MODEL_SCRAPPER` â†’ `DARK_JUDGE_MODEL_DRIFT_JUDGE_DAEMON`**.
+- Test file `internal/orchestration/scrapper_wiring_test.go` â†’
   `internal/orchestration/drift_judge_daemon_wiring_test.go`.
 
 ### Breaking (server lifecycle default)
 
-- **Shutdown default `close_reason` `aborted` → `clean`** in
+- **Shutdown default `close_reason` `aborted` â†’ `clean`** in
   `internal/server/lifecycle.go`. Operators who relied on the
   legacy `aborted` default for crash-recovery workflows can opt
   back via `DARK_SHUTDOWN_CLOSE_REASON=aborted`.
@@ -3083,7 +3107,7 @@ now share the same `CachedSource` instance.
 
 ### Fixed
 
-- **INFRA-002 — `dark_memory_vibe_spec` now surfaces WHICH form and WHY
+- **INFRA-002 â€” `dark_memory_vibe_spec` now surfaces WHICH form and WHY
   on tasks parse failure.** Pre-fix, `parseTasksField` in
   `internal/orchestration/vibe_spec.go` discarded the underlying
   `json.Unmarshal` error and returned only
@@ -3097,7 +3121,7 @@ now share the same `CachedSource` instance.
   - Wrapped with `fmt.Errorf("%w: rejected by parser (Form A/B
     step N/unknown form ...): %v", fe, cause)` so the operator
     sees which form was attempted AND the underlying json
-    diagnostic (e.g. "invalid character '·' after top-level
+    diagnostic (e.g. "invalid character 'Â·' after top-level
     value").
   - The unknown-first-byte path explicitly names the offending
     byte (`first non-whitespace byte='{'`) and the expected
@@ -3105,12 +3129,12 @@ now share the same `CachedSource` instance.
     `classifyUnknown`'s no-payload-leak policy).
 - Concrete reproductions covered by:
   - `internal/orchestration/vibe_spec_test.go` (orchestrator-level):
-    - `[{...}]·` (trailing garbage byte after close-bracket, Form A)
+    - `[{...}]Â·` (trailing garbage byte after close-bracket, Form A)
     - `"[not-an-array]"` (outer string but inner not parseable, Form B)
-    - `{...}` (object-shaped payload — neither Form applies)
+    - `{...}` (object-shaped payload â€” neither Form applies)
   - `tests/wire/infra002_vibe_spec_diagnostic_test.go` (H-3 wire
     conformance): pins the contract end-to-end against the running
-    binary over JSON-RPC — the same envelope shape production
+    binary over JSON-RPC â€” the same envelope shape production
     harnesses see.
 
 ### Added (memory-as-policy-gateway pivot)
@@ -3127,86 +3151,86 @@ now traverses `internal/policy.PostCheck` which:
 4. **Drift-checks the response at the write boundary** before
    returning to the LLM (`internal/drift.Checker`).
 
-- **`dark_memory_recall` (29th canonical tool, CONTEXT 3 → 4)** —
+- **`dark_memory_recall` (29th canonical tool, CONTEXT 3 â†’ 4)** â€”
   the canonical scoped-replay orchestrator. Inputs: scope
   (global|project|session), project_id, session_id, since_token.
   Outputs: per-kind atomic frames (Identity, Scope, Capabilities,
   Drift, Persona) + delta write_audit rows since since_token +
-  new_token cursor. RFC §3 M1 + §6.1.
-- **`internal/atomic` package (NEW)** — Frame interface + 6
+  new_token cursor. RFC Â§3 M1 + Â§6.1.
+- **`internal/atomic` package (NEW)** â€” Frame interface + 6
   concrete types: IdentityFrame, ScopeFrame, CapabilitiesFrame,
   PersonaFrame, DriftFrame, EvidenceFrame. FrameSource interface.
-  Wave 5X.2: `Frame.Hash` signature `Hash() [32]byte` →
+  Wave 5X.2: `Frame.Hash` signature `Hash() [32]byte` â†’
   `Hash() ([32]byte, error)` (defense against previous
   interface/type mismatch that was silently swallowed).
-- **`internal/drift` package (NEW)** — `Strictness` enum
+- **`internal/drift` package (NEW)** â€” `Strictness` enum
   (off|warn|strict), `Checker` type with `CheckArtifact(ctx,
-  ArtifactInput) → Verdict`, `JudgeCaller` interface. Replaces
+  ArtifactInput) â†’ Verdict`, `JudgeCaller` interface. Replaces
   the previous `policy.PostCheck` stub. Decision tree for judge
   errors: strict refuses, warn allows.
-- **`internal/policy` package (NEW)** — gate.PostCheckInput
+- **`internal/policy` package (NEW)** â€” gate.PostCheckInput
   gains `DriftChecker + DriftArtifact` optional fields.
   `PostCheck` now calls `drift.Checker` when `Strictness != off`.
-- **`internal/recall` package (NEW)** — `StoreSource` (reads
+- **`internal/recall` package (NEW)** â€” `StoreSource` (reads
   from `store.Store`) + `CachedSource` (INV-5 cache re-hash on
   Get + audit emission on cache_mismatch). 9 tests.
-- **Session lifecycle resilience** — `session_resurrect`,
+- **Session lifecycle resilience** â€” `session_resurrect`,
   `session_recover`, `session_heartbeat`, `session_sweeper`,
   `boot_reconcile`. Closed-due-to-crash sessions are now
   resurrectable (only operator-initiated termination is
   terminal). `SessionResurrectOutput` gains 5 fields:
   `InheritedConstitution{ID,Ver}`, `ActiveConstitution{ID,Ver}`,
   `ConstitutionBumped`, `InheritedMods`.
-- **L6 adapter integration** — 3 hooks from
-  `BRIDGE_AND_COEXISTENCE.md` §6 wired:
-  * `startup-recover` → `runStartupRecover()` in main.go
-  * `periodic-heartbeat` → sweeper (5E.iii, doc-only)
-  * `exit-close_clean` → Shutdown default reason = clean
-- **Per-project drift strictness** — `Project.DriftStrictness`
+- **L6 adapter integration** â€” 3 hooks from
+  `BRIDGE_AND_COEXISTENCE.md` Â§6 wired:
+  * `startup-recover` â†’ `runStartupRecover()` in main.go
+  * `periodic-heartbeat` â†’ sweeper (5E.iii, doc-only)
+  * `exit-close_clean` â†’ Shutdown default reason = clean
+- **Per-project drift strictness** â€” `Project.DriftStrictness`
   field (migration v14). `drift.ResolveStrictness(projectOverride,
-  envValue, warnf)` — empty/'default' → env; valid → override;
-  invalid → warn + env fallback.
+  envValue, warnf)` â€” empty/'default' â†’ env; valid â†’ override;
+  invalid â†’ warn + env fallback.
 
-### Added (canonical tool count 28 → 29)
+### Added (canonical tool count 28 â†’ 29)
 
-- **`dark_memory_recall`** — see "memory-as-policy-gateway
-  pivot" above. CONTEXT namespace: 3 → 4 tools.
+- **`dark_memory_recall`** â€” see "memory-as-policy-gateway
+  pivot" above. CONTEXT namespace: 3 â†’ 4 tools.
 
 ### Changed (data plane)
 
-- **Schema migrations v11–v15** (sqlite + postgres):
-  * v11, v12 — frame-related scaffolding (see git log)
-  * v13 — `CREATE UNIQUE INDEX uq_vibe_frames_natural_key ON
+- **Schema migrations v11â€“v15** (sqlite + postgres):
+  * v11, v12 â€” frame-related scaffolding (see git log)
+  * v13 â€” `CREATE UNIQUE INDEX uq_vibe_frames_natural_key ON
     vibe_frames (project_id, session_id, scope_level, scope_id,
-    frame_kind)` — enables the UPSERT rewrite
-  * v14 — `ALTER TABLE projects ADD COLUMN drift_strictness TEXT
+    frame_kind)` â€” enables the UPSERT rewrite
+  * v14 â€” `ALTER TABLE projects ADD COLUMN drift_strictness TEXT
     NOT NULL DEFAULT 'default'`
-  * v15 — `ALTER TABLE vlp_state ADD COLUMN open_spec_id INTEGER
+  * v15 â€” `ALTER TABLE vlp_state ADD COLUMN open_spec_id INTEGER
     NOT NULL DEFAULT 0`
 - **SaveFrame rewritten as INSERT ... ON CONFLICT DO UPDATE**
   (sqlite) / `ON CONFLICT ... RETURNING` (postgres). Replaces the
   SELECT-then-INSERT/UPDATE race in the previous implementation
   under concurrent SaveFrame calls. Tested with 10-goroutine
-  concurrent upsert → 1 row.
-- **`WriteContext.SessionEvent`** — every `Save*` emits this
+  concurrent upsert â†’ 1 row.
+- **`WriteContext.SessionEvent`** â€” every `Save*` emits this
   field in `write_audit`. Closes pre-existing drift where the
   `session_event` column was INSERTed NULL silently.
-- **`VLPStateRow.OpenSpecID`** — the actual spec_id the session
+- **`VLPStateRow.OpenSpecID`** â€” the actual spec_id the session
   is working on. Previously the recall cache used `vlp_state.ID`
   as a meaningless proxy.
-- **`Project.DriftStrictness`** — per-project resolver override.
+- **`Project.DriftStrictness`** â€” per-project resolver override.
 
 ### Notes (constitution + RFC)
 
 - The pivot's design rationale lives in
   `vibe-flow/main/ACTIVE_MEMORY_RFC.md`, `SCHEMA_v11_v12.md`, and
-  `DRIFT_BURST.md` — these are operator-private planning docs
+  `DRIFT_BURST.md` â€” these are operator-private planning docs
   (NOT committed; lives in the operator's local workspace).
 - Public docs updated: `vibe-flow/PLAN.md` v2 (pivoted roadmap),
   `vibe-flow/main/BRIDGE_AND_COEXISTENCE.md` v2 (cx.v3,
   policy_gateway, dark-research-mcp demoted, dark-recall
   cancelled).
-- `DefaultServerVersion` constant bumped from `"1.4.1-dev"` →
+- `DefaultServerVersion` constant bumped from `"1.4.1-dev"` â†’
   `"2.0.0-dev"`. Canonical source remains `version.Resolve()`
   (set by `make release` via `-ldflags`).
 - 9 commits + 1 release (this PR). Pre-merge lint scrub PR #10
@@ -3215,7 +3239,7 @@ now traverses `internal/policy.PostCheck` which:
 
 ---
 
-## [1.4.1] — 2026-07-18
+## [1.4.1] â€” 2026-07-18
 
 ### Behavior change (callers MUST verify)
 
@@ -3245,7 +3269,7 @@ stability promise at v1.x), a PATCH bump is appropriate.
 
 ### Added (canonical C1..C7 taxonomy)
 
-- **`internal/vibecase` package** — single source of truth for the
+- **`internal/vibecase` package** â€” single source of truth for the
   C1..C7 case taxonomy. Replaces a JSON Schema enum fragment that
   was duplicated across `vibe_publish` and (asymmetrically) absent
   from `vibe_spec`. Exports:
@@ -3254,11 +3278,11 @@ stability promise at v1.x), a PATCH bump is appropriate.
   - `Parse(s)` (strict, trims, rejects empty + unknown + mixed-case),
     `MustParse(s)` (panic-on-error for startup constants),
     `IsValid(s)` (boolean shortcut).
-  - `All()` and `JSONSchemaEnum()` — stable, ordered, defensively
+  - `All()` and `JSONSchemaEnum()` â€” stable, ordered, defensively
     copied.
-  - `Description(c)` — human-facing one-liner per case (for LLM
+  - `Description(c)` â€” human-facing one-liner per case (for LLM
     context projections).
-  - `ErrInvalidCase` — exported sentinel for `errors.Is` checks.
+  - `ErrInvalidCase` â€” exported sentinel for `errors.Is` checks.
   - 15 unit tests covering ordering, defensive copy, trim, empty,
     unknown, mixed-case, error message contents, panic, boolean
     shortcut, round-trip, description, cardinality.
@@ -3291,7 +3315,7 @@ the package doc on `internal/vibecase` for the full contract.
 
 ---
 
-## [1.4.0] — 2026-07-18
+## [1.4.0] â€” 2026-07-18
 
 ### Added (release-integrity release)
 
@@ -3301,19 +3325,19 @@ the package doc on `internal/vibecase` for the full contract.
   authoritative, (4) drift detection on every boot, (5) session-bound
   governance. Cross-cutting reference for every `vibe_publish` artifact
   in the dark-memory-mcp project.
-- **`internal/version` package** — single-source version resolver.
+- **`internal/version` package** â€” single-source version resolver.
   Replaces the hardcoded `DefaultServerVersion = "1.3.0"` constant in
   `internal/server/bootstrap.go` and the `var Version = "1.1.0-dev"`
   in `cmd/dark-mem-cli/main.go` and `cmd/dark-mem-inspect/main.go`.
   Resolution priority: `-ldflags` injection (canonical, set by
-  `make release`) → `debug.ReadBuildInfo()` (dev) → hardcoded
+  `make release`) â†’ `debug.ReadBuildInfo()` (dev) â†’ hardcoded
   `"dev"` sentinel (emergency). 9 unit tests cover all three paths.
 - **`Makefile`** with `build` / `release` / `drift-check` /
   `version` / `version-json` / `inspect` / `tag` / `clean` targets.
   Handles the multi-module `cmd/*` layout (each cmd is its own Go
   module; the Makefile `cd`s into each before `go build`).
 - **`scripts/inject-version.sh`** (bash) and
-  **`scripts/inject-version.ps1`** (PowerShell) — resolve the canonical
+  **`scripts/inject-version.ps1`** (PowerShell) â€” resolve the canonical
   version from `git describe` and emit the `-ldflags` expression that
   feeds `make release`. Same resolution rules, same output formats
   (`--raw` / `--json` / default), same `--strict` flag.
@@ -3323,7 +3347,7 @@ the package doc on `internal/vibecase` for the full contract.
 - **`dark_memory_health_ping` response grew a `git` block.**
   New fields: `git.tag`, `git.commit`, `git.dirty`, `git.build_time`,
   `git.source` (one of `ldflags|buildinfo|dev`), `git.is_dev`.
-- **Top-level `drift` bool** — true iff the resolver fell back to the
+- **Top-level `drift` bool** â€” true iff the resolver fell back to the
   dev path OR the working tree was dirty at build time. Per
   `CONSTITUTION.md` Rule 4, a release binary MUST report
   `drift=false`. Operators can monitor the single-bit signal directly.
@@ -3337,7 +3361,7 @@ the package doc on `internal/vibecase` for the full contract.
   is now a deprecated string (`"1.4.0-dev"`) for any external
   callers; the canonical default flows through `version.Resolve()`.
 - `cmd/e2e/main.go` relaxed the hardcoded `"1.3.0"` health_ping
-  version assertion to "non-empty" — the value is now driven by the
+  version assertion to "non-empty" â€” the value is now driven by the
   resolver, not by source code.
 
 ### Notes
@@ -3351,7 +3375,7 @@ the package doc on `internal/vibecase` for the full contract.
 
 ---
 
-## [1.3.2] — 2026-07-16
+## [1.3.2] â€” 2026-07-16
 
 ### Fixed
 
@@ -3382,7 +3406,7 @@ the package doc on `internal/vibecase` for the full contract.
 
 ---
 
-## [1.3.1] — 2026-07-16
+## [1.3.1] â€” 2026-07-16
 
 ### Note (release plumbing)
 
@@ -3390,7 +3414,7 @@ the package doc on `internal/vibecase` for the full contract.
   commit message reads `release: v1.3.1 -- sync unreleased work to origin/main
   (squashed)`. The squash landed in the repo on 2026-07-16 but no annotated
   tag was created at the time; the v1.3.1 entry exists to give that squash
-  a canonical reference and to keep the tag chain (v1.3.0 → v1.3.1 → v1.3.2)
+  a canonical reference and to keep the tag chain (v1.3.0 â†’ v1.3.1 â†’ v1.3.2)
   consistent with the commit graph.
 - No standalone code changes between v1.3.0 and v1.3.2: v1.3.1 is a
   release-plumbing tag only. The substantive changes in this window are
@@ -3398,12 +3422,12 @@ the package doc on `internal/vibecase` for the full contract.
 
 ---
 
-## [1.3.0] — 2026-07-16
+## [1.3.0] â€” 2026-07-16
 
 ### Added (production-readiness release)
 
-- **`dark_memory_health_ping` — operator-facing liveness probe.**
-  The canonical surface grew 27 → 28 tools (OBSERVABILITY 3 → 4).
+- **`dark_memory_health_ping` â€” operator-facing liveness probe.**
+  The canonical surface grew 27 â†’ 28 tools (OBSERVABILITY 3 â†’ 4).
   health_ping is a strict, documented-shape probe distinct from
   `memory_state`:
     - **Latency budget:** <500ms round-trip (target <50ms on warm cache);
@@ -3417,27 +3441,27 @@ the package doc on `internal/vibecase` for the full contract.
   Wire conformance: `tests/wire/health_ping_test.go::TestWire_HealthPingShape`
   (verifies all fields) and `::TestWire_HealthPingLatency` (verifies the
   500ms ceiling). Tool count: `tests/wire/zz_toolenum_test.go`.
-- **`tests/wire/wire_session_test.go::waitForBootMarker`** — eliminates
+- **`tests/wire/wire_session_test.go::waitForBootMarker`** â€” eliminates
   the startup race that previously caused intermittent "tool not found"
   failures when `initialize` arrived before the binary's mcp-go loop
   started. The harness now waits up to 5s for the `registered N tools`
   boot marker on stderr before sending `initialize`.
-- **`internal/tools/health.go::unwrapToolResponse` helper** — single
+- **`internal/tools/health.go::unwrapToolResponse` helper** â€” single
   point of edit for the mcp-go `content:[{type:"text",text:"..."}]`
   envelope shape that wraps every tool response.
-- **`Config.BootedAt`** field — wall-clock time captured at config load;
+- **`Config.BootedAt`** field â€” wall-clock time captured at config load;
   `SetRuntimeContext` propagates it into `health_ping` so uptime is
   accurate from the very first call.
-- **`.github/workflows/ci.yml`** — operator-reproducible CI recipe:
+- **`.github/workflows/ci.yml`** â€” operator-reproducible CI recipe:
   builds, runs lint, runs `go test ./...`, runs `go test ./tests/wire`
   with `DARK_MEM_MCP_BIN` set. The never-push policy is preserved
   (this file lives in-repo for transparency; CI is local-only).
-- **`docs/PRODUCTION_CHECKLIST.md` §Health Probe** — wiring guide for
+- **`docs/PRODUCTION_CHECKLIST.md` Â§Health Probe** â€” wiring guide for
   the new `dark_memory_health_ping` including a sample K8s liveness
   probe YAML and a Prometheus `up{job="dark-mem-mcp"}` snippet.
 
 ### Changed
-- **Canonical tool count 27 → 28.** README, DECISION_MATRIX,
+- **Canonical tool count 27 â†’ 28.** README, DECISION_MATRIX,
   bridge.7 conformance test, e2e canonical-order test, and the
   sanity check inside `tools.RegisterAll` all bumped to 28.
 - **`DARK_SERVER_VERSION` default** bumped from `1.2.3` to `1.3.0`
@@ -3448,14 +3472,14 @@ the package doc on `internal/vibecase` for the full contract.
   freshly-built binary is picked up automatically.
 
 ### Documented
-- **`docs/PRODUCTION_CHECKLIST.md` §Race detector availability** —
+- **`docs/PRODUCTION_CHECKLIST.md` Â§Race detector availability** â€”
   the operator's `go test -race` requires a C compiler; on this host
   no gcc is installed and the race detector is therefore unavailable.
   Workaround: validate via the wire suite (10 tests, including
   TestWire_HealthPingLatency which exercises 5 sequential calls and
   catches perf regressions) and the e2e suite (`tests/e2e/server_test.go`
   fires 1000 concurrent calls).
-- **`docs/PRODUCTION_CHECKLIST.md` §Stale-binary gotcha** — if a
+- **`docs/PRODUCTION_CHECKLIST.md` Â§Stale-binary gotcha** â€” if a
   previous binary is left at `dark-mem-mcp.exe` in the repo root
   (or in `PATH` before `cmd/dark-mem-mcp/`), the wire harness's
   fallback resolution picks it up. Always rebuild into
@@ -3483,7 +3507,7 @@ the package doc on `internal/vibecase` for the full contract.
 
 ---
 
-## [1.2.5] — 2026-07-16
+## [1.2.5] â€” 2026-07-16
 
 ### Added
 - **`tests/wire/` end-to-end JSON-RPC suite.** Wire-conformance tests
@@ -3554,26 +3578,26 @@ the package doc on `internal/vibecase` for the full contract.
 
 ---
 
-## [1.2.3] — 2026-07-16
+## [1.2.3] â€” 2026-07-16
 
 ### Added
-- **INV-8 (per-MCP database isolation).** Each MCP server in the dark-agents family owns its **own SQLite file** by convention. dark-memory-mcp now defaults to `dark-memory.db` instead of `dark.db`; dark-research-mcp continues to use `dark.db`. Sharing `dark.db` was the root cause of the v1.2.2 boot crashes (schema_migrations name collisions in the shared bookkeeping table). The principle is documented in `docs/INVARIANTS.md` (new `INV-8` section, with rationale, defence test, operator signal, and applicability to all future dark-* servers). Defensive test: `tests/invariants/inv8_test.go::TestServer_DefaultDSN_DoesNotCollideWithDarkResearch_INV8` — asserts the default DSN (a) is not `dark.db`, (b) doesn't contain `dark-research`, (c) contains `dark-memory`. Operators who want the legacy shared-DB behaviour can opt in via `DARK_DB=dark.db` env var.
+- **INV-8 (per-MCP database isolation).** Each MCP server in the dark-agents family owns its **own SQLite file** by convention. dark-memory-mcp now defaults to `dark-memory.db` instead of `dark.db`; dark-research-mcp continues to use `dark.db`. Sharing `dark.db` was the root cause of the v1.2.2 boot crashes (schema_migrations name collisions in the shared bookkeeping table). The principle is documented in `docs/INVARIANTS.md` (new `INV-8` section, with rationale, defence test, operator signal, and applicability to all future dark-* servers). Defensive test: `tests/invariants/inv8_test.go::TestServer_DefaultDSN_DoesNotCollideWithDarkResearch_INV8` â€” asserts the default DSN (a) is not `dark.db`, (b) doesn't contain `dark-research`, (c) contains `dark-memory`. Operators who want the legacy shared-DB behaviour can opt in via `DARK_DB=dark.db` env var.
 
 ### Changed
-- **`defaultDSN()` → `"dark-memory.db"`** (was `"dark.db"`). Backward-compatible override via `DARK_DB=` env var. Affects `internal/server/bootstrap.go` only. New public accessor `server.DefaultDSN()` so tests/invariants can assert without reflection. No DB migration needed; the change only affects the default path.
+- **`defaultDSN()` â†’ `"dark-memory.db"`** (was `"dark.db"`). Backward-compatible override via `DARK_DB=` env var. Affects `internal/server/bootstrap.go` only. New public accessor `server.DefaultDSN()` so tests/invariants can assert without reflection. No DB migration needed; the change only affects the default path.
 
 ### Future directions
 - **`[FUTURE-MCP-1]`** (the next dark-* project, see session notes) MUST default to a project-specific filename (`harvest.db` or per-project variant) and pass the `INV-8 defaultDSN uniqueness` lint. The lint is informal today (a grep in CI) but will become a go-vet rule in v1.3.0. Documented in `docs/INVARIANTS.md` under INV-8.
 
 ---
 
-## [1.2.2] — 2026-07-16
+## [1.2.2] â€” 2026-07-16
 
 ### Fixed
-- **F37 — migration runner now tolerates "duplicate column name" errors.** applyOne in `internal/migrate/migrate.go` was running every statement in `m.Up` via a single `tx.ExecContext` inside one transaction. Any failure (including benign "duplicate column name: project_id" when a v7-style ALTER TABLE ADD COLUMN had partially completed during a prior boot crash) rolled back the WHOLE migration and aborted the daemon. The runner now splits multi-statement migration bodies on `;`, runs each statement separately, and treats the duplicate-column error class (SQLite `duplicate column name: X` + Postgres `column X already exists`) as already-satisfied. Regression tests cover the recovery flow (`TestMigrate_TolerantOfDuplicateColumn_F37`) plus a regression guard against over-broad catch (`TestMigrate_StillFailsOnNonDuplicateErrors_F37`).
-- **F38 — `EnsureCoreTables` self-heals missing core tables on boot.** The dark.db at `C:\Users\Nico\AppData\Local\dark-agents\dark.db` is shared with dark-research-mcp, whose bookkeeping table uses the same `schema_migrations` rows. When dark-research-mcp's v1-v3 were applied with overlapping version names (initial_schema, constitutions_and_mods, sdd_evaluations_constitution_audit), dark-memory-mcp's v5+ (`sessions_table`, `project_namespace`, `vibe_brands_composite_unique`, `vlp_state_table`, `audit_project_index`) appeared "already applied" without having actually run against the schema — leaving `sessions` and `projects` tables physically absent from the DB. New helper `migrate.EnsureCoreTables(ctx, db)` issues `CREATE TABLE IF NOT EXISTS` for the four core tables v5/v6/v7 expect to find, called once from the sqlite Store's `Open` before `Migrate` so the migration runner sees the correct schema state. Tests: `TestEnsureCoreTables_FreshDB_F38`, `_Idempotent_F38`, `_RecoveryFromHalfMigratedDarkDB_F38` (the exact 6-step crash repro from today's session).
-- **F39 — migration runner tolerates "no such module: <ext>" errors.** Orphan sqlite-vec triggers (`trg_research_items_vec_delete`, etc.) referencing the unloadable `vec0` virtual-table module were causing `ALTER TABLE vibe_brands RENAME TO vibe_brands_old` (in v8) to surface `SQL logic error: error in trigger trg_research_items_vec_delete: no such module: vec0`. Same `applyOne` extension; the "no such module" substring is now treated as already-satisfied at the per-statement level. Tests in `tests/migrate/tolerate_ddl_errors_f39_f40_test.go::TestMigrate_ToleratesNoSuchModule_F39`.
-- **F40 — migration runner tolerates "table X already exists" errors.** The same per-statement loop now also handles the rare case where a `CREATE TABLE` in a migration's `Up` is called against a table that already exists (e.g. `EnsureCoreTables` + `Migrate` both try to create the same table at boot, or a v8-style rename-and-recreate pattern). The existing table is preserved as-is. Test in `tests/migrate/tolerate_ddl_errors_f39_f40_test.go::TestMigrate_ToleratesTableAlreadyExists_F40`.
+- **F37 â€” migration runner now tolerates "duplicate column name" errors.** applyOne in `internal/migrate/migrate.go` was running every statement in `m.Up` via a single `tx.ExecContext` inside one transaction. Any failure (including benign "duplicate column name: project_id" when a v7-style ALTER TABLE ADD COLUMN had partially completed during a prior boot crash) rolled back the WHOLE migration and aborted the daemon. The runner now splits multi-statement migration bodies on `;`, runs each statement separately, and treats the duplicate-column error class (SQLite `duplicate column name: X` + Postgres `column X already exists`) as already-satisfied. Regression tests cover the recovery flow (`TestMigrate_TolerantOfDuplicateColumn_F37`) plus a regression guard against over-broad catch (`TestMigrate_StillFailsOnNonDuplicateErrors_F37`).
+- **F38 â€” `EnsureCoreTables` self-heals missing core tables on boot.** The dark.db at `C:\Users\Nico\AppData\Local\dark-agents\dark.db` is shared with dark-research-mcp, whose bookkeeping table uses the same `schema_migrations` rows. When dark-research-mcp's v1-v3 were applied with overlapping version names (initial_schema, constitutions_and_mods, sdd_evaluations_constitution_audit), dark-memory-mcp's v5+ (`sessions_table`, `project_namespace`, `vibe_brands_composite_unique`, `vlp_state_table`, `audit_project_index`) appeared "already applied" without having actually run against the schema â€” leaving `sessions` and `projects` tables physically absent from the DB. New helper `migrate.EnsureCoreTables(ctx, db)` issues `CREATE TABLE IF NOT EXISTS` for the four core tables v5/v6/v7 expect to find, called once from the sqlite Store's `Open` before `Migrate` so the migration runner sees the correct schema state. Tests: `TestEnsureCoreTables_FreshDB_F38`, `_Idempotent_F38`, `_RecoveryFromHalfMigratedDarkDB_F38` (the exact 6-step crash repro from today's session).
+- **F39 â€” migration runner tolerates "no such module: <ext>" errors.** Orphan sqlite-vec triggers (`trg_research_items_vec_delete`, etc.) referencing the unloadable `vec0` virtual-table module were causing `ALTER TABLE vibe_brands RENAME TO vibe_brands_old` (in v8) to surface `SQL logic error: error in trigger trg_research_items_vec_delete: no such module: vec0`. Same `applyOne` extension; the "no such module" substring is now treated as already-satisfied at the per-statement level. Tests in `tests/migrate/tolerate_ddl_errors_f39_f40_test.go::TestMigrate_ToleratesNoSuchModule_F39`.
+- **F40 â€” migration runner tolerates "table X already exists" errors.** The same per-statement loop now also handles the rare case where a `CREATE TABLE` in a migration's `Up` is called against a table that already exists (e.g. `EnsureCoreTables` + `Migrate` both try to create the same table at boot, or a v8-style rename-and-recreate pattern). The existing table is preserved as-is. Test in `tests/migrate/tolerate_ddl_errors_f39_f40_test.go::TestMigrate_ToleratesTableAlreadyExists_F40`.
 
 ### Operator notes
 - v1.2.2 is a **drop-in replacement** for v1.2.1. No migrations required. The 27-tool canonical surface is unchanged. No DB schema change.
@@ -3584,58 +3608,58 @@ the package doc on `internal/vibecase` for the full contract.
   - **Risky path C (do not try):** manually drop `vibe_brands` before booting v1.2.2 so v8 can recreate it. The F37/F39 tolerance will then drop the rename/recreate loop back into a clean state. Only do this if you've back-vacuumed data.
 
 ### Known issue
-- The dark.db shared schema_migrations bookkeeping between dark-research-mcp and dark-memory-mcp is fragile by design (both projects use `version INTEGER, applied_at TEXT` rows but the version numbers are NAME-aligned, not ID-aligned). Future directions to consider: namespace dark-memory-mcp's bookkeeping to `dark_memory_schema_migrations`; or partition the schema_migrations table by namespace. Not addressed in v1.2.2 — separate PR if you want to take it on.
+- The dark.db shared schema_migrations bookkeeping between dark-research-mcp and dark-memory-mcp is fragile by design (both projects use `version INTEGER, applied_at TEXT` rows but the version numbers are NAME-aligned, not ID-aligned). Future directions to consider: namespace dark-memory-mcp's bookkeeping to `dark_memory_schema_migrations`; or partition the schema_migrations table by namespace. Not addressed in v1.2.2 â€” separate PR if you want to take it on.
 
 ---
 
-## [1.2.1] — 2026-07-16
+## [1.2.1] â€” 2026-07-16
 
 ### Fixed
-- **F36 — `vibe_spec` rejects payloads from MCP harnesses that stringify arrays.** The gemela tool `dark_research_spec_create` (separate server, same `vibe_specs` table) declares `tasks` as `type: "string"` and persists the value as opaque text. `dark_memory_vibe_spec` declared `tasks` as `type: "array"` and required `Tasks []VibeSpecTask`. Some MCP harnesses serialise array arguments as JSON-encoded strings under either schema; in that case `BindOrchestrator`'s `json.Unmarshal` fails with `*json.UnmarshalTypeError: cannot unmarshal string into Go struct field VibeSpecInput.tasks of type []orchestration.VibeSpecTask`, and the operator-visible error surfaced as a generic `ErrInvalidArgument` (without a precise field hint) — F35's structured-field reporting kicked in only on successful unmarshal-then-orchestrator failure paths, not on raw unmarshal failures. Symptom: every `dark_memory_vibe_spec` call from certain harnesses returned `{"code":"ErrInvalidArgument","message":"One or more arguments failed validation..."}` regardless of payload validity.
-  - `internal/orchestration/vibe_spec.go` — `Tasks` is now `json.RawMessage`; new helper `parseTasksField` accepts both forms (leading-byte dispatch on `[` vs `"`) and returns a typed `[]VibeSpecTask`. The validation graph (unique ids, non-empty description, depends_on consistency, cycle detection) is unchanged.
-  - `internal/tools/vibe.go` — schema for `tasks` widened from `type: "array"` to `anyOf: [{...array, items: vibeSpecTaskSchema}, {type: "string"}]`. Both forms now advertise at the wire layer so harnesses can pick whichever shape they prefer.
-  - `tests/orchestration/orchestrator_test.go` — added `mustMarshalTasks` helper bridging the old typed-slice test bodies; added 2 new tests: `TestVibeSpec_AcceptsStringifiedTasks` (round-trip: raw string in, parsed array in storage) and `TestVibeSpec_StringifiedTasks_MalformedRejected` (precise error mentions "stringified" plus `ErrInvalidArgument`). The 8 pre-existing VibeSpec tests updated from `Tasks: []orchestration.VibeSpecTask{...}` to `Tasks: mustMarshalTasks(t, []orchestration.VibeSpecTask{...})`.
+- **F36 â€” `vibe_spec` rejects payloads from MCP harnesses that stringify arrays.** The gemela tool `dark_research_spec_create` (separate server, same `vibe_specs` table) declares `tasks` as `type: "string"` and persists the value as opaque text. `dark_memory_vibe_spec` declared `tasks` as `type: "array"` and required `Tasks []VibeSpecTask`. Some MCP harnesses serialise array arguments as JSON-encoded strings under either schema; in that case `BindOrchestrator`'s `json.Unmarshal` fails with `*json.UnmarshalTypeError: cannot unmarshal string into Go struct field VibeSpecInput.tasks of type []orchestration.VibeSpecTask`, and the operator-visible error surfaced as a generic `ErrInvalidArgument` (without a precise field hint) â€” F35's structured-field reporting kicked in only on successful unmarshal-then-orchestrator failure paths, not on raw unmarshal failures. Symptom: every `dark_memory_vibe_spec` call from certain harnesses returned `{"code":"ErrInvalidArgument","message":"One or more arguments failed validation..."}` regardless of payload validity.
+  - `internal/orchestration/vibe_spec.go` â€” `Tasks` is now `json.RawMessage`; new helper `parseTasksField` accepts both forms (leading-byte dispatch on `[` vs `"`) and returns a typed `[]VibeSpecTask`. The validation graph (unique ids, non-empty description, depends_on consistency, cycle detection) is unchanged.
+  - `internal/tools/vibe.go` â€” schema for `tasks` widened from `type: "array"` to `anyOf: [{...array, items: vibeSpecTaskSchema}, {type: "string"}]`. Both forms now advertise at the wire layer so harnesses can pick whichever shape they prefer.
+  - `tests/orchestration/orchestrator_test.go` â€” added `mustMarshalTasks` helper bridging the old typed-slice test bodies; added 2 new tests: `TestVibeSpec_AcceptsStringifiedTasks` (round-trip: raw string in, parsed array in storage) and `TestVibeSpec_StringifiedTasks_MalformedRejected` (precise error mentions "stringified" plus `ErrInvalidArgument`). The 8 pre-existing VibeSpec tests updated from `Tasks: []orchestration.VibeSpecTask{...}` to `Tasks: mustMarshalTasks(t, []orchestration.VibeSpecTask{...})`.
 
 ### Operator notes
 - v1.2.1 is a **drop-in replacement** for v1.2.0. No migrations required. The 27-tool canonical surface is unchanged (no new tools, no deprecations). No DB schema change.
-- Restart the running `dark-mem-mcp.exe` (PIDs currently running the pre-v1.2.1 binary are tagged in the process list) to pick up the new code. Until restart, `dark_memory_vibe_spec` calls that pass `tasks` as a raw array will continue to fail — pass them as a JSON-encoded string in the meantime.
+- Restart the running `dark-mem-mcp.exe` (PIDs currently running the pre-v1.2.1 binary are tagged in the process list) to pick up the new code. Until restart, `dark_memory_vibe_spec` calls that pass `tasks` as a raw array will continue to fail â€” pass them as a JSON-encoded string in the meantime.
 
 ---
 
-## [1.2.0] — 2026-07-16
+## [1.2.0] â€” 2026-07-16
 
 ### Added
-- **`dark_memory_project_create`** (F33 / Bug C) — new PROJECT namespace tool (1 tool) that closes the bootstrap loop for INV-7 multi-tenancy. Prior to v1.2.0, the only way to provision a non-`default` project was to insert into the `projects` table out of band; now operators can create tenants from inside the MCP surface, then immediately call `dark_memory_session_start` with the new `project_id`. Idempotent on `project_id` — re-creating an existing project returns the existing row with `idempotent_replay: true` and the original `created_at`.
-  - `internal/tools/project.go` — new file (RegisterProject + ProjectCreateInput/Result + validation)
+- **`dark_memory_project_create`** (F33 / Bug C) â€” new PROJECT namespace tool (1 tool) that closes the bootstrap loop for INV-7 multi-tenancy. Prior to v1.2.0, the only way to provision a non-`default` project was to insert into the `projects` table out of band; now operators can create tenants from inside the MCP surface, then immediately call `dark_memory_session_start` with the new `project_id`. Idempotent on `project_id` â€” re-creating an existing project returns the existing row with `idempotent_replay: true` and the original `created_at`.
+  - `internal/tools/project.go` â€” new file (RegisterProject + ProjectCreateInput/Result + validation)
   - Kebab-case pattern enforced: `^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$`
   - Placed at canonical index 0 (before `session_start`) so tools/list discovery order matches the natural bootstrap flow
-- **F35 structured error reporting** — `ToolError` extended with `Field`, `ExpectedType`, `ActualType`, and `SchemaHintURL`. `BindOrchestrator` now promotes `*json.UnmarshalTypeError` paths into discrete fields instead of hiding them in `Message`. Callers (LLM-driven or operator-driven) can render targeted fix-up hints without parsing free-form strings. All new fields are `omitempty` so the legacy shape is preserved for non-type-mismatch errors.
-- **`vibeSpecTaskSchema`** (F33 / Bug B) — extracted shared strict schema for `vibe_spec` / `vibe_publish` task items. `additionalProperties: false` + explicit property list (`id`, `description`, `depends_on`, `owner`). Stops the silent-drop / type-coerce behavior that made calls fail with `cannot unmarshal string into ... depends_on of type []string` when callers passed `title`/`status`/`priority`.
-- **`tests/tools/project_tool_test.go`** — 7 sub-tests covering happy path, idempotent replay, schema rejection (uppercase project_id, empty display_name, missing fields, unknown field) and the BindStore error envelope shape.
+- **F35 structured error reporting** â€” `ToolError` extended with `Field`, `ExpectedType`, `ActualType`, and `SchemaHintURL`. `BindOrchestrator` now promotes `*json.UnmarshalTypeError` paths into discrete fields instead of hiding them in `Message`. Callers (LLM-driven or operator-driven) can render targeted fix-up hints without parsing free-form strings. All new fields are `omitempty` so the legacy shape is preserved for non-type-mismatch errors.
+- **`vibeSpecTaskSchema`** (F33 / Bug B) â€” extracted shared strict schema for `vibe_spec` / `vibe_publish` task items. `additionalProperties: false` + explicit property list (`id`, `description`, `depends_on`, `owner`). Stops the silent-drop / type-coerce behavior that made calls fail with `cannot unmarshal string into ... depends_on of type []string` when callers passed `title`/`status`/`priority`.
+- **`tests/tools/project_tool_test.go`** â€” 7 sub-tests covering happy path, idempotent replay, schema rejection (uppercase project_id, empty display_name, missing fields, unknown field) and the BindStore error envelope shape.
 
 ### Fixed
-- **F33 / Bug A — `vibe_publish` JSON Schema is wrong.** Schema declared `spec`, `constitution`, `tasks`, `artifact_url`, `artifact_type`, `text` as flat top-level strings, but the Go struct `PublishVibeInput` (internal/orchestration/publish_vibe.go:42-72) nests them under `Spec PublishSpecInput` and `Artifact PublishArtifactInput`. Result: every harness call failed with `cannot unmarshal string into Go struct field PublishVibeInput.spec of type orchestration.PublishSpecInput`. Schema is now nested-correct with `additionalProperties: false` on both sub-objects.
-- **F33 / Bug C — `dark_memory_project_create` was documented but not implemented.** `internal/project/types.go:9` advertised the tool, but no `tools/project.go` existed. Closed by adding the tool in this release.
+- **F33 / Bug A â€” `vibe_publish` JSON Schema is wrong.** Schema declared `spec`, `constitution`, `tasks`, `artifact_url`, `artifact_type`, `text` as flat top-level strings, but the Go struct `PublishVibeInput` (internal/orchestration/publish_vibe.go:42-72) nests them under `Spec PublishSpecInput` and `Artifact PublishArtifactInput`. Result: every harness call failed with `cannot unmarshal string into Go struct field PublishVibeInput.spec of type orchestration.PublishSpecInput`. Schema is now nested-correct with `additionalProperties: false` on both sub-objects.
+- **F33 / Bug C â€” `dark_memory_project_create` was documented but not implemented.** `internal/project/types.go:9` advertised the tool, but no `tools/project.go` existed. Closed by adding the tool in this release.
 
 ### Changed
-- **Canonical tool surface: 26 → 27** (F33). New PROJECT namespace (1 tool) inserted at index 0. `NewRegistry`, `CanonicalOrder`, and the boot-time sanity check in `RegisterAll` updated to expect 27.
+- **Canonical tool surface: 26 â†’ 27** (F33). New PROJECT namespace (1 tool) inserted at index 0. `NewRegistry`, `CanonicalOrder`, and the boot-time sanity check in `RegisterAll` updated to expect 27.
 - **Tool surface layout**:
-  - `PROJECT (1) → create`
-  - `SESSION (4) → start, resume, status, close`
-  - `RESEARCH (3) → topic, recall, resume_thread`
-  - `VIBE (4) → publish, spec, pipeline_status, resolve_drift`
-  - `CONTEXT (3) → artifact_context, spec_context, session_context`
-  - `JUDGE (3) → judge, consensus, judgment_history`
-  - `POLICY (2) → active_policy, load_constitution`
-  - `OBSERVABILITY (3) → memory_state, writes, anomalies`
-  - `ADMIN (3) → admin_migrate, admin_schema_status, admin_vacuum`
-  - `L6-VLP (1) → vlp_handle_event` (DMAP v1.1 spec 193)
+  - `PROJECT (1) â†’ create`
+  - `SESSION (4) â†’ start, resume, status, close`
+  - `RESEARCH (3) â†’ topic, recall, resume_thread`
+  - `VIBE (4) â†’ publish, spec, pipeline_status, resolve_drift`
+  - `CONTEXT (3) â†’ artifact_context, spec_context, session_context`
+  - `JUDGE (3) â†’ judge, consensus, judgment_history`
+  - `POLICY (2) â†’ active_policy, load_constitution`
+  - `OBSERVABILITY (3) â†’ memory_state, writes, anomalies`
+  - `ADMIN (3) â†’ admin_migrate, admin_schema_status, admin_vacuum`
+  - `L6-VLP (1) â†’ vlp_handle_event` (DMAP v1.1 spec 193)
   - Total: 1+4+3+4+3+3+2+3+3+1 = 27.
 - Schema strictness: `vibe_publish`, `vibe_spec`, `project_create` now use `additionalProperties: false` on their nested objects so the harness rejects unknown fields at parse time instead of silently dropping or coercing them.
 
 ### Migration notes
-- **No DB migration.** `dark_memory_project_create` writes to the existing `projects` table (migrations/v7) — no schema change. Existing operators running v1.1.x keep their data; the new tool just provides an in-band path to provision what previously required `INSERT INTO projects (...)`.
-- **Backwards compatibility for `vibe_publish` callers.** The schema fix is breaking for callers that built payloads against the old (broken) flat-string shape — those payloads were never valid against the Go struct and would have failed unmarshal at runtime. New payloads use the nested shape. See `docs/PR-v1.2.0.md` (added in this release) for a before/after payload diff.
+- **No DB migration.** `dark_memory_project_create` writes to the existing `projects` table (migrations/v7) â€” no schema change. Existing operators running v1.1.x keep their data; the new tool just provides an in-band path to provision what previously required `INSERT INTO projects (...)`.
+- **Backwards compatibility for `vibe_publish` callers.** The schema fix is breaking for callers that built payloads against the old (broken) flat-string shape â€” those payloads were never valid against the Go struct and would have failed unmarshal at runtime. New payloads use the nested shape. See `docs/PR-v1.2.0.md` (added in this release) for a before/after payload diff.
 - **Backwards compatibility for `ToolError` consumers.** The four new fields (`Field`, `ExpectedType`, `ActualType`, `SchemaHintURL`) are `omitempty`, so existing JSON consumers that ignore unknown fields keep working. Consumers that strictly validate the response shape should add the new fields to their allow-list.
 
 ### Tests
@@ -3646,50 +3670,50 @@ the package doc on `internal/vibecase` for the full contract.
 
 ---
 
-## [1.1.0] — 2026-07-16
+## [1.1.0] â€” 2026-07-16
 
 ### Added
-- **DMAP v1.1 (Dark Memory Agent Protocol)** — 6-layer architecture, 26 atomic specs
+- **DMAP v1.1 (Dark Memory Agent Protocol)** â€” 6-layer architecture, 26 atomic specs
   - Layer 2 (loop coordinator) closed with 5 atomic specs:
-    - 2.1 SessionState — pure state-machine logic
-    - 2.2 VLPPackage — 4 typed primitives (Brief/Propose/Record/Complete)
-    - 2.3 VLPPersistence — Store-backed state with audit
-    - 2.4 VLPAuditor — transition-level audit
-    - 2.5 VLPLoopUseCase — end-to-end loop driver
-- `Store.SaveVLPStateWithTransition` — atomic combo: UPSERT + row-level audit + transition-level audit in one DB transaction
-- `audit.WriteEvent.ProjectID` field — INV-7 multi-tenancy at the audit layer
-- `audit.ListFilters.ProjectID` — read-side tenant filtering
+    - 2.1 SessionState â€” pure state-machine logic
+    - 2.2 VLPPackage â€” 4 typed primitives (Brief/Propose/Record/Complete)
+    - 2.3 VLPPersistence â€” Store-backed state with audit
+    - 2.4 VLPAuditor â€” transition-level audit
+    - 2.5 VLPLoopUseCase â€” end-to-end loop driver
+- `Store.SaveVLPStateWithTransition` â€” atomic combo: UPSERT + row-level audit + transition-level audit in one DB transaction
+- `audit.WriteEvent.ProjectID` field â€” INV-7 multi-tenancy at the audit layer
+- `audit.ListFilters.ProjectID` â€” read-side tenant filtering
 - 2 new dual-driver sub-tests: `write_audit_project_isolation` (F33), `vlp_state_roundtrip` enhancements (F33 cross-project)
 
 ### Changed
 - **INV-1 hardening (F32)**: 21 SQLite Save*/Update*/Delete*/Close*/Link* methods now wrapped in `BeginTx` + `Commit` + `defer Rollback`
   - New helpers: `runInTx`, `recordWriteLockedTx` (SQLite); `runInTx`, `recordWriteTx` (Postgres)
   - Data row + audit row now atomic; partial failure rolls back both
-  - **Critical**: helpers read `s.activeProject` without re-locking (deadlock avoidance — caller already holds `s.mu`)
+  - **Critical**: helpers read `s.activeProject` without re-locking (deadlock avoidance â€” caller already holds `s.mu`)
 - `UseCase.HandleEvent` (spec 2.5) refactored to use `Store.SaveVLPStateWithTransition` instead of two separate calls
 - Default version bumped from `0.1.0-dev` to `1.1.0-dev` in `cmd/dark-mem-cli` + `cmd/dark-mem-inspect`
 
 ### Database
-- **Migration v9** (`vlp_state_table`) — vlp_state per-session state row
-  - `UNIQUE INDEX (project_id, session_id)` — multi-tenancy at vlp layer (INV-7)
-- **Migration v10** (`audit_project_index`) — composite index on `write_audit(project_id, session_id)` for ListWrites filtering efficiency
-  - **No column changes** — `write_audit.project_id` was already added in v7 (`project_namespace`)
-  - **Idempotent** — `CREATE INDEX IF NOT EXISTS`
+- **Migration v9** (`vlp_state_table`) â€” vlp_state per-session state row
+  - `UNIQUE INDEX (project_id, session_id)` â€” multi-tenancy at vlp layer (INV-7)
+- **Migration v10** (`audit_project_index`) â€” composite index on `write_audit(project_id, session_id)` for ListWrites filtering efficiency
+  - **No column changes** â€” `write_audit.project_id` was already added in v7 (`project_namespace`)
+  - **Idempotent** â€” `CREATE INDEX IF NOT EXISTS`
   - **Backwards compatible**
 
 ### Tests
-- `internal/vlp` — 12 tests including new `TestVLP_E2E_AtomicSaveEmitsTwoAuditRows`
-- `tests/dual_driver` — 11 sub-tests including F33 isolation
+- `internal/vlp` â€” 12 tests including new `TestVLP_E2E_AtomicSaveEmitsTwoAuditRows`
+- `tests/dual_driver` â€” 11 sub-tests including F33 isolation
 - 10 packages, all PASS (374s full suite)
 
 ### Known v2 follow-ups (not blocking)
 - Postgres `notImpl` stubs need same F32 wrapping when real impls land (~30 methods)
-- No meta-test verifying "every Save* rolls back its audit row on data-write failure" — only VLP has this
+- No meta-test verifying "every Save* rolls back its audit row on data-write failure" â€” only VLP has this
 - `usecaseTransitionNotes` and `auditor.marshalTransitionNotes` produce byte-identical JSON but are duplicated; trivial refactor when v2 reorganizes vlp package
 
 ---
 
-## [1.0.0] — 2026-07-12
+## [1.0.0] â€” 2026-07-12
 
 ### Added
 - **Initial release**: 25 MCP tools, dual-driver SQLite + Postgres, 7 operational invariants
@@ -3697,15 +3721,15 @@ the package doc on `internal/vibecase` for the full contract.
 - Migrations v1-v8 establishing core schema (sessions, research, vibe_specs, vibe_artifacts, vibe_brands, vibe_compliance, vibe_drift_reports, sdd_evaluations, write_audit, constitutions, mods, projects, mod_loads)
 - CLI tools: `dark-mem-mcp` (MCP server), `dark-mem-cli` (admin), `dark-mem-inspect` (read-only observability)
 - 9 test suites: cli, conformance, context, dual_driver, e2e, economy, invariants, orchestration, project
-- Constitution watchdog (INV-4) — `constitutions` table + `Store.VerifyConstitutionHash`
-- Canary protection (INV-3) — `SafetyHolder` rejects payloads containing canary
-- Mod sanitization (INV-6) — content loader refuses unsafe content
-- Multi-tenancy foundation (INV-7) — projects table + project_id column on every tenant-scoped table
+- Constitution watchdog (INV-4) â€” `constitutions` table + `Store.VerifyConstitutionHash`
+- Canary protection (INV-3) â€” `SafetyHolder` rejects payloads containing canary
+- Mod sanitization (INV-6) â€” content loader refuses unsafe content
+- Multi-tenancy foundation (INV-7) â€” projects table + project_id column on every tenant-scoped table
 - Bridge documentation: 5/7 bridges complete (bridge.3 + bridge.5 deferred per spec 164)
 - MCP Inspector conformance test (`tests/conformance/`)
 
 ### License
-- MIT — see [LICENSE](LICENSE)
+- MIT â€” see [LICENSE](LICENSE)
 
 [1.1.0]: https://github.com/Opita-Code/dark-memory-mcp/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/Opita-Code/dark-memory-mcp/releases/tag/v1.0.0Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).

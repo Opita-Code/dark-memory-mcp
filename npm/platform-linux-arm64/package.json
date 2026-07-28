@@ -1,5 +1,5 @@
 {
-  "name": "@opita-code/dark-memory-mcp-linux-arm64",
+  "name": "@opitacode/dark-memory-mcp-linux-arm64",
   "version": "2.5.0",
   "description": "dark-memory-mcp binary for Linux (ARM64)",
   "license": "MIT",

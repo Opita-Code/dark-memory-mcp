@@ -1,4 +1,4 @@
-# @opita-code/dark-memory-mcp
+# @opitacode/dark-memory-mcp
 
 > Cross-platform npm wrapper for the dark-memory-mcp MCP server.
 
@@ -17,7 +17,7 @@ For **Claude Code / Cursor / VS Code / opencode** etc., add this to your MCP hos
   "mcpServers": {
     "dark-memory": {
       "command": "npx",
-      "args": ["-y", "@opita-code/dark-memory-mcp"]
+      "args": ["-y", "@opitacode/dark-memory-mcp"]
     }
   }
 }
@@ -28,11 +28,11 @@ That's it. The first invocation downloads the wrapper + your platform's binary; 
 ## How it works
 
 ```
-npx -y @opita-code/dark-memory-mcp
+npx -y @opitacode/dark-memory-mcp
   |
   v
 node wrapper/index.js   <-- this package
-  |   (detects platform + resolves @opita-code/dark-memory-mcp-{platform}-{arch})
+  |   (detects platform + resolves @opitacode/dark-memory-mcp-{platform}-{arch})
   v
 spawn node platform-package/index.js   <-- sub-package
   |   (locates bin/dark-mem-mcp[.exe])
@@ -46,12 +46,12 @@ All three layers inherit stdio so the JSON-RPC stream from your AI client reache
 
 | OS       | Arch   | Package                                       |
 |----------|--------|-----------------------------------------------|
-| macOS    | x64    | `@opita-code/dark-memory-mcp-darwin-x64`     |
-| macOS    | arm64  | `@opita-code/dark-memory-mcp-darwin-arm64`   |
-| Linux    | x64    | `@opita-code/dark-memory-mcp-linux-x64`      |
-| Linux    | arm64  | `@opita-code/dark-memory-mcp-linux-arm64`    |
-| Windows  | x64    | `@opita-code/dark-memory-mcp-win32-x64`      |
-| Windows  | arm64  | `@opita-code/dark-memory-mcp-win32-arm64`    |
+| macOS    | x64    | `@opitacode/dark-memory-mcp-darwin-x64`     |
+| macOS    | arm64  | `@opitacode/dark-memory-mcp-darwin-arm64`   |
+| Linux    | x64    | `@opitacode/dark-memory-mcp-linux-x64`      |
+| Linux    | arm64  | `@opitacode/dark-memory-mcp-linux-arm64`    |
+| Windows  | x64    | `@opitacode/dark-memory-mcp-win32-x64`      |
+| Windows  | arm64  | `@opitacode/dark-memory-mcp-win32-arm64`    |
 
 ## Windows note
 
@@ -62,7 +62,7 @@ On Windows, some MCP hosts have trouble invoking `npx` directly. If you see "com
   "mcpServers": {
     "dark-memory": {
       "command": "cmd",
-      "args": ["/c", "npx", "-y", "@opita-code/dark-memory-mcp"]
+      "args": ["/c", "npx", "-y", "@opitacode/dark-memory-mcp"]
     }
   }
 }
@@ -87,7 +87,7 @@ Set them in your MCP host config under `env`:
   "mcpServers": {
     "dark-memory": {
       "command": "npx",
-      "args": ["-y", "@opita-code/dark-memory-mcp"],
+      "args": ["-y", "@opitacode/dark-memory-mcp"],
       "env": {
         "DARK_DB": "C:\\Users\\you\\dark-memory.db",
         "ANTHROPIC_API_KEY": "sk-ant-..."
@@ -99,11 +99,11 @@ Set them in your MCP host config under `env`:
 
 ## License
 
-MIT — same as dark-memory-mcp itself. See [LICENSE](https://github.com/Opita-Code/dark-memory-mcp/blob/main/LICENSE).
+MIT Ã¢â‚¬â€ same as dark-memory-mcp itself. See [LICENSE](https://github.com/Opita-Code/dark-memory-mcp/blob/main/LICENSE).
 
 ## Source
 
 - Repository: https://github.com/Opita-Code/dark-memory-mcp
 - npm wrapper source: https://github.com/Opita-Code/dark-memory-mcp/tree/main/npm/wrapper
 - Issue tracker: https://github.com/Opita-Code/dark-memory-mcp/issues
-- Official MCP Registry entry: `io.github.opita-code/dark-memory-mcp`
+- Official MCP Registry entry: `io.github.Opita-Code/dark-memory-mcp`

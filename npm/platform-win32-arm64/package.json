@@ -1,5 +1,5 @@
 {
-  "name": "@opita-code/dark-memory-mcp-win32-arm64",
+  "name": "@opitacode/dark-memory-mcp-win32-arm64",
   "version": "2.5.0",
   "description": "dark-memory-mcp binary for Windows (ARM64)",
   "license": "MIT",

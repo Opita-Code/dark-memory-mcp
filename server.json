@@ -1,13 +1,13 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
-  "name": "io.github.opita-code/dark-memory-mcp",
+  "name": "io.github.Opita-Code/dark-memory-mcp",
   "title": "dark-memory-mcp",
-  "description": "Persistent memory + vibe-loop engine + agent governance for AI agents. Tracks decisions, findings, and audit history across sessions so your AI never loses the thread of what it is doing. Single Go binary, SQLite-backed, stdio MCP transport. Cross-platform install via npx: npx -y @opita-code/dark-memory-mcp",
+  "description": "Persistent memory + vibe-loop engine + agent governance for AI agents. Tracks decisions, findings, and audit history across sessions so your AI never loses the thread of what it is doing. Single Go binary, SQLite-backed, stdio MCP transport. Cross-platform install via npx: npx -y @opitacode/dark-memory-mcp",
   "version": "2.5.0",
   "packages": [
     {
       "registryType": "npm",
-      "identifier": "@opita-code/dark-memory-mcp",
+      "identifier": "@opitacode/dark-memory-mcp",
       "version": "2.5.0",
       "transport": {
         "type": "stdio"
