@@ -60,7 +60,7 @@ jobs:
           "
 
       - name: Resolve latest mcp-publisher version
-        id: version
+        id: publisher-version
         run: |
           # The mcp-publisher has no `latest` symlink; we have to query
           # the GitHub API for the most recent release tag_name.
@@ -78,7 +78,7 @@ jobs:
           set -euo pipefail
           OS=$(uname -s | tr '[:upper:]' '[:lower:]')
           ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
-          VERSION="${{ steps.version.outputs.version }}"
+          VERSION="${{ steps.publisher-version.outputs.version }}"
           URL="https://github.com/modelcontextprotocol/registry/releases/download/${VERSION}/mcp-publisher_${OS}_${ARCH}.tar.gz"
           echo "Downloading $URL"
           curl -sSL "$URL" | tar xz mcp-publisher
