@@ -272,11 +272,11 @@ func TestBridge7_CallToolErrorPath(t *testing.T) {
 }
 
 // canonicalWireOrder is the wire-format (dark_memory_*) version of
-// the 35-tool canonical order (v2.3.0; was 34 in v2.1.x, 29 in v2.0.x,
-// 28 in v1.3.x, 27 in v1.2.x, 26 in v1.1.x), mirrored from
-// internal/tools/registry.go so this test doesn't depend on the
-// library's internal package (it tests the wire format, not the
-// library shape).
+// the 39-tool canonical order (v2.7.0-alpha; was 38 in v2.6.0, 35 in
+// v2.3.0, 34 in v2.1.x, 29 in v2.0.x, 28 in v1.3.x, 27 in v1.2.x,
+// 26 in v1.1.x), mirrored from internal/tools/registry.go so this
+// test doesn't depend on the library's internal package (it tests
+// the wire format, not the library shape).
 //
 // v2.1.0: AGENT_MEMORY namespace (5 tools: save/list/get/update/archive)
 // inserted between CONTEXT and JUDGE per spec D-12 /
@@ -287,6 +287,8 @@ func TestBridge7_CallToolErrorPath(t *testing.T) {
 // v2.6.0: AGENT_BOOTSTRAP namespace (3 tools: agent_bootstrap,
 // agent_recommend_companions, agent_detect_environment) inserted
 // between RESEARCH and VIBE. New canonical count = 38.
+// v2.7.0-alpha: MINDSET namespace (1 tool: mindset_apply) inserted
+// between AGENT_MEMORY and JUDGE. New canonical count = 39.
 func canonicalWireOrder() []string {
 	bare := []string{
 		// PROJECT (1) — v1.2.0
@@ -303,6 +305,8 @@ func canonicalWireOrder() []string {
 		"artifact_context", "spec_context", "session_context", "recall",
 		// AGENT_MEMORY (6) — v2.1.0 (5) + v2.3.0 (1: recall)
 		"agent_memory_save", "agent_memory_list", "agent_memory_recall", "agent_memory_get", "agent_memory_update", "agent_memory_archive",
+		// MINDSET (1) — v2.7.0-alpha
+		"mindset_apply",
 		// JUDGE (3)
 		"judge", "consensus", "judgment_history",
 		// POLICY (2)
