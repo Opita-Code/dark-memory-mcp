@@ -106,7 +106,43 @@ jobs:
       - name: Login to Official MCP Registry (GitHub OIDC)
         run: ./mcp-publisher login github-oidc
 
+      - name: Check if version already published in MCP Registry (idempotency)
+        id: check-exists
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
+        run: |
+          set -euo pipefail
+          # Query the registry's GET endpoint for our server. If it returns
+          # 200 and includes our version, skip the publish. If it returns 404
+          # (server doesn't exist yet), publish normally.
+          HTTP_CODE=$(curl -s -o /tmp/registry.json -w "%{http_code}" \
+            "https://registry.modelcontextprotocol.io/v0/servers/io.github.Opita-Code/dark-memory-mcp" || echo "000")
+          if [ "$HTTP_CODE" = "404" ]; then
+            echo "EXISTS=false" >> "$GITHUB_OUTPUT"
+            echo "Server not yet in registry; will publish"
+            exit 0
+          fi
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::warning::Unexpected HTTP $HTTP_CODE from registry; will attempt publish"
+            echo "EXISTS=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Check if version is in the response. The registry response shape
+          # for v0 is { server, ...meta }. The version is at server.version
+          # or in server.versions[] (varies by API revision).
+          if jq -e --arg v "$VERSION" '
+            (.server.version // "") == $v
+            or ((.server.versions // []) | map(.version) | index($v))
+          ' /tmp/registry.json > /dev/null 2>&1; then
+            echo "EXISTS=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::$VERSION already in MCP Registry; skipping publish"
+          else
+            echo "EXISTS=false" >> "$GITHUB_OUTPUT"
+            echo "Version $VERSION not yet in registry; will publish"
+          fi
+
       - name: Publish to Official MCP Registry
+        if: steps.check-exists.outputs.EXISTS != 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: ./mcp-publisher publish

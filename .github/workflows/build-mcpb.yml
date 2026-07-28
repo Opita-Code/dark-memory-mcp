@@ -180,7 +180,17 @@ jobs:
         with:
           path: release-binaries
           pattern: binary-*
-          merge-multiple: true
+          # NOTE: do NOT set merge-multiple: true here. With merge-multiple,
+          # all matching artifacts are extracted into a single directory with
+          # NO subdirectories — which means files with the same name COLLIDE
+          # (e.g. dark-mem-mcp-amd64 from darwin and linux binaries). One
+          # would silently overwrite the other, so the rename script below
+          # only finds 4 files instead of 6.
+          #
+          # With merge-multiple omitted (default = false), each artifact is
+          # downloaded to its own subdirectory named after the artifact
+          # (binary-darwin-amd64/, binary-linux-amd64/, ...). The rename
+          # script then flattens to release-binaries/<bin>-<bundle>.
 
       - name: Rename raw binaries for release upload
         working-directory: release-binaries
