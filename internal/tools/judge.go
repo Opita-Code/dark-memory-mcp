@@ -23,7 +23,7 @@ import (
 func RegisterJudge(reg *Registry, orch *orchestration.Orchestrator, st store.Store) {
 	// judge — wraps O5 Judge orchestrator (single-sample).
 	reg.Add(BindOrchestrator("judge",
-		"Run a single LLM-as-judge verdict on content. Eval types: drift_judge, brand_match, compliance_check, pii_detect, prompt_injection_scan, grounding_check.",
+		"Run a single LLM-as-judge verdict on content. Eval types: drift_judge, brand_match, compliance_check, pii_detect, prompt_injection_scan, grounding_check. v2.4.2: brand_match + compliance_check consult prior agent_memory decisions/findings (filtered by resolved agent_id); pass no_enrich=true to opt out.",
 		MustJSONSchema(map[string]any{
 			"type":     "object",
 			"required": []string{"eval_type", "content"},
@@ -33,6 +33,8 @@ func RegisterJudge(reg *Registry, orch *orchestration.Orchestrator, st store.Sto
 				"target_id":   map[string]any{"type": "string"},
 				"content":     map[string]any{"type": "string"},
 				"model":       map[string]any{"type": "string"},
+				"agent_id":    map[string]any{"type": "string", "description": "v2.4.2: optional Mem0 agent_id (LLM identity). Resolved priority: caller input > projects.default_agent_id > empty string."},
+				"no_enrich":   map[string]any{"type": "boolean", "description": "v2.4.2: opt-out escape hatch. Default false (enrichment runs for brand_match + compliance_check). When true, Judge passes raw content to the LLM."},
 			},
 		}),
 		func(ctx context.Context, in orchestration.JudgeInput) (*orchestration.JudgeOutput, error) {
@@ -41,7 +43,7 @@ func RegisterJudge(reg *Registry, orch *orchestration.Orchestrator, st store.Sto
 
 	// consensus — wraps O8 JudgeConsensus orchestrator (N-shot).
 	reg.Add(BindOrchestrator("consensus",
-		"Run N-shot LLM-as-judge and return modal verdict + confidence interval. N clamped to [1, 7].",
+		"Run N-shot LLM-as-judge and return modal verdict + confidence interval. N clamped to [1, 7]. v2.4.2: forwards agent_id + no_enrich to all N samples so each gets the same agent-scoped enrichment.",
 		MustJSONSchema(map[string]any{
 			"type":     "object",
 			"required": []string{"eval_type", "content"},
@@ -52,6 +54,8 @@ func RegisterJudge(reg *Registry, orch *orchestration.Orchestrator, st store.Sto
 				"content":     map[string]any{"type": "string"},
 				"n":           map[string]any{"type": "integer", "description": "Sample count. Default 3, clamped to [1, 7]."},
 				"model":       map[string]any{"type": "string"},
+				"agent_id":    map[string]any{"type": "string", "description": "v2.4.2: forwarded to all N Judge samples for consistent agent-scoped enrichment."},
+				"no_enrich":   map[string]any{"type": "boolean", "description": "v2.4.2: forwarded to all N Judge samples for consistent opt-out semantics. Default false."},
 			},
 		}),
 		func(ctx context.Context, in orchestration.JudgeConsensusInput) (*orchestration.JudgeConsensusResult, error) {

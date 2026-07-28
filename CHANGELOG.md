@@ -291,6 +291,162 @@ Pre-flight evaluation pending. (See drift_judge result below.)
 
 ---
 
+## [2.4.2] — 2026-07-28
+
+### Added — judge-side memory-RAG for brand_match + compliance_check
+
+v2.4.0 wired `agent_memory` into `drift_judge` via `PublishVibe`, but
+left `brand_match`, `compliance_check`, and the direct
+`dark_memory_judge` callers blind to prior context. A brand voice
+LLM scored new copy without ever seeing the brand canon. A
+compliance LLM scored EU marketing copy without seeing GDPR Article
+13. **v2.4.2 closes the "judges are blind" debt** for brand_match +
+compliance_check by enriching the LLM prompt with pinned
+agent_memory rows of the relevant kind, filtered by the resolved
+agent_id (same priority chain as v2.4.1).
+
+#### Strategy: PINNED, not BM25
+
+v2.4.0's drift_judge enrichment uses BM25 search against the
+artifact text. v2.4.2 uses **pinned memories** instead, because:
+
+- Brand decisions are operator-curated: the operator pinned them
+  because they're the brand canon. Pinned = explicit operator
+  intent, not text similarity.
+- Compliance decisions + findings are similar: operator pinned
+  them because they're jurisdictional canon.
+- BM25 against the artifact text is **fragile** for these judges:
+  a compliance decision like "GDPR Article 13 disclosure" rarely
+  shares keywords with the artifact copy being reviewed. Pinned
+  gives predictable, curated context.
+- drift_judge keeps BM25 (in `PublishVibe`) because drift detection
+  benefits from SPEC-relevant context, not pinned canon.
+
+#### What gets enriched (per eval_type)
+
+| eval_type          | Kinds injected     | Why                                  |
+| ------------------ | ------------------ | ------------------------------------ |
+| `brand_match`      | `[decision]`       | Brand canon = operator-pinned decisions |
+| `compliance_check` | `[decision, finding]` | Compliance rules + prior flags   |
+| `drift_judge`      | (unchanged)        | Lives in `PublishVibe` (v2.4.0)      |
+| `pii_detect`       | (none)             | Pattern-matching, not RAG            |
+| `prompt_injection_scan` | (none)        | Pattern-matching, not RAG            |
+| `grounding_check`  | (out-of-scope)     | Future v2.4.4 candidate              |
+
+#### Wire contract (additive)
+
+```go
+// dark_memory_judge (orchestrator.O5):
+{
+  "eval_type": "brand_match" | "compliance_check" | ...,  // existing
+  "content": "...",                                        // existing
+  "agent_id": "...",                // NEW v2.4.2 — same priority chain as v2.4.1
+  "no_enrich": false,               // NEW v2.4.2 — opt-out escape hatch
+  // ... rest unchanged
+}
+
+// dark_memory_consensus (orchestrator.O8):
+{
+  "eval_type": "...",
+  "content": "...",
+  "agent_id": "...",                // NEW v2.4.2 — forwarded to all N samples
+  "n": 3,
+  // ... rest unchanged
+}
+```
+
+`no_enrich: true` opts out of enrichment entirely (raw content
+passes to the LLM). Default `false` = enrichment on. Use this
+when testing the LLM in isolation, when content must not see prior
+context (sensitive audits), or when debugging enrichment behavior.
+
+#### NoEnrich escape hatch (the operator override)
+
+Operators who want raw, no-enrichment behavior (e.g., sensitive
+audits where the brand canon must not leak into the verdict) can
+pass `no_enrich: true` on the Judge call. The LLM receives the
+raw content unchanged. Verified by
+`TestV242_BrandMatch_NoEnrich_RespectsOptOut`.
+
+#### AgentID priority chain (unchanged from v2.4.1)
+
+1. Caller-supplied `AgentID` on the Judge call.
+2. `projects.default_agent_id` (set at tenant provisioning).
+3. Empty string — no agent filter; v2.4.0 backward compat.
+
+#### Tests (8 new defensive tests)
+
+**Orchestrator-level** (in `tests/orchestration/agent_memory_v2_4_2_test.go`):
+
+- `TestV242_BrandMatch_EnrichesWithBrandDecisions` — kind=decision
+  surfaces in LLM prompt; kind=finding + kind=link are filtered
+  out (all three rows PINNED to isolate the kind filter from the
+  pinned filter).
+- `TestV242_ComplianceCheck_EnrichesWithDecisionsAndFindings` —
+  both decision + finding surface; note is filtered out.
+- `TestV242_BrandMatch_NoEnrich_RespectsOptOut` — `no_enrich=true`
+  → LLM sees raw content unchanged (verifies the escape hatch).
+- `TestV242_PIIDetect_NoEnrichment` — pii_detect is not enriched
+  (pattern-matching eval_type stays blind to memory-RAG).
+- `TestV242_Consensus_PassesAgentIDToAllSamples` — N=3 brand_match
+  consensus: each of the 3 samples sees the same enrichment
+  (AgentID forwarded to all N).
+- `TestV242_AgentID_PriorityChain_ResolvesInJudge` — Judge
+  resolves AgentID via the v2.4.1 priority chain (caller >
+  projects.default_agent_id > ""). Same `resolveActiveAgentID`
+  helper used by SessionStart and PublishVibe.
+- `TestV242_DriftJudge_EnrichmentUnchangedInPublishVibe` —
+  **regression guard**: drift_judge enrichment still lives in
+  PublishVibe (NOT moved to Judge in v2.4.2). Direct Judge callers
+  of drift_judge do NOT get enriched — deliberate scope boundary.
+
+**Store-level** (in `tests/dual_driver/agent_memory_v2_4_2_test.go`):
+
+- `TestV242_Store_SearchAgentMemory_FilterByKind_DefenseInDepth`
+  — verifies the Store's `SearchAgentMemory` Kind filter actually
+  filters at the data plane (defense in depth in case future
+  refactors change the orchestrator helper).
+
+#### What v2.4.2 does NOT do (deliberate scope)
+
+1. **Does not touch drift_judge enrichment** — it still lives in
+   `PublishVibe` (auditable since v2.4.0). Operators using
+   `dark_memory_judge(eval_type=drift_judge)` directly without
+   `PublishVibe` get NO enrichment — they must go through
+   `PublishVibe` for enriched prompts. This is **deliberate scope**,
+   not oversight.
+2. **Does not enrich pii_detect, prompt_injection_scan, or
+   grounding_check.** Pattern-matching judges don't benefit from
+   RAG; grounding_check is out-of-scope for v2.4.2.
+3. **The enriched prompt is NOT persisted** in the audit trail —
+   only the LLM response (`SDDEvaluation.VerdictJSON`) is. This is
+   consistent with v2.4.0 INV-1 contract (writes are audited, not
+   prompts). Operators needing prompt-level audit get it in v2.4.4+.
+4. **Memory-RAG is best-effort.** If `agent_memory` is broken, Judge
+   runs with raw content (same fail-safe as v2.4.0). The LLM still
+   gets called; the verdict is still persisted; only the enrichment
+   block is missing.
+
+#### Upgrade notes
+
+- Wire contract is additive only. Existing v2.4.1 callers see no
+  behavioral change unless they explicitly opt in to
+  `brand_match` / `compliance_check` enrichment (which is on by
+  default for those eval_types). Operators who want raw, no-
+  enrichment behavior can pass `no_enrich: true` per call.
+- Operators must PIN important brand + compliance decisions to make
+  them visible to the enrichment. Unpinned decisions are not
+  surfaced (this is a deliberate trade-off: pinned = operator-
+  curated canon; unpinned = transient working memory).
+- v2.4.0 drift_judge enrichment in PublishVibe is unchanged.
+- Tool count remains 35 (additive integration, no new tools).
+
+---
+
+## [2.3.0] — 2026-07-28
+
+---
+
 ## [2.3.0] — 2026-07-28
 
 ### Added — agent_memory save-decouple + Mem0 alignment + recall tool

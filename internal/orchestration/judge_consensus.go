@@ -39,6 +39,18 @@ type JudgeConsensusInput struct {
 	Content    string  `json:"content"`               // the text to evaluate
 	N          int     `json:"n,omitempty"`           // sample count; default 3, clamped to [1, 7]
 	Model      string  `json:"model,omitempty"`       // optional override
+	// AgentID (v2.4.2) is forwarded to every N Judge sample so all
+	// samples see the same agent-scoped agent_memory enrichment
+	// (for brand_match + compliance_check). Same priority chain as
+	// v2.4.1 (caller > projects.default_agent_id > ""). drift_judge
+	// enrichment still lives in PublishVibe (deliberate scope).
+	AgentID string `json:"agent_id,omitempty"`
+	// NoEnrich (v2.4.2) is forwarded to every N Judge sample so all
+	// samples see the same opt-out semantics. Default false
+	// (enrichment on for brand_match + compliance_check). When true,
+	// every consensus sample receives raw content unchanged (no
+	// enrichment block). Mirrors JudgeInput.NoEnrich for consistency.
+	NoEnrich bool `json:"no_enrich,omitempty"`
 }
 
 // JudgeConsensusSample is one Judge call's result inside a consensus run.
@@ -116,6 +128,12 @@ func (o *Orchestrator) JudgeConsensus(ctx context.Context, in JudgeConsensusInpu
 			TargetID:   in.TargetID,
 			Content:    in.Content,
 			Model:      in.Model,
+			// v2.4.2: forward AgentID so each sample gets the same
+			// agent-scoped enrichment (brand_match + compliance_check).
+			AgentID: in.AgentID,
+			// v2.4.2: forward NoEnrich so all N samples share the
+			// same opt-out semantics (raw content vs enriched).
+			NoEnrich: in.NoEnrich,
 		})
 		if jerr != nil {
 			return nil, fmt.Errorf("judge_consensus: sample %d/%d failed: %w", i+1, n, jerr)

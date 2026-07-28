@@ -476,8 +476,8 @@ de estado):
 
 ### Estado actual (al cierre de esta versión)
 
-- **Versión**: v2.4.1 (post-v2.4.0; agent_id plumbing end-to-end)
-- **Schema DB**: v20 (projects.default_agent_id)
+- **Versión**: v2.4.2 (post-v2.4.1; brand_match + compliance_check enrichment with agent_memory)
+- **Schema DB**: v20 (unchanged; v2.4.2 is additive integration)
 - **Tools canónicos**: 34 (+ 3 en modo armed)
 - **Backends**: SQLite (default) + Postgres (research only en este host)
 - **Paquetes internos**: 27
