@@ -19,12 +19,12 @@
     "postinstall": "node -e \"console.log('dark-memory-mcp installed. Use: dark-memory-mcp or npx @opitacode/dark-memory-mcp')\""
   },
   "optionalDependencies": {
-    "@opitacode/dark-memory-mcp-darwin-x64": "2.6.0",
-    "@opitacode/dark-memory-mcp-darwin-arm64": "2.6.0",
-    "@opitacode/dark-memory-mcp-linux-x64": "2.6.0",
-    "@opitacode/dark-memory-mcp-linux-arm64": "2.6.0",
-    "@opitacode/dark-memory-mcp-win32-x64": "2.6.0",
-    "@opitacode/dark-memory-mcp-win32-arm64": "2.6.0"
+    "@opitacode/dark-memory-mcp-darwin-x64": "2.6.1",
+    "@opitacode/dark-memory-mcp-darwin-arm64": "2.6.1",
+    "@opitacode/dark-memory-mcp-linux-x64": "2.6.1",
+    "@opitacode/dark-memory-mcp-linux-arm64": "2.6.1",
+    "@opitacode/dark-memory-mcp-win32-x64": "2.6.1",
+    "@opitacode/dark-memory-mcp-win32-arm64": "2.6.1"
   },
   "keywords": [
     "mcp",
