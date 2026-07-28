@@ -12,391 +12,480 @@
 ║                                                                                    ║
 ║                              OPITA CODE DARK MEMORY MCP                            ║
 ║                                                                                    ║
-║        Persistent Memory • Autonomous Agents • Threat Intelligence • MCP           ║
+║        Persistent Memory • Vibe-Loop Engine • Agent Governance • MCP               ║
 ║                                                                                    ║
 ╚════════════════════════════════════════════════════════════════════════════════════╝
 ```
 
-**El servidor MCP de memoria persistente y orquestación de workflows para dark-agents-v2.**
+**El cuaderno persistente del agente: para que nunca pierdas el hilo de lo que estás haciendo.**
 
 [![MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Go 1.25+](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go&logoColor=white)](go.mod)
-[![MCP tools](https://img.shields.io/badge/MCP-29%20tools-blueviolet)](#los-29-tools)
-[![Tests](https://img.shields.io/badge/tests-20%20suites%20passing-brightgreen)](#tests)
-[![Backends](https://img.shields.io/badge/backends-sqlite%20%7C%20postgres-blue)](docs/MIGRATION.md)
-[![Conformant](https://img.shields.io/badge/MCP%20Inspector-passing-success)](tests/conformance/)
+[![MCP tools](https://img.shields.io/badge/MCP-34%20canonical%20tools-blueviolet)](#las-34-herramientas)
+[![Schema](https://img.shields.io/badge/schema-v18-success)](#la-base-de-datos)
+[![Tests](https://img.shields.io/badge/tests-22%20suites%20verdes-brightgreen)](#tests)
+[![Backends](https://img.shields.io/badge/backends-sqlite%20%7C%20postgres-blue)](#la-base-de-datos)
 
-[¿Qué hace?](#qué-hace) · [¿Para quién?](#para-quién) · [Quickstart](#quickstart) · [Arquitectura](#arquitectura) · [Vibe-Flow](#el-vibe-flow-loop)
+[¿Qué es dark-memory?](#que-es-dark-memory) · [¿Qué es vibe-loop?](#que-es-vibe-loop) · [Cómo se conectan](#como-se-conectan) · [Quickstart en 5 minutos](#quickstart-en-5-minutos) · [Hacer un vibe-loop paso a paso](#hacer-un-vibe-loop-paso-a-paso) · [Cuando algo no funciona](#cuando-algo-no-funciona) · [Para los curiosos técnicos](#para-los-curiosos-tecnicos)
 
 </div>
 
 ---
 
-## ¿Qué hace?
+## ¿Qué es dark-memory?
 
-**dark-memory-mcp** es un servidor MCP escrito en Go que entrega a tu agente IA **28 herramientas canónicas** agrupadas en 10 oficios (incluido el namespace L6-VLP para el state machine del Vibe-Loop Protocol, y el namespace PROJECT para bootstrap multi-tenant sin acceso directo a la DB), persistidas en una base SQL dual-driver (SQLite para dev, Postgres para prod) y gobernadas por **8 invariantes operacionales** que se defienden a sí mismos en el boundary del Store.
+Imagina que tu agente IA es un asistente brillante que trabaja contigo todos los días.
+Cada día le pides algo nuevo: refactorizar una función, escribir un test, diseñar
+un workflow, recordar por qué tomaste una decisión la semana pasada.
 
-Una sola API. Tres binarios (`dark-mem-mcp` server MCP, `dark-mem-cli` admin, `dark-mem-inspect` read-only). Un solo `dark.db` compartido con `dark-research-mcp` (tablas distintas, propietarios distintos). **Sin magia: con código que puedes leer y modificar.**
+**El problema es que el agente olvida.** Cuando cierras la sesión, todo se va.
+Al día siguiente le tienes que volver a explicar quién eres, qué proyecto estás
+haciendo, qué decisiones tomaste, qué cosas ya intentaste.
 
-Cuando se opera en modo `armed` (`DARK_REDTEAM=armed`), el servidor emite además **3 herramientas L7-REDTEAM adicionales** (`dark_memory_redteam_list_mods`, `_get_prompts`, `_log_attempt` — research use only, ver [Modo Armed (L7-REDTEAM)](#modo-armed-l7-redteam)). Superficie total: **31**. Sin `armed`, la superficie canónica se mantiene en 28 (test defensivo en `TestE2E_28ToolsRegistered` + `TestWire_RuntimeToolEnumeration`).
+**dark-memory es el cuaderno donde el agente anota todo lo importante.**
 
-**Health probe (v1.3.0):** `dark_memory_health_ping` es un liveness probe de bajo costo (latencia objetivo <50ms en caliente, presupuesto <500ms) apto para K8s liveness/readiness. Devuelve un snapshot inmutable `{server, db, runtime, registry, latency_ms, checked_at}` sin tocar el audit bus ni avanzar el VLP state. Ver `docs/PRODUCTION_CHECKLIST.md` §Health Probe para el wiring.
+Cuando el agente aprende algo nuevo, lo escribe. Cuando toma una decisión, registra
+por qué. Cuando descubre que algo no funcionó, lo apunta para no repetirlo.
+Cuando le preguntas "¿qué decidimos la semana pasada?", lo busca.
 
-> 🇨🇴 *Construido en Colombia como parte del ecosistema [Opita Code](https://opitacode.com). Software práctico para investigación real, no para verse bonito en una presentación.*
+Es un **cuaderno persistente** (no se borra al cerrar) que vive en tu propia
+computadora y al que tu agente puede acceder cuando quiera, desde cualquier sesión
+de trabajo.
+
+### Tres cosas concretas que hace por ti
+
+1. **Recuerda entre sesiones.** Anota el contexto de tu proyecto una vez;
+   recuérdalo siempre. Cuando vuelvas mañana, el agente sabe quién eres,
+   qué proyecto tienes, en qué punto vas, qué decisiones tomaste.
+
+2. **Te ayuda a hacer vibe-loop.** Cuando le pides algo al agente, dark-memory
+   guarda la promesa ("voy a hacer X") y luego verifica que lo que entregó
+   realmente cumpla esa promesa. Si no cumple, te avisa. (Más sobre esto abajo.)
+
+3. **Lleva un registro de auditoría.** Cada cambio que el agente hace en su
+   cuaderno queda firmado con quién lo hizo, cuándo, y por qué. Si algo
+   sale mal, puedes revisar qué pasó.
+
+### ¿Qué NO es dark-memory?
+
+- **No es una base de datos para tu aplicación.** Es un cuaderno del agente,
+  no un almacén de datos de negocio. Para eso usa Postgres normal.
+- **No es un modelo de IA.** No piensa, no escribe código, no toma decisiones.
+  Solo guarda y recupera lo que el agente ya pensó.
+- **No es un servicio en la nube.** Todo vive en tu computadora. No hay
+  servidor remoto, no hay telemetría, no hay costos recurrentes.
 
 ---
 
-## Para quién
+## ¿Qué es vibe-loop?
 
-| Si eres… | Te interesa porque… |
-|---|---|
-| 🤖 **Agent developer** | 28 `dark_memory_*` tools canónicos listos para usar en tu agente MCP — sesiones, research, vibe-flow, judge, policy, observability, admin, project. Wire format estabilizado, orden canónico enforced. |
-| 🧠 **Memory engineer** | El Store dual-driver + 7 invariantes operacionales te da persistencia defendible: write-path audit, per-session scoping, canary en writes, constitution watchdog, cache re-hash, mod sanitization, multi-tenancy. |
-| 🌊 **Vibe-coder** | El pipeline `spec_create → artifact_log → drift_judge → drift_log → publish` cierra el loop spec-vs-artifact. Para de regenerar el mismo bug cada vez. |
-| 🏛️ **Compliance officer** | `dark_memory_active_policy` retorna constitution + active mods + jurisdiction. Cada write_audit lleva `constitution_id@version`. Auditoría de punta a punta. |
-| 🛡️ **Red-teamer** | El canary token en payloads detecta constitution extraction attempts. INV-6 mod loader rechaza prompt injection. Cross-link con `dark-research-mcp` para combinar OSINT + memory. |
-| 🔌 **MCP integrator** | Bridge conformance 5/5 contra MCP Inspector. `coexistence_group=dark-agents/memory` declarado en initialize. Coexiste con `dark-research-mcp` (sibling) sin pisarse. |
+Vibe-loop es una forma de trabajar con tu agente que cierra el círculo entre
+**lo que le pediste** y **lo que entregó**.
+
+El flujo normal con un agente es así:
+
+> Tú: "Hazme una función que valide emails."
+> Agente: "Aquí está." [te da código]
+> Tú: [lo pruebas] "Funciona, gracias."
+
+Pero ¿qué pasa cuando el código entregado **no cumple lo que pediste**?
+
+> Tú: "Hazme una función que valide emails."
+> Agente: "Aquí está." [te da una función que solo valida emails de gmail]
+> Tú: "Pero esto no valida emails de yahoo..."
+> Agente: "Tienes razón, lo arreglo." [te da otra versión]
+> Tú: "Ahora tampoco maneja emails con +..."
+> Agente: "..." [iteración sin fin]
+
+El problema: **el agente nunca se da cuenta solo de que se desvió**. Tú tienes
+que estar revisando cada entrega. Se pierde mucho tiempo.
+
+**Vibe-loop cierra ese círculo:**
+
+```
+   Le dices al agente QUÉ quieres (la promesa/spec)
+            ↓
+   El agente entrega algo (el artefacto)
+            ↓
+   Un juez automático revisa: ¿lo entregado cumple lo prometido?
+            ↓
+   Si cumple → "OK, seguimos"
+   Si NO cumple → el agente re-intenta con la crítica del juez
+            ↓
+   Si después de varios intentos NO cumple → te pregunta a ti
+```
+
+La promesa (spec) y la crítica del juez (drift) se quedan guardadas en
+dark-memory. Mañana puedes revisar: "¿qué le pedí, qué entregó, qué dijo
+el juez?"
+
+Es como tener un manager de calidad revisando cada entrega del agente,
+pero automático y persistente.
 
 ---
 
-## Quickstart
+## ¿Cómo se conectan?
+
+dark-memory es el **cuaderno donde el vibe-loop escribe**.
+
+| Pieza del vibe-loop | Qué hace | Cómo lo guarda dark-memory |
+|---|---|---|
+| La promesa | "Voy a hacer X, Y, Z" | Lo guarda como **spec** |
+| El artefacto | El código/texto/imagen que entregó el agente | Lo guarda como **artifact** |
+| El juicio | "¿Cumple lo prometido? Sí/No/Parcial" | Lo guarda como **drift_log** |
+| Tu decisión final | "Acepto / Rechazo" | Lo guarda como **resolve_drift** |
+| El cuaderno | Tus notas, observaciones, decisiones, links | Lo guarda como **agent_memory** |
+
+Cuando el agente está trabajando y necesita recordar algo, mira su cuaderno
+(consulta `dark_memory_recall`). Cuando termina y entrega algo, escribe
+en el cuaderno qué hizo y por qué. Es un loop cerrado.
+
+---
+
+## Quickstart en 5 minutos
+
+### 1. Verifica que tienes lo necesario
+
+```
+- Go 1.25+ (https://go.dev/dl/)
+- Git
+- Una terminal
+```
+
+### 2. Clona y compila
 
 ```bash
-# 1. Clona y compila
 git clone https://github.com/Opita-Code/dark-memory-mcp.git
 cd dark-memory-mcp
-go build -o bin/dark-mem-mcp ./cmd/dark-mem-mcp
-go build -o bin/dark-mem-cli ./cmd/dark-mem-cli
-go build -o bin/dark-mem-inspect ./cmd/dark-mem-inspect
 
-# 2. Configura en opencode.jsonc (la coexistencia con dark-research-mcp es automática)
+# Esto crea los tres binarios que necesitas
+go build -o bin/dark-mem-mcp   ./cmd/dark-mem-mcp
+go build -o bin/dark-mem-cli   ./cmd/dark-mem-cli
+go build -o bin/dark-mem-inspect ./cmd/dark-mem-inspect
+```
+
+### 3. Conéctalo a tu agente (opencode, Claude Code, Cursor, etc.)
+
+Si usas **opencode**, agrega esto a tu `opencode.jsonc`:
+
+```jsonc
 {
   "mcp": {
     "dark-memory": {
       "type": "local",
-      "command": ["C:/path/to/bin/dark-mem-mcp.exe"],
+      "command": ["C:/ruta/a/dark-memory-mcp/bin/dark-mem-mcp.exe"],
       "enabled": true
     }
   }
 }
+```
 
-# 3. Primera ejecución — el server auto-bootstraps (migrations + watchdog + seed default project)
+(reemplaza la ruta con la real; en Mac/Linux sería sin `.exe`).
+
+### 4. Verifica que arrancó bien
+
+```bash
 ./bin/dark-mem-inspect --json
 ```
 
-Salida esperada:
+Deberías ver algo como:
 
 ```json
 {
-  "generated_at": "2026-07-15T22:50:00Z",
   "driver": "sqlite",
-  "schema_version": 10,
+  "schema_version": 18,
   "canary_present": false,
   "active_constitution_id": "dark-agents/dark-memory-mcp",
-  "active_constitution_version": "1.0.0",
-  "tables": ["projects", "research_runs", "research_items", "vibe_specs", ...]
+  "active_constitution_version": "2.1.0",
+  "tables": ["projects", "sessions", "agent_memory", ...]
 }
 ```
 
-El binario `dark-mem-cli` aplica migraciones explícitas cuando las quieras, y `dark-mem-inspect` corre contra producción sin escribir nada.
+Si ves `schema_version: 18`, todo está bien. La primera vez crea un archivo
+`dark-memory.db` en el directorio donde arrancaste.
+
+### 5. Pídele a tu agente que use el cuaderno
+
+> *"Inicia una sesión de dark-memory para mí, soy Nico y estoy trabajando
+> en el proyecto darkmem."*
+
+El agente debería llamar a `dark_memory_session_start`. Si no, recuérdale
+que tiene una herramienta MCP disponible.
 
 ---
 
-## Los 29 tools
+## Las 34 herramientas
 
-Diez namespaces. El prefijo wire es `dark_memory_` (mandatory por BRIDGE_AND_COEXISTENCE §2.2). El orden canónico es **parte del contrato wire** — harnesses pueden indexar por posición.
+dark-memory expone 34 acciones que tu agente puede invocar. Todas empiezan
+con el prefijo `dark_memory_`. Están agrupadas en 11 oficios:
 
-| Namespace | Count | Tools |
-|---|---|---|
-| **PROJECT** (v1.2.0) | 1 | `dark_memory_project_create` |
-| **SESSION** | 4 | `dark_memory_session_start`, `_resume`, `_status`, `_close` |
-| **RESEARCH** | 3 | `dark_memory_research_topic`, `_recall`, `_resume_thread` |
-| **VIBE** | 4 | `dark_memory_vibe_publish`, `_spec`, `_pipeline_status`, `_resolve_drift` |
-| **CONTEXT** | 3 | `dark_memory_artifact_context`, `_spec_context`, `_session_context` |
-| **JUDGE** | 3 | `dark_memory_judge`, `_consensus`, `_judgment_history` |
-| **POLICY** | 2 | `dark_memory_active_policy`, `_load_constitution` |
-| **OBSERVABILITY** | 4 | `dark_memory_health_ping` (v1.3.0), `_memory_state`, `_writes`, `_anomalies` |
-| **ADMIN** | 3 | `dark_memory_admin_migrate`, `_schema_status`, `_vacuum` |
-| **L6-VLP** (DMAP v1.1) | 1 | `dark_memory_vlp_handle_event` |
+### 🧭 Empezar y cerrar sesión (PROJECT + SESSION — 5 tools)
 
-Total: **1+4+3+4+4+3+2+3+3+1 = 28** ✓ (RFC §D-9 + DMAP v1.1 spec 193 Layer 6 + F33 v1.2.0 + health_ping v1.3.0)
+| Herramienta | Cuándo se usa |
+|---|---|
+| `dark_memory_project_create` | Una vez: para crear un proyecto nuevo (como "crear un workspace") |
+| `dark_memory_session_start` | Al comenzar a trabajar: abre tu sesión del día |
+| `dark_memory_session_resume` | Si cerraste mal y quieres retomar |
+| `dark_memory_session_status` | "¿En qué punto vamos?" |
+| `dark_memory_session_close` | Al terminar: cierra la sesión limpio |
 
-Cada tool expone un JSON Schema de input. Cada respuesta lleva `data + audit + next` para que el LLM sepa qué hacer después. La posición en esta tabla es el orden wire (`tools/list`); los harnesses pueden confiar en el índice.
+### 🔍 Investigar (RESEARCH — 3 tools)
 
-### Modo Armed (L7-REDTEAM)
+| Herramienta | Cuándo se usa |
+|---|---|
+| `dark_memory_research_topic` | "Investiga X y dame un resumen" |
+| `dark_memory_research_recall` | "¿Qué investigué antes sobre X?" |
+| `dark_memory_research_resume_thread` | "Continúa esa investigación de la semana pasada" |
 
-Cuando se arranca con `DARK_REDTEAM=armed`, el servidor registra **3 herramientas adicionales** en el namespace `dark_memory_redteam_*`:
+### 🌊 Hacer vibe-loop (VIBE — 4 tools)
 
-| Namespace | Count | Tools |
-|---|---|---|
-| **L7-REDTEAM** (armed-only) | 3 | `dark_memory_redteam_list_mods`, `_get_prompts`, `_log_attempt` |
+| Herramienta | Cuándo se usa |
+|---|---|
+| `dark_memory_vibe_spec` | Crear la promesa ("voy a hacer X") |
+| `dark_memory_vibe_publish` | Entregar el artefacto bajo una promesa |
+| `dark_memory_pipeline_status` | "¿Cómo va mi pipeline de vibe-loop?" |
+| `dark_memory_resolve_drift` | Cuando el juez dice que se desvió: aceptar o rechazar |
 
-Las herramientas cargan los mods instalados bajo `mods/redteam/` (configurable vía `DARK_REDTEAM_MODS_PATH`). Los mods son files de payloads de security research (prompt-injection-lab, jailbreak-taxonomy, etc.). **Solo para uso de investigación con autorización explícita.** No destinados a infraestructura de ataque en producción.
+### 📋 Ver el contexto (CONTEXT — 4 tools)
 
-La superficie armed es 28 + 3 = **31**. La superficie sin armar es 28, garantizada por `TestE2E_28ToolsRegistered` (Go level) y `TestWire_RuntimeToolEnumeration` (wire level).
+| Herramienta | Cuándo se usa |
+|---|---|
+| `dark_memory_artifact_context` | "Muéstrame qué entregué en este artefacto" |
+| `dark_memory_spec_context` | "Muéstrame la promesa original" |
+| `dark_memory_session_context` | "Muéstrame todo lo que pasó en esta sesión" |
+| `dark_memory_recall` | "Dame un resumen de los últimos cambios" |
 
----
+### 🧠 El cuaderno del agente (AGENT_MEMORY — 5 tools, nuevo en v2.1.0)
 
-## El vibe-flow loop
+Esta es la pieza nueva. Es el **cuaderno personal** del agente, donde anota
+notas, observaciones, decisiones, links, hallazgos — cosas que quiere
+recordar entre sesiones.
 
-El problema #1 sin resolver en 2026 AI-assisted development es el **spec-drift**: el agente genera algo, lo publica, y nunca reconcilia si lo que generó realmente cumple lo que el spec pedía.
+| Herramienta | Cuándo se usa |
+|---|---|
+| `dark_memory_agent_memory_save` | "Apunta esto: usamos Postgres 16" |
+| `dark_memory_agent_memory_list` | "Dame mis notas sobre este proyecto" |
+| `dark_memory_agent_memory_get` | "Muéstrame la nota #42" |
+| `dark_memory_agent_memory_update` | "Edita esa nota, ya no aplica" |
+| `dark_memory_agent_memory_archive` | "Borra esa nota (soft delete)" |
 
-**dark-memory-mcp** cierra ese loop con persistencia + LLM-as-judge:
+El agente puede guardar cosas de **tres tipos de alcance**:
 
-```
-                     ┌───────────────────────────────────────────┐
-                     │  1. Crear spec (vibe_publish / vibe_spec) │
-                     │     Persiste intent + tasks + constitution│
-                     │     (vibe_case ∈ {C1..C7} enforced, v1.4.1)│
-                     │                                           │
-                     │  2. Generar el artifact                   │
-                     │     (tu modelo / servicio preferido)      │
-                     │                                           │
-                     │  3. Loggear artifact                      │
-                     │     artifact_log → write_audit row        │
-                     │                                           │
-                     │  4. LLM-as-judge: drift                   │
-                     │     dark_memory_judge(                    │
-                     │       eval_type="drift_judge",            │
-                     │       target_id=artifact_id,              │
-                     │       content=artifact_text)              │
-                     │     verdict ∈ {aligned, drift_detected,   │
-                     │                  needs_human}             │
-                     │                                           │
-                     │  5. Loggear verdict                       │
-                     │     drift_log(verdict, judge_reasoning)   │
-                     │                                           │
-                     │  6. Human gate si algo falló              │
-                     │     resolve_drift(accept | reject)        │
-                     └───────────────────────────────────────────┘
-```
+- **Sesión** — solo aplica a la sesión actual (cosas tácticas)
+- **Proyecto** — aplica a todo el proyecto (decisiones de arquitectura)
+- **Operador** — persiste por siempre, asociado a ti (preferencias personales)
 
-Cada `dark_memory_judge(eval_type=drift_judge)` persiste su verdict en `sdd_evaluations` con `prompt_version` + `model`. **Reproducible, auditable, mejorable con el tiempo** (calibration loop). Para high-stakes verdicts usa `dark_memory_consensus(eval_type, content, n=5..7)` — N-shot LLM-as-judge con modal verdict. (El viejo namespace `dark_ssd_*` se deprecó en v1.4.0 y se consolidó en dark-memory-mcp como `dark_memory_judge`.)
+Y puede buscar por **tipo de nota** (`note`, `observation`, `decision`,
+`finding`, `todo`, `link`, `context`) o por texto libre (búsqueda BM25).
 
----
+### ⚖️ Juzgar (JUDGE — 3 tools)
 
-## Arquitectura
+| Herramienta | Cuándo se usa |
+|---|---|
+| `dark_memory_judge` | "Revisa si esto cumple la promesa" |
+| `dark_memory_consensus` | "Pregúntale a 5 jueces y dame la mayoría" |
+| `dark_memory_judgment_history` | "¿Qué ha dicho el juez antes?" |
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  Tu agente (opencode, Claude Code, Cursor, lo que sea)          │
-│                                                                 │
-│  stdio MCP                                                      │
-└────────────────────────────┬────────────────────────────────────┘
-                             │
-                             ▼
-         ┌────────────────────────────────────┐
-         │   dark-mem-mcp.exe                 │
-         │                                    │
-         │   ┌──────────────────────────┐     │
-         │   │  28 MCP tools (+3 armed) │     │
-         │   │  ├ PROJECT (1, v1.2.0)   │     │
-         │   │  ├ SESSION (4)           │     │
-         │   │  ├ RESEARCH (3)          │     │
-         │   │  ├ VIBE (4)              │     │
-         │   │  ├ CONTEXT (3)           │     │
-         │   │  ├ JUDGE (3)             │     │
-         │   │  ├ POLICY (2)            │     │
-         │   │  ├ OBSERVABILITY (4)     │     │
-         │   │  ├ ADMIN (3)             │     │
-         │   │  └ L6-VLP (1, v1.1.0)    │     │
-         │   │  + L7-REDTEAM (3, armed) │     │
-         │   └──────────────────────────┘     │
-         │                                    │
-         │   ┌──────────────────────────┐     │
-         │   │  internal/  (22 packages)│     │
-         │   │  ├ store (sqlite/pg)     │◄──── DARK_DB_DRIVER + DARK_DB
-         │   │  ├ tools (28 handlers)   │     │
-         │   │  ├ orchestration (16)   │     │
-         │   │  ├ vlp (state machine,  │     │
-         │   │  │  DMAP v1.1 Layer 2)  │     │
-         │   │  ├ vibecase (C1-C7,      │     │
-         │   │  │  v1.4.1)             │     │
-         │   │  ├ vibeflow (5)          │     │
-         │   │  ├ context (8)           │     │
-         │   │  ├ ssd (judge persist)   │     │
-         │   │  ├ llm/cache (INV-5)     │     │
-         │   │  ├ constitution (INV-4)  │     │
-         │   │  ├ safety (canary)       │     │
-         │   │  ├ audit (INV-1)         │     │
-         │   │  ├ mods/loader (INV-6)   │     │
-         │   │  ├ project (INV-7)       │     │
-         │   │  ├ session               │     │
-         │   │  ├ server/bootstrap      │     │
-         │   │  ├ version (resolver,    │     │
-         │   │  │  v1.4.0)             │     │
-         │   │  ├ adapter/opencode      │     │
-         │   │  ├ federation (cross-MCP)│     │
-         │   │  ├ migrate (sqlite+pg)   │     │
-         │   │  └ economy (Atlan 5-bkt) │     │
-         │   └──────────────────────────┘     │
-         └────────────────┬───────────────────┘
-                         │
-              ┌──────────┴──────────┐
-              ▼                     ▼
-   ┌───────────────────┐  ┌──────────────────┐
-   │ dark-memory.db    │  │ Postgres         │
-   │ (SQLite, INV-8    │  │ (jackc/pgx/v5)   │
-   │  default)         │  │                  │
-   │                   │  │  same schema,    │
-   │  projects         │  │  v10 migrations  │
-   │  sessions         │  │  + dark-research │
-   │  vlp_state        │  │  cross-link      │
-   │  write_audit      │  │                  │
-   │  research_*       │  │                  │
-   │  vibe_*           │  │                  │
-   │  sdd_evaluations  │  │                  │
-   │  constitutions    │  │                  │
-   │  mods             │  │                  │
-   └───────────────────┘  └──────────────────┘
-```
+### 📜 Políticas (POLICY — 2 tools)
 
-Detalles en [`docs/`](docs/) y [`vibe-flow/main/DARK_MEMORY_MCP_RFC.md`](vibe-flow/main/DARK_MEMORY_MCP_RFC.md).
+| Herramienta | Cuándo se usa |
+|---|---|
+| `dark_memory_active_policy` | "¿Cuáles son las reglas que me aplican?" |
+| `dark_memory_load_constitution` | "Muéstrame la constitución completa" |
+
+### 👀 Monitorear (OBSERVABILITY — 4 tools)
+
+| Herramienta | Cuándo se usa |
+|---|---|
+| `dark_memory_health_ping` | "¿Está vivo el servidor?" (latencia <50ms) |
+| `dark_memory_memory_state` | "¿Cómo va la base de datos?" |
+| `dark_memory_writes` | "Muéstrame los últimos cambios" |
+| `dark_memory_anomalies` | "¿Pasó algo raro?" |
+
+### 🛠️ Admin (ADMIN — 3 tools)
+
+| Herramienta | Cuándo se usa |
+|---|---|
+| `dark_memory_admin_migrate` | "Aplica las migraciones pendientes" |
+| `dark_memory_admin_schema_status` | "¿Qué versión de schema tengo?" |
+| `dark_memory_admin_vacuum` | "Limpia espacio en disco" |
+
+### 🌀 Estado interno (L6-VLP — 1 tool)
+
+| Herramienta | Cuándo se usa |
+|---|---|
+| `dark_memory_vlp_handle_event` | "Avanza el ciclo del vibe-loop protocol" |
+
+### 🛡️ Red team (L7-REDTEAM — 3 tools, modo armado)
+
+Si arrancas el servidor con `DARK_REDTEAM=armed`, se activan estas 3
+herramientas adicionales para investigación de seguridad:
+
+- `dark_memory_redteam_list_mods`
+- `dark_memory_redteam_get_prompts`
+- `dark_memory_redteam_log_attempt`
+
+**Solo para investigación de seguridad con autorización.** No las uses en
+infraestructura de producción.
 
 ---
 
-## Los 8 invariantes operacionales
+## Hacer un vibe-loop paso a paso
 
-Cada operación del Store respeta estos contratos — defendidos en el boundary, no en la constitución como texto:
+Este es el flujo más común cuando le pides al agente que haga algo
+sustancial (no solo "arregla este typo").
 
-| ID | Regla | Defendido por |
-|---|---|---|
-| **INV-1** | Write-path audit en cada `Save*` | `Store.RecordWrite` dentro de la misma transacción |
-| **INV-2** | Per-session scoping en `Recall()` | `research.RecallOptions.SessionScope`; workflow tools siempre llevan `session_id` |
-| **INV-3** | Payloads con canary token son rechazados | `Store.canary.ValidatePayload` al inicio de cada `Save*` |
-| **INV-4** | Constitution audit + SHA watchdog en Open | `Store.runWatchdog` verifica constitution file SHA256 |
-| **INV-5** | Cache re-hash on Get (mismatch = anomaly) | `internal/llm/cache.go` |
-| **INV-6** | Mod content sanitization (injection markers) | `internal/safety/safety.go` injectionMarkers regex |
-| **INV-7** | Multi-tenancy: `SetActiveProject` requerido antes de leer/escribir | `Store.requireProject` |
-| **INV-8** | **Per-MCP database isolation**: cada MCP usa su propio archivo SQLite. Default = `dark-memory.db` (NO `dark.db`). Operador puede sobrescribir pero el default mantiene aislado de dark-research-mcp. Aplica a toda la familia dark-* (futuro [FUTURE-MCP-1] debe usar `harvest.db`). | `server.DefaultDSN()` retorna string con substring `dark-memory`; CI lint valida que `defaultDSN` de cada MCP sea único |
+### Paso 1: Abrir sesión
 
-Tabla completa con cada método Store → su set de invariantes en [`docs/INVARIANTS.md`](docs/INVARIANTS.md).
+> *"Inicia una sesión para mí. Operador: nico. Proyecto: darkmem."*
+
+El agente llama `dark_memory_session_start` y recibe un `session_id`.
+
+### Paso 2: Crear la promesa
+
+> *"Voy a pedirte que hagas X. Antes de empezar, escribe la promesa."*
+
+El agente llama `dark_memory_vibe_spec` con:
+- qué va a hacer (`intent`)
+- en qué casos aplica (`vibe_case` — un código C1..C7 que clasifica el trabajo)
+- las tareas concretas que va a realizar
+
+La promesa queda guardada. **El juez la va a usar para evaluar la entrega.**
+
+### Paso 3: El agente trabaja
+
+El agente hace lo que tenga que hacer (escribir código, investigar,
+diseñar, etc.) usando su propio modelo. Tú no intervienes aquí.
+
+(Opcionalmente, el agente puede ir guardando cosas en su cuaderno con
+`dark_memory_agent_memory_save` — hallazgos intermedios, decisiones, etc.)
+
+### Paso 4: Entregar
+
+> *"Ya está. Entrégalo bajo la promesa #N."*
+
+El agente llama `dark_memory_vibe_publish` con el id de la promesa
+y la URL del artefacto (código, texto, imagen, lo que sea).
+
+### Paso 5: Juicio automático
+
+> *"Revisa si lo que entregaste cumple la promesa."*
+
+El agente llama `dark_memory_judge(eval_type="drift_judge", ...)` con
+el contenido del artefacto. El juez responde uno de tres veredictos:
+
+- **`aligned`** — cumple. Adelante.
+- **`drift_detected`** — se desvió. El agente tiene que ver la crítica
+  e intentar de nuevo (vuelve al paso 3).
+- **`needs_human`** — el juez no está seguro. Te pregunta a ti.
+
+Si quieres más confianza, usa `dark_memory_consensus(n=5)` para que
+5 jueces voten y te quedes con la mayoría.
+
+### Paso 6: Tu decisión final (si hubo drift)
+
+Si el juez dijo `drift_detected` y el agente intentó 2-3 veces sin
+lograrlo, te pregunta. Tú decides:
+
+- **Aceptar** (`resolve_drift(decision="accept")`) — "OK, sirve aunque
+  no sea perfecto, sigamos"
+- **Rechazar** (`resolve_drift(decision="reject")`) — "No, esto no
+  sirve, intentemos otra cosa"
+
+### Paso 7: Cerrar sesión
+
+> *"Cierra la sesión, todo limpio."*
+
+El agente llama `dark_memory_session_close`. La sesión queda registrada
+en el cuaderno.
 
 ---
 
-## Configuración
+## Cuando algo no funciona
 
-| Variable | Default | Propósito |
-|---|---|---|
-| `DARK_DB_DRIVER` | `sqlite` | `sqlite` \| `postgres` |
-| `DARK_DB` | `./dark-memory.db` (cwd) | Path al SQLite o URL Postgres. Default cambió en v1.2.3 (era `./dark.db` antes de v1.2.2) por **INV-8**: cada MCP de la familia dark-* usa su propio archivo. |
-| `DARK_CACHE_DIR` | (vacío) | Dónde persiste el LLM cache (INV-5). Vacío = in-process only. |
-| `DARK_MOD_WHITELIST` | (vacío) | Lista comma-separated de mod IDs permitidos a cargar (INV-6) |
-| `DARK_SERVER_NAME` | `dark-memory-mcp` | `serverInfo.name` en initialize response |
-| `DARK_SERVER_VERSION` | `1.4.1-dev` | `serverInfo.version` en initialize response (canonical source: `internal/version` resolver; `Makefile release` lo inyecta via `-ldflags`) |
-| `DARK_COEXISTENCE_GROUP` | `dark-agents/memory` | Bridge §2.1 coexistence contract |
-| `DARK_HOME` | `~/.config/dark-memory-mcp` | Donde `dark-mem-cli set-driver` escribe `config.toml` |
-| `DARK_REDTEAM` | (unset) | Si =`armed`, registra las 3 herramientas L7-REDTEAM. Surface total = 31. Sin la var, surface = 28. |
-| `DARK_REDTEAM_MODS_PATH` | `./mods/redteam` | Path al directorio de mods armed. |
+### "El agente dice que las herramientas MCP no están disponibles"
 
----
+Verifica:
+1. Que `bin/dark-mem-mcp.exe` existe y es ejecutable
+2. Que la ruta en `opencode.jsonc` es correcta
+3. Que reiniciaste el agente después de cambiar la config
+4. Que el archivo no quedó bloqueado por otra instancia (en Windows,
+  a veces pasa — cierra todas las terminales y vuelve a abrir)
 
-## Tests
+### "El agente no me deja llamar una herramienta porque dice 'session required'"
+
+Casi todas las herramientas necesitan una sesión activa. Pídele al
+agente que primero llame `dark_memory_session_start`.
+
+### "El cuaderno está vacío / no encuentro lo que guardé"
+
+Las notas son por **proyecto + sesión**. Si cambiaste de proyecto o
+cerraste la sesión sin querer, las notas pueden estar en otro lugar.
+Pídele al agente `dark_memory_agent_memory_list(scope="all")` para ver
+todo.
+
+### "Hay un schema_version raro en la base de datos"
+
+Si vienes de una versión vieja (< v2.0.0), la base necesita migrar.
+Las migraciones se aplican automáticamente al arrancar el servidor,
+pero si algo se rompe:
 
 ```bash
-go test -count=1 ./...
+./bin/dark-mem-cli migrate --status   # ver qué falta
+./bin/dark-mem-cli migrate --apply    # aplicar pendientes
 ```
 
-**20 suites verdes** con `-count=1` (cold rebuild, ~12 min total). v1.4.0–v1.4.2 añadieron: `internal/vibecase` (15 tests, v1.4.1), `internal/version` (9 tests, v1.4.0), `internal/federation` (v1.4.2), `internal/vlp` (55 tests across 6 files, DMAP v1.1).
+### "Los tests están fallando en mi máquina pero en CI pasan"
 
-```
-ok  internal/adapter/opencode   ~46s   (OpenCode harness adapter)
-ok  internal/federation         ~49s   (cross-MCP federation lookup)
-ok  internal/orchestration       ~3s   (16 orchestrators)
-ok  internal/server              ~5s   (bootstrap + version + DSN)
-ok  internal/tools              ~73s   (28 tool handlers + registry)
-ok  internal/version             ~1s   (resolver: ldflags|buildinfo|dev)
-ok  internal/vibecase            ~1s   (15 tests: C1..C7 taxonomy)
-ok  internal/vlp                ~103s   (55 tests: state machine + persistence + audit)
-ok  tests/cli                   ~123s   (13 tests: 11 + 2 canary_present regression)
-ok  tests/conformance            ~99s   (4 bridge.7 tests via mcp-go real client)
-ok  tests/context                ~37s
-ok  tests/dual_driver             ~8s   (sqlite contract 7/7 sub-tests)
-ok  tests/e2e                   ~108s   (1000-mixed-no-deadlock + 28-tool register guard)
-ok  tests/economy                 ~1s
-ok  tests/invariants              ~6s   (INV-5 + INV-6)
-ok  tests/migrate                ~88s
-ok  tests/orchestration         ~124s   (73+ tests; F36 dual-form + v1.4.1 vibecase)
-ok  tests/project                ~90s   (INV-7 multi-tenancy)
-ok  tests/tools                  ~44s   (F33 project tool: 7 sub-tests, schema rejection, idempotency)
-ok  tests/wire                   ~26s   (wire conformance: F33/F35/F36/F37/F38/F39/F40 + health_ping)
-```
+Estás en una máquina corporativa con WDAC o similar (mira
+`tests/README.md` para el detalle). El workaround es:
+- Confía en el CI como señal autoritativa
+- Localmente: `go build ./...` + `go vet ./...` + drift-judge sobre
+  el artefacto de la wave
 
-Highlights:
-- `TestE2E_28ToolsRegistered` — Go-level canonical-order guard (v1.3.0: 27 → 28 with health_ping)
-- `TestVibeSpec_AcceptsStringifiedTasks` — F36 dual-form compat with `dark_research_spec_create` (v1.2.1)
-- `TestVibeSpec_StringifiedTasks_MalformedRejected` — F36 precise error surfaces field hint
-- `TestE2E_1000MixedCallsNoDeadlock` — RFC §12 #4 (1000 mixed tool calls)
-- `TestBridge7_ListToolsCanonical` — wire-format regression for canonical order
-- `TestSQLiteStoreContract/*` — dual-driver contract (sqlite branch)
-- `TestInspect_CanaryPresent_StoreMethod` — review-w4 regression guard
-- `TestProjectTool_HappyPath`, `_SchemaRejects*`, `_IdempotentReplay` — F33 v1.2.0 coverage
+### "Quiero agregar una herramienta nueva"
+
+Lee `CONTRIBUTING.md`. Reglas de oro:
+- Respeta el orden canónico (no renumeres los existentes)
+- Si agregas una migración: append-only, nunca edites una ya pasada
+- Si agregas un invariante: documéntalo en `docs/INVARIANTS.md`
+- Si agregas un orchestrator: spec_create + drift_judge antes de merge
 
 ---
 
-## Status
+## Para los curiosos técnicos
 
-- ✅ **v1.0.0** — 25 tools + dual-driver + bridge conformance 5/5 + 9 test suites + 6 runbooks
-- ✅ **v1.0.x** — `dark-mem-inspect` ahora reporta `canary_present` correctamente (review-w4-001); `dark-mem-mcp` tiene panic recovery en boot-path (review-w4-002); mcp-go upgraded to v0.56.0 (review-w4-003); bridge.7 cold-cache timeout bumped 10s→30s (review-w4-004)
-- ✅ **v1.1.0** — DMAP v1.1 Layer 6: `dark_memory_vlp_handle_event` (Vibe-Loop Protocol wire tool) + OpenCode adapter demo + L6.1 merge
-- ✅ **v1.2.0** (F33 + F35, 2026-07-16) — `dark_memory_project_create` cierra el loop de bootstrap multi-tenant. `vibe_publish` JSON Schema corregido (nested spec+artifact en lugar de flat) + `vibeSpecTaskSchema` strict (additionalProperties:false) + `BindOrchestrator`'s `typeMismatchToolError` devuelve field path + expected/actual type. Tool count: 26 → 27.
-- ✅ **v1.2.1** (F36, 2026-07-16) — `dark_memory_vibe_spec.tasks` ahora acepta tanto JSON array como JSON-encoded string (compatibilidad con la gemela `dark_research_spec_create` que persiste el campo como string opaco). 2 tests nuevos. Drop-in replacement; sin migrations; sin cambio de surface. **Restart requerido del binario `dark-mem-mcp.exe`** para tomar el código nuevo.
-- ✅ **v1.2.2** (F37 + F38 + F39 + F40, 2026-07-16) — Migration runner self-healing: `applyOne` ahora split-on-`;` y tolera 4 clases de errores DDL idempotentes (`duplicate column name`, `no such module`, `table already exists`). `EnsureCoreTables` recrea tablas core faltantes al boot. Sin esto, dark-memory-mcp NO podía arrancar contra dark.dbs parcialmente migrados. 8 tests nuevos en `tests/migrate/`.
-- ✅ **v1.3.0** (production-readiness, 2026-07-16) — `dark_memory_health_ping` (liveness probe enlatado, OBSERVABILITY 3→4), wire-conformance total (10/10 tests PASS contra el binario real), wait-for-boot-marker para eliminar race en startup, `.github/workflows/ci.yml` con receta de CI operator-reproducible, race-detector note en PRODUCTION_CHECKLIST, stale-binary gotcha documentada. **28 tools canónicos, 31 armed.**
-- ✅ **v1.4.0** (release-integrity, 2026-07-18) — [`CONSTITUTION.md`](CONSTITUTION.md) `release-integrity@1.0.0` (5 reglas: single source of truth, archive-not-delete, CHANGELOG authoritative, drift detection on boot, session-bound governance). `internal/version` package — resolver canónico (`-ldflags` → `debug.ReadBuildInfo()` → hardcoded `"dev"`). `Makefile` con `build`/`release`/`drift-check`/`version`/`tag` targets. `dark_memory_health_ping` ahora incluye bloque `git` (`tag`, `commit`, `dirty`, `build_time`, `source`, `is_dev`) + `drift` bool. `scripts/inject-version.{sh,ps1}`. 9 tests del resolver cubren los 3 paths.
-- ✅ **v1.4.1** (vibecase taxonomy, 2026-07-18) — `internal/vibecase` como **single source of truth** para la taxonomía C1..C7 (vibe_case case labels). `dark_memory_vibe_spec` ahora enforza el enum (antes era free string; **ver "Behavior change" en CHANGELOG [1.4.1]**). `dark_memory_vibe_publish` JSON Schema enum deriva de `vibecase.JSONSchemaEnum()`. Ambos orchestrators validan via `vibecase.Parse` (defense in depth). 4 nuevos tests (InvalidVibeCase x2, AcceptsAllCanonicalCases, AcceptsTrimmedVibeCase). 15 nuevos unit tests en `internal/vibecase`. **Behavior change**: callers que pasaban valores no canónicos ahora reciben `ErrInvalidArgument`.
-- ✅ **v1.4.2** (CI follow-ups, 2026-07-18) — 2 PRs separados (#8 + #9) cerrando las fallas de CI pre-existentes que cargó v1.4.1 (merge con `--admin`). PR #8: `redteamModsAbsPath` honra `DARK_REDTEAM_MODS_PATH` primero, fallback `t.Skipf` (no `t.Fatalf`) cuando no hay mods → 6 unit tests pasan/skipped clean. PR #9: drop over-strict `USER` MUST-contain check en `TestWire_HealthPingShape` (redaction sólo aplica a paths bajo `$HOME`). Vendoring guide en `internal/tools/testdata/redteam-vendoring.md`. **Primer release con CI 100% verde desde v1.4.0.**
-- ✅ **v2.0.0** (memory-as-policy-gateway pivot, 2026-07-19) — **breaking architectural pivot**. Replaces the pull-based CRUD model with a gate-driven active-memory model. Every `tools/call` now traverses `internal/policy.PostCheck` which composes atomic frames (`internal/atomic`), invokes the orchestrator with the frame as input, and drift-checks the response at the write boundary. 13 waves shipped (5A.ii.b.2.a..c, 5A.vi, 5E.iv, 5E.iv.b, 5E.v, 5X.1, 5X.2, 5X.3, 5X.4, 5A.ii.a polish). New: `internal/atomic`, `internal/drift`, `internal/policy`, `internal/recall` packages. New tool: `dark_memory_recall` (29th canonical; CONTEXT 3→4). Schema migrations v11–v15 (frame UPSERT, audit session_event, drift_strictness, open_spec_id). L6 adapter integration: startup-recover + periodic-heartbeat + exit-clean. Shutdown default close_reason `aborted` → `clean` (BREAKING). Operator env contract rename: `DARK_SCRAPPER_URL` → `DARK_DRIFT_JUDGE_DAEMON_URL` (PR #10). 9 commits + release. Tool count: 28 → 29.
-- 🚧 **v2.1.x** — Vector recall via sqlite-vec; constitution mod registry v2; L7-REDTEAM integration formal (actualmente en operator-WIP)
+Si quieres entender cómo funciona por dentro (MCP, drivers de DB,
+invariantes operacionales, formalización del vibe-loop como protocolo
+de estado):
 
-Patches publicados (release artifacts, no en el repo):
-- `dark-memory-mcp-v1.2.0.patch` — superficie 27 tools, ~870 LOC adicionales
-- `dark-memory-mcp-v1.2.1.patch` — drop-in replacement, F36 fix
-- `dark-memory-mcp-v1.2.5.patch` — wire-conformance suite (tests/wire/) + F35 wire propagation + CONTRIBUTING + PRODUCTION_CHECKLIST
-- `dark-memory-mcp-v1.3.0.patch` — production-readiness: health_ping + wire-conformance bump + race-free boot + CI workflow
-- v1.4.0 / v1.4.1 / v1.4.2 — distribuidos vía GitHub Releases (no como `.patch` files) por la mayor densidad de cambios (constitution + version resolver + vibecase + 2 CI fixes)
+- [`docs/`](docs/) — manuales de operación, runbooks, INVARIANTS
+- [`vibe-flow/main/DARK_MEMORY_MCP_RFC.md`](vibe-flow/main/DARK_MEMORY_MCP_RFC.md) — el RFC original
+- [`vibe-flow/main/BRIDGE_AND_COEXISTENCE.md`](vibe-flow/main/BRIDGE_AND_COEXISTENCE.md) — cómo coexiste con `dark-research-mcp`
+- [`CHANGELOG.md`](CHANGELOG.md) — qué cambió en cada versión
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — cómo contribuir
 
-Ver [`CHANGELOG.md`](CHANGELOG.md) para el detalle completo de cada release y [`docs/PR-v1.2.0.md`](docs/PR-v1.2.0.md) para el desglose técnico de F33+F35.
+### Estado actual (al cierre de esta versión)
 
----
-
-## Contribuir
-
-Lee [`CONTRIBUTING.md`](CONTRIBUTING.md). PRs bienvenidos:
-
-1. `go test -count=1 ./...` antes de pushear (20 suites, ~12 min)
-2. Si añades un tool nuevo: sigue el orden canónico (no renumeres) — el orden es wire contract
-3. Si añades un orchestrator: implementa tests + spec_create (C1) + drift_judge antes de merge
-4. Si añades una migración: append a `migratesqlite.Migrations` / `migratepostgres.Migrations`, nunca edites una pasada
-5. Si añades un invariante: documéntalo en `docs/INVARIANTS.md` + agregas test defensivo
-
----
-
-## Coexistencia con dark-research-mcp
-
-| MCP | Namespace | Tools (canonical) | Propósito |
-|---|---|---|---|
-| **dark-memory-mcp** | `dark_memory_*` | 28 (+3 armed) | Memoria persistente + workflow orchestration (este repo) |
-| **dark-research-mcp** | `dark_research_*` | ~13 + multi + router | OSINT acquisition |
-| (deprecado) | `dark_mem_*` | legacy | dark-research-mcp emite `{deprecated: true, successor: 'dark-memory-mcp'}` en cada response |
-
-Ambos comparten `dark.db` (tablas distintas, propietarios distintos). El `coexistence_group=dark-agents/memory` se declara en el `initialize` response — los harnesses MCP-native detectan automáticamente.
-
-> **F36 note:** `dark_research_spec_create` persiste el campo `tasks` como string opaco. `dark_memory_vibe_spec` antes rechazaba inputs que vinieran stringificados de harnesses que adoptan ese patrón; **F36 (v1.2.1) acepta ambos shapes** (JSON array o JSON-encoded string). Migración operativa: si tu harness ya maneja el shape string de `dark_research_spec_create`, ahora funciona tal cual contra `dark_memory_vibe_spec`.
-
-Arquitectura completa: [`vibe-flow/main/BRIDGE_AND_COEXISTENCE.md`](vibe-flow/main/BRIDGE_AND_COEXISTENCE.md) y [`docs/COEXISTENCE.md`](docs/COEXISTENCE.md).
+- **Versión**: v2.1.0 (commit `d37f2e2`)
+- **Schema DB**: v18 (agent_memory + FTS5 mirror)
+- **Tools canónicos**: 34 (+ 3 en modo armed)
+- **Backends**: SQLite (default) + Postgres (research only en este host)
+- **Paquetes internos**: 27
+- **Suites de test**: ~22
 
 ---
 
 ## Licencia
 
-[MIT](LICENSE). Úsalo, modifícalo, distribúyelo. Si construyes algo bueno cuéntanos.
+[MIT](LICENSE). Úsalo, modifícalo, distribúyelo. Si construyes algo bueno
+con él, cuéntanos.
 
 ---
 
 <div align="center">
 
-Construido con 🇨🇴 desde Neiva, Huila, Colombia por [Opita Code](https://opitacode.com).
+Construido con ❤️ desde Neiva, Huila, Colombia por [Opita Code](https://opitacode.com).
 
 *"No construimos software para que se vea bonito en una presentación. Lo construimos para que trabaje contigo todos los días."*
 
