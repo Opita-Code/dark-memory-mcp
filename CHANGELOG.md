@@ -6,6 +6,114 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [2.7.0-alpha] — 2026-07-28
+
+### Added — Phase 1 delegation primitive: dark_memory_mindset_apply
+
+Procedural composition of subagent system prompts with LLM-as-judge
+validation. The first dark-memory tool designed to make the LLM
+work better by priming it with the right mindset for a delegated task.
+
+**The problem this solves**
+
+LLMs produce measurably better output when primed with an over-qualified,
+task-appropriate role + goal + backstory + constraints. Pre-baked
+"mindset templates" are limited — humans can't anticipate every
+specialization. Procedural synthesis by an LLM, validated by a second
+LLM, is the generalizable approach.
+
+**What ships**
+
+1. **`dark_memory_mindset_apply(vibe_case, task_description, [model_floor])`** —
+   composes a subagent `system_prompt` for the given (vibe_case,
+   task_description) pair, validates it against 5 pass criteria
+   (OVER-QUALIFIED, TASK-APPROPRIATE, CONSTRAINT-PRIMED, MINIMAL-TOOLS,
+   NO-LEAKAGE), and returns it ready for the harness to inject into
+   its subagent spawn tool.
+   - Cache hit: <50ms, 0 LLM calls (TTL via `DARK_MINDSET_CACHE_TTL`, default 1h).
+   - Cache miss: 2-6 LLM calls per `mindset_apply` (composition + validation per
+     iteration, up to `DARK_MINDSET_MAX_ITERATIONS=3`).
+
+2. **Two new Judge eval types** registered alongside the existing six:
+   - `mindset_compose` (generative) — LLM synthesizes the system_prompt.
+   - `mindset_quality` (validative) — LLM judges the prompt against 5 criteria.
+   Both persist `sdd_evaluations` rows for full audit trail.
+
+3. **5 meta-categories** as starting frames for composition:
+   - `c1/security-review` — senior appsec researcher, OWASP Top 10, CVE-aware
+   - `c1/refactor` — senior maintainer, idempotent changes, reads-first
+   - `c2/docs-explain` — senior technical writer, examples > abstraction
+   - `c2/marketing-copy` — senior conversion copywriter, clarity > cleverness
+   - `c3+generalist` — focused task-execution specialist, scope-disciplined
+   The LLM uses the matching category as a starting frame; it synthesizes
+   the actual prompt from the task description.
+
+4. **3 new env vars** (all optional, all default to sane values):
+   - `DARK_MINDSET_MAX_ITERATIONS` (default 3, clamped [1, 10])
+   - `DARK_MINDSET_TIMEOUT_MS` (default 15000, clamped [100, 120000])
+   - `DARK_MINDSET_CACHE_TTL` (default 3600s, clamped [60, 86400])
+
+5. **New operator doc** `docs/mindsets.md` covering: usage pattern
+   (harness spawns, dark-memory provides the mindset), the 5
+   pass criteria, the cache contract, env var tuning, and the
+   "what the harness sees" walkthrough.
+
+6. **~700 LOC new** across 4 files:
+   - `internal/orchestration/mindset_meta_prompts.go` (meta-prompt constants)
+   - `internal/orchestration/mindset_apply.go` (composition orchestrator)
+   - `internal/orchestration/mindset_apply_test.go` (7 focused unit tests)
+   - `internal/tools/mindset.go` (wire tool registration)
+
+7. **7 unit tests** covering cache key determinism, JSON extraction
+   from prose wrappers, system_prompt assembly, prompt rendering with
+   iteration history, category selection, and env-var defaults/overrides.
+
+**Wire contract — appenditive**
+
+- +1 tool (`dark_memory_mindset_apply`)
+- +2 eval types (`mindset_compose`, `mindset_quality`)
+- +3 env vars (all optional)
+- 0 schema migrations
+- 0 new tables (cache lives in `agent_memory`, kind=context, tags=mindset-cache)
+- 0 tools removed or modified
+- Canonical count: 38 → 39 (cardinality guard updated)
+
+**Usage pattern**
+
+The harness spawns the subagent; dark-memory provides the mindset:
+
+```
+1. dark_memory_mindset_apply(vibe_case="C1", task_description="review auth code")
+   → { system_prompt: "You are a senior appsec researcher...",
+        tools_recommended: ["Read","Grep","Glob","Bash"],
+        model_recommended: "sonnet",
+        judge_verdict: {verdict: "aligned", confidence: 0.91} }
+
+2. Task(subagent_type="general-purpose",
+       prompt=<system_prompt>,
+       model="sonnet",
+       tools=[Read,Grep,Glob,Bash])
+```
+
+**YAGNI defer list (intentional non-goals for this release)**
+
+- No `subagent_registry` table — wait until 3+ production subagents registered
+- No VLP `StateDelegating` — wait until parent needs to wait on child lifecycle
+- No A2A server transport — wait until A2A ecosystem settles (6+ months)
+- No `VibeSpecTask.Owner` typed semantics — wait until Phase 2
+- No tool grant enforcement — `tools_recommended` is a hint string for now
+- No operator-customizable meta-prompt — env override is trivial if anyone asks
+
+**Why pre-2.7.0-alpha (not stable yet)**
+
+The composition loop is novel — no production usage data yet on how
+often judges reject first attempts, what the latency distribution
+looks like, what the cache hit rate will be. Ship as alpha; gather
+metrics; stabilize in v2.7.0 stable. Operator may want to gate this
+behind `DARK_MINDSET_DISABLED=1` (TODO — not implemented yet; defer).
+
+---
+
 ## [2.5.2] — 2026-07-28
 
 ### Added — MCPB bundles (Desktop Extensions / MCP Bundles) for Claude Desktop one-click install

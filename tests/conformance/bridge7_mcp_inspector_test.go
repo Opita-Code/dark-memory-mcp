@@ -154,8 +154,8 @@ func TestBridge7_ListToolsCanonical(t *testing.T) {
 		t.Fatalf("list tools: %v", err)
 	}
 
-	if len(result.Tools) != 38 {
-		t.Fatalf("tool count: want 38 (v2.6.0 added AGENT_BOOTSTRAP namespace 3 tools; pre-v2.6.0 was 35), got %d", len(result.Tools))
+	if len(result.Tools) != 39 {
+		t.Fatalf("tool count: want 39 (v2.7.0-alpha added MINDSET namespace 1 tool; pre-v2.7.0 was 38 in v2.6.0, 35 in v2.3.0, 34 in v2.1.0), got %d", len(result.Tools))
 	}
 
 	want := canonicalWireOrder()

@@ -367,6 +367,17 @@ func defaultSystemForEval(evalType string) string {
 		return base + ` Schema: {"injection_found":true|false,"evidence":"..."}`
 	case "grounding_check":
 		return base + ` Schema: {"grounded":true|false,"confidence":0.0-1.0,"evidence_quote":"..."}`
+	case "mindset_compose":
+		// v2.7.0-alpha: GENERATIVE call — the LLM synthesizes a subagent
+		// system_prompt given vibe_case + task_description. This is NOT a
+		// verdict in the usual sense; the "verdict" slot carries the
+		// proposed system_prompt as JSON.
+		return "You are a meta-system-prompt engineer. Produce ONLY JSON. No prose, no markdown fences. " +
+			`Output schema: {"role":"...","goal":"...","backstory":"...","constraints":["don't...","don't...","don't..."],"tools_recommended":["Read","Grep",...],"model_recommended":"sonnet"}`
+	case "mindset_quality":
+		// v2.7.0-alpha: VALIDATIVE call — judge whether a proposed
+		// subagent system_prompt is well-formed against 5 pass criteria.
+		return base + ` Schema: {"verdict":"aligned"|"drift_detected"|"needs_human","confidence":0.0-1.0,"reasoning":"...","criteria_failed":["OVER_QUALIFIED"|"TASK_APPROPRIATE"|"CONSTRAINT_PRIMED"|"MINIMAL_TOOLS"|"NO_LEAKAGE"]}`
 	default:
 		return base + ` Schema: {"verdict":"...","confidence":0.0-1.0}`
 	}

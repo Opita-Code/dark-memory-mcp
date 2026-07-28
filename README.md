@@ -234,10 +234,10 @@ de correrlo.
 
 ---
 
-## Las 38 herramientas
+## Las 39 herramientas
 
-dark-memory expone 38 acciones que tu agente puede invocar. Todas empiezan
-con el prefijo `dark_memory_`. Están agrupadas en 12 oficios:
+dark-memory expone 39 acciones que tu agente puede invocar. Todas empiezan
+con el prefijo `dark_memory_`. Están agrupadas en 13 oficios:
 
 ### 🧭 Empezar y cerrar sesión (PROJECT + SESSION — 5 tools)
 

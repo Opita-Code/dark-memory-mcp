@@ -70,11 +70,18 @@ func RegisterAll(reg *Registry, orch *orchestration.Orchestrator, st store.Store
 	// CONTEXT (4) — read-only, no orchestrator needed (orchestrator
 	// only used for write paths). 5A.ii.b.2.c adds `recall` (29th tool).
 	RegisterContext(reg, nil, st)
-	// AGENT_MEMORY (5) — v2.1.0 (Mem0-aligned data plane). All five
+	// AGENT_MEMORY (6) — v2.1.0 (Mem0-aligned data plane). All six
 	// tools go through the orchestrator (write paths: save/update/
-	// archive; read paths: list/get). Positioned between CONTEXT and
-	// JUDGE per spec D-12 / BRIDGE_AND_COEXISTENCE.md §3.
+	// archive; read paths: list/get/recall). Positioned between CONTEXT
+	// and MINDSET per spec D-12 / BRIDGE_AND_COEXISTENCE.md §3.
 	RegisterAgentMemory(reg, orch, st)
+	// MINDSET (1) — v2.7.0-alpha. Procedural composition with
+	// judge-validated subagent system prompts. Uses agent_memory
+	// rows as TTL cache (kind=context, tags=mindset-cache, expires_at
+	// honored in orchestrator). Composition + validation both go
+	// through the Judge orchestrator (eval_type=mindset_compose +
+	// eval_type=mindset_quality) for full audit trail.
+	RegisterMindset(reg, orch, st)
 	// 5A.ii.b.2.c.1 (v2.0.1): construct the FrameSource ONCE at boot
 	// and share it between the recall tool and the Gate (server.Gate).
 	// Pre-2.0.1, recall built a fresh CachedSource per invocation; that
@@ -157,14 +164,18 @@ func RegisterAll(reg *Registry, orch *orchestration.Orchestrator, st store.Store
 	// v2.1.0: bumped from 29 → 34 (added AGENT_MEMORY namespace:
 	// save, list, get, update, archive).
 	// v2.3.0: bumped from 34 → 35 (added agent_memory_recall).
+	// v2.6.0: bumped from 35 → 38 (added AGENT_BOOTSTRAP namespace:
+	// agent_bootstrap, agent_recommend_companions, agent_detect_environment).
+	// v2.7.0-alpha: bumped from 38 → 39 (added MINDSET namespace:
+	// mindset_apply — procedural + judge-validated subagent prompts).
 	canonical := CanonicalOrder()
 	for _, name := range canonical {
 		if reg.Get(name) == nil {
 			return nil, fmt.Errorf("tools: RegisterAll: missing tool %q (canonical order violation)", name)
 		}
 	}
-	if got := len(reg.ListCanonical()); got != 38 {
-		return nil, fmt.Errorf("tools: RegisterAll: expected 38 tools, got %d", got)
+	if got := len(reg.ListCanonical()); got != 39 {
+		return nil, fmt.Errorf("tools: RegisterAll: expected 39 tools, got %d", got)
 	}
 	return src, nil
 }

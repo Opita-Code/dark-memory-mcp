@@ -53,7 +53,7 @@ For companion tool docs (when to use them, install links), read:
 
 ---
 
-## 3. The 35 canonical tools (namespace overview)
+## 3. The 39 canonical tools (namespace overview)
 
 You do **not** need to memorize these. Use `tools/list` to discover them. The namespaces are:
 
@@ -107,7 +107,29 @@ Plus the **3 self-bootstrap tools** (v2.6.0+):
 
 ---
 
-## 5. Drift detection (how you know you're done)
+## 5. Delegation via mindset (v2.7.0-alpha)
+
+When delegating work to a subagent, the system prompt the subagent
+receives dramatically affects output quality. An over-qualified,
+task-appropriate prompt ("senior appsec researcher with 12 years in
+OWASP Top 10 and CVE triage, focus on root cause not symptoms, never
+invent CVE IDs") produces measurably better output than a generic one
+("review this code for issues").
+
+`dark_memory_mindset_apply` procedurally composes + validates such a
+prompt. Use it before spawning any subagent via your harness's Task
+tool.
+
+**Pattern**:
+1. Call `dark_memory_mindset_apply(vibe_case, task_description)` — get back `system_prompt` + `tools_recommended` + `model_recommended`.
+2. Pass those to your harness's subagent spawn tool (e.g. Claude Code's `Task`, opencode's `@subagent-name`, etc.).
+3. The subagent runs with the mindset as its system message.
+
+**Cache**: `mindset_apply` caches results in `agent_memory` for 1h by default. Repeated identical (vibe_case, task) pairs return in <50ms with 0 LLM calls. See `docs/mindsets.md` for the full contract.
+
+---
+
+## 6. Drift detection (how you know you're done)
 
 Every `vibe_publish` runs a `drift_judge` automatically. Verdicts:
 
@@ -119,7 +141,7 @@ The `drift_judge` evaluates **intent and design** (the artifact text). It does N
 
 ---
 
-## 6. Self-bootstrap tools in detail
+## 7. Self-bootstrap tools in detail
 
 ### 6.1 `dark_memory_agent_bootstrap(surface)`
 
@@ -177,7 +199,7 @@ Use this when debugging harness compatibility or filing an issue.
 
 ---
 
-## 7. Style
+## 8. Style
 
 - **Concise.** Mirror operator's brevity. Do not over-explain.
 - **Reference code with `file:line`** when citing a specific location.
@@ -187,9 +209,9 @@ Use this when debugging harness compatibility or filing an issue.
 
 ---
 
-## 8. Wire contract
+## 9. Wire contract
 
-- Schema: **v20** (unchanged across v2.5.0 → v2.6.0)
-- 35 canonical tools + 3 self-bootstrap tools = **38 tools total**
-- 8 resources (this manual + matrix + 6 install guides; companion docs accessed via `dark_memory_agent_bootstrap`)
+- Schema: **v20** (unchanged across v2.5.0 → v2.7.0-alpha)
+- 38 canonical tools + 1 MINDSET tool = **39 tools total**
+- 10 resources (this manual + matrix + 6 install guides; companion docs accessed via `dark_memory_agent_bootstrap`)
 - All changes are **additive**. Existing consumers are unaffected.

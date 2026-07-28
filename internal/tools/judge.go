@@ -28,7 +28,7 @@ func RegisterJudge(reg *Registry, orch *orchestration.Orchestrator, st store.Sto
 			"type":     "object",
 			"required": []string{"eval_type", "content"},
 			"properties": map[string]any{
-				"eval_type":   map[string]any{"type": "string", "enum": []string{"drift_judge", "brand_match", "compliance_check", "pii_detect", "prompt_injection_scan", "grounding_check"}},
+				"eval_type":   map[string]any{"type": "string", "enum": []string{"drift_judge", "brand_match", "compliance_check", "pii_detect", "prompt_injection_scan", "grounding_check", "mindset_compose", "mindset_quality"}},
 				"target_type": map[string]any{"type": "string"},
 				"target_id":   map[string]any{"type": "string"},
 				"content":     map[string]any{"type": "string"},

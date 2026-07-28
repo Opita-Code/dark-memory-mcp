@@ -17,6 +17,14 @@ const (
 	EvalPIIDetect            EvaluationType = "pii_detect"
 	EvalPromptInjectionScan  EvaluationType = "prompt_injection_scan"
 	EvalConsensus            EvaluationType = "consensus"
+	// v2.7.0-alpha: mindset delegation primitive. MindsetCompose is
+	// the GENERATIVE call (LLM synthesizes a subagent system_prompt
+	// given vibe_case + task_description). MindsetQuality is the
+	// VALIDATIVE call (LLM judges whether the proposed prompt is
+	// well-formed per the 5 pass criteria). Both persist SDDEvaluation
+	// rows for full audit trail of every composition iteration.
+	EvalMindsetCompose EvaluationType = "mindset_compose"
+	EvalMindsetQuality EvaluationType = "mindset_quality"
 )
 
 // SDDEvaluation is one LLM-as-judge verdict. v3 added five constitution-

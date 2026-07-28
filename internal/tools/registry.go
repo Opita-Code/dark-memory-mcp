@@ -193,13 +193,14 @@ func (r *Registry) CountExtras() int {
 //	VIBE             (4)  - publish, spec, pipeline_status, resolve_drift
 //	CONTEXT          (4)  - artifact_context, spec_context, session_context, recall
 //	AGENT_MEMORY     (6)  - save, list, recall, get, update, archive (v2.1.0 + v2.3.0)
+//	MINDSET          (1)  - mindset_apply                        (v2.7.0-alpha, procedural + judge-validated)
 //	JUDGE            (3)  - judge, consensus, judgment_history
 //	POLICY           (2)  - active_policy, load_constitution
 //	OBSERVABILITY    (4)  - memory_state, writes, anomalies, health_ping (v1.3.0)
 //	ADMIN            (3)  - admin_migrate, admin_schema_status, admin_vacuum
 //	L6-VLP           (1)  - vlp_handle_event          (DMAP v1.1 spec 193)
 //
-// Total: 1+4+3+3+4+4+6+3+2+4+3+1 = 38.
+// Total: 1+4+3+3+4+4+6+1+3+2+4+3+1 = 39.
 //
 //   - PROJECT was added in v1.2.0 to close the bootstrap loop
 //     (operators can now provision a tenant from inside the MCP
@@ -249,6 +250,13 @@ var canonicalToolOrder = []string{
 	// data plane; wraps SearchAgentMemory with FTS5 escape done in
 	// the orchestrator layer).
 	"agent_memory_save", "agent_memory_list", "agent_memory_recall", "agent_memory_get", "agent_memory_update", "agent_memory_archive",
+	// MINDSET (1) - v2.7.0-alpha. Procedural composition with judge-validated
+	// system prompts for subagent delegation. Cache hit returns in <50ms with
+	// 0 LLM calls; cache miss loops composition + validation up to
+	// DARK_MINDSET_MAX_ITERATIONS times, each persisting SDDEvaluation rows
+	// for full audit trail. Positioned between AGENT_MEMORY (the data plane
+	// it caches against) and JUDGE (the validator).
+	"mindset_apply",
 	// JUDGE (3)
 	"judge", "consensus", "judgment_history",
 	// POLICY (2)

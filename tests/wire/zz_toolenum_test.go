@@ -10,9 +10,9 @@ import (
 // TestWire_RuntimeToolEnumeration freezes the public tool surface.
 //
 // The contract is:
-//   - un-armed server: exactly 35 tools (29 from v2.0.0 + 5 from
-//     v2.1.0 AGENT_MEMORY namespace + 1 from v2.3.0 agent_memory_recall)
-//   - armed server:    35 + 3 redteam extras = 38
+//   - un-armed server: exactly 39 tools (v2.0.0 29 + v2.1.0 5 +
+//     v2.3.0 1 + v2.6.0 3 AGENT_BOOTSTRAP + v2.7.0-alpha 1 MINDSET)
+//   - armed server:    39 + 3 redteam extras = 42
 //
 // If this test fires, the contract changed and README.md +
 // DECISION_MATRIX.md + CONTRIBUTING.md must be updated in the SAME
@@ -50,8 +50,8 @@ func TestWire_RuntimeToolEnumeration(t *testing.T) {
 		t.Fatalf("tools/list body not JSON: %v\n  body=%s", err, respBytes)
 	}
 	got := len(resp.Result.Tools)
-	const wantUnarmed = 35
-	const wantArmed = 38
+	const wantUnarmed = 39
+	const wantArmed = 42
 	if got != wantUnarmed && got != wantArmed {
 		t.Fatalf("contract: tools/list returns %d tools, frozen at %d (un-armed) or %d (armed)", got, wantUnarmed, wantArmed)
 	}
