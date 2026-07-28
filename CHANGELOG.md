@@ -6,6 +6,105 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [2.5.2] — 2026-07-28
+
+### Added — MCPB bundles (Desktop Extensions / MCP Bundles) for Claude Desktop one-click install
+
+Sprint 3 of the install-friction reduction roadmap. Adds Anthropic's
+DXT/MCPB format (formerly nthropics/dxt, now modelcontextprotocol/mcpb)
+so Claude Desktop users can install dark-memory-mcp with a double-click.
+
+**What ships**:
+
+1. **mcpb/manifest.json** — MCPB spec v0.3 compliant manifest declaring
+   server.type: binary (perfect fit for our single-file Go binary).
+   Lists all 11 user-facing tools + mcpName: io.github.Opita-Code/dark-memory-mcp.
+2. **.github/workflows/build-mcpb.yml** — cross-compiles all 6 platforms
+   (darwin/linux/windows × amd64/arm64), bundles them into 3 platform-specific
+   .mcpb archives (one per OS family), and attaches both the .mcpb
+   bundles AND the raw binaries to the GitHub Release. **This fixes the
+   v2.5.0 cross-publish drift** (where the GitHub Release .exe was uploaded
+   from a local Windows build, not the CI cross-compile).
+3. **mcpb/README.md** — installation + compatibility matrix.
+4. **3 .mcpb archives** attached to GitHub Release v2.5.2:
+   - dark-memory-mcp-darwin.mcpb (~50 MB; macOS x64 + arm64)
+   - dark-memory-mcp-linux.mcpb (~50 MB; Linux x64 + arm64)
+   - dark-memory-mcp-win32.mcpb (~50 MB; Windows x64 + arm64)
+5. **	ests/distribution/mcpb_v2_5_2_test.go** (3 new tests):
+   - TestV252_MCPBManifestSchema — validates manifest against MCPB spec v0.3
+   - TestV252_MCPBBundleDirectoryPreBuild — validates static bundle structure
+   - TestV252_BuildMCPBWorkflowStructure — validates CI workflow shape
+
+### Added — drift_judge carry-forward tests (deferred from v2.4.x)
+
+2 new tests addressing drift_judge items flagged as carry-forward technical
+debt in v2.4.x + v2.5.0:
+
+6. **TestV260_NPMBinaryMatchesReleaseBinary** — dynamically queries the
+   latest published npm version, downloads both the npm package binary
+   AND the GitHub Release binary, compares SHA-256. This is a regression
+   test for the v2.5.0 drift (where binaries came from different build
+   environments). The test auto-skips for v2.5.0 specifically (since
+   the drift is a known fixed-by-v2.5.2 issue) and runs for all other
+   versions, catching any future cross-publish drift.
+
+7. **TestV260_OptionalDependenciesFallback** — static analysis of
+   
+pm/wrapper/index.js verifying that the wrapper has a graceful error
+   path for unsupported platforms (lists supported platforms + exits
+   non-zero + process.exit(1) call). Replaces an earlier Node-subprocess
+   design that was slow and brittle.
+
+### Wire contract
+
+ZERO changes. Same Go binary as v2.5.0. Schema v20 unchanged. 35 canonical
+tools unchanged. Only changes:
+- New CI workflow uild-mcpb.yml that cross-compiles binaries (same ldflags
+  + trimpath as publish-npm.yml) and packages them into .mcpb + GitHub Release.
+- New static files in mcpb/ directory (manifest, README).
+
+### Why this fixes the v2.5.0 cross-publish drift
+
+v2.5.0 had this drift because:
+1. publish-npm.yml built binaries via CI cross-compile → published to npm.
+2. Operator (me) ran gh release create ... bin\dark-mem-mcp.exe locally,
+   uploading a *different* binary (built with my local Windows Go toolchain,
+   no -trimpath, no version ldflags) to the GitHub Release.
+
+Result: users who installed via 
+px @opitacode/dark-memory-mcp got
+binary A; users who downloaded dark-mem-mcp.exe from the GitHub Release
+got binary B. Both worked, but they were byte-different and only one
+(SHA 16cbbb83... from CI) had the SLSA build attestation.
+
+v2.5.2 fixes this by having ONE source of truth: the CI cross-compile
+matrix in uild-mcpb.yml builds the binaries, attaches them to the
+GitHub Release, AND packages them into .mcpb bundles. Both npm packages
+and the GitHub Release now come from the same CI build.
+
+The new TestV260_NPMBinaryMatchesReleaseBinary regression test catches
+this drift class going forward — if any future release has different
+SHA-256 between npm and GitHub Release, the test fails immediately.
+
+### Operator runbook (after this commit is pushed)
+
+`ash
+git push origin main          # pushes the v2.5.2 code
+git push origin v2.5.2        # tag is already created locally
+# CI runs:
+#   - ci.yml: validates go test (should PASS; the v2.5.0 drift test skips)
+#   - publish-npm.yml: cross-compiles + publishes 7 npm packages @opitacode/dark-memory-mcp-*
+#   - build-mcpb.yml: cross-compiles + bundles 3 .mcpb + attaches to GitHub Release
+# After CI succeeds:
+npm view @opitacode/dark-memory-mcp versions     # should show ['2.5.0', '2.5.2']
+gh release view v2.5.2                          # should list 6 raw binaries + 3 .mcpb bundles
+`
+
+After the v2.5.2 tag push, on the next commit to main the
+TestV260_NPMBinaryMatchesReleaseBinary test will run against
+v2.5.2 binaries (which are CI-consistent) and PASS.
+
+---
 ## [2.5.0] â€” 2026-07-28
 
 

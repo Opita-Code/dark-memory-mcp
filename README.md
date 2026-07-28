@@ -25,6 +25,7 @@
 [![Schema](https://img.shields.io/badge/schema-v20-success)](#la-base-de-datos)
 [![Tests](https://img.shields.io/badge/tests-27%20suites%20verdes-brightgreen)](#tests)
 [![Install](https://img.shields.io/badge/install-npx%20%40opita--code%2Fdark--memory--mcp-cc3534)](docs/npm-install.md)
+[![MCPB](https://img.shields.io/badge/MCPB%20bundle%20for%20Claude%20Desktop-cc3534)](docs/mcpb-install.md)
 [![Backends](https://img.shields.io/badge/backends-sqlite%20%7C%20postgres-blue)](#la-base-de-datos)
 
 [¿Qué es dark-memory?](#que-es-dark-memory) · [¿Qué es vibe-loop?](#que-es-vibe-loop) · [Cómo se conectan](#como-se-conectan) · [Quickstart en 5 minutos](#quickstart-en-5-minutos) · [Hacer un vibe-loop paso a paso](#hacer-un-vibe-loop-paso-a-paso) · [Cuando algo no funciona](#cuando-algo-no-funciona) · [Para los curiosos técnicos](#para-los-curiosos-tecnicos)
@@ -495,13 +496,13 @@ de estado):
 
 ### Estado actual (al cierre de esta versión)
 
-- **Versión**: v2.5.0 (post-v2.4.3; npm wrapper + Official MCP Registry publish)
-- **Schema DB**: v20 (unchanged across v2.4.x and v2.5.0; zero migrations in v2.5.0)
+- **Versión**: v2.5.2 (Sprint 3 roadmap: MCPB bundles + carry-forward tests)
+- **Schema DB**: v20 (zero migrations across v2.4.x and v2.5.x)
 - **Tools canónicos**: 35 (+ 3 en modo armed)
 - **Backends**: SQLite (default) + Postgres (research only en este host)
 - **Paquetes internos**: 27
-- **Suites de test**: 27
-- **Canales de distribución**: GitHub Releases + npm wrapper + Official MCP Registry
+- **Suites de test**: 29 distribution tests + 27 total packages
+- **Canales de distribución**: GitHub Releases + npm wrapper (`@opitacode/dark-memory-mcp*`) + Official MCP Registry (`io.github.Opita-Code/dark-memory-mcp`) + MCPB bundles for Claude Desktop (`.mcpb`)
 
 ---
 

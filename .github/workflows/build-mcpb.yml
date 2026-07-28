@@ -1,0 +1,223 @@
+name: build-mcpb
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write  # For npm provenance (in case we publish to npm from here)
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }} binary
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: darwin-amd64
+            goos: darwin
+            goarch: amd64
+            binary-name: dark-mem-mcp-amd64
+            bundle-name: darwin
+            ext: ""
+          - target: darwin-arm64
+            goos: darwin
+            goarch: arm64
+            binary-name: dark-mem-mcp-arm64
+            bundle-name: darwin
+            ext: ""
+          - target: linux-amd64
+            goos: linux
+            goarch: amd64
+            binary-name: dark-mem-mcp-amd64
+            bundle-name: linux
+            ext: ""
+          - target: linux-arm64
+            goos: linux
+            goarch: arm64
+            binary-name: dark-mem-mcp-arm64
+            bundle-name: linux
+            ext: ""
+          - target: windows-amd64
+            goos: windows
+            goarch: amd64
+            binary-name: dark-mem-mcp-amd64
+            bundle-name: win32
+            ext: ".exe"
+          - target: windows-arm64
+            goos: windows
+            goarch: arm64
+            binary-name: dark-mem-mcp-arm64
+            bundle-name: win32
+            ext: ".exe"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Extract version from git tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+
+      - name: Cross-compile dark-mem-mcp binary for ${{ matrix.target }}
+        working-directory: cmd/dark-mem-mcp
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          set -euo pipefail
+          mkdir -p ../../build/server-${{ matrix.bundle-name }}
+          go build \
+            -trimpath \
+            -ldflags "-s -w -X github.com/dark-agents/dark-memory-mcp/internal/version.buildVersion=${{ steps.version.outputs.VERSION }}" \
+            -o ../../build/server-${{ matrix.bundle-name }}/${{ matrix.binary-name }}${{ matrix.ext }} \
+            .
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.target }}
+          path: build/server-${{ matrix.bundle-name }}/${{ matrix.binary-name }}${{ matrix.ext }}
+          retention-days: 1
+
+  bundle:
+    name: Build ${{ matrix.bundle-name }} .mcpb bundle
+    runs-on: ubuntu-latest
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        bundle-name:
+          - darwin
+          - linux
+          - win32
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Download all binaries for ${{ matrix.bundle-name }}
+        uses: actions/download-artifact@v4
+        with:
+          path: build/${{ matrix.bundle-name }}
+          pattern: binary-${{ matrix.bundle-name }}-*
+          merge-multiple: true
+
+      - name: Assemble bundle directory structure
+        run: |
+          set -euo pipefail
+          # Copy manifest
+          cp mcpb/manifest.json build/${{ matrix.bundle-name }}/manifest.json
+          # Move binaries from build/server-${{ matrix.bundle-name }}/ to build/${{ matrix.bundle-name }}/server/
+          mkdir -p build/${{ matrix.bundle-name }}/server
+          # Find and move both arch binaries
+          for arch in amd64 arm64; do
+            # Darwin and Linux binaries have no extension; Windows has .exe
+            for ext in "" ".exe"; do
+              src="build/${{ matrix.bundle-name }}/dark-mem-mcp-${arch}${ext}"
+              if [ -f "$src" ]; then
+                mv "$src" "build/${{ matrix.bundle-name }}/server/dark-mem-mcp-${arch}${ext}"
+                echo "Moved $src to server/"
+              fi
+            done
+          done
+          echo "=== Final bundle structure for ${{ matrix.bundle-name }} ==="
+          find build/${{ matrix.bundle-name }} -type f -exec ls -la {} \;
+
+      - name: Zip .mcpb bundle
+        run: |
+          set -euo pipefail
+          cd build
+          # Use zip without compression on the binaries (already compressed by Go build)
+          zip -0 -r "../dark-memory-mcp-${{ matrix.bundle-name }}.mcpb" "${{ matrix.bundle-name }}/" > /dev/null
+          cd ..
+          ls -la dark-memory-mcp-${{ matrix.bundle-name }}.mcpb
+
+      - name: Verify bundle contents
+        run: |
+          echo "=== Bundle file listing ==="
+          unzip -l dark-memory-mcp-${{ matrix.bundle-name }}.mcpb
+          echo ""
+          echo "=== Bundle manifest.json head ==="
+          unzip -p dark-memory-mcp-${{ matrix.bundle-name }}.mcpb ${{ matrix.bundle-name }}/manifest.json | head -c 500
+
+      - name: Upload .mcpb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: bundle-${{ matrix.bundle-name }}
+          path: dark-memory-mcp-${{ matrix.bundle-name }}.mcpb
+          retention-days: 30
+
+  attach-to-release:
+    name: Attach .mcpb bundles + raw binaries to GitHub Release
+    runs-on: ubuntu-latest
+    needs: [build, bundle]
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Download all .mcpb artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: .
+          pattern: bundle-*
+          merge-multiple: true
+
+      - name: Download all raw binary artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-binaries
+          pattern: binary-*
+          merge-multiple: true
+
+      - name: Rename raw binaries for release upload
+        working-directory: release-binaries
+        run: |
+          # The build job uploaded each binary into a subdirectory named after
+          # its matrix entry (e.g. binary-darwin-amd64/dark-mem-mcp-amd64).
+          # Flatten them to the release root with predictable names.
+          shopt -s globstar nullglob
+          for src in **/*; do
+            [ -f "$src" ] || continue
+            base=$(basename "$src")
+            ext="${base##*.}"
+            base_noext="${base%.*}"
+            target_dir=$(dirname "$src")
+            target="${target_dir}/../${base_noext}-${target_dir##*/}"
+            # Already-renamed target: skip
+            [ -e "$target" ] && continue
+            mv "$src" "$target"
+          done
+          # Walk and emit summary
+          echo "=== Binaries ready for release ==="
+          ls -la release-binaries/ 2>/dev/null || ls -la .
+
+      - name: Find or create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: "v${{ github.ref_name }}"
+          generate_release_notes: true
+          files: |
+            dark-memory-mcp-darwin.mcpb
+            dark-memory-mcp-linux.mcpb
+            dark-memory-mcp-win32.mcpb
+            release-binaries/dark-mem-mcp-amd64-darwin
+            release-binaries/dark-mem-mcp-arm64-darwin
+            release-binaries/dark-mem-mcp-amd64-linux
+            release-binaries/dark-mem-mcp-arm64-linux
+            release-binaries/dark-mem-mcp-amd64.exe-win32
+            release-binaries/dark-mem-mcp-arm64.exe-win32
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
