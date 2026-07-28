@@ -20,6 +20,7 @@ import (
 	"log"
 	"sort"
 
+	"github.com/dark-agents/dark-memory-mcp/internal/agentbootstrap"
 	"github.com/dark-agents/dark-memory-mcp/internal/tools"
 	mcplib "github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -36,7 +37,7 @@ type Server struct {
 // ServeStdio for that. Tool registration must happen between New and
 // ServeStdio (or via RegisterAll called from New — see flag below).
 //
-// Three mcp-go options are wired here:
+// mcp-go options wired here:
 //   - WithToolCapabilities(true): advertises listChanged so harnesses
 //     can hot-reload the tool list.
 //   - WithRecovery(): catches panics in any tool handler so one bad
@@ -44,13 +45,21 @@ type Server struct {
 //   - WithToolFilter(canonicalOrderFilter): mcp-go's handleListTools
 //     sorts tools alphabetically by name (verified by reading the
 //     upstream source at v0.40.0). Our canonical order per RFC D-9
-//     is namespace-grouped (SESSION → RESEARCH → VIBE → CONTEXT →
-//     JUDGE → POLICY → OBSERVABILITY → ADMIN); the filter re-sorts
-//     to that order so tools/list emits the contract promised by
-//     spec 164 bridge.4.
-//   - WithInstructions(...): bake coexistence_group into the
-//     initialize response so harnesses can detect dark-agents/memory
-//     membership via the standard MCP instructions field (bridge.2).
+//     is namespace-grouped (PROJECT → SESSION → RESEARCH →
+//     AGENT_BOOTSTRAP → VIBE → CONTEXT → AGENT_MEMORY → RECALL →
+//     JUDGE → POLICY → OBSERVABILITY → ADMIN → VLP); the filter
+//     re-sorts to that order so tools/list emits the contract
+//     promised by spec 164 bridge.4.
+//   - WithInstructions(...): bake coexistence_group + cross-feature
+//     hints into the initialize response (per spec 164 bridge.2 + the
+//     v2.6.0 self-bootstrap cross-references).
+//   - WithResourceCapabilities(true, true): advertises subscribe +
+//     listChanged so harnesses can detect resource additions.
+//   - WithHooks: capture the initialize.clientInfo (legacy 2025-06-18).
+//   - WithMetaPropagator: capture _meta.clientInfo per-request (new
+//     2026-07-28 spec). The two paths converge in the agentbootstrap
+//     clientInfo store; recommend_companions + detect_environment
+//     read from there.
 func New(ctx context.Context) (*Server, error) {
 	boot, err := Boot(ctx)
 	if err != nil {
@@ -84,12 +93,20 @@ func New(ctx context.Context) (*Server, error) {
 		return listed
 	}
 
+	// Hooks + meta propagator wire the dual-spec clientInfo capture
+	// (legacy handshake + new per-request _meta). See
+	// internal/agentbootstrap/clientinfo.go for the full design.
+	bootstrapHooks, bootstrapMeta := agentbootstrap.RegisterHooks()
+
 	mcpSrv := server.NewMCPServer(
 		boot.Config.ServerName,
 		boot.Config.ServerVersion,
 		server.WithToolCapabilities(true),
 		server.WithRecovery(),
 		server.WithToolFilter(canonicalOrderFilter),
+		server.WithResourceCapabilities(true, true),
+		server.WithHooks(bootstrapHooks),
+		server.WithMetaPropagator(bootstrapMeta),
 		// coexistence_group + policy_gateway baked into the standard
 		// MCP instructions field. mcp-go v0.56.0's Implementation
 		// struct doesn't carry custom fields, so we use the
@@ -104,8 +121,20 @@ func New(ctx context.Context) (*Server, error) {
 		// drift-at-write. dark-research-mcp v0.8.0+ is demoted to
 		// a backing (policy_gateway=false); see its RELEASE_NOTES
 		// and BRIDGE §3.2.
+		//
+		// v2.6.0+: cross-feature hints appended (resources,
+		// dark_memory_agent_bootstrap/recommend_companions/detect_environment,
+		// companion MCPs). See agentbootstrap.CrossFeatureHints.
 		server.WithInstructions(BuildInstructions(boot.Config.CoexistenceGroup, boot.Config.ServerVersion)),
 	)
+
+	// Register the dark-agent self-bootstrap resources (system prompt,
+	// compatibility matrix, 6 install guides, 2 companion docs). This
+	// must happen AFTER mcpSrv construction (AddResource needs the
+	// server instance). Idempotent for the lifetime of the process.
+	if err := agentbootstrap.RegisterAll(mcpSrv); err != nil {
+		return nil, fmt.Errorf("server.New: register agentbootstrap resources: %w", err)
+	}
 
 	return &Server{
 		boot:   boot,
@@ -129,11 +158,20 @@ func New(ctx context.Context) (*Server, error) {
 // v0.8.0+ reads this string to detect that dark-memory is the gateway
 // and route dark-* calls through it (or fall back to direct calls in
 // legacy mode).
+//
+// v2.6.0+ also appends cross-feature hints pointing harnesses at the
+// self-bootstrap resources + the 3 self-bootstrap tools. This is
+// best-effort: per the MCP blog (2025-11-03), the instructions field
+// is "up to the implementer" — opencode (#32856) discards it; Claude
+// Desktop + Claude Code honor it. The canonical bootstrap path is the
+// dark-memory://docs/* resources.
 func BuildInstructions(coexistenceGroup, version string) string {
-	return fmt.Sprintf(
-		"dark-memory-mcp server. coexistence_group=%s policy_gateway=true (spec 164 bridge.2 cx.v3). Canonical 34-tool order preserved per spec 164 bridge.4 + DMAP v1.1 spec 193 Layer 6. This server is the policy gateway for the dark-agents/memory coexistence group; harnesses detecting another dark-agents/* peer (dark-research-mcp with coexistence_group=dark-agents/research, policy_gateway=false) should route dark_* calls through this gateway for persona shaping, capability checks, and drift-at-write. Version=%s.",
+	base := fmt.Sprintf(
+		"dark-memory-mcp server. coexistence_group=%s policy_gateway=true (spec 164 bridge.2 cx.v3). Canonical 38-tool order preserved per spec 164 bridge.4 + DMAP v1.1 spec 193 Layer 6 (v2.6.0 bump: +3 AGENT_BOOTSTRAP tools; pre-v2.6.0 had 35). This server is the policy gateway for the dark-agents/memory coexistence group; harnesses detecting another dark-agents/* peer (dark-research-mcp with coexistence_group=dark-agents/research, policy_gateway=false) should route dark_* calls through this gateway for persona shaping, capability checks, and drift-at-write. Version=%s.",
 		coexistenceGroup, version,
 	)
+	crossFeature := agentbootstrap.CrossFeatureHints(version)
+	return base + " " + crossFeature
 }
 
 // RegisterAll iterates the canonical 26-tool list and registers each

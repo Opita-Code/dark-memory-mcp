@@ -184,30 +184,31 @@ func (r *Registry) CountExtras() int {
 // canonicalToolOrder is the fixed tool order (bare names, no
 // "dark_memory_" prefix; the server prepends on wire).
 //
-// Per RFC D-9 + BRIDGE_AND_COEXISTENCE.md §3 (bridge.4), v2.3.0:
+// Per RFC D-9 + BRIDGE_AND_COEXISTENCE.md §3 (bridge.4), v2.6.0:
 //
-//	PROJECT        (1)  — create                              (v1.2.0, INV-7)
-//	SESSION        (4)  — start, resume, status, close
-//	RESEARCH       (3)  — topic, recall, resume_thread
-//	VIBE           (4)  — publish, spec, pipeline_status, resolve_drift
-//	CONTEXT        (4)  — artifact_context, spec_context, session_context, recall
-//	AGENT_MEMORY   (6)  — save, list, recall, get, update, archive (v2.1.0 + v2.3.0)
-//	JUDGE          (3)  — judge, consensus, judgment_history
-//	POLICY         (2)  — active_policy, load_constitution
-//	OBSERVABILITY  (4)  — memory_state, writes, anomalies, health_ping (v1.3.0)
-//	ADMIN          (3)  — admin_migrate, admin_schema_status, admin_vacuum
-//	L6-VLP         (1)  — vlp_handle_event          (DMAP v1.1 spec 193)
+//	PROJECT          (1)  - create                              (v1.2.0, INV-7)
+//	SESSION          (4)  - start, resume, status, close
+//	RESEARCH         (3)  - topic, recall, resume_thread
+//	AGENT_BOOTSTRAP  (3)  - bootstrap, recommend_companions, detect_environment (v2.6.0)
+//	VIBE             (4)  - publish, spec, pipeline_status, resolve_drift
+//	CONTEXT          (4)  - artifact_context, spec_context, session_context, recall
+//	AGENT_MEMORY     (6)  - save, list, recall, get, update, archive (v2.1.0 + v2.3.0)
+//	JUDGE            (3)  - judge, consensus, judgment_history
+//	POLICY           (2)  - active_policy, load_constitution
+//	OBSERVABILITY    (4)  - memory_state, writes, anomalies, health_ping (v1.3.0)
+//	ADMIN            (3)  - admin_migrate, admin_schema_status, admin_vacuum
+//	L6-VLP           (1)  - vlp_handle_event          (DMAP v1.1 spec 193)
 //
-// Total: 1+4+3+4+4+6+3+2+4+3+1 = 35.
+// Total: 1+4+3+3+4+4+6+3+2+4+3+1 = 38.
 //
 //   - PROJECT was added in v1.2.0 to close the bootstrap loop
 //     (operators can now provision a tenant from inside the MCP
 //     surface instead of having to insert into the projects table
 //     out of band). It is positioned at index 0 because the natural
-//     discovery order is project_create → session_start → …;
+//     discovery order is project_create  session_start  .;
 //     harness callers that iterate the canonical list get
 //     project_create first.
-//   - OBSERVABILITY grew from 3 → 4 in v1.3.0 with `health_ping`.
+//   - OBSERVABILITY grew from 3  4 in v1.3.0 with `health_ping`.
 //     Health_ping is the operator-facing liveness probe; it is a
 //     SIBLING of memory_state, not a replacement, because the two
 //     have different latency budgets and different side-effect
@@ -220,18 +221,30 @@ func (r *Registry) CountExtras() int {
 //     project isolation layered on. Five tools cover the full
 //     lifecycle (save / list / get / update / archive); retrieval
 //     search ships as a future minor (F48).
+//   - AGENT_BOOTSTRAP (v2.6.0) sits between RESEARCH and VIBE.
+//     These are the 3 self-bootstrap tools that let any harness learn
+//     how to use the MCP via resources + tool introspection, without
+//     requiring the harness to read any external docs. Slotted before
+//     VIBE because the natural bootstrap order is:
+//     "what is this MCP and what does it do?" (recommend_companions)
+//      "what resources can I read?" (agent_bootstrap)
+//      "what does my runtime look like?" (detect_environment)
+//      "now I can do real work" (vibe_publish, etc.).
 var canonicalToolOrder = []string{
-	// PROJECT (1) — v1.2.0
+	// PROJECT (1) - v1.2.0
 	"project_create",
 	// SESSION (4)
 	"session_start", "session_resume", "session_status", "session_close",
 	// RESEARCH (3)
 	"research_topic", "research_recall", "research_resume_thread",
+	// AGENT_BOOTSTRAP (3) - v2.6.0. 3 self-bootstrap tools that
+	// teach any harness how to use the MCP without external docs.
+	"agent_bootstrap", "agent_recommend_companions", "agent_detect_environment",
 	// VIBE (4)
 	"vibe_publish", "vibe_spec", "pipeline_status", "resolve_drift",
-	// CONTEXT (4) — v2.0.0 (5A.ii.b.2.c): `recall` added.
+	// CONTEXT (4) - v2.0.0 (5A.ii.b.2.c): `recall` added.
 	"artifact_context", "spec_context", "session_context", "recall",
-	// AGENT_MEMORY (6) — v2.1.0 (Mem0-aligned data plane): 5 tools.
+	// AGENT_MEMORY (6) - v2.1.0 (Mem0-aligned data plane): 5 tools.
 	// v2.3.0 added agent_memory_recall (the missing consumer for the
 	// data plane; wraps SearchAgentMemory with FTS5 escape done in
 	// the orchestrator layer).
@@ -240,11 +253,11 @@ var canonicalToolOrder = []string{
 	"judge", "consensus", "judgment_history",
 	// POLICY (2)
 	"active_policy", "load_constitution",
-	// OBSERVABILITY (4) — v1.3.0: health_ping added
+	// OBSERVABILITY (4) - v1.3.0: health_ping added
 	"memory_state", "writes", "anomalies", "health_ping",
 	// ADMIN (3)
 	"admin_migrate", "admin_schema_status", "admin_vacuum",
-	// L6-VLP (1) — DMAP v1.1
+	// L6-VLP (1) - DMAP v1.1
 	"vlp_handle_event",
 }
 

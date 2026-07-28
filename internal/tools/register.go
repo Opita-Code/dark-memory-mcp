@@ -14,20 +14,24 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/vlp"
 )
 
-// RegisterAll wires all 29 dark_memory_* tools into the registry, in
+// RegisterAll wires all 38 dark_memory_* tools into the registry, in
 // the canonical order (spec 164, bridge.4 + spec 193 Layer 6). Safe
 // to call once per Registry; subsequent calls are no-ops if the tools
 // are already registered.
 //
 // The split into per-namespace Register* functions lets tests pull
 // in a subset (e.g. only the JUDGE tools for an eval-pipeline test).
-// The canonical 29-tool surface (v2.0.0; was 28 in v1.3.x, 27 in
-// v1.2.x, 26 in v1.1.x) is the union of all namespaces + the
-// armed-mode extras (L7-REDTEAM, +3 tools when DARK_REDTEAM=armed
-// — registered as "extras" below and emitted after the canonical
-// 29 in tools/list).
+// The canonical 38-tool surface (v2.6.0; was 35 in v2.5.x, 29 in
+// v2.0.0, 28 in v1.3.x, 27 in v1.2.x, 26 in v1.1.x) is the union of
+// all namespaces + the armed-mode extras (L7-REDTEAM, +3 tools when
+// DARK_REDTEAM=armed — registered as "extras" below and emitted after
+// the canonical 38 in tools/list).
 //
 // 5A.ii.b.2.c: bumped from 28 → 29 (added dark_memory_recall).
+// v2.6.0: bumped from 35 → 38 (added dark_memory_agent_bootstrap,
+// dark_memory_agent_recommend_companions, dark_memory_agent_detect_environment
+// in the new AGENT_BOOTSTRAP namespace, slotted between RESEARCH
+// and VIBE per the canonical-order contract).
 //
 // 5A.ii.b.2.c.1 (v2.0.1): returns the FrameSource singleton so the
 // caller can wire it into the gate (server.GateMiddleware). Both the
@@ -52,6 +56,15 @@ func RegisterAll(reg *Registry, orch *orchestration.Orchestrator, st store.Store
 	RegisterSession(reg, orch, st)
 	// RESEARCH (3)
 	RegisterResearch(reg, orch, st)
+	// AGENT_BOOTSTRAP (3) — v2.6.0. The 3 self-bootstrap tools:
+	// agent_bootstrap (returns bootstrap resource content by surface),
+	// agent_recommend_companions (detects harness + recommends missing
+	// companion MCPs), agent_detect_environment (returns what the MCP
+	// can infer about the runtime). Pure functions over the embedded
+	// bootstrap fs + the global clientInfo store; no Store or
+	// Orchestrator needed. Positioned between RESEARCH and VIBE so
+	// any spec work can call them first.
+	RegisterAgentBootstrap(reg)
 	// VIBE (4)
 	RegisterVibe(reg, orch, st)
 	// CONTEXT (4) — read-only, no orchestrator needed (orchestrator
@@ -150,8 +163,8 @@ func RegisterAll(reg *Registry, orch *orchestration.Orchestrator, st store.Store
 			return nil, fmt.Errorf("tools: RegisterAll: missing tool %q (canonical order violation)", name)
 		}
 	}
-	if got := len(reg.ListCanonical()); got != 35 {
-		return nil, fmt.Errorf("tools: RegisterAll: expected 35 tools, got %d", got)
+	if got := len(reg.ListCanonical()); got != 38 {
+		return nil, fmt.Errorf("tools: RegisterAll: expected 38 tools, got %d", got)
 	}
 	return src, nil
 }

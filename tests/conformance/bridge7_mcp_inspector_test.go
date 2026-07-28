@@ -117,7 +117,7 @@ func TestBridge7_Initialize(t *testing.T) {
 }
 
 // TestBridge7_ListToolsCanonical asserts tools/list returns exactly
-// 35 tools in the canonical RFC D-9 namespace order (bridge.4).
+// 38 tools in the canonical RFC D-9 namespace order (bridge.4).
 //
 // v1.2.0: PROJECT namespace (1 tool: project_create) inserted at
 // index 0, before SESSION.
@@ -127,6 +127,9 @@ func TestBridge7_Initialize(t *testing.T) {
 // inserted between CONTEXT and JUDGE; canonical count is now 34.
 // v2.3.0: AGENT_MEMORY namespace grew 5 to 6 with agent_memory_recall
 // (the missing consumer for the data plane); canonical count is now 35.
+// v2.6.0: AGENT_BOOTSTRAP namespace (3 tools: agent_bootstrap,
+// agent_recommend_companions, agent_detect_environment) inserted
+// between RESEARCH and VIBE; canonical count is now 38.
 //
 // This is the wire-format regression for the bug we caught during
 // the W4A polish: mcp-go's handleListTools sorts alphabetically;
@@ -151,8 +154,8 @@ func TestBridge7_ListToolsCanonical(t *testing.T) {
 		t.Fatalf("list tools: %v", err)
 	}
 
-	if len(result.Tools) != 35 {
-		t.Fatalf("tool count: want 35 (v2.1.0 added AGENT_MEMORY namespace 5 + v2.3.0 added agent_memory_recall = 6), got %d", len(result.Tools))
+	if len(result.Tools) != 38 {
+		t.Fatalf("tool count: want 38 (v2.6.0 added AGENT_BOOTSTRAP namespace 3 tools; pre-v2.6.0 was 35), got %d", len(result.Tools))
 	}
 
 	want := canonicalWireOrder()
@@ -281,6 +284,9 @@ func TestBridge7_CallToolErrorPath(t *testing.T) {
 //
 // v2.3.0: AGENT_MEMORY namespace grew 5 to 6 with agent_memory_recall
 // (the missing consumer for the data plane). New canonical count = 35.
+// v2.6.0: AGENT_BOOTSTRAP namespace (3 tools: agent_bootstrap,
+// agent_recommend_companions, agent_detect_environment) inserted
+// between RESEARCH and VIBE. New canonical count = 38.
 func canonicalWireOrder() []string {
 	bare := []string{
 		// PROJECT (1) — v1.2.0
@@ -289,6 +295,8 @@ func canonicalWireOrder() []string {
 		"session_start", "session_resume", "session_status", "session_close",
 		// RESEARCH (3)
 		"research_topic", "research_recall", "research_resume_thread",
+		// AGENT_BOOTSTRAP (3) — v2.6.0
+		"agent_bootstrap", "agent_recommend_companions", "agent_detect_environment",
 		// VIBE (4)
 		"vibe_publish", "vibe_spec", "pipeline_status", "resolve_drift",
 		// CONTEXT (4) — v2.0.0 grew from 3 to 4 with `recall`
