@@ -138,7 +138,50 @@ jobs:
         if: steps.check-exists.outputs.EXISTS != 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: ./mcp-publisher publish
+        run: |
+          set -euo pipefail
+          # Retry loop for npm-registry propagation race conditions.
+          #
+          # Why: publish-npm.yml + publish-mcp-registry.yml trigger in
+          # parallel on the same tag push. mcp-publisher's `publish`
+          # step validates server.json's packages[].version against the
+          # npm registry's published-versions index. npm has a 5-30s
+          # CDN propagation delay after a publish completes. When the
+          # registry workflow reaches `publish` before npm's CDN has
+          # indexed the new version, mcp-publisher returns:
+          #
+          #   NPM package '@opitacode/dark-memory-mcp' exists, but
+          #   version '2.6.0' was not found (status: 404).
+          #
+          # Fix (v2.6.1, operator-approved decision agent_memory id=80):
+          # retry up to 3 times with 30s waits between attempts. Total
+          # worst-case runtime is ~90s of retries + the publish itself;
+          # for the common case (npm propagates <30s) the publish
+          # succeeds on the first retry.
+          #
+          # Why retry and not `workflow_run`: workflow_run would
+          # require moving publish-mcp-registry to a separate trigger
+          # and breaks manual workflow_dispatch reruns (used after a
+          # bad server.json push). Retry inside the existing step
+          # preserves both trigger paths AND adds resilience.
+          MAX_ATTEMPTS=3
+          RETRY_DELAY=30
+          for attempt in $(seq 1 $MAX_ATTEMPTS); do
+            echo "::group::mcp-publisher publish (attempt $attempt/$MAX_ATTEMPTS)"
+            if ./mcp-publisher publish; then
+              echo "::endgroup::"
+              echo "Published on attempt $attempt"
+              exit 0
+            fi
+            echo "::endgroup::"
+            if [ "$attempt" -lt "$MAX_ATTEMPTS" ]; then
+              echo "Publish failed (likely npm-registry propagation race). "\
+                "Sleeping ${RETRY_DELAY}s before retry $((attempt+1))/$MAX_ATTEMPTS..."
+              sleep $RETRY_DELAY
+            fi
+          done
+          echo "::error::mcp-publisher publish failed after $MAX_ATTEMPTS attempts"
+          exit 1
 
       - name: Confirm registry entry is live
         run: |
