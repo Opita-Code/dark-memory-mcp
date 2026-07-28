@@ -476,8 +476,8 @@ de estado):
 
 ### Estado actual (al cierre de esta versión)
 
-- **Versión**: v2.4.2 (post-v2.4.1; brand_match + compliance_check enrichment with agent_memory)
-- **Schema DB**: v20 (unchanged; v2.4.2 is additive integration)
+- **Versión**: v2.4.3 (post-v2.4.2; wire-layer MCP audit + 3 contract-drift fixes)
+- **Schema DB**: v20 (unchanged across v2.4.x; v2.4.3 is test-schema cleanup only)
 - **Tools canónicos**: 34 (+ 3 en modo armed)
 - **Backends**: SQLite (default) + Postgres (research only en este host)
 - **Paquetes internos**: 27

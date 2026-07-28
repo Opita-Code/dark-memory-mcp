@@ -78,8 +78,8 @@ func TestWire_HealthPingShape(t *testing.T) {
 	if got.Runtime.PID <= 0 {
 		t.Errorf("runtime.pid=%d; want >0", got.Runtime.PID)
 	}
-	if got.Registry.CanonicalTools != 29 {
-		t.Errorf("registry.canonical_tools=%d; want 29 (v2.0.0 contract — pivot added dark_memory_recall)", got.Registry.CanonicalTools)
+	if got.Registry.CanonicalTools != 35 {
+		t.Errorf("registry.canonical_tools=%d; want 35 (v2.4.x contract — v2.1.0 added AGENT_MEMORY namespace 5 tools + v2.3.0 added agent_memory_recall = 35)", got.Registry.CanonicalTools)
 	}
 	if got.LatencyMS <= 0 || got.LatencyMS > 5000 {
 		t.Errorf("latency_ms=%v; want >0 and <=5000ms (this is a liveness probe, not a benchmark)", got.LatencyMS)
