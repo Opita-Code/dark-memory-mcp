@@ -112,27 +112,20 @@ jobs:
           VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
           set -euo pipefail
-          # Query the registry's GET endpoint for our server. If it returns
-          # 200 and includes our version, skip the publish. If it returns 404
-          # (server doesn't exist yet), publish normally.
+          # Query the registry's search endpoint. Returns 200 with a `servers`
+          # array containing one entry per published version of our server.
+          # Each entry: { server: {version: "X.Y.Z", ...}, _meta: { ... } }
           HTTP_CODE=$(curl -s -o /tmp/registry.json -w "%{http_code}" \
-            "https://registry.modelcontextprotocol.io/v0/servers/io.github.Opita-Code/dark-memory-mcp" || echo "000")
-          if [ "$HTTP_CODE" = "404" ]; then
-            echo "EXISTS=false" >> "$GITHUB_OUTPUT"
-            echo "Server not yet in registry; will publish"
-            exit 0
-          fi
+            "https://registry.modelcontextprotocol.io/v0/servers?search=io.github.Opita-Code/dark-memory-mcp" || echo "000")
           if [ "$HTTP_CODE" != "200" ]; then
             echo "::warning::Unexpected HTTP $HTTP_CODE from registry; will attempt publish"
             echo "EXISTS=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          # Check if version is in the response. The registry response shape
-          # for v0 is { server, ...meta }. The version is at server.version
-          # or in server.versions[] (varies by API revision).
+          # Check if our specific version is in the response. Iterate through
+          # the servers array and check each .server.version.
           if jq -e --arg v "$VERSION" '
-            (.server.version // "") == $v
-            or ((.server.versions // []) | map(.version) | index($v))
+            (.servers // []) | map(.server.version) | index($v) != null
           ' /tmp/registry.json > /dev/null 2>&1; then
             echo "EXISTS=true" >> "$GITHUB_OUTPUT"
             echo "::notice::$VERSION already in MCP Registry; skipping publish"
