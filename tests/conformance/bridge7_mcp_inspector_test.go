@@ -117,7 +117,7 @@ func TestBridge7_Initialize(t *testing.T) {
 }
 
 // TestBridge7_ListToolsCanonical asserts tools/list returns exactly
-// 34 tools in the canonical RFC D-9 namespace order (bridge.4).
+// 35 tools in the canonical RFC D-9 namespace order (bridge.4).
 //
 // v1.2.0: PROJECT namespace (1 tool: project_create) inserted at
 // index 0, before SESSION.
@@ -125,6 +125,8 @@ func TestBridge7_Initialize(t *testing.T) {
 // canonical count is 29 (was 28 in v1.3.x, 27 in v1.2.x, 26 in v1.1.x).
 // v2.1.0: AGENT_MEMORY namespace (5 tools: save/list/get/update/archive)
 // inserted between CONTEXT and JUDGE; canonical count is now 34.
+// v2.3.0: AGENT_MEMORY namespace grew 5 to 6 with agent_memory_recall
+// (the missing consumer for the data plane); canonical count is now 35.
 //
 // This is the wire-format regression for the bug we caught during
 // the W4A polish: mcp-go's handleListTools sorts alphabetically;
@@ -149,8 +151,8 @@ func TestBridge7_ListToolsCanonical(t *testing.T) {
 		t.Fatalf("list tools: %v", err)
 	}
 
-	if len(result.Tools) != 34 {
-		t.Fatalf("tool count: want 34 (v2.1.0 added AGENT_MEMORY namespace: save/list/get/update/archive), got %d", len(result.Tools))
+	if len(result.Tools) != 35 {
+		t.Fatalf("tool count: want 35 (v2.1.0 added AGENT_MEMORY namespace 5 + v2.3.0 added agent_memory_recall = 6), got %d", len(result.Tools))
 	}
 
 	want := canonicalWireOrder()
@@ -267,14 +269,18 @@ func TestBridge7_CallToolErrorPath(t *testing.T) {
 }
 
 // canonicalWireOrder is the wire-format (dark_memory_*) version of
-// the 34-tool canonical order (v2.1.0; was 29 in v2.0.x, 28 in v1.3.x,
-// 27 in v1.2.x, 26 in v1.1.x), mirrored from internal/tools/registry.go
-// so this test doesn't depend on the library's internal package
-// (it tests the wire format, not the library shape).
+// the 35-tool canonical order (v2.3.0; was 34 in v2.1.x, 29 in v2.0.x,
+// 28 in v1.3.x, 27 in v1.2.x, 26 in v1.1.x), mirrored from
+// internal/tools/registry.go so this test doesn't depend on the
+// library's internal package (it tests the wire format, not the
+// library shape).
 //
 // v2.1.0: AGENT_MEMORY namespace (5 tools: save/list/get/update/archive)
 // inserted between CONTEXT and JUDGE per spec D-12 /
 // BRIDGE_AND_COEXISTENCE.md §3 (Mem0-aligned agent memory data plane).
+//
+// v2.3.0: AGENT_MEMORY namespace grew 5 to 6 with agent_memory_recall
+// (the missing consumer for the data plane). New canonical count = 35.
 func canonicalWireOrder() []string {
 	bare := []string{
 		// PROJECT (1) — v1.2.0
@@ -287,8 +293,8 @@ func canonicalWireOrder() []string {
 		"vibe_publish", "vibe_spec", "pipeline_status", "resolve_drift",
 		// CONTEXT (4) — v2.0.0 grew from 3 to 4 with `recall`
 		"artifact_context", "spec_context", "session_context", "recall",
-		// AGENT_MEMORY (5) — v2.1.0 (Mem0-aligned)
-		"agent_memory_save", "agent_memory_list", "agent_memory_get", "agent_memory_update", "agent_memory_archive",
+		// AGENT_MEMORY (6) — v2.1.0 (5) + v2.3.0 (1: recall)
+		"agent_memory_save", "agent_memory_list", "agent_memory_recall", "agent_memory_get", "agent_memory_update", "agent_memory_archive",
 		// JUDGE (3)
 		"judge", "consensus", "judgment_history",
 		// POLICY (2)

@@ -38,29 +38,32 @@ import (
 
 var _ = audit.WriteEvent{}
 
-// RegisterAgentMemory wires the 5 AGENT_MEMORY tools into the
-// registry. The orchestrator and store are passed so handlers can
-// reach them without circular imports.
+// RegisterAgentMemory wires the AGENT_MEMORY tools into the registry.
+// The orchestrator and store are passed so handlers can reach them
+// without circular imports.
 //
-// v2.1.0 wire-contract: all 5 tools require an active session (so
-// the project_id and operator context are unambiguous). The gate's
-// RequiresActiveSession allowlist defaults to "require" for unknown
-// tools (see internal/policy/gate.go RequiresActiveSession), so no
-// gate.go change is needed — the default is correct.
+// v2.1.0 wire-contract: 5 tools (save / list / get / update /
+// archive). v2.3.0 added agent_memory_recall (the missing consumer
+// for the data plane). All 6 are gate-allowed only with an active
+// session (the gate's RequiresActiveSession allowlist covers them
+// by default — see internal/policy/gate.go RequiresActiveSession).
 func RegisterAgentMemory(reg *Registry, orch *orchestration.Orchestrator, st store.Store) {
 	reg.Add(BindOrchestrator("agent_memory_save",
-		"Save an agent memory. Mem0-aligned. Scoped to active project + active session (if bound).",
+		"Save an agent memory. Mem0-aligned. Scoped to the active project. By default (bind_session=false) the row survives session close; set bind_session=true to tag the row with the active session. v2.3.0.",
 		MustJSONSchema(map[string]any{
 			"type":     "object",
 			"required": []string{"operator", "kind", "content"},
 			"properties": map[string]any{
-				"operator":   map[string]any{"type": "string", "description": "Operator id (for ownership + audit). Required."},
-				"kind":       map[string]any{"type": "string", "enum": []string{"note", "observation", "decision", "finding", "todo", "link", "context"}},
-				"title":      map[string]any{"type": "string"},
-				"content":    map[string]any{"type": "string", "description": "The memory payload. Required."},
-				"tags":       map[string]any{"type": "string", "description": "Comma-separated, normalized lowercase."},
-				"pinned":     map[string]any{"type": "boolean", "default": false},
-				"expires_at": map[string]any{"type": "string", "description": "RFC3339. Optional TTL hint (sweeper follow-up)."},
+				"operator":     map[string]any{"type": "string", "description": "Operator id (for ownership + audit). Required."},
+				"agent_id":     map[string]any{"type": "string", "description": "Mem0 agent_id (LLM that owns the memory). Optional. v2.3.0."},
+				"kind":         map[string]any{"type": "string", "enum": []string{"note", "observation", "decision", "finding", "todo", "link", "context"}},
+				"memory_type":  map[string]any{"type": "string", "enum": []string{"episodic", "semantic", "procedural"}, "description": "Mem0 three-class taxonomy. Optional; empty = unclassified. v2.3.0."},
+				"title":        map[string]any{"type": "string"},
+				"content":      map[string]any{"type": "string", "description": "The memory payload. Required."},
+				"tags":         map[string]any{"type": "string", "description": "Comma-separated, normalized lowercase."},
+				"pinned":       map[string]any{"type": "boolean", "default": false},
+				"expires_at":   map[string]any{"type": "string", "description": "RFC3339. Optional TTL hint (sweeper follow-up)."},
+				"bind_session": map[string]any{"type": "boolean", "default": false, "description": "If true, tag the row with the active session id. Default false (v2.3.0 change; pre-v2.3.0 was implicitly true)."},
 			},
 		}),
 		func(ctx context.Context, in orchestration.AgentMemorySaveInput) (*orchestration.AgentMemorySaveOutput, error) {
@@ -68,12 +71,15 @@ func RegisterAgentMemory(reg *Registry, orch *orchestration.Orchestrator, st sto
 		}))
 
 	reg.Add(BindOrchestrator("agent_memory_list",
-		"List agent memories in the active project, filterable by scope/kind/tag/pinned/archived.",
+		"List agent memories in the active project. v2.3.0: scope default is 'project' (was implicit session); scope=operator now requires the explicit operator parameter; scope=agent is new (Mem0 agent_id).",
 		MustJSONSchema(map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"scope":            map[string]any{"type": "string", "enum": []string{"current", "session", "project", "operator", "all"}},
+				"scope":            map[string]any{"type": "string", "enum": []string{"current", "session", "project", "operator", "agent", "all"}},
+				"operator":         map[string]any{"type": "string", "description": "Caller identity for scope=operator resolution. v2.3.0."},
+				"agent_id":         map[string]any{"type": "string", "description": "Required for scope=agent (Mem0 agent_id). v2.3.0."},
 				"kind":             map[string]any{"type": "string"},
+				"memory_type":      map[string]any{"type": "string", "enum": []string{"episodic", "semantic", "procedural"}, "description": "Mem0 three-class taxonomy filter. v2.3.0."},
 				"tag":              map[string]any{"type": "string"},
 				"pinned_only":      map[string]any{"type": "boolean", "default": false},
 				"include_archived": map[string]any{"type": "boolean", "default": false},
@@ -82,6 +88,24 @@ func RegisterAgentMemory(reg *Registry, orch *orchestration.Orchestrator, st sto
 		}),
 		func(ctx context.Context, in orchestration.AgentMemoryListInput) (*orchestration.AgentMemoryListOutput, error) {
 			return orch.AgentMemoryList(ctx, in)
+		}))
+
+	reg.Add(BindOrchestrator("agent_memory_recall",
+		"BM25-ranked search over content+title+tags in the active project's agent_memory. v2.3.0 NEW. Lexical-only (FTS5). Vector search is v2.4.0+. Use this tool instead of re-implementing FTS5 escape in client code.",
+		MustJSONSchema(map[string]any{
+			"type":     "object",
+			"required": []string{"operator", "query"},
+			"properties": map[string]any{
+				"operator":    map[string]any{"type": "string", "description": "Operator id (caller identity for INV-1 audit + result attribution). Required."},
+				"query":       map[string]any{"type": "string", "description": "FTS5 search query. Alphanumeric + . - _ / + * only; AND/OR/NOT/NEAR rejected."},
+				"agent_id":    map[string]any{"type": "string", "description": "Optional. Scopes results to rows where agent_id == this value (Mem0 agent_id). v2.3.0."},
+				"kind":        map[string]any{"type": "string", "description": "Optional. Filter to one operator-kind (note, observation, decision, ...)."},
+				"memory_type": map[string]any{"type": "string", "enum": []string{"episodic", "semantic", "procedural"}, "description": "Optional. Mem0 three-class taxonomy filter. v2.3.0."},
+				"limit":       map[string]any{"type": "integer", "default": 10, "maximum": 50},
+			},
+		}),
+		func(ctx context.Context, in orchestration.AgentMemoryRecallInput) (*orchestration.AgentMemoryRecallOutput, error) {
+			return orch.AgentMemoryRecall(ctx, in)
 		}))
 
 	reg.Add(BindOrchestrator("agent_memory_get",
@@ -98,17 +122,18 @@ func RegisterAgentMemory(reg *Registry, orch *orchestration.Orchestrator, st sto
 		}))
 
 	reg.Add(BindOrchestrator("agent_memory_update",
-		"Update an agent memory's mutable fields (content/title/tags/pinned/expires_at). Operator + project are immutable.",
+		"Update an agent memory's mutable fields (content/title/tags/pinned/expires_at/memory_type). Operator + project + agent_id are immutable.",
 		MustJSONSchema(map[string]any{
 			"type":     "object",
 			"required": []string{"id"},
 			"properties": map[string]any{
-				"id":         map[string]any{"type": "integer"},
-				"title":      map[string]any{"type": "string"},
-				"content":    map[string]any{"type": "string"},
-				"tags":       map[string]any{"type": "string"},
-				"pinned":     map[string]any{"type": "boolean"},
-				"expires_at": map[string]any{"type": "string"},
+				"id":          map[string]any{"type": "integer"},
+				"title":       map[string]any{"type": "string"},
+				"content":     map[string]any{"type": "string"},
+				"tags":        map[string]any{"type": "string"},
+				"pinned":      map[string]any{"type": "boolean"},
+				"expires_at":  map[string]any{"type": "string"},
+				"memory_type": map[string]any{"type": "string", "enum": []string{"episodic", "semantic", "procedural", ""}, "description": "Mem0 three-class taxonomy. Empty string clears. v2.3.0."},
 			},
 		}),
 		func(ctx context.Context, in orchestration.AgentMemoryUpdateInput) (*orchestration.AgentMemoryUpdateOutput, error) {

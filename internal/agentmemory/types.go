@@ -61,18 +61,55 @@ func ValidKind(k string) bool {
 // take. The default ("current") defers to the orchestrator: if an
 // active session is bound, the scope narrows to that session; else it
 // widens to operator. Explicit values let callers force a view.
+//
+// v2.3.0 adds ScopeAgent = (project_id, agent_id) — Mem0 agent_id
+// semantics. Rows are independently queryable by (project_id,
+// agent_id, kind). Closing the session does NOT invalidate rows. See
+// INV-10 in docs/INVARIANTS.md.
 const (
 	ScopeCurrent  = "current"  // session if bound, else operator (default)
-	ScopeSession  = "session"  // exactly the active session
+	ScopeSession  = "session"  // exactly the active session (back-compat)
 	ScopeProject  = "project"  // the active project, all operators/sessions
 	ScopeOperator = "operator" // the active operator, all projects (gated)
+	ScopeAgent    = "agent"    // (project_id, agent_id) — Mem0 agent_id (v2.3.0)
 	ScopeAll      = "all"      // everything in active project
 )
 
 // ValidScope returns true if s is a recognized scope filter value.
 func ValidScope(s string) bool {
 	switch s {
-	case "", ScopeCurrent, ScopeSession, ScopeProject, ScopeOperator, ScopeAll:
+	case "", ScopeCurrent, ScopeSession, ScopeProject, ScopeOperator, ScopeAgent, ScopeAll:
+		return true
+	}
+	return false
+}
+
+// MemoryType enumerates the Mem0-aligned three memory classes.
+// Independent of Kind (which is the operator's tool filter — 10
+// values: note, observation, decision, finding, todo, link,
+// context, and free-form). MemoryType is the export contract; v2.4.0
+// may also surface it in dark_memory_recall for cross-system port.
+//
+// Free-form strings are accepted at the SQL boundary for
+// forward-compat, but the canonical three are listed here for tooling
+// + tests. Mapping: episodic = KindObservation + event-anchored;
+// semantic = atemporal facts (KindDecision, KindFinding, KindNote);
+// procedural = learned workflows (how-to instructions, typically
+// pinned).
+const (
+	MemoryTypeEpisodic  = "episodic"  // event-anchored; mirrors Mem0 episodic
+	MemoryTypeSemantic  = "semantic"  // atemporal facts; mirrors Mem0 semantic
+	MemoryTypeProcedural = "procedural" // learned workflows; mirrors Mem0 procedural
+)
+
+// ValidMemoryType returns true if t is one of the three canonical
+// Mem0-aligned memory classes. Free-form values are accepted by the
+// Store but rejected here for callers that want forward-compat.
+func ValidMemoryType(t string) bool {
+	switch t {
+	case MemoryTypeEpisodic, MemoryTypeSemantic, MemoryTypeProcedural:
+		return true
+	case "": // empty = unset; allowed
 		return true
 	}
 	return false
@@ -80,25 +117,48 @@ func ValidScope(s string) bool {
 
 // AgentMemory is the row shape for the agent_memory table.
 //
-// SessionID being non-empty means the row was created while a session
-// was active; the orchestrator captures this at save time. Operators
-// can later filter by "session" to see only those rows. Operators that
-// save without a session get session_id = "" (operator-scoped rows
-// that persist across sessions).
+// SessionID is OPTIONAL metadata (v2.3.0). Pre-v2.3.0 the
+// orchestrator auto-bound session_id from the active session; that
+// behavior was removed because it caused rows to "disappear" via
+// scope=session / scope=operator after session close. v2.3.0 callers
+// MUST pass session_id explicitly via the wire (via AgentMemorySaveInput
+// / agent_memory_save's bind_session flag) if they want a session
+// tag; otherwise the row is born with session_id = "" and is
+// accessible from any session within the same (project_id, agent_id).
+//
+// AgentID is the Mem0 agent_id field (v2.3.0): identifies the LLM
+// that owns the memory, distinct from Operator (which is the human/
+// agent identity per dark-memory INV-1 audit trail). For a single-
+// agent tool flow, AgentID and Operator may carry the same value.
+//
+// MemoryType is the Mem0-aligned three-class taxonomy (episodic /
+// semantic / procedural); independent of Kind. Both columns are
+// nullable; callers can save without setting either.
+//
+// EmbeddedHook (v2.5.0 placeholder; reserved column NOT used in
+// v2.3.0) and QuarantinedUntil (v2.5.0 placeholder) are documented
+// here for forward-compat but the schema column does not exist yet.
 type AgentMemory struct {
-	ID         int64     `json:"id"`
-	ProjectID  string    `json:"project_id"`
-	SessionID  string    `json:"session_id,omitempty"`
-	Operator   string    `json:"operator"`
-	Kind       string    `json:"kind"`
-	Title      string    `json:"title,omitempty"`
-	Content    string    `json:"content"`
-	Tags       string    `json:"tags,omitempty"`
-	Pinned     bool      `json:"pinned"`
-	CreatedAt  string    `json:"created_at"`
-	UpdatedAt  string    `json:"updated_at"`
-	ArchivedAt string    `json:"archived_at,omitempty"`
-	ExpiresAt  string    `json:"expires_at,omitempty"`
+	ID                int64  `json:"id"`
+	ProjectID         string `json:"project_id"`
+	SessionID         string `json:"session_id,omitempty"`
+	Operator          string `json:"operator"`
+	AgentID           string `json:"agent_id,omitempty"`
+	Kind              string `json:"kind"`
+	MemoryType        string `json:"memory_type,omitempty"`
+	Title             string `json:"title,omitempty"`
+	Content           string `json:"content"`
+	Tags              string `json:"tags,omitempty"`
+	Pinned            bool   `json:"pinned"`
+	CreatedAt         string `json:"created_at"`
+	UpdatedAt         string `json:"updated_at"`
+	ArchivedAt        string `json:"archived_at,omitempty"`
+	ExpiresAt         string `json:"expires_at,omitempty"`
+	// QuarantinedUntil is reserved for v2.5.0 (memory-poisoning
+	// defenses, zylos.ai 2026-04-05 §6). v2.3.0 schema does NOT
+	// include this column; the field always returns "". Carried
+	// here as wire-contract placeholder for tool forward-compat.
+	QuarantinedUntil string `json:"quarantined_until,omitempty"`
 }
 
 // IsArchived returns true if the row has been soft-deleted.
@@ -132,24 +192,47 @@ func parseRFC3339Nano(s string) (time.Time, bool) {
 // "leave unchanged" distinct from "set to empty". The Store impl
 // MUST treat a nil pointer as no-op and an empty-string pointer
 // as explicit clear.
+//
+// v2.3.0 added MemoryType (Mem0 three-class taxonomy). Operator
+// and ProjectID remain immutable (those are identity / INV-7
+// tags, not editable content).
 type AgentMemoryUpdate struct {
-	Title     *string `json:"title,omitempty"`
-	Content   *string `json:"content,omitempty"`
-	Tags      *string `json:"tags,omitempty"`
-	Pinned    *bool   `json:"pinned,omitempty"`
-	ExpiresAt *string `json:"expires_at,omitempty"`
+	Title      *string `json:"title,omitempty"`
+	Content    *string `json:"content,omitempty"`
+	Tags       *string `json:"tags,omitempty"`
+	Pinned     *bool   `json:"pinned,omitempty"`
+	ExpiresAt  *string `json:"expires_at,omitempty"`
+	MemoryType *string `json:"memory_type,omitempty"`
 }
 
 // AgentMemoryListFilters are the optional filters for List. Zero
 // value is "all rows in active project, excluding archived, sorted
 // pinned DESC + created_at DESC".
+//
+// v2.3.0 added Operator + AgentID fields so the scope=operator and
+// scope=agent resolutions work from caller intent (NOT from the
+// unreliable write_audit.actor lookup that v2.1.x used). See INV-10.
 type AgentMemoryListFilters struct {
-	// Scope narrows the result set. Empty = ScopeCurrent
-	// (session if active, else operator).
+	// Scope narrows the result set. Empty = ScopeProject (v2.3.0
+	// change; pre-v2.3.0 default was ScopeSession when bound).
+	// Allowed: current|session|project|operator|agent|all.
 	Scope string
+
+	// Operator narrows to rows where row.operator == filter.Operator.
+	// Required for scope=operator (the resolver previously used
+	// write_audit.actor; v2.3.0 uses THIS field).
+	Operator string
+
+	// AgentID narrows to rows where row.agent_id == filter.AgentID.
+	// Required for scope=agent (v2.3.0 NEW).
+	AgentID string
 
 	// Kind filters to one kind. Empty = any kind.
 	Kind string
+
+	// MemoryType filters to one Mem0 memory class
+	// (episodic|semantic|procedural). Empty = any.
+	MemoryType string
 
 	// Tag filters to rows whose Tags contains the given token
 	// (case-insensitive, comma-separated match). Empty = any.
@@ -171,11 +254,26 @@ type AgentMemoryListFilters struct {
 // query is matched against content+title+tags via FTS5 BM25 ranking.
 // Empty Query means "no search" — the Store should return ErrInvalidArgument
 // rather than silently return everything.
+//
+// v2.3.0 added Operator + AgentID + MemoryType fields so the recall
+// path mirrors the list filters (governance: caller intent, not
+// audit side-channel).
 type SearchFilters struct {
 	Query string
 
 	// Kind narrows the result set. Empty = any.
 	Kind string
+
+	// MemoryType narrows to one Mem0 class
+	// (episodic|semantic|procedural). Empty = any.
+	MemoryType string
+
+	// Operator narrows to rows where row.operator == filter.Operator.
+	// INV-7 + INV-10 compliance.
+	Operator string
+
+	// AgentID narrows to rows where row.agent_id == filter.AgentID.
+	AgentID string
 
 	// Limit caps the result count. 0 = default (50).
 	Limit int

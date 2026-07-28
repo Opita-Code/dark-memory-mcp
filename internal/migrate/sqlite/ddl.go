@@ -764,4 +764,44 @@ CREATE TRIGGER IF NOT EXISTS agent_memory_au1 BEFORE UPDATE ON agent_memory BEGI
 CREATE TRIGGER IF NOT EXISTS agent_memory_au2 AFTER UPDATE ON agent_memory BEGIN INSERT INTO agent_memory_fts(rowid, content, title, tags) VALUES (new.id, new.content, COALESCE(new.title,''), COALESCE(new.tags,'')); END;
 `,
 	},
+	{
+		// v19 - agent_memory v2.3.0 columns + indices (save-decouple +
+		// INV-10 + agent_memory_recall).
+		//
+		// Adds two columns without disturbing the FTS5 mirror
+		// (memory_type is a filter, not text — FTS5 stays unchanged
+		// because it indexes content+title+tags already):
+		//
+		//   agent_id     TEXT NULL
+		//     Mem0 agent_id semantics: the LLM that owns the memory.
+		//     Distinct from operator (which is the human/agent
+		//     identity per INV-1 audit). Single-agent flows may use
+		//     same value for both. Filterable via scope=agent.
+		//
+		//   memory_type  TEXT NULL
+		//     Mem0 three-class taxonomy: episodic | semantic |
+		//     procedural. Independent of `kind` (operator's tool
+		//     filter, 10 values). NULL = unclassified. Used as
+		//     export contract for cross-system port; not currently
+		//     a recall scope dimension (v2.4.0+ may add).
+		//
+		// Why two columns and not one combined: agent_id is a key,
+		// memory_type is a tag. They have different nullability
+		// constraints downstream and combining them would require
+		// JSON parsing at every read. Two columns, two indices.
+		//
+		// Idempotent via the standard SQLite pattern: ALTER TABLE
+		// ADD COLUMN with no DEFAULT is a no-op if the column
+		// already exists. We do NOT drop the constraint or reindex
+		// existing rows; that would be data-destructive on
+		// already-deployed v2.1.0 databases.
+		Version: 19,
+		Name:    "agent_memory_v230_columns",
+		Up: `
+ALTER TABLE agent_memory ADD COLUMN agent_id TEXT;
+ALTER TABLE agent_memory ADD COLUMN memory_type TEXT;
+CREATE INDEX IF NOT EXISTS idx_agent_memory_agent ON agent_memory (project_id, agent_id, archived_at, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_agent_memory_mtype ON agent_memory (project_id, memory_type, archived_at, created_at DESC) WHERE memory_type IS NOT NULL;
+`,
+	},
 }

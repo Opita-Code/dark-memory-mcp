@@ -255,18 +255,27 @@ con el prefijo `dark_memory_`. Están agrupadas en 11 oficios:
 | `dark_memory_session_context` | "Muéstrame todo lo que pasó en esta sesión" |
 | `dark_memory_recall` | "Dame un resumen de los últimos cambios" |
 
-### 🧠 El cuaderno del agente (AGENT_MEMORY — 5 tools, nuevo en v2.1.0)
+### 🧠 El cuaderno del agente (AGENT_MEMORY — 6 tools, v2.1.0 + v2.3.0)
 
 Esta es la pieza nueva. Es el **cuaderno personal** del agente, donde anota
 notas, observaciones, decisiones, links, hallazgos — cosas que quiere
-recordar entre sesiones.
+recordar entre sesiones. **v2.3.0** corrigió dos bugs: las notas ya no
+desaparecen al cerrar la sesión (INV-10) y se alinean con la taxonomía
+Mem0 de 3 clases (`episodic`/`semantic`/`procedural`). Además
+`agent_memory_recall` es la primera herramienta que **usa** el cuaderno
+internamente — antes no había consumidor.
+
+> ⚠️ **v2.3.0 cambia dos defaults**:
+> - `agent_memory_save` ya no ata la sesión automáticamente. Pasá `bind_session: true` si querés el comportamiento pre-v2.3.0.
+> - `agent_memory_list(scope="current")` ahora devuelve el proyecto entero (no solo la sesión). Pasá `scope="session"` explícito para mantener la query acotada.
 
 | Herramienta | Cuándo se usa |
 |---|---|
-| `dark_memory_agent_memory_save` | "Apunta esto: usamos Postgres 16" |
-| `dark_memory_agent_memory_list` | "Dame mis notas sobre este proyecto" |
+| `dark_memory_agent_memory_save` | "Apunta esto: usamos Postgres 16". Acepta `agent_id`, `memory_type` y `bind_session` (default `false` desde v2.3.0). |
+| `dark_memory_agent_memory_list` | "Dame mis notas sobre este proyecto". Scopes: `current` (default `project` desde v2.3.0), `session`, `project`, `operator`, **`agent`** (nuevo en v2.3.0), `all`. |
+| `dark_memory_agent_memory_recall` | **Nuevo en v2.3.0**. Búsqueda BM25 sobre contenido + título + tags, con filtro opcional por `agent_id` y/o `memory_type`. |
 | `dark_memory_agent_memory_get` | "Muéstrame la nota #42" |
-| `dark_memory_agent_memory_update` | "Edita esa nota, ya no aplica" |
+| `dark_memory_agent_memory_update` | "Edita esa nota, ya no aplica". Ahora acepta `memory_type` también. |
 | `dark_memory_agent_memory_archive` | "Borra esa nota (soft delete)" |
 
 El agente puede guardar cosas de **tres tipos de alcance**:
@@ -467,8 +476,8 @@ de estado):
 
 ### Estado actual (al cierre de esta versión)
 
-- **Versión**: v2.1.0 (commit `d37f2e2`)
-- **Schema DB**: v18 (agent_memory + FTS5 mirror)
+- **Versión**: v2.3.0 (post-v2.1.0)
+- **Schema DB**: v19 (agent_memory + agent_id + memory_type + FTS5 mirror)
 - **Tools canónicos**: 34 (+ 3 en modo armed)
 - **Backends**: SQLite (default) + Postgres (research only en este host)
 - **Paquetes internos**: 27

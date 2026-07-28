@@ -136,21 +136,22 @@ func RegisterAll(reg *Registry, orch *orchestration.Orchestrator, st store.Store
 		redteamArmed,
 	)
 
-	// Sanity check: registry must contain all 34 canonical tools
+	// Sanity check: registry must contain all 35 canonical tools
 	// after Register*. If a tool was forgotten, fail loudly at boot
 	// rather than at request time.
 	//
 	// 5A.ii.b.2.c: bumped from 28 → 29 (added dark_memory_recall).
 	// v2.1.0: bumped from 29 → 34 (added AGENT_MEMORY namespace:
 	// save, list, get, update, archive).
+	// v2.3.0: bumped from 34 → 35 (added agent_memory_recall).
 	canonical := CanonicalOrder()
 	for _, name := range canonical {
 		if reg.Get(name) == nil {
 			return nil, fmt.Errorf("tools: RegisterAll: missing tool %q (canonical order violation)", name)
 		}
 	}
-	if got := len(reg.ListCanonical()); got != 34 {
-		return nil, fmt.Errorf("tools: RegisterAll: expected 34 tools, got %d", got)
+	if got := len(reg.ListCanonical()); got != 35 {
+		return nil, fmt.Errorf("tools: RegisterAll: expected 35 tools, got %d", got)
 	}
 	return src, nil
 }

@@ -150,9 +150,14 @@ func TestE2E_Gate_BareNameGrant(t *testing.T) {
 		}
 	}
 
-	// Step 3: agent_memory_list must also pass the gate.
+	// Step 3: agent_memory_list must also pass the gate. We use
+	// scope=project because v2.3.0 removed the implicit session_id
+	// auto-bind (INV-10); scope=session would only return rows that
+	// were saved with bind_session=true, which the regression test
+	// does NOT. scope=project is the v2.3.0 default and returns any
+	// non-archived row in the active project.
 	listOut, err := callTool(ts, "agent_memory_list", map[string]any{
-		"scope": "session",
+		"scope": "project",
 		"limit": 10,
 	})
 	if err != nil {

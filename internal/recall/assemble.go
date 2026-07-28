@@ -93,7 +93,7 @@ const DefaultToolGrants = "project_create," + // PROJECT (1)
 	"research_topic,research_recall,research_resume_thread," + // RESEARCH (3)
 	"vibe_publish,vibe_spec,pipeline_status,resolve_drift," + // VIBE (4)
 	"artifact_context,spec_context,session_context,recall," + // CONTEXT (4)
-	"agent_memory_save,agent_memory_list,agent_memory_get,agent_memory_update,agent_memory_archive," + // AGENT_MEMORY (5) — v2.1.0
+	"agent_memory_save,agent_memory_list,agent_memory_recall,agent_memory_get,agent_memory_update,agent_memory_archive," + // AGENT_MEMORY (6) — v2.1.0 (5) + v2.3.0 (1: recall)
 	"judge,consensus,judgment_history," + // JUDGE (3)
 	"active_policy,load_constitution," + // POLICY (2)
 	"memory_state,writes,anomalies,health_ping," + // OBSERVABILITY (4)

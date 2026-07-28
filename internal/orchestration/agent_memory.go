@@ -33,28 +33,46 @@ import (
 
 // AgentMemorySaveInput is the request to create one row. Operator +
 // kind + content are required (per the schema in tools/agent_memory.go).
+//
+// v2.3.0 added AgentID (Mem0 agent_id; the LLM that owns the
+// memory) and MemoryType (Mem0 three-class taxonomy:
+// episodic|semantic|procedural; empty = unclassified). Both are
+// optional. BindSession replaces the v2.1.x implicit auto-bind; the
+// caller must explicitly opt in to attach a session tag (see
+// AgentMemorySave below).
 type AgentMemorySaveInput struct {
-	Operator  string `json:"operator"`
-	Kind      string `json:"kind"`
-	Title     string `json:"title,omitempty"`
-	Content   string `json:"content"`
-	Tags      string `json:"tags,omitempty"`
-	Pinned    bool   `json:"pinned,omitempty"`
-	ExpiresAt string `json:"expires_at,omitempty"`
+	Operator    string `json:"operator"`
+	AgentID     string `json:"agent_id,omitempty"`
+	Kind        string `json:"kind"`
+	MemoryType  string `json:"memory_type,omitempty"`
+	Title       string `json:"title,omitempty"`
+	Content     string `json:"content"`
+	Tags        string `json:"tags,omitempty"`
+	Pinned      bool   `json:"pinned,omitempty"`
+	ExpiresAt   string `json:"expires_at,omitempty"`
+	BindSession bool   `json:"bind_session,omitempty"`
 }
 
 // AgentMemorySaveOutput is the row as stored (with project_id +
 // session_id resolved from context).
 type AgentMemorySaveOutput struct {
-	Row       agentmemory.AgentMemory `json:"row"`
-	AuditID   int64                   `json:"audit_id"`
+	Row     agentmemory.AgentMemory `json:"row"`
+	AuditID int64                   `json:"audit_id"`
 }
 
-// AgentMemorySave inserts one row into the active project. The
-// row's session_id is captured from the active session at the Store
-// layer (SaveAgentMemory resolves the active session via the projects
-// row). If no session is active, session_id stays empty (operator-scoped
-// row).
+// AgentMemorySave inserts one row into the active project.
+//
+// v2.3.0 BindSession contract:
+//   - BindSession = false (default): session_id is NOT auto-bound.
+//     The row is born with session_id = "" and survives session
+//     close. INV-10.
+//   - BindSession = true: session_id is captured from the active
+//     session at the Store layer (existing behavior). The row is
+//     tagged with the session at creation time; closing the session
+//     makes it invisible via scope=session but NOT via scope=agent,
+//     scope=operator, or scope=project. v2.3.0 callers should use
+//     BindSession only for rows they explicitly want pinned to a
+//     single session lifecycle (rare).
 func (o *Orchestrator) AgentMemorySave(ctx context.Context, in AgentMemorySaveInput) (*AgentMemorySaveOutput, error) {
 	if strings.TrimSpace(in.Operator) == "" {
 		return nil, errMissingField("operator")
@@ -65,20 +83,35 @@ func (o *Orchestrator) AgentMemorySave(ctx context.Context, in AgentMemorySaveIn
 	if !agentmemory.ValidKind(in.Kind) {
 		return nil, fmt.Errorf("agent_memory_save: invalid kind %q", in.Kind)
 	}
+	if !agentmemory.ValidMemoryType(in.MemoryType) {
+		return nil, fmt.Errorf("agent_memory_save: invalid memory_type %q", in.MemoryType)
+	}
 
 	wc := store.WriteContext{
 		Actor:     in.Operator,
 		WritePath: "AgentMemorySave",
 	}
 	m := &agentmemory.AgentMemory{
-		Operator:  in.Operator,
-		Kind:      in.Kind,
-		Title:     in.Title,
-		Content:   in.Content,
-		Tags:      in.Tags,
-		Pinned:    in.Pinned,
-		ExpiresAt: in.ExpiresAt,
-		// SessionID resolved by SaveAgentMemory from active project.
+		Operator:   in.Operator,
+		AgentID:    in.AgentID,
+		Kind:       in.Kind,
+		MemoryType: in.MemoryType,
+		Title:      in.Title,
+		Content:    in.Content,
+		Tags:       in.Tags,
+		Pinned:     in.Pinned,
+		ExpiresAt:  in.ExpiresAt,
+	}
+	// v2.3.0: bind_session is caller-driven (not implicit).
+	// Pre-v2.3.0 behavior auto-bound here at the orchestrator level
+	// too (via SaveAgentMemory's resolveActiveSessionID call); v2.3.0
+	// honors BindSession explicitly. If the caller wants the row
+	// tied to the session lifecycle, they MUST set BindSession=true
+	// AND have an active session at save time.
+	if in.BindSession {
+		if sid, err := o.Store.GetActiveSession(ctx, o.Store.ActiveProject()); err == nil && sid != "" {
+			m.SessionID = sid
+		}
 	}
 	id, err := o.Store.SaveAgentMemory(ctx, wc, m)
 	if err != nil {
@@ -109,9 +142,16 @@ func (o *Orchestrator) AgentMemorySave(ctx context.Context, in AgentMemorySaveIn
 // AgentMemoryListInput is the filter set for list. All fields are
 // optional; the zero value means "give me the current scope's most
 // recent rows, default limit, excluding archived".
+//
+// v2.3.0: Scope defaults to "project" (NOT "session") and Operator
+// is required when Scope=operator; AgentID is required when
+// Scope=agent. MemoryType added as a Mem0-class filter.
 type AgentMemoryListInput struct {
 	Scope           string `json:"scope,omitempty"`
+	Operator        string `json:"operator,omitempty"`
+	AgentID         string `json:"agent_id,omitempty"`
 	Kind            string `json:"kind,omitempty"`
+	MemoryType      string `json:"memory_type,omitempty"`
 	Tag             string `json:"tag,omitempty"`
 	PinnedOnly      bool   `json:"pinned_only,omitempty"`
 	IncludeArchived bool   `json:"include_archived,omitempty"`
@@ -127,10 +167,19 @@ type AgentMemoryListOutput struct {
 // AgentMemoryList returns rows matching the filters, with INV-7
 // (project isolation) enforced by the Store. Scope is resolved at
 // the Store layer against the active session / operator.
+//
+// v2.3.0: the orchestrator previously did NOT plumb Operator through
+// to the Store (the Store's pre-v2.3.0 scope=operator resolution
+// used write_audit.actor, which was unreliable — see INV-10). The
+// orchestrator MUST forward in.Operator to f.Operator so callers
+// can request rows by their own identity, not by an audit side-channel.
 func (o *Orchestrator) AgentMemoryList(ctx context.Context, in AgentMemoryListInput) (*AgentMemoryListOutput, error) {
 	f := agentmemory.AgentMemoryListFilters{
 		Scope:           in.Scope,
+		Operator:        in.Operator,
+		AgentID:         in.AgentID,
 		Kind:            in.Kind,
+		MemoryType:      in.MemoryType,
 		Tag:             in.Tag,
 		PinnedOnly:      in.PinnedOnly,
 		IncludeArchived: in.IncludeArchived,
@@ -141,6 +190,60 @@ func (o *Orchestrator) AgentMemoryList(ctx context.Context, in AgentMemoryListIn
 		return nil, err
 	}
 	return &AgentMemoryListOutput{Rows: rows, Count: len(rows)}, nil
+}
+
+// --- Recall ---------------------------------------------------------
+
+// AgentMemoryRecallInput is the BM25-ranked search over the agent
+// memory data plane. Query is required (FTS5 escape is handled by
+// the tool layer). v2.3.0 NEW.
+//
+// Filter semantics mirror agent_memory_list: Operator scopes by
+// caller's identity, AgentID scopes by Mem0 agent_id, MemoryType
+// scopes by Mem0 three-class taxonomy, Kind scopes by operator's
+// 10-kind taxonomy. All filters are AND-combined.
+type AgentMemoryRecallInput struct {
+	Operator   string `json:"operator,omitempty"`
+	AgentID    string `json:"agent_id,omitempty"`
+	Query      string `json:"query"`
+	Kind       string `json:"kind,omitempty"`
+	MemoryType string `json:"memory_type,omitempty"`
+	Limit      int    `json:"limit,omitempty"`
+}
+
+// AgentMemoryRecallOutput is the hits + a count.
+type AgentMemoryRecallOutput struct {
+	Hits  []agentmemory.SearchHit `json:"hits"`
+	Count int                    `json:"count"`
+}
+
+// AgentMemoryRecall runs FTS5 BM25-ranked search over
+// content+title+tags in the active project's agent_memory table.
+// Caller must supply Operator (their own identity) so the query can
+// be attributed for INV-1 audit and so the result set is scoped
+// appropriately for compliance.
+func (o *Orchestrator) AgentMemoryRecall(ctx context.Context, in AgentMemoryRecallInput) (*AgentMemoryRecallOutput, error) {
+	if strings.TrimSpace(in.Query) == "" {
+		return nil, errMissingField("query")
+	}
+	if strings.TrimSpace(in.Operator) == "" {
+		return nil, errMissingField("operator")
+	}
+	if !agentmemory.ValidMemoryType(in.MemoryType) {
+		return nil, fmt.Errorf("agent_memory_recall: invalid memory_type %q", in.MemoryType)
+	}
+	hits, err := o.Store.SearchAgentMemory(ctx, agentmemory.SearchFilters{
+		Query:      in.Query,
+		Operator:   in.Operator,
+		AgentID:    in.AgentID,
+		Kind:       in.Kind,
+		MemoryType: in.MemoryType,
+		Limit:      in.Limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &AgentMemoryRecallOutput{Hits: hits, Count: len(hits)}, nil
 }
 
 // --- Get ------------------------------------------------------------

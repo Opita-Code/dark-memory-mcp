@@ -44,7 +44,7 @@ func TestE2E_29ToolsRegistered(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.close()
 
-	const wantCount = 34 // v2.1.0: AGENT_MEMORY namespace
+	const wantCount = 35 // v2.1.0: AGENT_MEMORY (5). v2.3.0: + agent_memory_recall = 6.
 	canonical := tools.CanonicalOrder()
 	if got := len(canonical); got != wantCount {
 		t.Fatalf("canonical order length: want %d, got %d", wantCount, got)

@@ -236,21 +236,107 @@ new MCP server into `dark-agents/`. Documented in
 
 ---
 
+## INV-9 — *(reserved)*
+
+INV-9 was deliberately skipped. The numbering preserves INV-1
+through INV-8 in their original order; subsequent invariants
+follow (INV-10, INV-11, ...). v2.3.0 introduces INV-10. Operators
+that see gaps in numbering should treat them as deliberate (the
+v2.x.0 invariant contract is documented in CHANGELOG).
+
+---
+
+## INV-10 — agent memory rows are persistent across session lifecycle (v2.3.0)
+
+**Statement**: `agent_memory` rows are independently queryable by
+`(project_id, agent_id, kind)`. Closing the active session does
+NOT invalidate rows. Recall (the BM5-ranked search via
+`agent_memory_recall`) is permitted against rows whose
+`session_id IS NULL` (i.e. un-bound) within the active project.
+
+**Why**: Pre-v2.3.0, `SaveAgentMemory` auto-bound `session_id` from
+the active session. After a session closed (sweeper abort,
+`session_close`, or restarts), rows were invisible via
+`scope=session` because the `session_id` no longer matched any
+active session. They were also invisible via `scope=operator`
+because the v2.1.x `ListAgentMemory` implementation resolved
+`scope=operator` via `SELECT actor FROM write_audit ORDER BY id
+DESC LIMIT 1`, which returned `session_sweeper:open_to_idle` (the
+last actor to touch the audit log) — NOT the operator who
+actually saved the row. Operators experienced "I saved things,
+then they disappeared."
+
+v2.3.0 closes this gap by:
+1. Removing auto-bind (caller must explicitly set `bind_session=true`
+   in `AgentMemorySaveInput` to tag a row with the active session).
+2. Resolving `scope=operator` from the caller-provided `Operator`
+   filter field — NOT from `write_audit.actor`.
+3. Adding `scope=agent` (Mem0 `agent_id` semantics) that filters
+   on the new `agent_id` column.
+4. Adding `dark_memory_agent_memory_recall` as the canonical
+   retrieval path so other tools can consume the data plane.
+
+This invariant is the type-system-level guarantee. The wire
+contract is additive only: pre-v2.3.0 callers that omitted
+`bind_session` (implicit behaviour) get rows that survive session
+close; callers that passed `bind_session=true` get rows with the
+session tag, just as before.
+
+**Enforced at**:
+- `internal/store/sqlite/store.go::SaveAgentMemory` — no longer
+  populates `session_id` from the active session. (Line numbers:
+  pre-v2.3.0 auto-bind removed.)
+- `internal/store/sqlite/store.go::ListAgentMemory` — scope
+  resolution uses `f.Operator` (caller-provided) NOT
+  `write_audit.actor`. `f.AgentID` is required for `scope=agent`.
+- `internal/agentmemory/types.go::ScopeAgent` — new scope value.
+- `internal/tools/agent_memory.go::RegisterAgentMemory` — all six
+  tools' wire schemas.
+
+**Defensive test** (added in v2.3.0):
+- `tests/dual_driver/agent_memory_scope_test.go::TestListAgentMemory_ScopeOperator_UsesCallerOperatorNotAuditActor` — saves rows
+  from operator A, lets sweeper write one audit row, then asserts
+  `scope=operator` with `operator="A"` returns A's rows (was
+  broken pre-v2.3.0; sweeper would shadow).
+- `tests/dual_driver/agent_memory_lifecycle_test.go::TestSaveAgentMemory_NoAutoBind_PersistsAcrossSessionClose` — save without
+  `bind_session` while session S is active; close S; reopen a new
+  session; assert the row is visible via `scope=project`.
+
+**Operator signal**: `dark_memory_agent_memory_list(scope="project")`
+after a session restart should return the same rows as
+`scope="project"` immediately after saving — modulo any
+session-tagged rows (those are filtered correctly only via
+`scope=session`, which now requires an active session).
+
+**Migration**: `internal/migrate/sqlite/ddl.go` v19
+(`agent_memory_v230_columns`) adds `agent_id` and `memory_type`
+columns. Pre-v2.3.0 rows have `agent_id = NULL` and
+`memory_type = NULL`; that is fine for the new `scope=agent` and
+`memory_type` filters (NULL = unfiltered, which is what existing
+callers expect).
+
+---
+
 ## Quick reference: which `Save*` enforces which invariant
 
-| Store method | INV-1 | INV-2 | INV-3 | INV-4 | INV-6 | INV-7 | INV-8 |
-|---|---|---|---|---|---|---|---|
-| `SaveSpec` | ✓ | — | — | (read) | — | ✓ | ✓ |
-| `SaveArtifact` | ✓ | — | ✓ | (read) | — | ✓ | ✓ |
-| `SaveDriftReport` | ✓ | — | — | (read) | — | ✓ | ✓ |
-| `SaveSDDEvaluation` | ✓ | — | — | (read) | — | ✓ | ✓ |
-| `SaveRun` | ✓ | — | ✓ | (read) | — | ✓ | ✓ |
-| `SaveSession` | ✓ | ✓ | — | (read) | — | ✓ | ✓ |
-| `SaveMod` / `RecordModLoad` | ✓ | — | ✓ | (read) | ✓ | ✓ | ✓ |
-| `SaveConstitution` | ✓ | — | — | (write) | — | ✓ | ✓ |
-| `Recall` | — | ✓ | (read) | (read) | — | ✓ | ✓ |
-| `Vacuum` | — | — | — | — | — | (filters by project) | ✓ |
-| `Migrate` | — | — | — | refused under drift | — | — | ✓ |
+| Store method | INV-1 | INV-2 | INV-3 | INV-4 | INV-6 | INV-7 | INV-8 | INV-10 |
+|---|---|---|---|---|---|---|---|---|
+| `SaveSpec` | ✓ | — | — | (read) | — | ✓ | ✓ | — |
+| `SaveArtifact` | ✓ | — | ✓ | (read) | — | ✓ | ✓ | — |
+| `SaveDriftReport` | ✓ | — | — | (read) | — | ✓ | ✓ | — |
+| `SaveSDDEvaluation` | ✓ | — | — | (read) | — | ✓ | ✓ | — |
+| `SaveRun` | ✓ | — | ✓ | (read) | — | ✓ | ✓ | — |
+| `SaveSession` | ✓ | ✓ | — | (read) | — | ✓ | ✓ | — |
+| `SaveMod` / `RecordModLoad` | ✓ | — | ✓ | (read) | ✓ | ✓ | ✓ | — |
+| `SaveConstitution` | ✓ | — | — | (write) | — | ✓ | ✓ | — |
+| `SaveAgentMemory` | ✓ | — | — | (read) | — | ✓ | ✓ | ✓ |
+| `ListAgentMemory` | — | — | — | (read) | — | ✓ | ✓ | ✓ |
+| `SearchAgentMemory` | — | — | — | (read) | — | ✓ | ✓ | ✓ |
+| `UpdateAgentMemory` | ✓ | — | — | (read) | — | ✓ | ✓ | ✓ |
+| `ArchiveAgentMemory` | ✓ | — | — | (read) | — | ✓ | ✓ | — |
+| `Recall` | — | ✓ | (read) | (read) | — | ✓ | ✓ | — |
+| `Vacuum` | — | — | — | — | — | (filters by project) | ✓ | — |
+| `Migrate` | — | — | — | refused under drift | — | — | ✓ | — |
 
 *Legend: ✓ = enforces this invariant; — = not relevant; (read) =
 reads constitution for WriteContext, doesn't enforce a write-side
