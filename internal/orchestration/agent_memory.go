@@ -246,6 +246,147 @@ func (o *Orchestrator) AgentMemoryRecall(ctx context.Context, in AgentMemoryReca
 	return &AgentMemoryRecallOutput{Hits: hits, Count: len(hits)}, nil
 }
 
+// --- v2.4.0 helpers (memory RAG into the vibe-loop) ---------------
+//
+// These helpers exist so the VLP integration points (session_start,
+// publish_vibe/drift_judge, research_topic, judge, consensus) can
+// consult agent_memory without each call site re-implementing FTS5
+// escape + the Store filter shape. Errors are SWALLOWED
+// (best-effort): a broken agent_memory store MUST NOT block a
+// session_start or a drift_judge — the vibe-loop has higher
+// priority than the memory layer.
+//
+// All helpers require an active project (Store.requireProject at the
+// SearchAgentMemory boundary). If no project is active, they return
+// empty results and a nil error; the caller treats that as "no
+// context to inject".
+
+// recallForVibe runs a BM25-ranked search over the active project's
+// agent_memory using the caller-provided query. Filters narrow by
+// Kind + MemoryType + AgentID; empty filters = any. limit clamps to
+// [1, 50] (Store enforces 200 max, but VLP callers typically want 3-10).
+//
+// Returns hits + an error. Errors are non-fatal at the call site;
+// this helper returns them so the caller can choose to log them.
+func (o *Orchestrator) recallForVibe(ctx context.Context, query, kind, memoryType, agentID string, limit int) ([]agentmemory.SearchHit, error) {
+	if limit <= 0 {
+		limit = 5
+	}
+	if limit > 50 {
+		limit = 50
+	}
+	hits, err := o.Store.SearchAgentMemory(ctx, agentmemory.SearchFilters{
+		Query:      query,
+		Kind:       kind,
+		MemoryType: memoryType,
+		AgentID:    agentID,
+		Limit:      limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return hits, nil
+}
+
+// listPinnedForVibe returns the most recent pinned rows in the active
+// project (no operator filter — intent is "show me what's pinned, by
+// anyone, in this project"). limit defaults to 10, max 50.
+func (o *Orchestrator) listPinnedForVibe(ctx context.Context, kind string, limit int) ([]agentmemory.AgentMemory, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	if limit > 50 {
+		limit = 50
+	}
+	rows, err := o.Store.ListAgentMemory(ctx, agentmemory.AgentMemoryListFilters{
+		Scope:      agentmemory.ScopeProject,
+		Kind:       kind,
+		PinnedOnly: true,
+		Limit:      limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// listOpenTodosForVibe returns kind=todo rows in the active project,
+// scoped by AgentID filter if set. Used by SessionStart so the
+// operator sees their pending work without re-listing manually.
+// Note: by v2.5.0 this should respect a "due_at" / status column
+// (deferred). For v2.4.0 we return all kind=todo rows.
+func (o *Orchestrator) listOpenTodosForVibe(ctx context.Context, agentID string, limit int) ([]agentmemory.AgentMemory, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 50 {
+		limit = 50
+	}
+	rows, err := o.Store.ListAgentMemory(ctx, agentmemory.AgentMemoryListFilters{
+		Scope:  agentmemory.ScopeProject,
+		Kind:   "todo",
+		AgentID: agentID,
+		Limit:  limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// formatHitsForContext formats a list of SearchHits as a
+// human-readable block suitable for prepending to an LLM judge
+// prompt or to a research_topic output. The format is:
+//
+//	=== Relevant prior context (n hits) ===
+//	[kind=decision] "<title or first 80 chars of content>"
+//	[kind=decision] "<title or first 80 chars of content>"
+//	...
+//
+// Empty list returns "" so callers can branch on len==0 / result==""
+// without parsing newlines. v2.4.0 returns the human-readable shape;
+// v2.4.x follow-ups may add JSON-typed evidence (EvidenceFrame) if a
+// downstream consumer wants machine-parseable citations.
+func formatHitsForContext(hits []agentmemory.SearchHit) string {
+	if len(hits) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "=== Relevant prior context (%d hits) ===\n", len(hits))
+	for _, h := range hits {
+		title := h.Title
+		if title == "" {
+			// Use first 80 chars of content (word boundary).
+			title = firstLine(h.Content, 80)
+		}
+		fmt.Fprintf(&b, "[kind=%s", h.Kind)
+		if h.MemoryType != "" {
+			fmt.Fprintf(&b, " memory_type=%s", h.MemoryType)
+		}
+		if h.AgentID != "" {
+			fmt.Fprintf(&b, " agent_id=%s", h.AgentID)
+		}
+		fmt.Fprintf(&b, "] %s\n", title)
+	}
+	return b.String()
+}
+
+// firstLine returns up to maxChars of the first line of s. If the
+// first line is longer than maxChars, the truncation appends "…".
+// Used as a fallback title in formatHitsForContext when the row
+// has no explicit title.
+func firstLine(s string, maxChars int) string {
+	for i, r := range s {
+		if r == '\n' || r == '\r' {
+			return s[:i]
+		}
+		if i >= maxChars {
+			return s[:maxChars] + "…"
+		}
+	}
+	return s
+}
+
 // --- Get ------------------------------------------------------------
 
 // AgentMemoryGetInput is the request for one row by id.

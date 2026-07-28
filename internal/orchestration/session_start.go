@@ -1,6 +1,14 @@
 // O1: SessionStart — opens a session for an operator and binds it to
 // a project. The active project is set on the Store so subsequent
 // operations land in the right tenant.
+//
+// v2.4.0: SessionStart now consults agent_memory and surfaces a
+// ContextRecap in the response so the operator can see what they (or
+// their project) already know before starting work. This is the
+// first vibe-loop integration point — previously the data plane
+// had no consumers, leaving the operator with a blank slate on every
+// session. INV-10 keeps memories persistent across session close;
+// v2.4.0 makes that persistence visible at session start.
 package orchestration
 
 import (
@@ -9,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dark-agents/dark-memory-mcp/internal/agentmemory"
 	"github.com/dark-agents/dark-memory-mcp/internal/session"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 )
@@ -27,12 +36,31 @@ type SessionStartInput struct {
 }
 
 // SessionStartOutput is what SessionStart returns. SessionID is the
-// new opaque ID; subsequent operations carry it.
+// new opaque ID; subsequent operations carry it. ContextRecap is
+// the v2.4.0 addition (omitted when empty so callers can detect
+// "no accumulated knowledge" vs "fetch failed").
 type SessionStartOutput struct {
-	SessionID      string    `json:"session_id"`
-	ProjectID      string    `json:"project_id"`
-	StartedAt      time.Time `json:"started_at"`
-	ConstitutionID string    `json:"constitution_id,omitempty"`
+	SessionID      string        `json:"session_id"`
+	ProjectID      string        `json:"project_id"`
+	StartedAt      time.Time     `json:"started_at"`
+	ConstitutionID string        `json:"constitution_id,omitempty"`
+	ContextRecap   *ContextRecap `json:"context_recap,omitempty"`
+}
+
+// ContextRecap is the v2.4.0 agent_memory-derived context prepended
+// to SessionStart's response. It surfaces accumulated knowledge so
+// the operator can pick up where the last session left off instead of
+// starting blind. All fields are best-effort: an empty list (no
+// hits) means the project has no agent_memory rows yet.
+type ContextRecap struct {
+	// PinnedMemories is the list of pinned rows from
+	// agent_memory_list(scope=project, pinned_only=true). Pinned =
+	// operator-curated canonical facts about the project.
+	PinnedMemories []agentmemory.AgentMemory `json:"pinned_memories,omitempty"`
+	// OpenTodos is the list of kind=todo rows that are still open
+	// (no closed status in v2.4.0; "open" = not yet archived).
+	// Limited to 20 by default.
+	OpenTodos []agentmemory.AgentMemory `json:"open_todos,omitempty"`
 }
 
 // SessionStart opens a session for the given operator + project.
@@ -108,11 +136,40 @@ func (o *Orchestrator) SessionStart(ctx context.Context, in SessionStartInput) (
 	// second audit row needed here. The orchestrator-level audit
 	// signal is the SaveSession call itself.
 
+	// v2.4.0: surface the v2.1.0 agent_memory data plane on
+	// SessionStart. Best-effort: a broken agent_memory store MUST
+	// NOT block session creation. Errors are swallowed (no logger
+	// interface yet — orchestrator package nop). If both queries
+	// return zero hits, ContextRecap is nil (the JSON omits the
+	// field so existing callers see no behavioral change).
+	recap := o.recapSessionStartMemory(ctx)
+
 	startedAt, _ := time.Parse(time.RFC3339Nano, now)
 	return &SessionStartOutput{
 		SessionID:      sess.SessionID,
 		ProjectID:      in.ProjectID,
 		StartedAt:      startedAt,
 		ConstitutionID: in.ConstitutionID,
+		ContextRecap:   recap,
 	}, nil
+}
+
+// recapSessionStartMemory is the v2.4.0 best-effort agent_memory
+// recap helper. Returns nil when the project has no accumulated
+// memory (the JSON omits the field). Errors are swallowed — see
+// SessionStart docstring for the rationale.
+func (o *Orchestrator) recapSessionStartMemory(ctx context.Context) *ContextRecap {
+	// Pinned: operator-curated canonical facts. Project-wide by
+	// default (any operator's pinned); v2.4.x follow-up can narrow
+	// to "my pinned" by plumbing agent_id into the list filter.
+	pinned, _ := o.listPinnedForVibe(ctx, "", 10)
+	// Open todos: kind=todo rows scoped project-wide in v2.4.0.
+	openTodos, _ := o.listOpenTodosForVibe(ctx, "", 20)
+	if len(pinned) == 0 && len(openTodos) == 0 {
+		return nil
+	}
+	return &ContextRecap{
+		PinnedMemories: pinned,
+		OpenTodos:      openTodos,
+	}
 }

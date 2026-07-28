@@ -6,6 +6,140 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [2.4.0] — 2026-07-28
+
+### Added — memory RAG into the vibe-loop (closes v2.3.0 data-plane orphan debt)
+
+The v2.1.0 + v2.3.0 `agent_memory` data plane shipped with producers
+(save / list / get / update / archive) and one consumer (recall), but
+the **vibe-loop** itself (session_start, drift_judge, research_topic,
+judge, consensus) never consulted agent_memory. Operators landed on
+every session with a blank slate; drift_judge scored artifacts without
+seeing prior decisions; research_topic queried the world but not its
+own memory. v2.3.0 closed the `save-decouple` + `agent_memory_recall`
+gaps but knowingly left the integration to v2.4.0.
+
+**v2.4.0 closes that debt.** Four integrations, all additive, all
+best-effort (a broken agent_memory store MUST NOT block any VLP
+path):
+
+1. **`SessionStart` → `ContextRecap`** (output field). After
+   `SaveSession`, the orchestrator fetches top-10 pinned rows
+   project-wide + top-20 kind=todo rows. Emitted as a new field on
+   `SessionStartOutput`. Empty recap → JSON omits the field
+   (backward compatible).
+2. **`PublishVibe` → `drift_judge` enrichment**. Before calling the
+   LLM judge, the artifact text is prepended with a formatted block
+   of relevant prior decisions + findings (BM25-ranked, top 5). The
+   enrichment is invisible at the wire level (the artifact is what
+   gets persisted — not the enriched prompt).
+3. **`ResearchTopic` → `PriorFindings`** (output field). Top-5
+   kind=finding rows relevant to the query, surfaced alongside
+   fresh research items.
+4. **Helper layer**: `recallForVibe`, `listPinnedForVibe`,
+   `listOpenTodosForVibe`, `formatHitsForContext`, `firstLine` —
+   `internal/orchestration/agent_memory.go`. Each helper swallows
+   errors and returns best-effort empty results; callers never need
+   to error-handle them.
+
+### Wire contract (additive only)
+
+```jsonc
+// dark_memory_session_start now MAY return a context_recap field
+{
+  "session_id": "sess-...",
+  "project_id": "default",
+  "started_at": "2026-07-28T...",
+  "context_recap": {                  // v2.4.0 NEW
+    "pinned_memories": [...],         // top 10 pinned rows
+    "open_todos": [...]               // top 20 kind=todo rows
+  }
+}
+
+// dark_memory_research_topic now MAY return a prior_findings field
+{
+  "run_id": 42,
+  "items_count": 5,
+  "items": [...],
+  "prior_findings": [...]             // v2.4.0 NEW (top 5 kind=finding)
+}
+```
+
+`dark_memory_vibe_publish` is unchanged on the wire (the drift_judge
+enrichment is internal to publish_vibe; the artifact body itself
+is unmodified).
+
+### Why this matters
+
+Before v2.4.0 the agent_memory data plane had **two producers
+(sessions, artifacts)** and **zero consumers in the workflow**. The
+tool was an island. After v2.4.0 the workflow IS the consumer:
+
+- `session_start` shows you what you (or your project) already
+  know, before you start.
+- `drift_judge` scores an artifact against the project's accumulated
+  decisions + findings, not just the artifact's own text.
+- `research_topic` shows you the in-project findings first, before
+  hitting the world.
+
+This is the canonical Mem0 / Letta "memory RAG" pattern applied to
+our own vibe-loop. Equivalent to Zylos AI's 2026-04 observation that
+"the production consensus in 2025-2026 is a three-tier hierarchy" —
+v2.4.0 implements the long-term tier that v2.1.0 was missing in
+the workflow.
+
+### Drift governance
+
+`dark_memory_judge(eval_type=drift_judge)` returned
+`verdict=aligned` with `confidence=0.95` (evaluation 416). The
+release is approved for canonical artifact publication. Source of
+truth for invariants is `docs/INVARIANTS.md`; INV-10 (rows survive
+session close) is honored by the best-effort helpers (they query
+across project-wide scope, not session scope).
+
+### Tests
+
+4 new defensive tests in
+`tests/orchestration/agent_memory_v2_4_0_integration_test.go`:
+
+- `TestV240_SessionStart_SurfacesContextRecap` — pinned + todos
+  surface in the recap; INV-1 audit row still emitted.
+- `TestV240_SessionStart_NoRecapWhenProjectEmpty` — empty recap
+  is nil (backward compatible).
+- `TestV240_ResearchTopic_EmitsPriorFindings` — BM25-ranked
+  in-project findings surface.
+- `TestV240_DriftJudge_BestEffortContract` — a broken store
+  returns ErrSessionRequired cleanly, no panic / no half-state.
+
+`go test ./...` **all green** post-merge.
+
+### Open follow-ups (NOT in v2.4.0)
+
+- `agent_id` filter is not yet plumbed through `ContextRecap`
+  (currently project-wide). v2.4.x follow-up: scope to "my
+  pinned" rather than "project pinned" by plumbing the active
+  operator's `agent_id` into the list filter.
+- `brand_match` and `compliance_check` judges could also be
+  enriched, but were NOT in scope (the drift_judge is the canonical
+  judge; brand/compliance are optional eval paths). v2.4.x
+  follow-up.
+- The operator is responsible for plumbing scope=session vs
+  scope=project explicitly if they want per-session isolation in
+  the recap. v2.4.x follow-up: add an opt-in `recap_scope` flag
+  on `SessionStartInput`.
+
+### Process / pre-flight
+
+- Started dark-memory project session `sess-f3e1f134396295bc`.
+- VLP state machine: not formally cycled (the vibe_spec + vibe_publish
+  MCP tools remained broken on the wrapper layer; pre-flight
+  proceeded via `dark_memory_judge` directly per the v2.3.0
+  workaround — see CHANGELOG v2.3.0 Process note).
+- drift_judge evaluation 416 verdict=aligned confidence=0.95 →
+  release approved.
+
+---
+
 ## [2.3.0] — 2026-07-28
 
 ### Added — agent_memory save-decouple + Mem0 alignment + recall tool

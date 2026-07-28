@@ -2,6 +2,13 @@
 // aggregates results, persists one ResearchRun + Items in the
 // active project. Returns the new run ID and the items (already
 // capped to MaxItems).
+//
+// v2.4.0 memory RAG: prior findings from agent_memory are surfaced
+// alongside the fresh research items in a new PriorFindings field.
+// This is the second vibe-loop integration point (after
+// session_start). Without it, the operator's own project was
+// invisible to research_topic — the system queried the world but
+// not its own memory.
 package orchestration
 
 import (
@@ -10,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dark-agents/dark-memory-mcp/internal/agentmemory"
 	"github.com/dark-agents/dark-memory-mcp/internal/research"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 )
@@ -24,9 +32,10 @@ type ResearchTopicInput struct {
 
 // ResearchTopicOutput is the result of a research topic.
 type ResearchTopicOutput struct {
-	RunID      int64           `json:"run_id"`
-	ItemsCount int             `json:"items_count"`
-	Items      []research.Item `json:"items"`
+	RunID         int64                 `json:"run_id"`
+	ItemsCount    int                   `json:"items_count"`
+	Items         []research.Item       `json:"items"`
+	PriorFindings []agentmemory.SearchHit `json:"prior_findings,omitempty"`
 }
 
 // ResearchTopic runs the registered research backends, aggregates
@@ -87,6 +96,12 @@ func (o *Orchestrator) ResearchTopic(ctx context.Context, in ResearchTopicInput)
 
 	tookMs := o.now().Sub(start).Milliseconds()
 
+	// v2.4.0 memory RAG: surface relevant in-project findings (kind=
+	// finding) so the operator sees what they already know before
+	// the fresh items hit. Best-effort — broken agent_memory MUST
+	// NOT block the research_topic flow.
+	priorFindings, _ := o.recallForVibe(ctx, in.Query, "finding", "", "", 5)
+
 	run := &research.ResearchRun{
 		SessionID:     in.SessionID,
 		Query:         in.Query,
@@ -110,9 +125,10 @@ func (o *Orchestrator) ResearchTopic(ctx context.Context, in ResearchTopicInput)
 	}
 
 	return &ResearchTopicOutput{
-		RunID:      runID,
-		ItemsCount: len(allItems),
-		Items:      allItems,
+		RunID:         runID,
+		ItemsCount:    len(allItems),
+		Items:         allItems,
+		PriorFindings: priorFindings,
 	}, nil
 }
 

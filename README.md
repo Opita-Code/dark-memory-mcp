@@ -476,7 +476,7 @@ de estado):
 
 ### Estado actual (al cierre de esta versión)
 
-- **Versión**: v2.3.0 (post-v2.1.0)
+- **Versión**: v2.4.0 (post-v2.3.0; memory-RAG wired into the vibe-loop)
 - **Schema DB**: v19 (agent_memory + agent_id + memory_type + FTS5 mirror)
 - **Tools canónicos**: 34 (+ 3 en modo armed)
 - **Backends**: SQLite (default) + Postgres (research only en este host)

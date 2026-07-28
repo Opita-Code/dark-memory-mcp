@@ -32,6 +32,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dark-agents/dark-memory-mcp/internal/agentmemory"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 	"github.com/dark-agents/dark-memory-mcp/internal/vibecase"
 	"github.com/dark-agents/dark-memory-mcp/internal/vibeflow"
@@ -216,11 +217,19 @@ func (o *Orchestrator) PublishVibe(ctx context.Context, in PublishVibeInput) (*P
 		result.NextAction = "publish"
 		result.Reasoning = "no artifact text; drift_judge requires text body"
 	} else {
+		// v2.4.0 memory-RAG: prepend agent_memory hits to the
+		// drift_judge content so the judge sees relevant prior
+		// decisions / findings when scoring the artifact. Best-
+		// effort: errors are swallowed — drift_judge runs even if
+		// agent_memory is broken (the data-plane should never
+		// break the judge path; that's the principle that keeps
+		// the VLP integration non-blocking).
+		enriched := o.enrichWithAgentMemory(ctx, in.Artifact.Text, []string{"decision", "finding"}, 5)
 		judgeOut, jerr := o.Judge(ctx, JudgeInput{
 			EvalType:   "drift_judge",
 			TargetType: "artifact",
 			TargetID:   fmt.Sprintf("artifact_%d", artifactID),
-			Content:    in.Artifact.Text,
+			Content:    enriched,
 		})
 		if jerr != nil {
 			// No LLM available (or canary rejected). Record
@@ -372,4 +381,48 @@ func nextActionForVerdict(v string) string {
 	default:
 		return "human_gate"
 	}
+}
+
+// enrichWithAgentMemory is the v2.4.0 memory-RAG prepend helper.
+// Takes a base text + a list of kinds to filter on (defaults to
+// "decision" + "finding" when len(kinds)==0) + a limit (defaults to
+// 5, max 50). Returns the base text with the formatted hit block
+// prepended, OR the base text unchanged if (a) agent_memory is
+// broken, (b) no project is active, or (c) no hits. Errors are
+// swallowed — the caller should never see an error from this path.
+func (o *Orchestrator) enrichWithAgentMemory(ctx context.Context, base string, kinds []string, limit int) string {
+	if strings.TrimSpace(base) == "" {
+		return base
+	}
+	if len(kinds) == 0 {
+		kinds = []string{"decision", "finding"}
+	}
+	// Filter hits across the supplied kinds; in practice we run the
+	// search once with no kind filter and re-filter the hits
+	// in-process (cheaper than N round trips).
+	hits, err := o.recallForVibe(ctx, base, "", "", "", limit*len(kinds))
+	if err != nil || len(hits) == 0 {
+		return base
+	}
+	filtered := make([]agentmemory.SearchHit, 0, len(hits))
+	want := make(map[string]bool, len(kinds))
+	for _, k := range kinds {
+		want[k] = true
+	}
+	for _, h := range hits {
+		if want[h.Kind] {
+			filtered = append(filtered, h)
+			if len(filtered) >= limit {
+				break
+			}
+		}
+	}
+	if len(filtered) == 0 {
+		return base
+	}
+	block := formatHitsForContext(filtered)
+	if block == "" {
+		return base
+	}
+	return block + "\n\n=== Artifact under review ===\n\n" + base
 }
