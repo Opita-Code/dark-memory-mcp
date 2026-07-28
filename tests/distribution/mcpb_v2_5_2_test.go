@@ -274,8 +274,12 @@ func TestV252_NPMBinaryMatchesReleaseBinary(t *testing.T) {
 	}
 
 	// 2. Download both binaries (GitHub Release + npm tarball)
+	// Note: starting from v2.5.2, GitHub Release attaches raw binaries with
+	// arch+bundle suffix (dark-mem-mcp-amd64.exe-win32). Pre-v2.5.2 used
+	// the unsuffixed name (dark-mem-mcp.exe) and was uploaded manually by
+	// the operator, causing cross-publish drift.
 	ghReleaseURL := fmt.Sprintf(
-		"https://github.com/Opita-Code/dark-memory-mcp/releases/download/v%s/dark-mem-mcp.exe",
+		"https://github.com/Opita-Code/dark-memory-mcp/releases/download/v%s/dark-mem-mcp-amd64.exe-win32",
 		latestVersion)
 	npmTarballURL := fmt.Sprintf(
 		"https://registry.npmjs.org/@opitacode/dark-memory-mcp-win32-x64/-/dark-memory-mcp-win32-x64-%s.tgz",
