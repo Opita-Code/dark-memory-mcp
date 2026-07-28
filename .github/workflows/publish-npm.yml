@@ -92,7 +92,23 @@ jobs:
         working-directory: npm/platform-${{ matrix.npm-platform }}
         run: node --check index.js
 
+      - name: Check if version already published on npm (idempotency)
+        id: check-exists
+        working-directory: npm/platform-${{ matrix.npm-platform }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN }}
+        run: |
+          PACKAGE_NAME=$(node -p "require('./package.json').name")
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          if npm view "${PACKAGE_NAME}@${PACKAGE_VERSION}" version >/dev/null 2>&1; then
+            echo "EXISTS=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::${PACKAGE_NAME}@${PACKAGE_VERSION} already published; skipping"
+          else
+            echo "EXISTS=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish platform package to npm
+        if: steps.check-exists.outputs.EXISTS != 'true'
         working-directory: npm/platform-${{ matrix.npm-platform }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN }}
@@ -145,7 +161,23 @@ jobs:
           node-version: "lts/*"
           registry-url: "https://registry.npmjs.org"
 
+      - name: Check if wrapper version already published on npm (idempotency)
+        id: check-exists
+        working-directory: npm/wrapper
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN }}
+        run: |
+          PACKAGE_NAME=$(node -p "require('./package.json').name")
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          if npm view "${PACKAGE_NAME}@${PACKAGE_VERSION}" version >/dev/null 2>&1; then
+            echo "EXISTS=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::${PACKAGE_NAME}@${PACKAGE_VERSION} already published; skipping"
+          else
+            echo "EXISTS=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish main wrapper to npm
+        if: steps.check-exists.outputs.EXISTS != 'true'
         working-directory: npm/wrapper
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN }}

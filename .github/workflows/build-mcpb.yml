@@ -86,7 +86,9 @@ jobs:
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: binary-${{ matrix.target }}
+          # Use bundle-name (not target) so the glob `binary-<bundle>-*` matches.
+          # win32 would otherwise break because target is `windows-*` but bundle-name is `win32`.
+          name: binary-${{ matrix.bundle-name }}-${{ matrix.goarch }}
           path: build/server-${{ matrix.bundle-name }}/${{ matrix.binary-name }}${{ matrix.ext }}
           retention-days: 1
 
@@ -183,24 +185,29 @@ jobs:
       - name: Rename raw binaries for release upload
         working-directory: release-binaries
         run: |
-          # The build job uploaded each binary into a subdirectory named after
-          # its matrix entry (e.g. binary-darwin-amd64/dark-mem-mcp-amd64).
-          # Flatten them to the release root with predictable names.
+          # The build job uploaded each binary into a subdirectory named
+          # `binary-<bundle-name>-<arch>` (e.g. binary-darwin-amd64).
+          # Inside that dir is the binary itself (e.g. dark-mem-mcp-amd64).
+          # Flatten to `release-binaries/<binary>-<bundle-name>` so the
+          # attach-to-release files: glob matches.
           shopt -s globstar nullglob
           for src in **/*; do
             [ -f "$src" ] || continue
             base=$(basename "$src")
-            ext="${base##*.}"
-            base_noext="${base%.*}"
             target_dir=$(dirname "$src")
-            target="${target_dir}/../${base_noext}-${target_dir##*/}"
-            # Already-renamed target: skip
-            [ -e "$target" ] && continue
-            mv "$src" "$target"
+            bundle_arch=$(basename "$target_dir")
+            # Strip "binary-" prefix and arch suffix to extract bundle-name.
+            # e.g. binary-darwin-amd64 -> darwin
+            if [[ "$bundle_arch" =~ ^binary-([^-]+)-.+$ ]]; then
+              bundle_name="${BASH_REMATCH[1]}"
+              target="release-binaries/${base}-${bundle_name}"
+              [ -e "$target" ] && continue
+              mv "$src" "$target"
+            fi
           done
-          # Walk and emit summary
+          # Emit summary
           echo "=== Binaries ready for release ==="
-          ls -la release-binaries/ 2>/dev/null || ls -la .
+          ls -la release-binaries/
 
       - name: Find or create GitHub Release
         uses: softprops/action-gh-release@v2
