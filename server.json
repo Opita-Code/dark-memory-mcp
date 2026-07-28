@@ -1,0 +1,47 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
+  "name": "io.github.opita-code/dark-memory-mcp",
+  "title": "dark-memory-mcp",
+  "description": "Persistent memory + vibe-loop engine + agent governance for AI agents. Tracks decisions, findings, and audit history across sessions so your AI never loses the thread of what it is doing. Single Go binary, SQLite-backed, stdio MCP transport. Cross-platform install via npx: npx -y @opita-code/dark-memory-mcp",
+  "version": "2.5.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@opita-code/dark-memory-mcp",
+      "version": "2.5.0",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ],
+  "repository": {
+    "url": "https://github.com/Opita-Code/dark-memory-mcp",
+    "source": "github"
+  },
+  "homepage": "https://github.com/Opita-Code/dark-memory-mcp",
+  "license": "MIT",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "agent-memory",
+    "vibe-loop",
+    "agent-governance",
+    "decision-tracking",
+    "audit-trail",
+    "sqlite",
+    "dark-agents"
+  ],
+  "tools": [
+    { "name": "dark_memory_session_start", "description": "Start a governed session" },
+    { "name": "dark_memory_session_close", "description": "Close a session cleanly" },
+    { "name": "dark_memory_session_resume", "description": "Resume an existing session" },
+    { "name": "dark_memory_agent_memory_save", "description": "Save persistent agent memory (decisions, findings, todos, links)" },
+    { "name": "dark_memory_agent_memory_list", "description": "List memories by scope" },
+    { "name": "dark_memory_agent_memory_recall", "description": "BM25 ranked search over agent_memory" },
+    { "name": "dark_memory_vibe_spec", "description": "Create a vibe-loop spec" },
+    { "name": "dark_memory_vibe_publish", "description": "Publish artifact under a spec with drift_judge" },
+    { "name": "dark_memory_judge", "description": "Run a single LLM-as-judge verdict" },
+    { "name": "dark_memory_consensus", "description": "Run N-shot consensus verdict" },
+    { "name": "dark_memory_health_ping", "description": "Liveness probe (server identity, DB, schema)" }
+  ]
+}

@@ -6,6 +6,135 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [2.5.0] — 2026-07-28
+
+### Added — npm wrapper (cross-platform one-line install) + Official MCP Registry entry
+
+Until v2.4.x, dark-memory-mcp was distributed only as raw Go binaries
+in GitHub Releases. Vibe-coder install path was:
+
+1. Open Releases page.
+2. Find OS + arch.
+3. Download `.exe` / ELF / Mach-O.
+4. Compute SHA-256, compare with the release notes.
+5. Hand-edit `mcp.json` with the absolute binary path.
+6. To upgrade: repeat steps 1-5.
+
+That is **five steps of friction** to get a 25 MB binary onto disk.
+The Go binary itself has zero runtime dependencies (static, CGO=0),
+so the install path is the only thing the user has to figure out.
+
+**v2.5.0 collapses all five steps into one line:**
+
+```json
+{
+  "mcpServers": {
+    "dark-memory": {
+      "command": "npx",
+      "args": ["-y", "@opita-code/dark-memory-mcp"]
+    }
+  }
+}
+```
+
+### What v2.5.0 ships
+
+1. **npm wrapper** (`@opita-code/dark-memory-mcp`). Microsoft-pattern
+   cross-platform wrapper: detects `process.platform + process.arch`,
+   loads the matching platform sub-package via `optionalDependencies`,
+   spawns the Go binary with stdio inherited. Pattern documented at
+   https://github.com/microsoft/mcp/blob/main/eng/npm/wrapperBinariesArchitecture.md
+2. **6 platform sub-packages** (`@opita-code/dark-memory-mcp-{platform}-{arch}`):
+   - `@opita-code/dark-memory-mcp-darwin-x64` (macOS Intel)
+   - `@opita-code/dark-memory-mcp-darwin-arm64` (macOS Apple Silicon)
+   - `@opita-code/dark-memory-mcp-linux-x64` (Linux x86_64)
+   - `@opita-code/dark-memory-mcp-linux-arm64` (Linux ARM64 / Graviton / Raspberry Pi)
+   - `@opita-code/dark-memory-mcp-win32-x64` (Windows x86_64)
+   - `@opita-code/dark-memory-mcp-win32-arm64` (Windows ARM64 / Surface Pro X)
+3. **`server.json`** at repo root: Official MCP Registry manifest. Once
+   published, the server shows up at
+   `io.github.opita-code/dark-memory-mcp` in
+   [registry.modelcontextprotocol.io](https://registry.modelcontextprotocol.io)
+   AND auto-syncs to PulseMCP, Glama, mcp.so, Smithery,
+   mcpservers.org (per the [OpenHelm MCP registry guide](https://openhelm.ai/blog/mcp-registry-directory-guide)).
+4. **`.github/workflows/publish-npm.yml`**: cross-compiles all 6
+   platforms via Go's `GOOS`/`GOARCH` env vars, copies each binary
+   into the matching npm sub-package, publishes all 7 npm packages in
+   order. Uses `--provenance` to attach GitHub's SLSA build
+   attestation to every published package.
+5. **`.github/workflows/publish-mcp-registry.yml`**: downloads
+   `mcp-publisher`, authenticates via GitHub OIDC (no long-lived
+   secrets), publishes to the Official MCP Registry.
+6. **`docs/npm-install.md`**: 5-host-config copy-paste examples
+   (Claude Code, Claude Desktop, opencode, Cursor) +
+   troubleshooting matrix (Windows `cmd /c`, missing
+   `optionalDependencies`, ENOENT, version pinning, cache reset).
+7. **`tests/distribution/`** (new test category): 12 static-analysis
+   tests that validate package.json structure, server.json schema,
+   node syntax on all 7 index.js files, PLATFORM_MAP consistency
+   between wrapper index.js + optionalDependencies block, workflow
+   YAML structure, version drift across all 7 npm packages +
+   server.json.
+
+### Wire contract (unchanged)
+
+The Go binary, MCP wire protocol, all 35 canonical tools, schema v20
+— everything the binary does — is unchanged. v2.5.0 adds a packaging
+layer; it does not modify the binary or its protocol.
+
+### Distribution channels now active
+
+| Channel | Status | Coverage |
+|---------|--------|----------|
+| GitHub Releases binary download | still works (unchanged) | all OSes |
+| npm wrapper (`npx -y @opita-code/dark-memory-mcp`) | ready, needs `NODE_AUTH_TOKEN` secret | all 6 platforms |
+| Official MCP Registry (`io.github.opita-code/dark-memory-mcp`) | ready, needs OIDC configured | indexed by 5+ directories on publish |
+| Auto-sync to Glama / PulseMCP / mcp.so / Smithery | automatic post-registry-publish | all 5+ directories |
+| Homebrew tap (macOS) | deferred to v2.5.1 | n/a |
+| Scoop bucket (Windows) | deferred to v2.5.1 | n/a |
+| DXT (Claude Desktop one-click) | deferred to v2.5.2 | n/a |
+
+### Why I did not ship Homebrew / Scoop / DXT in v2.5.0
+
+Per the operator-approved phased roadmap:
+
+- **Sprint 1** (v2.5.0) = npm wrapper + Official MCP Registry. Solves
+  the install friction for **100% of the audience** including Mac
+  (~60%) and Windows (~25%).
+- **Sprint 2** (v2.5.1) = Homebrew tap + Scoop bucket. For users
+  who already have `brew` or `scoop` installed and prefer those.
+- **Sprint 3** (v2.5.2) = DXT. For Claude Desktop users specifically.
+
+### Operator setup required before first publish
+
+This release commits the npm wrapper structure + CI workflow + server.json
++ docs. **The CI will not auto-publish until the operator configures
+two secrets on the GitHub repo:**
+
+1. `NODE_AUTH_TOKEN`: An npm automation token. Create at
+   https://www.npmjs.com/settings/<your-org>/tokens with "Automation"
+   type. Required by publish-npm.yml.
+2. **npm org must exist**: `npm view @opita-code/dark-memory-mcp`
+   returns 404 today. The operator must create the `@opita-code` org
+   on npmjs.com before the first publish.
+
+For the Official MCP Registry publish: no token required (uses GitHub
+OIDC, configured automatically when the workflow has
+`permissions: id-token: write`).
+
+### What v2.5.0 does NOT change
+
+- Zero protocol changes. The 35 canonical tools behave identically.
+- Zero schema migrations. Schema v20 is the current and remains the
+  current.
+- Zero breaking changes to the wire contract. All existing MCP
+  clients that connect via the GitHub Releases download path keep
+  working unchanged.
+- Zero changes to the Go binary itself. v2.5.0 = same v2.4.3 binary,
+  repackaged.
+
+---
+
 ## [2.4.0] — 2026-07-28
 
 ### Added — memory RAG into the vibe-loop (closes v2.3.0 data-plane orphan debt)

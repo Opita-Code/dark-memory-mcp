@@ -1,0 +1,85 @@
+name: publish-mcp-registry
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write  # For OIDC auth with the Official MCP Registry
+
+jobs:
+  publish:
+    name: Publish to Official MCP Registry
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Extract version from git tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify server.json version matches tag
+        run: |
+          PACKAGE_VERSION=$(node -p "require('./server.json').version")
+          if [ "$PACKAGE_VERSION" != "${{ steps.version.outputs.VERSION }}" ]; then
+            echo "::error::server.json version ($PACKAGE_VERSION) does not match git tag (${{ steps.version.outputs.VERSION }})"
+            exit 1
+          fi
+          echo "server.json version $PACKAGE_VERSION matches tag"
+
+      - name: Validate server.json schema basics
+        run: |
+          # Lightweight validation: server.json must have name, version,
+          # packages array, and each package must have identifier.
+          node -e "
+            const s = require('./server.json');
+            if (!s.name || !s.name.startsWith('io.github.opita-code/')) {
+              console.error('server.json: invalid name: ' + s.name);
+              process.exit(1);
+            }
+            if (!s.version) { console.error('server.json: missing version'); process.exit(1); }
+            if (!Array.isArray(s.packages) || s.packages.length === 0) {
+              console.error('server.json: packages must be a non-empty array');
+              process.exit(1);
+            }
+            for (const p of s.packages) {
+              if (!p.registryType || !p.identifier || !p.version) {
+                console.error('server.json: package missing required field');
+                process.exit(1);
+              }
+              if (!p.transport || p.transport.type !== 'stdio') {
+                console.error('server.json: transport.type must be stdio');
+                process.exit(1);
+              }
+            }
+            console.log('server.json schema validation passed');
+          "
+
+      - name: Download mcp-publisher CLI
+        run: |
+          set -euo pipefail
+          OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+          ARCH=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+          URL="https://github.com/modelcontextprotocol/registry/releases/download/latest/mcp-publisher_${OS}_${ARCH}.tar.gz"
+          echo "Downloading $URL"
+          curl -sSL "$URL" | tar xz mcp-publisher
+          chmod +x mcp-publisher
+          ./mcp-publisher --version
+
+      - name: Login to Official MCP Registry (GitHub OIDC)
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish to Official MCP Registry
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: ./mcp-publisher publish
+
+      - name: Confirm registry entry is live
+        run: |
+          sleep 5  # Allow registry to propagate
+          curl -sf "https://registry.modelcontextprotocol.io/v0/servers?search=io.github.opita-code/dark-memory-mcp" | head -c 500
+          echo

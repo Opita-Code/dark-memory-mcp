@@ -21,9 +21,10 @@
 
 [![MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Go 1.25+](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go&logoColor=white)](go.mod)
-[![MCP tools](https://img.shields.io/badge/MCP-34%20canonical%20tools-blueviolet)](#las-34-herramientas)
-[![Schema](https://img.shields.io/badge/schema-v18-success)](#la-base-de-datos)
-[![Tests](https://img.shields.io/badge/tests-22%20suites%20verdes-brightgreen)](#tests)
+[![MCP tools](https://img.shields.io/badge/MCP-35%20canonical%20tools-blueviolet)](#las-35-herramientas)
+[![Schema](https://img.shields.io/badge/schema-v20-success)](#la-base-de-datos)
+[![Tests](https://img.shields.io/badge/tests-27%20suites%20verdes-brightgreen)](#tests)
+[![Install](https://img.shields.io/badge/install-npx%20%40opita--code%2Fdark--memory--mcp-cc3534)](docs/npm-install.md)
 [![Backends](https://img.shields.io/badge/backends-sqlite%20%7C%20postgres-blue)](#la-base-de-datos)
 
 [¿Qué es dark-memory?](#que-es-dark-memory) · [¿Qué es vibe-loop?](#que-es-vibe-loop) · [Cómo se conectan](#como-se-conectan) · [Quickstart en 5 minutos](#quickstart-en-5-minutos) · [Hacer un vibe-loop paso a paso](#hacer-un-vibe-loop-paso-a-paso) · [Cuando algo no funciona](#cuando-algo-no-funciona) · [Para los curiosos técnicos](#para-los-curiosos-tecnicos)
@@ -147,12 +148,75 @@ en el cuaderno qué hizo y por qué. Es un loop cerrado.
 ### 1. Verifica que tienes lo necesario
 
 ```
-- Go 1.25+ (https://go.dev/dl/)
-- Git
-- Una terminal
+- Node.js 18+ (https://nodejs.org/) — solo si vas a usar el wrapper npm
+- Go 1.25+ (https://go.dev/dl/) — solo si vas a compilar desde source
 ```
 
-### 2. Clona y compila
+### 2. Conéctalo a tu agente (opencode, Claude Code, Cursor, etc.)
+
+**Opción A — vía npm wrapper (recomendado para vibe-coders, desde v2.5.0):**
+
+Pega esto en tu config de MCP host:
+
+```jsonc
+{
+  "mcpServers": {
+    "dark-memory": {
+      "command": "npx",
+      "args": ["-y", "@opita-code/dark-memory-mcp"]
+    }
+  }
+}
+```
+
+Eso es todo. `npx` descarga el wrapper + el binario para tu OS la primera vez; las
+siguientes veces usa caché. No hay build, no hay SHA-256 manual, no hay
+`go install`. Funciona idéntico en macOS, Linux y Windows.
+
+Detalles por host (Claude Code, Claude Desktop, opencode, Cursor) en
+[`docs/npm-install.md`](docs/npm-install.md).
+
+**Opción B — descarga directa del binario (legacy, aún soportado):**
+
+Ve a [Releases](https://github.com/Opita-Code/dark-memory-mcp/releases),
+descarga el `.exe` / ELF / Mach-O de tu OS, verifica el SHA-256, y apunta
+tu MCP host al path absoluto:
+
+```jsonc
+{
+  "mcp": {
+    "dark-memory": {
+      "type": "local",
+      "command": ["C:/ruta/a/dark-mem-mcp.exe"],
+      "enabled": true
+    }
+  }
+}
+```
+
+(en Mac/Linux sería sin `.exe`).
+
+### 3. Verifica que arrancó bien
+
+Si usaste el wrapper npm, abre tu agente y pídele que llame a
+`dark_memory_health_ping`. Deberías ver un JSON con
+`schema_version: 20` (o superior) y `driver: sqlite`.
+
+Si compilaste desde source:
+
+```bash
+./bin/dark-mem-inspect --json
+```
+
+### 4. Pídele a tu agente que use el cuaderno
+
+> *"Inicia una sesión de dark-memory para mí, soy Nico y estoy trabajando
+> en el proyecto darkmem."*
+
+El agente debería llamar a `dark_memory_session_start`. Si no, recuérdale
+que tiene una herramienta MCP disponible.
+
+### ¿Quieres compilarlo tú mismo?
 
 ```bash
 git clone https://github.com/Opita-Code/dark-memory-mcp.git
@@ -164,59 +228,14 @@ go build -o bin/dark-mem-cli   ./cmd/dark-mem-cli
 go build -o bin/dark-mem-inspect ./cmd/dark-mem-inspect
 ```
 
-### 3. Conéctalo a tu agente (opencode, Claude Code, Cursor, etc.)
-
-Si usas **opencode**, agrega esto a tu `opencode.jsonc`:
-
-```jsonc
-{
-  "mcp": {
-    "dark-memory": {
-      "type": "local",
-      "command": ["C:/ruta/a/dark-memory-mcp/bin/dark-mem-mcp.exe"],
-      "enabled": true
-    }
-  }
-}
-```
-
-(reemplaza la ruta con la real; en Mac/Linux sería sin `.exe`).
-
-### 4. Verifica que arrancó bien
-
-```bash
-./bin/dark-mem-inspect --json
-```
-
-Deberías ver algo como:
-
-```json
-{
-  "driver": "sqlite",
-  "schema_version": 18,
-  "canary_present": false,
-  "active_constitution_id": "dark-agents/dark-memory-mcp",
-  "active_constitution_version": "2.1.0",
-  "tables": ["projects", "sessions", "agent_memory", ...]
-}
-```
-
-Si ves `schema_version: 18`, todo está bien. La primera vez crea un archivo
-`dark-memory.db` en el directorio donde arrancaste.
-
-### 5. Pídele a tu agente que use el cuaderno
-
-> *"Inicia una sesión de dark-memory para mí, soy Nico y estoy trabajando
-> en el proyecto darkmem."*
-
-El agente debería llamar a `dark_memory_session_start`. Si no, recuérdale
-que tiene una herramienta MCP disponible.
+Útil si quieres contribuir, hacer un fork, o auditar el binario antes
+de correrlo.
 
 ---
 
-## Las 34 herramientas
+## Las 35 herramientas
 
-dark-memory expone 34 acciones que tu agente puede invocar. Todas empiezan
+dark-memory expone 35 acciones que tu agente puede invocar. Todas empiezan
 con el prefijo `dark_memory_`. Están agrupadas en 11 oficios:
 
 ### 🧭 Empezar y cerrar sesión (PROJECT + SESSION — 5 tools)
@@ -476,12 +495,13 @@ de estado):
 
 ### Estado actual (al cierre de esta versión)
 
-- **Versión**: v2.4.3 (post-v2.4.2; wire-layer MCP audit + 3 contract-drift fixes)
-- **Schema DB**: v20 (unchanged across v2.4.x; v2.4.3 is test-schema cleanup only)
-- **Tools canónicos**: 34 (+ 3 en modo armed)
+- **Versión**: v2.5.0 (post-v2.4.3; npm wrapper + Official MCP Registry publish)
+- **Schema DB**: v20 (unchanged across v2.4.x and v2.5.0; zero migrations in v2.5.0)
+- **Tools canónicos**: 35 (+ 3 en modo armed)
 - **Backends**: SQLite (default) + Postgres (research only en este host)
 - **Paquetes internos**: 27
-- **Suites de test**: ~22
+- **Suites de test**: 27
+- **Canales de distribución**: GitHub Releases + npm wrapper + Official MCP Registry
 
 ---
 

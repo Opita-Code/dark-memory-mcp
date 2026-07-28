@@ -1,0 +1,49 @@
+{
+  "name": "@opita-code/dark-memory-mcp",
+  "version": "2.5.0",
+  "description": "dark-memory-mcp cross-platform wrapper — installs the right binary for your OS via optionalDependencies. Persistent memory + vibe-loop engine + agent governance for AI agents (MCP server).",
+  "license": "MIT",
+  "bin": {
+    "dark-memory-mcp": "index.js"
+  },
+  "main": "index.js",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "mcpName": "io.github.opita-code/dark-memory-mcp",
+  "files": [
+    "index.js",
+    "README.md"
+  ],
+  "scripts": {
+    "postinstall": "node -e \"console.log('dark-memory-mcp installed. Use: dark-memory-mcp or npx @opita-code/dark-memory-mcp')\""
+  },
+  "optionalDependencies": {
+    "@opita-code/dark-memory-mcp-darwin-x64": "2.5.0",
+    "@opita-code/dark-memory-mcp-darwin-arm64": "2.5.0",
+    "@opita-code/dark-memory-mcp-linux-x64": "2.5.0",
+    "@opita-code/dark-memory-mcp-linux-arm64": "2.5.0",
+    "@opita-code/dark-memory-mcp-win32-x64": "2.5.0",
+    "@opita-code/dark-memory-mcp-win32-arm64": "2.5.0"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "agent-memory",
+    "vibe-loop",
+    "agent-governance",
+    "dark-agents",
+    "sqlite",
+    "cross-platform"
+  ],
+  "author": "Opita Code <nico@opitacode.com>",
+  "homepage": "https://github.com/Opita-Code/dark-memory-mcp#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Opita-Code/dark-memory-mcp.git",
+    "directory": "npm/wrapper"
+  },
+  "bugs": {
+    "url": "https://github.com/Opita-Code/dark-memory-mcp/issues"
+  }
+}
