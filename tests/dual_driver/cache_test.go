@@ -135,7 +135,7 @@ func TestCachedSourceCapabilities(t *testing.T) {
 	if err != nil || caps1 == nil {
 		t.Fatalf("CapabilitiesFrame #1: err=%v caps=%+v", err, caps1)
 	}
-	if !caps1.HasGrant("dark_memory_active_policy") {
+	if !caps1.HasGrant("active_policy") {
 		t.Errorf("CapabilitiesFrame #1 missing default grant")
 	}
 

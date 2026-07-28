@@ -146,13 +146,13 @@ func TestFrameSourceCapabilities(t *testing.T) {
 	if caps.SessionID != sid {
 		t.Errorf("SessionID = %q, want %q", caps.SessionID, sid)
 	}
-	if !caps.HasGrant("dark_memory_active_policy") {
-		t.Errorf("HasGrant(dark_memory_active_policy) = false, want true")
+	if !caps.HasGrant("active_policy") {
+		t.Errorf("HasGrant(active_policy) = false, want true")
 	}
-	if !caps.HasGrant("dark_memory_recall") {
-		t.Errorf("HasGrant(dark_memory_recall) = false, want true")
+	if !caps.HasGrant("recall") {
+		t.Errorf("HasGrant(recall) = false, want true")
 	}
-	if caps.HasGrant("dark_memory_nonexistent_tool") {
+	if caps.HasGrant("nonexistent_tool") {
 		t.Errorf("HasGrant(nonexistent) = true, want false")
 	}
 	if !caps.HasProjectAccess("default") {
@@ -237,7 +237,7 @@ func TestFrameSourcePostgresDual(t *testing.T) {
 	if err != nil || caps == nil {
 		t.Fatalf("CapabilitiesFrame (postgres): err=%v caps=%+v", err, caps)
 	}
-	if !caps.HasGrant("dark_memory_active_policy") {
+	if !caps.HasGrant("active_policy") {
 		t.Errorf("CapabilitiesFrame missing default grant on postgres")
 	}
 }

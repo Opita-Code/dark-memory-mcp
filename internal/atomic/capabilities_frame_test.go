@@ -8,8 +8,8 @@ import (
 
 func TestCapabilitiesFrame_HappyPath(t *testing.T) {
 	tools := []ToolGrant{
-		{ToolName: "dark_memory_recall", Scope: "*", GrantedAt: time.Now()},
-		{ToolName: "dark_memory_session_close", Scope: "proj-1", GrantedAt: time.Now()},
+		{ToolName: "recall", Scope: "*", GrantedAt: time.Now()},
+		{ToolName: "session_close", Scope: "proj-1", GrantedAt: time.Now()},
 	}
 	scopes := []ScopeGrant{
 		{ProjectID: "proj-1", ReadOnly: false},
@@ -22,10 +22,10 @@ func TestCapabilitiesFrame_HappyPath(t *testing.T) {
 	if err := f.Validate(); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
-	if !f.HasGrant("dark_memory_recall") {
+	if !f.HasGrant("recall") {
 		t.Errorf("HasGrant recall: expected true")
 	}
-	if !f.HasGrant("dark_memory_session_close") {
+	if !f.HasGrant("session_close") {
 		t.Errorf("HasGrant session_close: expected true")
 	}
 	if f.HasGrant("nonexistent_tool") {

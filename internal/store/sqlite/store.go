@@ -3984,6 +3984,22 @@ func (s *Store) SaveAgentMemory(ctx context.Context, wc store.WriteContext, m *a
 	projectID := projectIDOrActive(wc.ProjectID, s.activeProject)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 
+	// v2.1.2: bind the row to the active session (per the orchestrator
+	// contract — see internal/orchestration/agent_memory.go:81
+	// "SessionID resolved by SaveAgentMemory from active project").
+	// Pre-fix, the row was inserted with m.SessionID (empty when the
+	// orchestrator didn't set it), which made agent_memory_list with
+	// scope="session" return zero rows even immediately after a save.
+	// resolveActiveSessionID returns the projects.active_session_id
+	// for the active project — empty when no session is active (the
+	// row then becomes operator-scoped, which the list scope="operator"
+	// path can find via the write_audit actor).
+	if m.SessionID == "" {
+		if sid, _ := s.resolveActiveSessionID(ctx); sid != "" {
+			m.SessionID = sid
+		}
+	}
+
 	var id int64
 	s.mu.Lock()
 	defer s.mu.Unlock()

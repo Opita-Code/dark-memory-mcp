@@ -50,9 +50,35 @@ import (
 // CapabilitiesFrame composition until Wave 5B ships the vibe_grants
 // table with per-session grant resolution.
 //
+// # Wire-format note (v2.1.2 fix)
+//
+// The entries use BARE tool names (e.g. "session_start"), not the
+// wire-format prefixed names ("dark_memory_session_start"). The
+// gate's HasGrant check (internal/atomic/capabilities_frame.go)
+// receives `in.ToolName` as bare name from GateInput.ToolName
+// (see internal/server/middleware.go buildGateInput). The
+// CapabilityTool struct is bare-name too — see
+// internal/tools/registry.go:37 ("Name is the bare tool name
+// WITHOUT the 'dark_memory_' prefix. The server prepends the
+// prefix when registering with mcp-go").
+//
+// v2.1.0 shipped with the prefix in this constant, which meant
+// NO tool was granted by the fallback. The bug went unnoticed
+// because the e2e and dual_driver test suites call tool handlers
+// directly (t.Handler) — bypassing the gate entirely. v2.1.2
+// strips the prefix and adds the 5 new agent_memory_* tools.
+//
+// # Source of truth
+//
+// This list MUST stay in sync with internal/tools/registry.go
+// canonicalToolOrder. If you add a new tool there, add it here
+// too. The TestDefaultToolGrants_CoversCanonicalOrder test in
+// internal/recall/assemble_test.go (added in v2.1.2) enforces the
+// invariant via a set comparison.
+//
 // # Security note
 //
-// These defaults grant access to all 27 MCP tools plus global
+// These defaults grant access to all 34 MCP tools plus global
 // read-only project scope. This is INTERIM/DEVELOPMENT-ONLY
 // behavior — operators MUST NOT enable this fallback in
 // production. The expected production posture is: no fallback
@@ -62,33 +88,17 @@ import (
 // Source label for these defaults is "default:<project>" so
 // operators can grep write_audit rows for sessions using the
 // fallback.
-const DefaultToolGrants = "dark_memory_active_policy," +
-	"dark_memory_session_start," +
-	"dark_memory_session_status," +
-	"dark_memory_session_resurrect," +
-	"dark_memory_session_recover," +
-	"dark_memory_session_close," +
-	"dark_memory_session_heartbeat," +
-	"dark_memory_artifact_context," +
-	"dark_memory_spec_context," +
-	"dark_memory_session_context," +
-	"dark_memory_recall," +
-	"dark_memory_recall_research," +
-	"dark_memory_research_topic," +
-	"dark_memory_vibe_spec," +
-	"dark_memory_vibe_publish," +
-	"dark_memory_judge," +
-	"dark_memory_judge_consensus," +
-	"dark_memory_resolve_drift," +
-	"dark_memory_health_ping," +
-	"dark_memory_schema_status," +
-	"dark_memory_active_mods," +
-	"dark_memory_audit_log," +
-	"dark_memory_set_active_project," +
-	"dark_memory_vlp_handle_event," +
-	"dark_memory_admin_vacuum," +
-	"dark_memory_admin_schema_status," +
-	"dark_memory_admin_inspect"
+const DefaultToolGrants = "project_create," + // PROJECT (1)
+	"session_start,session_resume,session_status,session_close," + // SESSION (4)
+	"research_topic,research_recall,research_resume_thread," + // RESEARCH (3)
+	"vibe_publish,vibe_spec,pipeline_status,resolve_drift," + // VIBE (4)
+	"artifact_context,spec_context,session_context,recall," + // CONTEXT (4)
+	"agent_memory_save,agent_memory_list,agent_memory_get,agent_memory_update,agent_memory_archive," + // AGENT_MEMORY (5) — v2.1.0
+	"judge,consensus,judgment_history," + // JUDGE (3)
+	"active_policy,load_constitution," + // POLICY (2)
+	"memory_state,writes,anomalies,health_ping," + // OBSERVABILITY (4)
+	"admin_migrate,admin_schema_status,admin_vacuum," + // ADMIN (3)
+	"vlp_handle_event" // L6-VLP (1) — DMAP v1.1
 
 // DefaultTone is the fallback persona tone when the active
 // constitution doesn't have a [tone] section. Used by PersonaFrame.

@@ -6,6 +6,99 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [2.1.2] — 2026-07-27
+
+### Fixed (DefaultToolGrants wire prefix + SaveAgentMemory session binding)
+
+Two more bugs surfaced by the v2.1.1 end-to-end smoke test on the
+live MCP. Both were **pre-existing** — neither regression test
+exercised the gate end-to-end (e2e + dual_driver suites call
+`t.Handler` directly, bypassing GateMiddleware entirely).
+
+**Bug A — DefaultToolGrants has wire-format prefix on every entry
+(caused every session-required tool to refuse with
+`ErrCapabilityNotGranted`)**:
+
+`internal/recall/assemble.go:65` defined:
+
+```go
+const DefaultToolGrants = "dark_memory_active_policy," +
+    "dark_memory_session_start," +
+    ...
+```
+
+The list had the `dark_memory_` wire prefix on every entry. The gate's
+`CapabilitiesFrame.HasGrant` (`internal/atomic/capabilities_frame.go:154`)
+performs case-sensitive exact match against `in.ToolName` from
+`GateInput.ToolName` — which is the **bare** name (e.g.
+`"session_status"`, not `"dark_memory_session_status"`; see
+`internal/tools/registry.go:37`). Every entry mismatched, so the
+fallback granted **zero** tools.
+
+This bug went unnoticed because every test that touches a tool bypasses
+the gate:
+- `tests/e2e/server_test.go:304` — `resp, err := t.Handler(ctx, raw)`
+- `tests/dual_driver/*.go` — same direct-handler pattern
+
+Fix: strip `dark_memory_` from every entry, add the 5 new
+`agent_memory_*` tools (which were missing from v2.1.0 anyway).
+
+**Bug B — `SaveAgentMemory` did not bind the row to the active
+session**:
+
+The orchestrator-level contract
+(`internal/orchestration/agent_memory.go:81`):
+> `// SessionID resolved by SaveAgentMemory from active project.`
+
+…but the Store's `SaveAgentMemory` impl inserted `m.SessionID`
+verbatim, and the orchestrator never set it. Result: every saved row
+had `session_id=""`, so `agent_memory_list(scope="session")` returned
+zero rows even immediately after a save.
+
+Fix: in `SaveAgentMemory`, if `m.SessionID == ""`, populate from
+`s.resolveActiveSessionID(ctx)` before the INSERT. Operator-scoped
+saves (no active session) still work — the row stays with
+`session_id=""` and the `scope="operator"` list path finds it via
+write_audit.
+
+**New tests**:
+
+- `internal/recall/assemble_test.go` (external test pkg) —
+  `TestDefaultToolGrants_CoversCanonicalOrder` enforces the
+  invariant that every tool in `tools.CanonicalOrder()` is in
+  `DefaultToolGrants`, AND that every entry uses bare names. The
+  `tools.CanonicalOrder` set is the source of truth — adding a tool
+  there without updating `DefaultToolGrants` now fails CI.
+- `tests/e2e/gate_test.go` — `TestE2E_Gate_BareNameGrant` and
+  `TestE2E_Gate_SessionStatus` exercise the gate end-to-end via
+  `GateMiddleware.Wrap` (not just `t.Handler`). Both would have
+  caught v2.1.0's DefaultToolGrants bug AND v2.1.1's empty-
+  project_id bug. They are the canonical regression tests going
+  forward.
+
+**Files touched** (84 LOC production + 220 LOC test):
+
+- `internal/recall/assemble.go` — `DefaultToolGrants` constant
+  (strip prefix + add 5 agent_memory_*).
+- `internal/recall/assemble_test.go` — NEW external test pkg
+  enforcing the invariant.
+- `internal/store/sqlite/store.go` — `SaveAgentMemory` binds
+  session_id from active project.
+- `internal/atomic/capabilities_frame_test.go` — test names
+  updated from `dark_memory_*` prefix to bare.
+- `tests/dual_driver/recall_test.go`, `cache_test.go` — same.
+- `tests/e2e/gate_test.go` — NEW gate end-to-end tests.
+- `internal/server/bootstrap.go` — `DefaultServerVersion` bumped
+  2.1.1-dev → 2.1.2-dev.
+
+**Upgrade notes**: Operators on v2.1.0 or v2.1.1 must restart
+opencode to load the v2.1.2 binary. The `bin\dark-mem-mcp.exe`
+swap is the same procedure as before (Windows holds the inode
+open across `Move-Item` so opencode needs a restart, not a
+file-replace).
+
+---
+
 ## [2.1.1] — 2026-07-27
 
 ### Fixed (GateMiddleware empty project_id regression)
