@@ -430,14 +430,19 @@ func (o *Orchestrator) AgentMemoryGet(ctx context.Context, in AgentMemoryGetInpu
 	}
 	row, err := o.Store.GetAgentMemory(ctx, in.ID)
 	if err != nil {
-		// v2.8.0-alpha: when the flag is on, propagate the typed
-		// CrossProjectAccessError; when off, convert to (nil, nil)
-		// for v2.7.x backward compat.
+		// v2.8.0-alpha D5: when the flag is on, propagate the typed
+		// CrossProjectAccessError directly — it implements Is(target)
+		// for the sentinel AND its Error() method carries the same
+		// diagnostic. When the flag is off, convert to ErrNotFound
+		// for v2.7.x backward compat (no existence leak).
+		//
+		// NOTE: previously this wrapped with fmt.Errorf("%w", sentinel)
+		// which dropped the typed struct, causing errors.As to fail in
+		// the tools layer. Direct return preserves the struct.
 		var cpe *store.CrossProjectAccessError
 		if errors.As(err, &cpe) {
 			if v280Enabled() {
-				return nil, fmt.Errorf("%w (id=%d, requested=%q, row=%q)",
-					store.ErrCrossProjectAccess, in.ID, cpe.RequestedProject, cpe.RowProject)
+				return nil, cpe
 			}
 			return nil, store.ErrNotFound
 		}

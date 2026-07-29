@@ -1,6 +1,6 @@
 # dark-agent Operating Manual
 
-> **Bootstrap version 1** — tied to MCP schema v20, dark-memory-mcp v2.6.0+
+> **Bootstrap version 2** — tied to MCP schema v21, dark-memory-mcp v2.8.0-alpha+
 >
 > **What this is:** the canonical operating manual that any harness can ingest to learn how to use `dark-memory-mcp` correctly. Self-contained — does not require reading any other documentation. Cross-references below are *for context only*; you do not need to follow them to use the MCP.
 >
@@ -22,7 +22,7 @@ You are operating a **governance-first** MCP stack. Your job is to leave an audi
 
 ## 1. What you have access to
 
-You have at least one MCP server: `dark-memory-mcp`. It exposes the canonical **35 tools** + 8 resources (this manual is one of them) + 3 self-bootstrap tools introduced in v2.6.0.
+You have at least one MCP server: `dark-memory-mcp`. It exposes the canonical **41 tools** + 8 resources (this manual is one of them) + 3 self-bootstrap tools introduced in v2.6.0.
 
 | MCP | Purpose | When you need it |
 |---|---|---|
@@ -53,7 +53,7 @@ For companion tool docs (when to use them, install links), read:
 
 ---
 
-## 3. The 39 canonical tools (namespace overview)
+## 3. The 41 canonical tools (namespace overview)
 
 You do **not** need to memorize these. Use `tools/list` to discover them. The namespaces are:
 
@@ -64,7 +64,7 @@ You do **not** need to memorize these. Use `tools/list` to discover them. The na
 | `RESEARCH` | 3 | Topic/recall/resume-thread for OSINT research |
 | `VIBE` | 4 | Spec + artifact publishing + drift detection |
 | `CONTEXT` | 4 | Context projection of artifacts/specs/sessions |
-| `AGENT_MEMORY` | 5 | Mem0-aligned cross-session memory (save/list/get/update/archive) |
+| `AGENT_MEMORY` | 7 | Mem0-aligned cross-session memory (save/list/get/update/archive + **v2.8.0-alpha**: `subagent_register`, `subagent_unregister`) |
 | `RECALL` | 1 | Scoped context replay |
 | `JUDGE` | 3 | Single-shot + N-shot consensus + history |
 | `POLICY` | 2 | Active policy + constitution lookup |
@@ -72,7 +72,7 @@ You do **not** need to memorize these. Use `tools/list` to discover them. The na
 | `ADMIN` | 3 | Migrations, schema status, vacuum |
 | `VLP` | 1 | VLP state machine event handling |
 
-Total: **35 canonical tools**.
+Total: **41 canonical tools**.
 
 Plus the **3 self-bootstrap tools** (v2.6.0+):
 
@@ -142,6 +142,39 @@ When `DARK_MEMORY_V280=1`, pass `spawn_subagent=true` + `subagent_id=<opaque-uui
 
 ---
 
+## 6. Cross-project isolation (v2.8.0-alpha D5 — INV-7)
+
+`agent_memory` rows are **scoped to the active project**. When you call
+`dark_memory_agent_memory_get(id=N)` with an `id` that exists in a
+*different* project than the one bound to your active session, you get
+`code=ErrCrossProjectAccess` (NOT `ErrNotFound`):
+
+```json
+{
+  "code": "ErrCrossProjectAccess",
+  "message": "agent_memory id=42 exists in project=\"smoke-d5\" but active project=\"dark-memory\" (INV-7). Set the active session to project=\"smoke-d5\" or query it from there.",
+  "field": "id"
+}
+```
+
+**When this fires — the rule:**
+1. Stop. Do NOT fall back to `list()` to "find" the row by scanning — that would leak the cross-project row's existence and content to a caller that has no tenant rights.
+2. Tell the operator which project the row lives in (the message contains the row's project_id).
+3. Offer one of three resolutions:
+   - Switch the active session: `dark_memory_session_start(operator, project_id=<the-other-project>)`, then re-`get`.
+   - Confirm with the operator that the cross-project lookup was intentional (rare).
+   - If you legitimately need the row, fetch it from a session already bound to that project.
+
+This is distinct from `ErrNotFound` (no such row anywhere) and `ErrInternal`
+(unrelated server error). Treat `ErrCrossProjectAccess` as a **security
+boundary**, not a bug.
+
+---
+
+## 6. Drift detection (how you know you're done)
+
+---
+
 ## 6. Drift detection (how you know you're done)
 
 Every `vibe_publish` runs a `drift_judge` automatically. Verdicts:
@@ -204,7 +237,7 @@ Returns:
   "client": {"name": "claude-desktop", "title": "Claude Desktop", "version": "1.0.0"},
   "negotiated_capabilities": {"resources": true, "tools": true, "prompts": false, "logging": false},
   "transport": "stdio",
-  "server": {"name": "dark-memory-mcp", "version": "2.6.0", "schema_version": 20, "tools_total": 38, "resources_total": 8}
+  "server": {"name": "dark-memory-mcp", "version": "2.8.0-alpha", "schema_version": 21, "tools_total": 41, "resources_total": 8}
 }
 ```
 
@@ -224,7 +257,7 @@ Use this when debugging harness compatibility or filing an issue.
 
 ## 9. Wire contract
 
-- Schema: **v20** (unchanged across v2.5.0 → v2.7.0-alpha)
-- 38 canonical tools + 1 MINDSET tool = **39 tools total**
+- Schema: **v21** (v2.5.0 → v2.8.0-alpha; v21 added `active_subagents` table for v2.8.0-alpha C2)
+- 40 canonical tools + 1 MINDSET tool = **41 tools total** (v2.8.0-alpha added `subagent_register` + `subagent_unregister` under AGENT_MEMORY)
 - 10 resources (this manual + matrix + 6 install guides; companion docs accessed via `dark_memory_agent_bootstrap`)
-- All changes are **additive**. Existing consumers are unaffected.
+- All changes are **additive**. Existing consumers are unaffected when `DARK_MEMORY_V280` is unset/empty (the v2.8.0-alpha hooks become inert in that mode).
