@@ -50,24 +50,39 @@ jobs:
           # Three trigger paths:
           # - push:tags: v*           — GITHUB_REF = refs/tags/vX.Y.Z  → VERSION = X.Y.Z
           # - workflow_dispatch       — operator passes -f version=X.Y.Z
-          # - workflow_run (v2.7.1)   — fires AFTER publish-npm completion;
-          #                              the original tag lives in
-          #                              github.event.workflow_run.head_ref
-          #                              (NOT in GITHUB_REF, which is the
-          #                              workflow file's branch = main).
+          # - workflow_run (v2.7.1)   — fires AFTER publish-npm completion.
+          #                              GITHUB_REF here is the workflow
+          #                              file's branch (main). We must
+          #                              reach into the upstream event to
+          #                              find the original tag. We try
+          #                              multiple payload fields in order
+          #                              of reliability.
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.version }}" ]; then
             VERSION="${{ inputs.version }}"
             SOURCE="workflow_dispatch input"
           elif [ "${{ github.event_name }}" = "workflow_run" ]; then
+            # Try the most informative field first: workflow_run.head_branch.
+            # For tag push triggers, GitHub puts the tag name in
+            # head_branch (NOT head_ref — head_ref is empty for tags).
+            HEAD_BRANCH="${{ github.event.workflow_run.head_branch }}"
             HEAD_REF="${{ github.event.workflow_run.head_ref }}"
-            if [[ "$HEAD_REF" == refs/tags/v* ]]; then
+            UPSTREAM_EVENT="${{ github.event.workflow_run.event }}"
+            echo "DEBUG workflow_run.head_branch=$HEAD_BRANCH"
+            echo "DEBUG workflow_run.head_ref=$HEAD_REF"
+            echo "DEBUG workflow_run.event=$UPSTREAM_EVENT"
+            if [[ "$HEAD_BRANCH" == v* ]]; then
+              VERSION="${HEAD_BRANCH#v}"
+              SOURCE="workflow_run head_branch (tag)"
+            elif [[ "$HEAD_REF" == refs/tags/v* ]]; then
               VERSION="${HEAD_REF#refs/tags/v}"
               SOURCE="workflow_run head_ref"
+            elif [[ "$HEAD_BRANCH" == */* ]]; then
+              # branch-style ref like "main" — not a tag, defensive
+              VERSION=""
+              SOURCE="workflow_run non-tag branch (skip)"
             else
-              # Defensive: if upstream was a branch push (shouldn't happen
-              # with our setup), use the head_branch as the version.
-              VERSION="${HEAD_REF#refs/heads/}"
-              SOURCE="workflow_run head_branch fallback"
+              VERSION=""
+              SOURCE="workflow_run unknown shape"
             fi
           else
             VERSION="${GITHUB_REF#refs/tags/v}"
@@ -80,7 +95,6 @@ jobs:
           echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Trigger: ${{ github.event_name }}"
           echo "Ref: ${{ github.ref }}"
-          echo "Workflow run head_ref: ${{ github.event.workflow_run.head_ref }}"
           echo "Resolved VERSION: $VERSION (source: $SOURCE)"
 
       - name: Verify server.json version matches tag
