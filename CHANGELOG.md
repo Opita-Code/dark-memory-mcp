@@ -73,6 +73,49 @@ Apply migration v21 automatically on next `dark-mem-mcp` startup (idempotent `CR
 
 ---
 
+## Post-ship fixes (2026-07-29) — applied to `v2.8.0-alpha` tag (no version bump)
+
+Soak tester feedback (operator local install) revealed **6 gaps** in the initial ship, all fixed in-branch and force-moved into the `v2.8.0-alpha` tag. No version bump — single release line per operator preference (soak testers see one update, not a `.2` micro-version).
+
+### Fixed
+
+1. **`DefaultToolGrants` missing the 2 new tools** — `internal/recall/assemble.go`. Operators got `ErrCapabilityNotGranted` calling `subagent_register`/`subagent_unregister`. The new tools were registered in the registry but not granted by default. (commit `b2dfe53`)
+
+2. **`ToToolError` switch missing `ErrCrossProjectAccess` case** — `internal/tools/errors.go`. Cross-project `agent_memory_get(id=N)` returned generic `ErrInternal` instead of the typed error code. The sentinel existed in the store layer but the tools layer had no case for it. (commit `85ec910`)
+
+3. **Orchestrator wrap dropped the typed struct** — `internal/orchestration/agent_memory.go::AgentMemoryGet`. The orchestrator wrapped with `fmt.Errorf("%w", sentinel, ...)` which discarded the typed `*CrossProjectAccessError` from the chain. `errors.As(err, &cpe)` failed in the tools layer, degrading to the generic message even though `errors.Is` worked. Fix: return the typed struct directly; its `Is(target)` method already satisfies the sentinel. (commit `eea5962`)
+
+4. **`escapeFTS5` dead code** — `internal/tools/agent_memory.go`. The FTS5 escape helper existed but was never called from the `agent_memory_recall` bind function. Raw queries reached FTS5's MATCH parser and exploded with "fts5: syntax error" for any input containing chars outside the FTS5 bareword allowlist (`.`, `-`, version numbers). (commit `9897318`)
+
+5. **`escapeFTS5` allowlist was wrong** — `internal/tools/agent_memory.go`. Even with #4 calling the function, the allowlist-based escape (`alphanumeric + . - _ / + *`) was contradictory: FTS5 barewords are restricted to `[a-zA-Z0-9_]` per `sqlite.org/fts5.html §3.1`; any other character MUST be quoted. Replaced with the production pattern from `gwicho38/legal-workspace-mcp` (deepwiki.com): whitespace-tokenize, wrap each token in FTS5 phrase quotes, length-prefix support (`jira*` → `"jira"*`), embedded quotes escaped by doubling. (commit `af15ee5`)
+
+6. **Harness intelligence gap (`SYSTEM_PROMPT.md` v1 → v2)** — `internal/agentbootstrap/data/SYSTEM_PROMPT.md`. The originally shipped bootstrap doc said "35 tools" (now 41), referenced schema v20 (now v21), omitted the 2 new tool names (`subagent_register`, `subagent_unregister`) from the AGENT_MEMORY namespace table, didn't document D5 cross-project isolation, didn't teach the LLM the **R-CRUD pattern** (recall is the primary discovery tool; `list()` is for browse-all only), and had a duplicated `## 6. Drift detection` header. (commit `a557f8e` for the v1→v2 deltas to date)
+
+### Changed
+
+- **`SearchAgentMemory` BM25 score sign flipped** — `internal/store/sqlite/store.go`. FTS5 `bm25()` returns negative scores (lower = better); SQL now `-bm25(...) AS rank` so hits are ranked `ORDER BY rank DESC` (higher = better, intuitive UX). Internal sort flipped to match. (commit `af15ee5`)
+
+- **`Store.Close()` runs `PRAGMA optimize`** — `internal/store/sqlite/store.go`. Best-effort: log-only on error, never fails Close. Per `sqlite.org/fts5.html §6.9` this analyzes recent query patterns and updates internal FTS5 statistics for better query planning on next startup. (commit `af15ee5`)
+
+### Added
+
+- **`internal/tools/agent_memory_escape_test.go::TestEscapeFTS5_QuoteWrap`** — 10 cases covering the new quote-wrap behavior: `.` `-` `*` `AND OR` embedded quotes whitespace-only empty single-token. (commit `af15ee5`)
+
+- **§4.5 "Memory discovery (the recall vs list distinction)"** in `SYSTEM_PROMPT.md` — teaches the R-CRUD pattern explicitly with a comparison table, rules of thumb (1-6), and an anti-pattern callout. Replaces the v1 one-line step 8 that said only `save`. (commit `a557f8e`)
+
+### Lessons captured for future releases
+
+1. **Smoke test the harness, not just the binary.** Original v2.8.0-alpha ship verified the binary boots + all 5 P1 features wire up — but the SYSTEM_PROMPT.md (which IS the "intelligence" delivered to the LLM) wasn't updated in sync. The smoke test caught this.
+2. **OSINT > guessing.** The wrong `escapeFTS5` allowlist was contradicted by `sqlite.org/fts5.html §3.1` ("barewords are restricted to [a-zA-Z0-9_]"). One fetch of the spec would have caught it before the soak started. For any new tech we adopt (FTS5, hybrid retrieval, etc.), the spec is the source of truth — not StackOverflow, not gpt, not our last impl.
+3. **Tool registry + DefaultToolGrants + tool description + SYSTEM_PROMPT must all stay in sync.** These are 4 different places to update when adding a new tool; missing any one makes the feature invisible or unusable. (See `agent_memory id=118` for the post-mortem.)
+4. **Don't wrap a typed struct with `fmt.Errorf("%w", sentinel)`** — the wrap drops the struct from the error chain. If a downstream consumer needs `errors.As` to extract the struct (for diagnostic fields like `RowID`, `RowProject`, `RequestedProject`), return the struct directly or use `fmt.Errorf("%w", struct)` (struct implements `Unwrap()` via `Is()`).
+
+### Git history at this tag
+
+Tag `v2.8.0-alpha` now points at commit `af15ee5` (force-moved from `d224d44`). The 5 fix commits since the original ship are: `b2dfe53` (gate), `85ec910` (errors), `eea5962` (orch), `9897318` (escape call), `af15ee5` (escape rewrite + BM25 + optimize). All in branch `v2.8.0-alpha-dev`.
+
+---
+
 ## [2.7.1] — 2026-07-29
 
 Deferred cleanup after the 2.7.0-alpha ship (which required 5 commits to land due to version-drift + race-condition failure modes). No wire-contract changes — same 39 canonical tools, same schemas, same schema_version. All changes are CI hardening + tests.
