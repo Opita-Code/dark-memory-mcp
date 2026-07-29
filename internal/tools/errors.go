@@ -106,6 +106,26 @@ func ToToolError(err error) *ToolError {
 			Message: "The active constitution's SHA256 does not match the file on disk (INV-4). Migrations and writes are refused under drift.",
 			Hint:    "Reload the constitution (dark_memory_load_constitution) or align the file with the stored SHA, then restart the server.",
 		}
+	case errors.Is(err, store.ErrCrossProjectAccess):
+		// v2.8.0-alpha D5: cross-project agent_memory access is
+		// distinct from "doesn't exist". The *CrossProjectAccessError
+		// wraps the sentinel; we extract requested_project +
+		// row_project for diagnostics.
+		var cpe *store.CrossProjectAccessError
+		fieldsAs := errors.As(err, &cpe)
+		te := &ToolError{
+			Code: "ErrCrossProjectAccess",
+			Message: fmt.Sprintf(
+				"agent_memory access denied: the requested row exists in a different project (INV-7). Use the active project's id or switch projects via session_start."),
+			Hint: "Either set the active session to the row's project (session_start) or use the row's project_id to query directly.",
+		}
+		if fieldsAs && cpe != nil {
+			te.Field = "id"
+			te.Message = fmt.Sprintf(
+				"agent_memory id=%d exists in project=%q but active project=%q (INV-7). Set the active session to project=%q or query it from there.",
+				cpe.RowID, cpe.RowProject, cpe.RequestedProject, cpe.RowProject)
+		}
+		return te
 	default:
 		// Catch-all. We do NOT leak the raw error string to the LLM
 		// (it can contain file paths or partial payloads); the server
