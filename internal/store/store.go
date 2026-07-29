@@ -10,6 +10,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/agentmemory"
@@ -121,6 +122,18 @@ var (
 	ErrNotFound           = errors.New("store: row not found")
 	ErrProjectNotFound    = errors.New("store: project not found")
 	ErrInvalidArgument    = errors.New("store: invalid argument")
+	// ErrCrossProjectAccess is returned by GetAgentMemory when the
+	// requested id exists in a different project than the active one
+	// (INV-7). Distinct from ErrNotFound: the row exists, but the
+	// caller cannot see it. The wrapped *CrossProjectAccessError
+	// carries requested_project + row_project + row_id for
+	// diagnostics. errors.Is(err, ErrCrossProjectAccess) is the
+	// standard check; errors.As(err, &cpe) extracts the struct.
+	//
+	// v2.8.0-alpha addition; gated by DARK_MEMORY_V280 (default off).
+	// Pre-v2.8.0 callers see (nil, nil) for cross-project access;
+	// v2.8.0+ callers see (nil, *CrossProjectAccessError).
+	ErrCrossProjectAccess = errors.New("store: cross-project agent_memory access denied")
 	// ErrInvalidState: state transition is invalid given the row's
 	// current state (e.g. resolving a drift that was already
 	// reconciled). Distinct from ErrAlreadyExists (which is about
@@ -152,6 +165,33 @@ func (e *FieldError) Error() string {
 }
 
 func (e *FieldError) Unwrap() error { return e.Store }
+
+// CrossProjectAccessError is the v2.8.0-alpha typed error returned by
+// GetAgentMemory when the requested id exists in a different project
+// than the active one. The struct form carries requested_project,
+// row_project, and row_id for diagnostics, but the sentinel
+// ErrCrossProjectAccess is the canonical check (errors.Is).
+//
+// Operators running with full project context get both project names
+// in the error message; this is INTENTIONAL — distinguishing "wrong
+// project" from "doesn't exist" is critical for debugging LLM
+// cross-project contamination bugs.
+type CrossProjectAccessError struct {
+	RequestedProject string
+	RowProject       string
+	RowID            int64
+}
+
+func (e *CrossProjectAccessError) Error() string {
+	return fmt.Sprintf("agent_memory id=%d exists in project=%q but active project=%q (INV-7)",
+		e.RowID, e.RowProject, e.RequestedProject)
+}
+
+// Is makes errors.Is(err, ErrCrossProjectAccess) work for both the
+// sentinel and any *CrossProjectAccessError returned by the store.
+func (e *CrossProjectAccessError) Is(target error) bool {
+	return target == ErrCrossProjectAccess
+}
 
 // NewFieldError wraps store-err as an ErrInvalidArgument-wrapping
 // FieldError carrying field name. ToToolError extracts both via
@@ -582,6 +622,75 @@ type Store interface {
 	// query returns ErrInvalidArgument. Postgres stubs return
 	// ErrNotConfigured until the FTS-equivalent migration lands.
 	SearchAgentMemory(ctx context.Context, f agentmemory.SearchFilters) ([]agentmemory.SearchHit, error)
+
+	// --- ACTIVE SUBAGENTS (v2.8.0-alpha) ------------------------------
+	//
+	// The active_subagents table tracks which subagent_id (opaque
+	// uuid) is currently active for a (project_id, operator) pair.
+	// When the subagent calls agent_memory_save, the orchestrator
+	// resolves agent_id with priority (caller input > active
+	// subagent_id > projects.default_agent_id > empty). This
+	// quarantines subagent memory from the principal's pinned
+	// ContextRecap (defense-in-depth against arxiv:2605.08460
+	// inheritance attacks).
+	//
+	// TTL: rows are auto-swept on session_start if spawned_at +
+	// ttl_seconds < now. Operators can also explicitly Clear. New
+	// Set with the same (project_id, operator, subagent_id) updates
+	// spawned_at + parent_agent_id + ttl_seconds (refresh).
+
+	// SetActiveSubagent registers or refreshes the active subagent
+	// for (project_id, operator). SubagentID is the caller-provided
+	// opaque uuid. Returns the row id. Best-effort: callers should
+	// not treat failure as fatal (mindset_apply logs + continues).
+	SetActiveSubagent(ctx context.Context, wc WriteContext, row *ActiveSubagent) (int64, error)
+
+	// GetActiveSubagent returns the most-recent active subagent for
+	// (project_id, operator) if one exists and is not expired.
+	// Returns (nil, nil) if none active or all expired (sweeper
+	// should have reaped but defense-in-depth). INV-7: scoped to
+	// active project.
+	GetActiveSubagent(ctx context.Context, operator string) (*ActiveSubagent, error)
+
+	// ClearActiveSubagent removes the active subagent binding for
+	// (project_id, operator, subagent_id). Returns ErrNotFound if
+	// no matching row.
+	ClearActiveSubagent(ctx context.Context, wc WriteContext, operator, subagentID string) error
+
+	// SweepExpiredSubagents deletes active_subagents rows where
+	// spawned_at + ttl_seconds < now. Returns the count of deleted
+	// rows. Called at session_start (orchestrator-level). Idempotent.
+	SweepExpiredSubagents(ctx context.Context) (int64, error)
+}
+
+// ActiveSubagent is one row in `active_subagents` (migration v21).
+//
+// Schema:
+//   project_id       TEXT NOT NULL
+//     INV-7 tenant scope.
+//   operator         TEXT NOT NULL
+//     INV-1 audit identity. Subagent bindings are per-operator so
+//     two operators spawning subagents in parallel don't collide.
+//   subagent_id      TEXT NOT NULL
+//     Opaque uuid the principal generates when spawning. The
+//     subagent's writes will be tagged with this as agent_id.
+//   parent_agent_id  TEXT NOT NULL
+//     The principal's resolved agent_id at spawn time (for
+//     audit + write_audit provenance).
+//   spawned_at       TEXT NOT NULL
+//     RFC3339Nano timestamp of registration. Used for TTL math.
+//   ttl_seconds      INTEGER NOT NULL DEFAULT 3600
+//     Default 1h. Clamp [60, 86400] (1m..24h) at orchestrator.
+//
+// PRIMARY KEY (project_id, operator, subagent_id).
+type ActiveSubagent struct {
+	ID            int64
+	ProjectID     string
+	Operator      string
+	SubagentID    string
+	ParentAgentID string
+	SpawnedAt     string
+	TTLSeconds    int
 }
 
 // VLPStateRow is the flat row type persisted in vlp_state. State is the

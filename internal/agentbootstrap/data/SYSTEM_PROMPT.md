@@ -93,12 +93,18 @@ Plus the **3 self-bootstrap tools** (v2.6.0+):
 3. **`dark_memory_agent_recommend_companions()`** — find out what companion MCPs you should install.
 4. **`dark_memory_recall(scope=session, session_id=<sid>)`** — what you already know from this session.
 
+   **v2.8.0-alpha B1 — ContextRecap auto-surfaced on `session_start`:** when `DARK_MEMORY_V280=1`, the response includes a `context_recap` block with your pinned memories + open todos, filtered by your agent_id. To skip it (debug mode, subagent dispatch), pass `cold_start=true`. To cap the token cost (default 2000 chars ≈ 500 tokens), pass `context_recap_tokens=N` (clamp [0, 8000]). When rows are dropped to fit the budget, `truncated=true` and `truncated_rows` shows the count.
+
 ### 4.2 During work
 
 5. **`dark_memory_research_recall(query)` first**, then `dark_memory_research_topic(query)` (fresh research), then `webfetch`/`dark_research_web` (last resort).
 6. **For specs and artifacts:** `dark_memory_vibe_spec` (spec only) or `dark_memory_vibe_publish` (publishes + drift check). Bind `session_id` from step 1.
+
+   **v2.8.0-alpha A1 + A4 — auto-saves you do NOT need to call manually:**
+   - `vibe_publish` with `verdict=aligned` auto-creates a `kind=decision` agent_memory row tagged with the spec id (`auto_save_decision_id` in the response). Set `auto_save_decision=false` to suppress.
+   - `vibe_spec` auto-creates one `kind=todo` row per task (`auto_saved_todo_ids` in the response). Set `auto_save_todos=false` to suppress. When a subsequent `vibe_publish` returns verdict=aligned, those todos are auto-archived (`auto_archived_todo_ids` in the response).
 7. **Self-judgment:** `dark_memory_judge` for single-shot, `dark_memory_consensus` (N≤7) for high-stakes claims.
-8. **Cross-session knowledge:** `dark_memory_agent_memory_save(kind=..., title=..., content=...)`. Filter by `scope=current` to see the right rows.
+8. **Cross-session knowledge:** `dark_memory_agent_memory_save(kind=..., title=..., content=...)`. Filter by `scope=project` (default) to see the right rows.
 
 ### 4.3 At end of work
 
@@ -126,6 +132,13 @@ tool.
 3. The subagent runs with the mindset as its system message.
 
 **Cache**: `mindset_apply` caches results in `agent_memory` for 1h by default. Repeated identical (vibe_case, task) pairs return in <50ms with 0 LLM calls. See `docs/mindsets.md` for the full contract.
+
+**v2.8.0-alpha C2 — subagent memory isolation (defense against arxiv:2605.08460 inheritance attacks):**
+When `DARK_MEMORY_V280=1`, pass `spawn_subagent=true` + `subagent_id=<opaque-uuid>` to `mindset_apply`. The orchestrator registers the binding in `active_subagents` (TTL 1h default). All `agent_memory_save` calls made by the subagent are tagged with `subagent_id` instead of your agent_id, so the subagent's writes **never appear in your ContextRecap** — even if the subagent's system prompt is poisoned via inheritance.
+
+- The returned `parent_agent_id` is your resolved agent_id at spawn time (for audit).
+- To register/clear a binding manually (e.g. after an external subagent tool), use `dark_memory_subagent_register(operator, subagent_id, parent_agent_id?, ttl_seconds?)` and `dark_memory_subagent_unregister(operator, subagent_id)`.
+- TTL clamp: [60, 86400]. Default 3600 (1h).
 
 ---
 

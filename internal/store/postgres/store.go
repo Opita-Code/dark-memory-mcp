@@ -2402,3 +2402,24 @@ func (s *Store) ListAgentMemory(ctx context.Context, f agentmemory.AgentMemoryLi
 func (s *Store) SearchAgentMemory(ctx context.Context, f agentmemory.SearchFilters) ([]agentmemory.SearchHit, error) {
 	return nil, notImpl("SearchAgentMemory")
 }
+
+// v2.8.0-alpha — active_subagents. Postgres driver does not yet
+// implement agent_memory at all (see F50 tsvector+GIN backlog).
+// These stubs satisfy the Store interface so the build compiles
+// and harness wiring is complete; the runtime path will return
+// notImpl until the Postgres backplane is built out.
+func (s *Store) SetActiveSubagent(ctx context.Context, wc store.WriteContext, row *store.ActiveSubagent) (int64, error) {
+	return 0, notImpl("SetActiveSubagent")
+}
+
+func (s *Store) GetActiveSubagent(ctx context.Context, operator string) (*store.ActiveSubagent, error) {
+	return nil, notImpl("GetActiveSubagent")
+}
+
+func (s *Store) ClearActiveSubagent(ctx context.Context, wc store.WriteContext, operator, subagentID string) error {
+	return notImpl("ClearActiveSubagent")
+}
+
+func (s *Store) SweepExpiredSubagents(ctx context.Context) (int64, error) {
+	return 0, notImpl("SweepExpiredSubagents")
+}

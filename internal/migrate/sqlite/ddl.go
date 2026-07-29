@@ -848,4 +848,62 @@ CREATE INDEX IF NOT EXISTS idx_agent_memory_mtype ON agent_memory (project_id, m
 ALTER TABLE projects ADD COLUMN default_agent_id TEXT;
 `,
 	},
+	{
+		// v21 — active_subagents (v2.8.0-alpha, DARK_MEMORY_V280)
+		//
+		// Closes the C2 subagent-scope-handoff gap: when a subagent
+		// is spawned via mindset_apply(spawn_subagent=true), we need
+		// to remember (project_id, operator) -> subagent_id binding
+		// so the next agent_memory_save call resolves agent_id to
+		// the subagent's uuid instead of the principal's default.
+		//
+		// Why a separate table (not a column on agent_memory or
+		// sessions): the binding is short-lived (TTL default 1h),
+		// per-operator (not per-session), and per-subagent (a
+		// principal could spawn multiple subagents in parallel). A
+		// dedicated table + (project_id, operator, subagent_id)
+		// PRIMARY KEY gives us O(1) upsert + targeted clear +
+		// sweep-by-TTL semantics. No FTS5 / no triggers.
+		//
+		// Defense-in-depth against arxiv:2605.08460 inheritance
+		// attacks: subagent writes are tagged with subagent_id (an
+		// opaque uuid the principal generates, NOT derivable from
+		// principal's agent_id). ContextRecap filters by
+		// projects.default_agent_id which the subagent does NOT
+		// inherit, so poisoned subagent memory can never appear in
+		// the principal's pinned recap.
+		//
+		// Schema:
+		//   project_id       TEXT NOT NULL
+		//   operator         TEXT NOT NULL
+		//   subagent_id      TEXT NOT NULL
+		//   parent_agent_id  TEXT NOT NULL
+		//   spawned_at       TEXT NOT NULL      (RFC3339Nano)
+		//   ttl_seconds      INTEGER NOT NULL DEFAULT 3600
+		//
+		// id is an AUTOINCREMENT surrogate key so write_audit (INV-1)
+		// can reference a single-row id. The composite natural key
+		// (project_id, operator, subagent_id) is also UNIQUE so
+		// INSERT OR REPLACE refreshes the same row.
+		// INDEX (project_id, operator) for GetActiveSubagent lookup.
+		//
+		// Postgres parity: see internal/migrate/postgres/ddl.go
+		// where the same DDL is mirrored with the IF NOT EXISTS
+		// pattern (Postgres requires it for idempotency).
+		Version: 21,
+		Name:    "active_subagents",
+		Up: `
+CREATE TABLE IF NOT EXISTS active_subagents (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id      TEXT NOT NULL,
+    operator        TEXT NOT NULL,
+    subagent_id     TEXT NOT NULL,
+    parent_agent_id TEXT NOT NULL,
+    spawned_at      TEXT NOT NULL,
+    ttl_seconds     INTEGER NOT NULL DEFAULT 3600,
+    UNIQUE (project_id, operator, subagent_id)
+);
+CREATE INDEX IF NOT EXISTS idx_active_subagents_lookup ON active_subagents (project_id, operator);
+`,
+	},
 }

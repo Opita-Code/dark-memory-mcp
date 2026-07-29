@@ -154,8 +154,8 @@ func TestBridge7_ListToolsCanonical(t *testing.T) {
 		t.Fatalf("list tools: %v", err)
 	}
 
-	if len(result.Tools) != 39 {
-		t.Fatalf("tool count: want 39 (v2.7.0-alpha added MINDSET namespace 1 tool; pre-v2.7.0 was 38 in v2.6.0, 35 in v2.3.0, 34 in v2.1.0), got %d", len(result.Tools))
+	if len(result.Tools) != 41 {
+		t.Fatalf("tool count: want 41 (v2.8.0-alpha added subagent_register + subagent_unregister; v2.7.0-alpha was 39 with MINDSET namespace; pre-v2.7.0 was 38 in v2.6.0, 35 in v2.3.0, 34 in v2.1.0), got %d", len(result.Tools))
 	}
 
 	want := canonicalWireOrder()
@@ -272,11 +272,12 @@ func TestBridge7_CallToolErrorPath(t *testing.T) {
 }
 
 // canonicalWireOrder is the wire-format (dark_memory_*) version of
-// the 39-tool canonical order (v2.7.0-alpha; was 38 in v2.6.0, 35 in
-// v2.3.0, 34 in v2.1.x, 29 in v2.0.x, 28 in v1.3.x, 27 in v1.2.x,
-// 26 in v1.1.x), mirrored from internal/tools/registry.go so this
-// test doesn't depend on the library's internal package (it tests
-// the wire format, not the library shape).
+// the 41-tool canonical order (v2.8.0-alpha; was 39 in v2.7.0-alpha,
+// 38 in v2.6.0, 35 in v2.3.0, 34 in v2.1.x, 29 in v2.0.x, 28 in
+// v1.3.x, 27 in v1.2.x, 26 in v1.1.x), mirrored from
+// internal/tools/registry.go so this test doesn't depend on the
+// library's internal package (it tests the wire format, not the
+// library shape).
 //
 // v2.1.0: AGENT_MEMORY namespace (5 tools: save/list/get/update/archive)
 // inserted between CONTEXT and JUDGE per spec D-12 /
@@ -289,6 +290,9 @@ func TestBridge7_CallToolErrorPath(t *testing.T) {
 // between RESEARCH and VIBE. New canonical count = 38.
 // v2.7.0-alpha: MINDSET namespace (1 tool: mindset_apply) inserted
 // between AGENT_MEMORY and JUDGE. New canonical count = 39.
+// v2.8.0-alpha: subagent_register + subagent_unregister appended to
+// the AGENT_MEMORY namespace (C2 subagent-scope-handoff). New canonical
+// count = 41.
 func canonicalWireOrder() []string {
 	bare := []string{
 		// PROJECT (1) — v1.2.0
@@ -317,6 +321,8 @@ func canonicalWireOrder() []string {
 		"admin_migrate", "admin_schema_status", "admin_vacuum",
 		// L6-VLP (1) — DMAP v1.1
 		"vlp_handle_event",
+		// SUBAGENT (2) — v2.8.0-alpha (appended after L6-VLP per registry implementation)
+		"subagent_register", "subagent_unregister",
 	}
 	out := make([]string, len(bare))
 	for i, b := range bare {

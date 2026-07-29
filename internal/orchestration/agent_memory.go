@@ -87,13 +87,28 @@ func (o *Orchestrator) AgentMemorySave(ctx context.Context, in AgentMemorySaveIn
 		return nil, fmt.Errorf("agent_memory_save: invalid memory_type %q", in.MemoryType)
 	}
 
+	// v2.8.0-alpha C2: when DARK_MEMORY_V280=1, the agent_id
+	// resolution priority chain extends with step 2 (active
+	// subagent_id). The caller-provided AgentID still wins
+	// (priority 1); only when the caller leaves AgentID empty do
+	// we consult the active_subagents table. When the flag is off,
+	// this falls back to the v2.7.x priority chain (caller >
+	// project default > "").
+	resolvedAgentID := in.AgentID
+	if v280Enabled() && strings.TrimSpace(resolvedAgentID) == "" {
+		activeOp := o.activeOperator(ctx)
+		if activeOp != "" {
+			resolvedAgentID = o.resolveActiveAgentIDWithSubagent(ctx, "", activeOp)
+		}
+	}
+
 	wc := store.WriteContext{
 		Actor:     in.Operator,
 		WritePath: "AgentMemorySave",
 	}
 	m := &agentmemory.AgentMemory{
 		Operator:   in.Operator,
-		AgentID:    in.AgentID,
+		AgentID:    resolvedAgentID,
 		Kind:       in.Kind,
 		MemoryType: in.MemoryType,
 		Title:      in.Title,
@@ -402,14 +417,30 @@ type AgentMemoryGetOutput struct {
 	Row agentmemory.AgentMemory `json:"row"`
 }
 
-// AgentMemoryGet returns one row by id. Cross-project reads return
-// ErrNotFound (the Store filters by active project).
+// AgentMemoryGet returns one row by id.
+//
+// v2.8.0-alpha D5: when DARK_MEMORY_V280=1, cross-project reads
+// return *store.CrossProjectAccessError (wrapping
+// store.ErrCrossProjectAccess). When the flag is off, the v2.7.x
+// behavior is preserved: cross-project reads return (nil, nil) just
+// like "not found" — to avoid leaking existence.
 func (o *Orchestrator) AgentMemoryGet(ctx context.Context, in AgentMemoryGetInput) (*AgentMemoryGetOutput, error) {
 	if in.ID <= 0 {
 		return nil, errMissingField("id")
 	}
 	row, err := o.Store.GetAgentMemory(ctx, in.ID)
 	if err != nil {
+		// v2.8.0-alpha: when the flag is on, propagate the typed
+		// CrossProjectAccessError; when off, convert to (nil, nil)
+		// for v2.7.x backward compat.
+		var cpe *store.CrossProjectAccessError
+		if errors.As(err, &cpe) {
+			if v280Enabled() {
+				return nil, fmt.Errorf("%w (id=%d, requested=%q, row=%q)",
+					store.ErrCrossProjectAccess, in.ID, cpe.RequestedProject, cpe.RowProject)
+			}
+			return nil, store.ErrNotFound
+		}
 		return nil, err
 	}
 	if row == nil {

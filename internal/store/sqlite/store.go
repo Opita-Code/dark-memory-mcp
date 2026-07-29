@@ -4074,8 +4074,23 @@ func (s *Store) SaveAgentMemory(ctx context.Context, wc store.WriteContext, m *a
 }
 
 // GetAgentMemory returns the row by id, enforcing project isolation.
-// A row from a different project returns (nil, nil) — same as "not
-// found" — to avoid leaking existence.
+//
+// Behavior matrix:
+//   - Row in active project             → (*AgentMemory, nil)
+//   - Row in different project          → (nil, *CrossProjectAccessError) [v2.8.0-alpha]
+//   - Row does not exist                → (nil, nil)
+//   - id <= 0                           → (nil, nil)
+//
+// v2.8.0-alpha change: pre-v2.8.0, case 2 returned (nil, nil) —
+// indistinguishable from case 3. The drift_judge on spec 681 flagged
+// this as a bug-magnet (an LLM might infer "doesn't exist" from a
+// cross-project get and silently re-create). The new error code lets
+// callers distinguish "wrong project" from "doesn't exist" via
+// errors.Is(err, store.ErrCrossProjectAccess).
+//
+// Gated by DARK_MEMORY_V280 env flag at the orchestrator layer:
+// when OFF, the orchestrator catches *CrossProjectAccessError and
+// converts to (nil, nil) for v2.7.x compat.
 func (s *Store) GetAgentMemory(ctx context.Context, id int64) (*agentmemory.AgentMemory, error) {
 	if err := s.requireProject(); err != nil {
 		return nil, err
@@ -4100,10 +4115,25 @@ func (s *Store) GetAgentMemory(ctx context.Context, id int64) (*agentmemory.Agen
 		&m.AgentID, &m.Kind, &m.MemoryType,
 		&m.Title, &m.Content, &m.Tags, &pinned,
 		&m.CreatedAt, &m.UpdatedAt, &m.ArchivedAt, &m.ExpiresAt); err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("agent_memory: get: %w", err)
+		}
+		// Row not in active project. Check if it exists elsewhere
+		// (v2.8.0-alpha: distinguish cross-project from non-existent).
+		var rowProject string
+		err := s.db.QueryRowContext(ctx,
+			`SELECT project_id FROM agent_memory WHERE id = ?`, id).Scan(&rowProject)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("agent_memory: get: %w", err)
+		if err != nil {
+			return nil, fmt.Errorf("agent_memory: cross-project probe: %w", err)
+		}
+		return nil, &store.CrossProjectAccessError{
+			RequestedProject: activeProject,
+			RowProject:       rowProject,
+			RowID:            id,
+		}
 	}
 	m.Pinned = pinned != 0
 	return &m, nil
@@ -4573,4 +4603,303 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// --- active_subagents (v2.8.0-alpha, migration v21) -----------------
+//
+// These 4 methods implement the C2 subagent-scope-handoff contract.
+// The orchestrator (mindset_apply, agent_memory_save) is the policy
+// layer; this is the storage primitive. See
+// internal/orchestration/mindset_apply.go for the spawn_subagent path
+// and internal/orchestration/agent_memory.go for the agent_id
+// resolution chain that consults GetActiveSubagent.
+
+// SetActiveSubagent inserts-or-refreshes the (project_id, operator,
+// subagent_id) row. New spawn OR re-spawn with same subagent_id both
+// call this; PRIMARY KEY ON CONFLICT REPLACE handles both. TTL
+// defaults to 3600s if row.TTLSeconds <= 0; clamp is the orchestrator's
+// responsibility (60..86400). Emits a write_audit row (INV-1).
+func (s *Store) SetActiveSubagent(ctx context.Context, wc store.WriteContext, row *store.ActiveSubagent) (int64, error) {
+	if err := s.requireProject(); err != nil {
+		return 0, err
+	}
+	if row == nil {
+		return 0, fmt.Errorf("sqlite: SetActiveSubagent: nil row")
+	}
+	if strings.TrimSpace(row.SubagentID) == "" {
+		return 0, fmt.Errorf("sqlite: SetActiveSubagent: subagent_id required")
+	}
+	if strings.TrimSpace(row.Operator) == "" {
+		return 0, fmt.Errorf("sqlite: SetActiveSubagent: operator required")
+	}
+	projectID := projectIDOrActive(wc.ProjectID, s.activeProject)
+	ttl := row.TTLSeconds
+	if ttl <= 0 {
+		ttl = 3600
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var id int64
+	err := s.runInTx(ctx, func(tx *sql.Tx) error {
+		// INSERT OR REPLACE on the PRIMARY KEY (project_id, operator,
+		// subagent_id). Refreshing spawned_at + parent_agent_id +
+		// ttl_seconds — same row, fresh TTL.
+		res, err := tx.ExecContext(ctx, `
+			INSERT OR REPLACE INTO active_subagents (
+				project_id, operator, subagent_id, parent_agent_id,
+				spawned_at, ttl_seconds
+			) VALUES (?, ?, ?, ?, ?, ?)`,
+			projectID, row.Operator, row.SubagentID, row.ParentAgentID,
+			now, ttl)
+		if err != nil {
+			return fmt.Errorf("active_subagents: upsert: %w", err)
+		}
+		id, err = res.LastInsertId()
+		if err != nil {
+			return fmt.Errorf("active_subagents: last insert id: %w", err)
+		}
+
+		// INV-1: write_audit row in the same tx.
+		if wc.WritePath == "" {
+			wc.WritePath = "SetActiveSubagent"
+		}
+		if err := s.recordWriteLockedTx(ctx, tx, audit.WriteEvent{
+			TableName:       "active_subagents",
+			RowID:           id,
+			ProjectID:       projectID,
+			Actor:           wc.Actor,
+			SessionID:       "",
+			WritePath:       wc.WritePath,
+			ConstitutionID:  wc.ConstitutionID,
+			ConstitutionVer: wc.ConstitutionVer,
+			CreatedAt:       now,
+		}, ""); err != nil {
+			return fmt.Errorf("active_subagents: audit: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	row.ID = id
+	row.ProjectID = projectID
+	row.SpawnedAt = now
+	row.TTLSeconds = ttl
+	return id, nil
+}
+
+// GetActiveSubagent returns the most-recent non-expired active
+// subagent for (active_project, operator). "Most-recent" = latest
+// spawned_at. Returns (nil, nil) when none active or all expired.
+//
+// Filter happens in Go (not SQL) because we need to compare
+// (spawned_at + ttl_seconds) to now, and SQLite date arithmetic
+// with strftime is brittle (timezone edge cases on TEXT RFC3339Nano
+// values). One row by (project_id, operator) is small enough that
+// the in-Go filter is fine.
+func (s *Store) GetActiveSubagent(ctx context.Context, operator string) (*store.ActiveSubagent, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(operator) == "" {
+		return nil, nil
+	}
+	activeProject := s.ActiveProject()
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, project_id, operator, subagent_id, parent_agent_id,
+		       spawned_at, ttl_seconds
+		  FROM active_subagents
+		 WHERE project_id = ? AND operator = ?
+		 ORDER BY spawned_at DESC
+		 LIMIT 1`, activeProject, operator)
+	if err != nil {
+		return nil, fmt.Errorf("active_subagents: get: %w", err)
+	}
+	defer rows.Close()
+
+	if !rows.Next() {
+		return nil, nil
+	}
+
+	var row store.ActiveSubagent
+	if err := rows.Scan(&row.ID, &row.ProjectID, &row.Operator, &row.SubagentID,
+		&row.ParentAgentID, &row.SpawnedAt, &row.TTLSeconds); err != nil {
+		return nil, fmt.Errorf("active_subagents: scan: %w", err)
+	}
+
+	// TTL filter (Go-side; defense-in-depth if sweeper missed one).
+	if isExpired(row.SpawnedAt, row.TTLSeconds) {
+		return nil, nil
+	}
+	return &row, nil
+}
+
+// ClearActiveSubagent removes the (project_id, operator, subagent_id)
+// binding. Returns store.ErrNotFound if no matching row (no rows
+// affected). Emits a write_audit row (INV-1).
+func (s *Store) ClearActiveSubagent(ctx context.Context, wc store.WriteContext, operator, subagentID string) error {
+	if err := s.requireProject(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(operator) == "" {
+		return fmt.Errorf("sqlite: ClearActiveSubagent: operator required")
+	}
+	if strings.TrimSpace(subagentID) == "" {
+		return fmt.Errorf("sqlite: ClearActiveSubagent: subagent_id required")
+	}
+	projectID := projectIDOrActive(wc.ProjectID, s.activeProject)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	err := s.runInTx(ctx, func(tx *sql.Tx) error {
+		// Fetch the row first so we can audit by its ID + the
+		// parent_agent_id for provenance.
+		var rowID int64
+		var parentAgentID string
+		if err := tx.QueryRowContext(ctx, `
+			SELECT id, parent_agent_id
+			  FROM active_subagents
+			 WHERE project_id = ? AND operator = ? AND subagent_id = ?`,
+			projectID, operator, subagentID,
+		).Scan(&rowID, &parentAgentID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return store.ErrNotFound
+			}
+			return fmt.Errorf("active_subagents: lookup: %w", err)
+		}
+
+		res, err := tx.ExecContext(ctx, `
+			DELETE FROM active_subagents
+			 WHERE project_id = ? AND operator = ? AND subagent_id = ?`,
+			projectID, operator, subagentID)
+		if err != nil {
+			return fmt.Errorf("active_subagents: delete: %w", err)
+		}
+		n, _ := res.RowsAffected()
+		if n == 0 {
+			return store.ErrNotFound
+		}
+
+		// INV-1: write_audit row in the same tx.
+		if wc.WritePath == "" {
+			wc.WritePath = "ClearActiveSubagent"
+		}
+		now := time.Now().UTC().Format(time.RFC3339Nano)
+		if err := s.recordWriteLockedTx(ctx, tx, audit.WriteEvent{
+			TableName:       "active_subagents",
+			RowID:           rowID,
+			ProjectID:       projectID,
+			Actor:           wc.Actor,
+			SessionID:       "",
+			WritePath:       wc.WritePath,
+			ConstitutionID:  wc.ConstitutionID,
+			ConstitutionVer: wc.ConstitutionVer,
+			CreatedAt:       now,
+		}, ""); err != nil {
+			return fmt.Errorf("active_subagents: audit: %w", err)
+		}
+		return nil
+	})
+	return err
+}
+
+// SweepExpiredSubagents deletes rows where spawned_at + ttl_seconds <
+// now across ALL projects (no active_project filter; the sweeper is
+// project-agnostic — TTL is a per-row clock). Called from
+// orchestrator-level SessionStart hook. Returns deleted count.
+// Idempotent.
+func (s *Store) SweepExpiredSubagents(ctx context.Context) (int64, error) {
+	// Fetch candidate rows + filter in Go (consistent with
+	// GetActiveSubagent's date-math avoidance).
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, project_id, operator, subagent_id, spawned_at, ttl_seconds
+		  FROM active_subagents`)
+	if err != nil {
+		return 0, fmt.Errorf("active_subagents: sweep-select: %w", err)
+	}
+	type cand struct {
+		id        int64
+		projectID string
+		operator  string
+		subagent  string
+	}
+	var cands []cand
+	for rows.Next() {
+		var c cand
+		var spawnedAt string
+		var ttl int
+		if err := rows.Scan(&c.id, &c.projectID, &c.operator, &c.subagent, &spawnedAt, &ttl); err != nil {
+			rows.Close()
+			return 0, fmt.Errorf("active_subagents: sweep-scan: %w", err)
+		}
+		if isExpired(spawnedAt, ttl) {
+			cands = append(cands, c)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("active_subagents: sweep-rows: %w", err)
+	}
+
+	if len(cands) == 0 {
+		return 0, nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var deleted int64
+	for _, c := range cands {
+		err := s.runInTx(ctx, func(tx *sql.Tx) error {
+			res, err := tx.ExecContext(ctx, `
+				DELETE FROM active_subagents
+				 WHERE id = ? AND project_id = ? AND operator = ? AND subagent_id = ?`,
+				c.id, c.projectID, c.operator, c.subagent)
+			if err != nil {
+				return fmt.Errorf("active_subagents: sweep-delete: %w", err)
+			}
+			n, _ := res.RowsAffected()
+			if n > 0 {
+				deleted++
+				// INV-1: write_audit row in the same tx.
+				now := time.Now().UTC().Format(time.RFC3339Nano)
+				if err := s.recordWriteLockedTx(ctx, tx, audit.WriteEvent{
+					TableName:       "active_subagents",
+					RowID:           c.id,
+					ProjectID:       c.projectID,
+					Actor:           "system/sweeper",
+					SessionID:       "",
+					WritePath:       "SweepExpiredSubagents",
+					ConstitutionID:  "",
+					ConstitutionVer: "",
+					CreatedAt:       now,
+				}, ""); err != nil {
+					return fmt.Errorf("active_subagents: sweep-audit: %w", err)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return deleted, err
+		}
+	}
+	return deleted, nil
+}
+
+// isExpired reports whether (RFC3339Nano spawnedAt + ttlSeconds) is
+// before now. Returns true on parse errors (defensive: a row with
+// bad data is treated as expired so the sweeper reaps it).
+func isExpired(spawnedAt string, ttlSeconds int) bool {
+	t, err := time.Parse(time.RFC3339Nano, spawnedAt)
+	if err != nil {
+		return true
+	}
+	expiry := t.Add(time.Duration(ttlSeconds) * time.Second)
+	return time.Now().UTC().After(expiry)
 }

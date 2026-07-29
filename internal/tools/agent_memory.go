@@ -48,6 +48,9 @@ var _ = audit.WriteEvent{}
 // session (the gate's RequiresActiveSession allowlist covers them
 // by default — see internal/policy/gate.go RequiresActiveSession).
 func RegisterAgentMemory(reg *Registry, orch *orchestration.Orchestrator, st store.Store) {
+	// v2.8.0-alpha C2: register the 2 subagent binding tools.
+	registerSubagentTools(reg, orch)
+
 	reg.Add(BindOrchestrator("agent_memory_save",
 		"Save an agent memory. Mem0-aligned. Scoped to the active project. By default (bind_session=false) the row survives session close; set bind_session=true to tag the row with the active session. v2.3.0.",
 		MustJSONSchema(map[string]any{
@@ -230,6 +233,46 @@ func auditContext(st store.Store, operator, sessionID, writePath string) store.W
 	// but every write path here has an explicit operator from input.
 	_ = st // st reserved for future constitution lookup
 	return wc
+}
+
+// v2.8.0-alpha C2 — register/unregister subagent bindings. These
+// tools explicitly manipulate the active_subagents table so the
+// harness can register a subagent binding WITHOUT going through
+// mindset_apply(spawn_subagent=true), or clear a stale binding
+// manually. Both gated by DARK_MEMORY_V280=1; when the flag is off,
+// the orchestrator returns ErrInvalidState.
+//
+// Canonical tool count: 39 → 41.
+func registerSubagentTools(reg *Registry, orch *orchestration.Orchestrator) {
+	reg.Add(BindOrchestrator("subagent_register",
+		"Register or refresh an active subagent binding. v2.8.0-alpha C2. After this call, the subagent's agent_memory_save writes are tagged with subagent_id (NOT the principal's agent_id) so they never leak into the principal's ContextRecap. Defense-in-depth against arxiv:2605.08460 inheritance attacks. Gated by DARK_MEMORY_V280=1.",
+		MustJSONSchema(map[string]any{
+			"type":     "object",
+			"required": []string{"operator", "subagent_id"},
+			"properties": map[string]any{
+				"operator":        map[string]any{"type": "string", "description": "Operator id (INV-1 audit). Required."},
+				"subagent_id":     map[string]any{"type": "string", "description": "Opaque uuid the principal generated when spawning the subagent. Required."},
+				"parent_agent_id": map[string]any{"type": "string", "description": "Principal's resolved agent_id for audit provenance. Optional; defaults to projects.default_agent_id."},
+				"ttl_seconds":     map[string]any{"type": "integer", "default": 3600, "minimum": 60, "maximum": 86400, "description": "TTL in seconds (clamp 60..86400; default 3600 = 1h)."},
+			},
+		}),
+		func(ctx context.Context, in orchestration.SubagentRegisterInput) (*orchestration.SubagentRegisterOutput, error) {
+			return orch.SubagentRegister(ctx, in)
+		}))
+
+	reg.Add(BindOrchestrator("subagent_unregister",
+		"Clear an active subagent binding. v2.8.0-alpha C2. After this call, subsequent agent_memory_save calls fall through to projects.default_agent_id (or empty). Idempotent: returns ErrNotFound if no binding matches. Gated by DARK_MEMORY_V280=1.",
+		MustJSONSchema(map[string]any{
+			"type":     "object",
+			"required": []string{"operator", "subagent_id"},
+			"properties": map[string]any{
+				"operator":    map[string]any{"type": "string", "description": "Operator id (must match the one used in subagent_register). Required."},
+				"subagent_id": map[string]any{"type": "string", "description": "The subagent_id to clear. Required."},
+			},
+		}),
+		func(ctx context.Context, in orchestration.SubagentUnregisterInput) (*orchestration.SubagentUnregisterOutput, error) {
+			return orch.SubagentUnregister(ctx, in)
+		}))
 }
 
 // auditSentinel keeps the import live in case future versions need

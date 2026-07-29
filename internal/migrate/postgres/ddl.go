@@ -603,4 +603,25 @@ CREATE INDEX IF NOT EXISTS idx_agent_memory_kind ON agent_memory (project_id, ki
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS default_agent_id TEXT;
 `,
 	},
+	{
+		// v21 — active_subagents (v2.8.0-alpha).
+		// Mirror of sqlite v21. Postgres parity with IF NOT EXISTS
+		// on all DDL. See internal/migrate/sqlite/ddl.go for the
+		// full rationale (C2 subagent-scope-handoff + defense
+		// against arxiv:2605.08460 inheritance attacks).
+		Version: 21,
+		Name:    "active_subagents",
+		Up: `
+CREATE TABLE IF NOT EXISTS active_subagents (
+    project_id       TEXT NOT NULL,
+    operator         TEXT NOT NULL,
+    subagent_id      TEXT NOT NULL,
+    parent_agent_id  TEXT NOT NULL,
+    spawned_at       TIMESTAMP WITH TIME ZONE NOT NULL,
+    ttl_seconds      INTEGER NOT NULL DEFAULT 3600,
+    PRIMARY KEY (project_id, operator, subagent_id)
+);
+CREATE INDEX IF NOT EXISTS idx_active_subagents_lookup ON active_subagents (project_id, operator);
+`,
+	},
 }

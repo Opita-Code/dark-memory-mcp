@@ -24,9 +24,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
+	"github.com/dark-agents/dark-memory-mcp/internal/agentmemory"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 	"github.com/dark-agents/dark-memory-mcp/internal/vibecase"
 	"github.com/dark-agents/dark-memory-mcp/internal/vibeflow"
@@ -55,12 +57,23 @@ type VibeSpecTask struct {
 // (the field path detail was preserved by typeMismatchToolError but the
 // operator-visible error message had no specific field hint). Accepting
 // both forms here closes the compatibility loop.
+//
+// v2.8.0-alpha A4: AutoSaveTodos (default true when DARK_MEMORY_V280=1)
+// triggers one kind=todo agent_memory row per task. The rows are
+// auto-archived by publish_vibe when verdict=aligned. Set false to
+// suppress per-call.
 type VibeSpecInput struct {
 	VibeCase     string          `json:"vibe_case"`
 	Constitution string          `json:"constitution,omitempty"`
 	Spec         string          `json:"spec,omitempty"` // opaque intent JSON
 	Tasks        json.RawMessage `json:"tasks"`          // F36: accept array OR JSON-string-encoded array
 	SessionID    string          `json:"session_id,omitempty"`
+	// AutoSaveTodos (v2.8.0-alpha A4) — when true (default when
+	// DARK_MEMORY_V280=1), each task auto-creates a kind=todo
+	// agent_memory row tagged with spec:<id>,task:<id>. Set false
+	// to suppress per-call (the auto-save might add noise for trivial
+	// specs with many small tasks).
+	AutoSaveTodos bool `json:"auto_save_todos,omitempty"`
 }
 
 // parseTasksField accepts both forms of the `tasks` input:
@@ -157,6 +170,10 @@ type VibeSpecResult struct {
 	TaskIDs        []string `json:"task_ids"`            // canonical order
 	TasksJSON      string   `json:"tasks_json"`          // serialised for storage
 	Warnings       []string `json:"warnings,omitempty"` // non-fatal: orphan ext refs, etc.
+	// AutoSavedTodoIDs (v2.8.0-alpha A4) — one row id per task,
+	// parallel to TaskIDs. Empty when AutoSaveTodos=false, V280
+	// flag off, or any save failed.
+	AutoSavedTodoIDs []int64 `json:"auto_saved_todo_ids,omitempty"`
 }
 
 // VibeSpec persists a spec with task validation. See package doc.
@@ -258,13 +275,67 @@ func (o *Orchestrator) VibeSpec(ctx context.Context, in VibeSpecInput) (*VibeSpe
 		return nil, fmt.Errorf("vibe_spec: save spec: %w", err)
 	}
 
-	return &VibeSpecResult{
+	result := &VibeSpecResult{
 		SpecID:         specID,
 		TasksValidated: len(tasks),
 		TaskIDs:        canonicalIDs,
 		TasksJSON:      string(tasksJSON),
 		Warnings:       warnings,
-	}, nil
+	}
+
+	// v2.8.0-alpha A4: auto-save kind=todo row per task when
+	// DARK_MEMORY_V280=1 AND AutoSaveTodos=true. Best-effort.
+	if v280Enabled() && in.AutoSaveTodos {
+		todoIDs, todoErr := o.autoSaveTodosForSpec(ctx, specID, tasks)
+		if todoErr != nil {
+			log.Printf("dark-mem-mcp: vibe_spec auto_save_todos err=%v (spec_id=%d)", todoErr, specID)
+		}
+		result.AutoSavedTodoIDs = todoIDs
+	}
+
+	return result, nil
+}
+
+// autoSaveTodosForSpec is the A4 hook. One kind=todo row per task,
+// tagged with spec:<id>,task:<id>,status:open. The agent_id is
+// resolved via the v2.8.0 priority chain (caller > subagent > project
+// default > empty). Best-effort: returns the IDs it did save + a
+// non-nil error if any save failed (callers log + continue).
+func (o *Orchestrator) autoSaveTodosForSpec(
+	ctx context.Context,
+	specID int64,
+	tasks []VibeSpecTask,
+) ([]int64, error) {
+	operator := o.activeOperator(ctx)
+	if operator == "" {
+		operator = "orchestrator_vibe_spec"
+	}
+	activeAgentID := o.resolveActiveAgentIDWithSubagent(ctx, "", operator)
+
+	ids := make([]int64, 0, len(tasks))
+	var firstErr error
+	for _, task := range tasks {
+		content := fmt.Sprintf("Task: %s\nSpec: %d\nDescription: %s\nStatus: open",
+			task.ID, specID, task.Description)
+		tags := fmt.Sprintf("spec:%d,task:%s,status:open", specID, task.ID)
+		out, err := o.AgentMemorySave(ctx, AgentMemorySaveInput{
+			Operator: operator,
+			AgentID:  activeAgentID,
+			Kind:     agentmemory.KindTodo,
+			Title:    task.ID,
+			Content:  content,
+			Tags:     tags,
+		})
+		if err != nil {
+			log.Printf("dark-mem-mcp: vibe_spec auto_save_todo task=%s err=%v", task.ID, err)
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		ids = append(ids, out.Row.ID)
+	}
+	return ids, firstErr
 }
 
 // looksLikeExternalRef returns true if dep matches known external
