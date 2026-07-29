@@ -205,8 +205,9 @@ jobs:
           fi
 
       - name: Publish to Official MCP Registry
-        if: steps.version.outputs.SKIP != 'true'
-        if: steps.check-exists.outputs.EXISTS != 'true'
+        if: |
+          steps.version.outputs.SKIP != 'true' &&
+          steps.check-exists.outputs.EXISTS != 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
