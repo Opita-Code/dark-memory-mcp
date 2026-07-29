@@ -47,18 +47,41 @@ jobs:
       - name: Extract version
         id: version
         run: |
-          # Two trigger paths:
-          # - push:tags: GITHUB_REF = refs/tags/vX.Y.Z  -> VERSION = X.Y.Z
-          # - workflow_dispatch (manual): operator passes -f version=X.Y.Z
+          # Three trigger paths:
+          # - push:tags: v*           — GITHUB_REF = refs/tags/vX.Y.Z  → VERSION = X.Y.Z
+          # - workflow_dispatch       — operator passes -f version=X.Y.Z
+          # - workflow_run (v2.7.1)   — fires AFTER publish-npm completion;
+          #                              the original tag lives in
+          #                              github.event.workflow_run.head_ref
+          #                              (NOT in GITHUB_REF, which is the
+          #                              workflow file's branch = main).
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.version }}" ]; then
             VERSION="${{ inputs.version }}"
+            SOURCE="workflow_dispatch input"
+          elif [ "${{ github.event_name }}" = "workflow_run" ]; then
+            HEAD_REF="${{ github.event.workflow_run.head_ref }}"
+            if [[ "$HEAD_REF" == refs/tags/v* ]]; then
+              VERSION="${HEAD_REF#refs/tags/v}"
+              SOURCE="workflow_run head_ref"
+            else
+              # Defensive: if upstream was a branch push (shouldn't happen
+              # with our setup), use the head_branch as the version.
+              VERSION="${HEAD_REF#refs/heads/}"
+              SOURCE="workflow_run head_branch fallback"
+            fi
           else
             VERSION="${GITHUB_REF#refs/tags/v}"
+            SOURCE="push tag GITHUB_REF"
+          fi
+          if [ -z "$VERSION" ]; then
+            echo "::error::Could not extract VERSION from trigger=${{ github.event_name }}"
+            exit 1
           fi
           echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Trigger: ${{ github.event_name }}"
           echo "Ref: ${{ github.ref }}"
-          echo "Resolved VERSION: $VERSION"
+          echo "Workflow run head_ref: ${{ github.event.workflow_run.head_ref }}"
+          echo "Resolved VERSION: $VERSION (source: $SOURCE)"
 
       - name: Verify server.json version matches tag
         run: |
