@@ -35,13 +35,15 @@ import (
 )
 
 // TestV261_RegistryPublishRetryLoop asserts the publish step in
-// publish-mcp-registry.yml is wrapped in a retry loop (up to 3
-// attempts with 30s sleeps). Catches:
+// publish-mcp-registry.yml is wrapped in a retry loop. Catches:
 //   - Someone removes the retry loop (regression to v2.6.0 race).
 //   - Someone shrinks MAX_ATTEMPTS below 3 (no longer tolerates
 //     npm propagation delay).
 //   - Someone shrinks RETRY_DELAY below 15s (too short for slow
 //     npm CDN propagation).
+//
+// v2.7.1: bumped from 3×30s to 5×60s per agent_memory id=93 follow-up
+// after the v2.7.0-alpha race exhausted the previous budget.
 func TestV261_RegistryPublishRetryLoop(t *testing.T) {
 	path := filepath.Join(repoRoot(t), ".github", "workflows", "publish-mcp-registry.yml")
 	raw, err := os.ReadFile(path)
@@ -69,22 +71,22 @@ func TestV261_RegistryPublishRetryLoop(t *testing.T) {
 	}
 
 	// 2. MAX_ATTEMPTS must be >= 3 to tolerate npm's 5-30s propagation.
-	//    We assert on the literal "3" rather than parsing the YAML,
-	//    because GitHub Actions interprets the value at runtime and
-	//    a regex parse would just duplicate the literal.
-	if !strings.Contains(content, "MAX_ATTEMPTS=3") {
-		t.Errorf("publish-mcp-registry.yml must set MAX_ATTEMPTS=3 " +
-			"(smaller values no longer tolerate npm's typical propagation delay)")
+	//    v2.7.1: bumped from 3 to 5 per agent_memory id=93.
+	if !strings.Contains(content, "MAX_ATTEMPTS=5") &&
+		!strings.Contains(content, "MAX_ATTEMPTS=4") &&
+		!strings.Contains(content, "MAX_ATTEMPTS=3") {
+		t.Errorf("publish-mcp-registry.yml must set MAX_ATTEMPTS in [3, 5] " +
+			"(v2.6.1 minimum 3; v2.7.1 bumped to 5 for npm CDN worst-case)")
 	}
 
-	// 3. RETRY_DELAY must be >= 15s. npm's CDN propagation is normally
-	//    <30s but the typical "wait 30s" is conservative; we enforce
-	//    the floor at 15 to keep some headroom for the common case.
-	if !strings.Contains(content, "RETRY_DELAY=30") &&
-		!strings.Contains(content, "RETRY_DELAY=20") &&
-		!strings.Contains(content, "RETRY_DELAY=15") {
-		t.Errorf("publish-mcp-registry.yml must set RETRY_DELAY >= 15 " +
-			"(npm CDN propagation is typically 5-30s; smaller values reintroduce the race)")
+	// 3. RETRY_DELAY must be >= 30s. v2.6.1: 30s (npm's typical CDN
+	//    propagation); v2.7.1: 60s (covers longer historical flakes).
+	if !strings.Contains(content, "RETRY_DELAY=60") &&
+		!strings.Contains(content, "RETRY_DELAY=45") &&
+		!strings.Contains(content, "RETRY_DELAY=30") {
+		t.Errorf("publish-mcp-registry.yml must set RETRY_DELAY >= 30 " +
+			"(npm CDN propagation is typically 5-30s; smaller values reintroduce the race). "+
+			"v2.7.1: bumped from 30 to 60 per agent_memory id=93 to cover worst-case flakes.")
 	}
 
 	// 4. Sanity: the retry loop must NOT silently swallow the final
