@@ -20,6 +20,7 @@ package distribution
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -265,22 +266,28 @@ func TestV250_PlatformPackagesHaveOSAndCPU(t *testing.T) {
 // TestV250_AllPackageVersionsMatch verifies all 7 npm package.json
 // versions + server.json version + go binary ldflags version are
 // identical. This is the canonical "version drift" check.
+//
+// The canonical version is read from npm/wrapper/package.json (the same
+// source scripts/bump-version.sh uses). The git-tag check is performed
+// separately by .github/workflows/precheck-version.yml — this test only
+// asserts INTERNAL consistency between the version-stamped files.
 func TestV250_AllPackageVersionsMatch(t *testing.T) {
-	want := "2.7.0-alpha"
+	// Read the canonical version from npm/wrapper/package.json (the source
+	// of truth per scripts/bump-version.sh).
+	want, err := readPackageVersion(t, filepath.Join(npmWrapperDir(t), "package.json"))
+	if err != nil {
+		t.Fatalf("read canonical version: %v", err)
+	}
 
 	// npm packages
 	dirs := append([]string{npmWrapperDir(t)}, platformDirs(t)...)
 	versions := []string{}
 	for _, dir := range dirs {
-		raw, err := os.ReadFile(filepath.Join(dir, "package.json"))
+		v, err := readPackageVersion(t, filepath.Join(dir, "package.json"))
 		if err != nil {
-			t.Fatalf("read %s: %v", dir, err)
+			t.Errorf("%s: %v", dir, err)
+			continue
 		}
-		var pkg map[string]any
-		if err := json.Unmarshal(raw, &pkg); err != nil {
-			t.Fatalf("parse %s: %v", dir, err)
-		}
-		v, _ := pkg["version"].(string)
 		versions = append(versions, v)
 		if v != want {
 			t.Errorf("%s/package.json version = %q, want %q", dir, v, want)
@@ -288,15 +295,10 @@ func TestV250_AllPackageVersionsMatch(t *testing.T) {
 	}
 
 	// server.json
-	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "server.json"))
+	srvVersion, err := readServerJSONVersion(t)
 	if err != nil {
-		t.Fatalf("read server.json: %v", err)
+		t.Fatalf("read server.json version: %v", err)
 	}
-	var srv map[string]any
-	if err := json.Unmarshal(raw, &srv); err != nil {
-		t.Fatalf("parse server.json: %v", err)
-	}
-	srvVersion, _ := srv["version"].(string)
 	if srvVersion != want {
 		t.Errorf("server.json version = %q, want %q", srvVersion, want)
 	}
@@ -308,6 +310,40 @@ func TestV250_AllPackageVersionsMatch(t *testing.T) {
 			t.Errorf("npm package version drift: package[%d]=%q, package[0]=%q", i, v, first)
 		}
 	}
+}
+
+// readPackageVersion reads the "version" field from a package.json file.
+func readPackageVersion(t *testing.T, path string) (string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	var pkg map[string]any
+	if err := json.Unmarshal(raw, &pkg); err != nil {
+		return "", err
+	}
+	v, _ := pkg["version"].(string)
+	if v == "" {
+		return "", fmt.Errorf("no version field in %s", path)
+	}
+	return v, nil
+}
+
+// readServerJSONVersion reads the "version" field from server.json.
+func readServerJSONVersion(t *testing.T) (string, error) {
+	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "server.json"))
+	if err != nil {
+		return "", err
+	}
+	var srv map[string]any
+	if err := json.Unmarshal(raw, &srv); err != nil {
+		return "", err
+	}
+	v, _ := srv["version"].(string)
+	if v == "" {
+		return "", fmt.Errorf("no version field in server.json")
+	}
+	return v, nil
 }
 
 // -----------------------------------------------------------------------------
@@ -350,10 +386,18 @@ func TestV250_ServerJSONSchema(t *testing.T) {
 		t.Errorf("server.json name = %q, want io.github.Opita-Code/dark-memory-mcp", name)
 	}
 
-	// version
+	// version — must match the canonical (npm/wrapper/package.json). The
+	// external "matches git tag" check is performed by
+	// .github/workflows/precheck-version.yml; this test only asserts the
+	// schema is internally consistent with the rest of the version-stamped
+	// files.
+	want, err := readPackageVersion(t, filepath.Join(npmWrapperDir(t), "package.json"))
+	if err != nil {
+		t.Fatalf("read canonical version: %v", err)
+	}
 	version, _ := srv["version"].(string)
-	if version != "2.7.0-alpha" {
-		t.Errorf("server.json version = %q, want 2.7.0-alpha", version)
+	if version != want {
+		t.Errorf("server.json version = %q, want %q (must match npm/wrapper/package.json)", version, want)
 	}
 
 	// packages array
