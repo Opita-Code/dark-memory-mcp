@@ -6,6 +6,73 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [2.8.0-alpha] — 2026-07-29
+
+**Memory Timing & Coordination** — closes the "agent and subagents don't write/read agent_memory at the right moments" failure mode documented in agent_memory id=106 (28 edge cases across 6 categories, OSINT-grounded against Mem0/LangMem/Zep/Letta/arxiv:2605.08460). Five P1 features land behind a single feature flag (`DARK_MEMORY_V280=1`, default off in v2.7.x compat). Schema: v20 → **v21** (one new table). Canonical tool count: 39 → **41**. Wire contract appenditive, zero breaking changes.
+
+### Added
+
+- **A1 Decision Auto-Save** — `vibe_publish` with `auto_save_decision=true` (default when `DARK_MEMORY_V280=1`) AND `verdict=aligned` auto-creates a `kind=decision` agent_memory row, `pinned=true`, tagged with `spec:<id>,verdict:aligned,artifact:<url>`. Returns `auto_saved_decision_id` in the response. Off by default in v2.7.x compat.
+- **A4 Todo Auto-Save** — `vibe_spec` with `auto_save_todos=true` (default when `DARK_MEMORY_V280=1`) auto-creates one `kind=todo` row per task, tagged `spec:<id>,task:<id>,status:open`. `vibe_publish` `verdict=aligned` auto-archives the corresponding todos. Returns `auto_saved_todo_ids` (on spec) + `auto_archived_todo_ids` (on aligned publish).
+- **B1 Cold Start + Token Budget** — `session_start` adds two new fields: `cold_start` (skip `context_recap` entirely) + `context_recap_tokens` (default 2000, clamp `[0, 8000]`). `ContextRecap` adds three new fields: `truncated`, `truncated_rows`, `formatted_chars`. Truncation drops open todos first, then pinned from the tail (least recent).
+- **C2 Subagent Scope Handoff** — `mindset_apply` adds `spawn_subagent` + `subagent_id`. New tools: `dark_memory_subagent_register` + `dark_memory_subagent_unregister`. New migration **v21**: `active_subagents` table (`(project_id, operator, subagent_id)` PK + `id` AUTOINCREMENT surrogate + TTL index). TTL sweeper at `session_start` (precursor to F51). When `DARK_MEMORY_V280=1`, the `agent_memory_save` agent_id resolution priority chain extends to **(1) caller input > (2) active subagent_id > (3) `projects.default_agent_id` > (4) empty string**. **Defense-in-depth against arxiv:2605.08460 inheritance attacks** — subagent writes are tagged with an opaque uuid the principal generates, never the principal's `agent_id`, so they never leak into the principal's ContextRecap.
+- **D5 Cross-Project Error Code** — `GetAgentMemory` cross-project now returns `*CrossProjectAccessError` (wrapping `store.ErrCrossProjectAccess` sentinel). Distinct from `ErrNotFound` — operators can now diagnose "wrong project" vs "doesn't exist". Pre-v2.8.0 callers (when `DARK_MEMORY_V280=off`) see `(nil, nil)` for cross-project (v2.7.x backward compat preserved).
+- **`internal/orchestration/feature_flags.go`** — `v280Enabled()` helper (env `DARK_MEMORY_V280=1/true/yes/on`).
+- **`internal/orchestration/subagent.go`** — `SubagentRegister` + `SubagentUnregister` orchestrator methods + input/output types.
+- **`internal/orchestration/agent_id.go`** — `activeOperator()` + `resolveActiveAgentIDWithSubagent()` (C2 subagent priority chain).
+- **`internal/orchestration/session_start.go`** — `applyContextRecapBudget()` (B1 truncation) + `formatPinnedForRecap` / `formatTodosForRecap` formatters.
+- **`internal/orchestration/publish_vibe.go`** — `autoSaveDecisionOnAligned` (A1) + `autoArchiveSpecTodosOnAligned` (A4).
+- **`internal/orchestration/vibe_spec.go`** — `autoSaveTodosForSpec` (A4).
+- **`internal/orchestration/agent_memory.go`** — C2 agent_id resolution extension + D5 cross-project error wrapping.
+- **`internal/migrate/sqlite/ddl.go`** + **`internal/migrate/postgres/ddl.go`** — migration v21 (`active_subagents`).
+- **`internal/store/store.go`** — `ActiveSubagent` type + 4 Store interface methods (`SetActiveSubagent` / `GetActiveSubagent` / `ClearActiveSubagent` / `SweepExpiredSubagents`) + `ErrCrossProjectAccess` sentinel + `CrossProjectAccessError` struct.
+- **`internal/store/sqlite/store.go`** — full SQLite impl for all 4 methods + cross-project GetAgentMemory logic.
+- **`internal/store/postgres/store.go`** — `notImpl` stubs (F50 backlog; Postgres backplane deferred).
+
+### Changed
+
+- **`agent_memory_save` agent_id resolution priority chain** (when `DARK_MEMORY_V280=1`): caller input > **active subagent_id** > `projects.default_agent_id` > empty string. Pre-v2.8.0 chain is preserved when the flag is off.
+- **`session_start` `ContextRecap`** now includes `truncated` + `truncated_rows` + `formatted_chars` (when `DARK_MEMORY_V280=1`); defaults to token-budget 2000 (vs v2.7.x's unbounded).
+- **`vibe_publish`** returns `auto_saved_decision_id` + `auto_archived_todo_ids` (when `DARK_MEMORY_V280=1`).
+- **`vibe_spec`** returns `auto_saved_todo_ids` (when `DARK_MEMORY_V280=1`).
+- **`mindset_apply`** returns `subagent_id` + `parent_agent_id` when `spawn_subagent=true` (when `DARK_MEMORY_V280=1`).
+- **`SYSTEM_PROMPT.md`** — line 101 drift fix: `scope=current` → `scope=project` (v2.3.0 default was already `project`). Added B1 ContextRecap auto-surface note (§4.1), A1/A4 auto-save notes (§4.2), C2 subagent memory isolation note (§5).
+
+### Tests
+
+- **`tests/dual_driver/agent_memory_v2_8_0_test.go`** (10 tests, all passing): D5 cross-project error matrix (happy + same-project + non-existent + error-message-format) + C2 active_subagents store-layer round-trip (Set / Get / not-registered / refresh-TTL / Clear / Clear-not-found / sweep / kind=decision regression).
+- **`tests/conformance/bridge7_mcp_inspector_test.go`** — canonical tool count 39 → 41 (added `dark_memory_subagent_register` + `dark_memory_subagent_unregister` at position 39 + 40, after `vlp_handle_event`).
+- **`tests/migrate/migrate_f37_test.go`** — `schema_version` 20 → 21.
+
+### Backward Compatibility
+
+All 5 features gated by `DARK_MEMORY_V280=1`. **Default off.** v2.7.x callers see no behavior change. To opt in:
+
+```bash
+export DARK_MEMORY_V280=1
+# start dark-mem-mcp as usual
+```
+
+### Migration
+
+Apply migration v21 automatically on next `dark-mem-mcp` startup (idempotent `CREATE TABLE IF NOT EXISTS`). No operator action required.
+
+### Rollout Plan
+
+- **Phase 1 (this release)**: tag `v2.8.0-alpha`, `DARK_MEMORY_V280=1` opt-in, 1-week soak.
+- **Phase 2 (v2.8.0)**: default ON, 4-channel distribution.
+- **Phase 3 (v2.10.0)**: remove `DARK_MEMORY_V280` flag (new behavior permanent).
+
+### References
+
+- Spec: 681 (vibe_case=C2, 6 tasks)
+- Artifact: 804 (design doc, drift_judge aligned @0.92)
+- Edge case catalog: agent_memory id=106
+- Roadmap: agent_memory id=108
+- OSINT sources: Zylos multi-agent architectures, AgentMarketCap 2026 vendor landscape, arxiv:2605.08460 "When Child Inherits"
+
+---
+
 ## [2.7.1] — 2026-07-29
 
 Deferred cleanup after the 2.7.0-alpha ship (which required 5 commits to land due to version-drift + race-condition failure modes). No wire-contract changes — same 39 canonical tools, same schemas, same schema_version. All changes are CI hardening + tests.
