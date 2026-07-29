@@ -108,6 +108,18 @@ func RegisterAgentMemory(reg *Registry, orch *orchestration.Orchestrator, st sto
 			},
 		}),
 		func(ctx context.Context, in orchestration.AgentMemoryRecallInput) (*orchestration.AgentMemoryRecallOutput, error) {
+			// Tool layer is the canonical escape site (see comment on
+			// SearchAgentMemory in internal/store/sqlite/store.go). The
+			// escapeFTS5 helper allows alphanumeric + . - _ / + * and
+			// rejects AND/OR/NOT/NEAR. Without this call, raw queries
+			// reach FTS5's MATCH parser and explode with "fts5: syntax
+			// error" — operator smoke 2026-07-29 confirmed this with
+			// "v2.8.0 alpha harness gaps" returning ErrInternal.
+			escaped, err := escapeFTS5(in.Query)
+			if err != nil {
+				return nil, fmt.Errorf("%w: field=query: %v", store.ErrInvalidArgument, err)
+			}
+			in.Query = escaped
 			return orch.AgentMemoryRecall(ctx, in)
 		}))
 

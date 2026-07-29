@@ -113,6 +113,41 @@ Plus the **3 self-bootstrap tools** (v2.6.0+):
 
 ---
 
+## 4.5. Memory discovery (the recall vs list distinction)
+
+`agent_memory` exposes 6 tools, but they are NOT equally important. The pattern is **R-CRUD** (Recall first, then save/update/etc):
+
+| Tool | When to use | Cost | Returns |
+|---|---|---|---|
+| **`dark_memory_agent_memory_recall`** | "¿Qué sé sobre X?" — answering a question from existing memory | O(log n) FTS5 indexed | ranked hits (BM25), top-K by relevance |
+| `dark_memory_agent_memory_save` | Writing NEW memory | 1 INSERT + audit row | the row id |
+| `dark_memory_agent_memory_list` | Browsing ALL rows (with filters) | O(n) table scan | paginated rows |
+| `dark_memory_agent_memory_get` | Exact lookup by id | O(1) PK | the row |
+| `dark_memory_agent_memory_update` | Editing existing row | 1 UPDATE + audit | the row |
+| `dark_memory_agent_memory_archive` | Soft delete | 1 UPDATE | ok |
+
+**Rules of thumb:**
+
+1. **Recall is the primary discovery tool.** When the operator asks "what do we know about X?" or "have we investigated Y before?" — call `recall` first. NEVER default to `list()` — it scans the whole table and ranks by `created_at DESC`, not by relevance to the query.
+2. **Recall query is FTS5 lexical.** Allowed chars: alphanumeric + `. - _ / + *`. Reserved words AND/OR/NOT/NEAR are rejected. Use natural-language terms (e.g. `"rate limit ddb"`, `"amazon s3 cors"`), not boolean expressions.
+3. **Recall default limit is 10, max 50.** If you need more, page (call again with different query terms), don't bump limit blindly.
+4. **Combine with filters when you have a known kind.** `recall(query="rate limit", kind="finding")` filters by Mem0 kind taxonomy. `memory_type=episodic|semantic|procedural` filters by Mem0 three-class taxonomy.
+5. **List is for UI / admin / narrow queries.** E.g. "show me all todos" or "pinned memories from this project". NOT for discovery.
+6. **Get is for retries after a save.** You got back an id from save; you can `get(id=N)` to verify. NOT for finding rows you didn't save.
+
+**Anti-pattern:**
+
+❌ `list(scope=project, limit=200)` then manually filter in your head
+✅ `recall(query="specific terms")` — returns ranked hits in <50ms
+
+**Recap interaction (B1):** `session_start` auto-surfaces pinned memories + open todos via `context_recap`. Recall is the COMPLEMENT to recap: recap gives you the "always-relevant" scaffolding, recall gives you the "ask-on-demand" search.
+
+---
+
+## 5. Delegation via mindset (v2.7.0-alpha)
+
+---
+
 ## 5. Delegation via mindset (v2.7.0-alpha)
 
 When delegating work to a subagent, the system prompt the subagent
@@ -168,10 +203,6 @@ When `DARK_MEMORY_V280=1`, pass `spawn_subagent=true` + `subagent_id=<opaque-uui
 This is distinct from `ErrNotFound` (no such row anywhere) and `ErrInternal`
 (unrelated server error). Treat `ErrCrossProjectAccess` as a **security
 boundary**, not a bug.
-
----
-
-## 6. Drift detection (how you know you're done)
 
 ---
 
