@@ -94,7 +94,7 @@ const DefaultToolGrants = "project_create," + // PROJECT (1)
 	"agent_bootstrap,agent_recommend_companions,agent_detect_environment," + // AGENT_BOOTSTRAP (3) — v2.6.0
 	"vibe_publish,vibe_spec,pipeline_status,resolve_drift," + // VIBE (4)
 	"artifact_context,spec_context,session_context,recall," + // CONTEXT (4)
-	"agent_memory_save,agent_memory_list,agent_memory_recall,agent_memory_get,agent_memory_update,agent_memory_archive," + // AGENT_MEMORY (6) — v2.1.0 (5) + v2.3.0 (1: recall)
+	"agent_memory_save,agent_memory_list,agent_memory_recall,agent_memory_get,agent_memory_update,agent_memory_archive,subagent_register,subagent_unregister," + // AGENT_MEMORY (8) — v2.1.0 (5) + v2.3.0 (1: recall) + v2.8.0-alpha (2: subagent register/unregister)
 	"mindset_apply," + // MINDSET (1) — v2.7.0-alpha
 	"judge,consensus,judgment_history," + // JUDGE (3)
 	"active_policy,load_constitution," + // POLICY (2)
