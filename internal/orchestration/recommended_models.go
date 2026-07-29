@@ -48,6 +48,14 @@ var RecommendedModels = []ModelRecommendation{
 			ssd.EvalPIIDetect:            "claude-haiku-4-5", // pattern recognition
 			ssd.EvalPromptInjectionScan: "claude-sonnet-4-5",
 			ssd.EvalConsensus:            "claude-opus-4-7",
+			// v2.7.0-alpha: procedural subagent system_prompt composition +
+			// LLM-as-judge validation. Both need careful instruction-following
+			// + JSON-output discipline; sonnet is the right cost/quality
+			// tier (opus is overkill; haiku is borderline on the 5 pass
+			// criteria). Composition LLM also benefits from sonnet's
+			// strong schema adherence for the role/goal/backstory JSON.
+			ssd.EvalMindsetCompose: "claude-sonnet-4-5",
+			ssd.EvalMindsetQuality: "claude-sonnet-4-5",
 		},
 	},
 	{
@@ -61,6 +69,11 @@ var RecommendedModels = []ModelRecommendation{
 			ssd.EvalPIIDetect:            "gpt-5-mini",
 			ssd.EvalPromptInjectionScan: "gpt-5",
 			ssd.EvalConsensus:            "gpt-5",
+			// v2.7.0-alpha: composition is mechanical (fill JSON schema),
+			// mini is fine and cheaper. Validation needs careful rule-
+			// following + JSON discipline; gpt-5 matches the default.
+			ssd.EvalMindsetCompose: "gpt-5-mini",
+			ssd.EvalMindsetQuality: "gpt-5",
 		},
 	},
 	{
@@ -74,6 +87,10 @@ var RecommendedModels = []ModelRecommendation{
 			ssd.EvalPIIDetect:            "gemini-2.5-flash",
 			ssd.EvalPromptInjectionScan: "gemini-2.5-pro",
 			ssd.EvalConsensus:            "gemini-2.5-pro",
+			// v2.7.0-alpha: composition uses flash (mechanical JSON fill);
+			// validation needs pro (5 pass criteria evaluation).
+			ssd.EvalMindsetCompose: "gemini-2.5-flash",
+			ssd.EvalMindsetQuality: "gemini-2.5-pro",
 		},
 	},
 	{
@@ -139,6 +156,12 @@ var RecommendedModels = []ModelRecommendation{
 			ssd.EvalPIIDetect:            "deepseek-v3",
 			ssd.EvalPromptInjectionScan: "deepseek-v3",
 			ssd.EvalConsensus:            "deepseek-r1",
+			// v2.7.0-alpha: composition uses R1 (reasoning helps with
+			// the structured role/goal/backstory/constraints synthesis);
+			// validation uses V3 (default — the 5-criteria checklist
+			// is mechanical, not deep reasoning).
+			ssd.EvalMindsetCompose: "deepseek-r1",
+			ssd.EvalMindsetQuality: "deepseek-v3",
 		},
 	},
 	{

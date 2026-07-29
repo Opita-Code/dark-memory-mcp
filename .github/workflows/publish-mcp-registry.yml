@@ -4,6 +4,19 @@ on:
   push:
     tags:
       - "v*"
+  # v2.7.1: deterministic ordering via workflow_run. Fires AFTER
+  # publish-npm completes (any conclusion). We branch on conclusion
+  # below to skip the publish step if publish-npm failed (no point
+  # looking up a version that doesn't exist on npm).
+  #
+  # Both triggers still go through the same retry-loop safety net;
+  # workflow_run gives us deterministic ordering so the retry usually
+  # succeeds on attempt 1 (npm has already propagated by the time we
+  # fire). The retry is the safety net for manual workflow_dispatch
+  # reruns and any future cross-workflow trigger surprises.
+  workflow_run:
+    workflows: ["publish-npm"]
+    types: [completed]
   workflow_dispatch:
     inputs:
       version:
@@ -19,6 +32,13 @@ permissions:
 jobs:
   publish:
     name: Publish to Official MCP Registry
+    # Skip the entire job if we were triggered by workflow_run and the
+    # upstream publish-npm job failed — registry can't look up a version
+    # that was never published. Push-tag and workflow_dispatch paths
+    # always run (they're explicit operator actions).
+    if: |
+      github.event_name != 'workflow_run' ||
+      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -142,32 +162,25 @@ jobs:
           set -euo pipefail
           # Retry loop for npm-registry propagation race conditions.
           #
-          # Why: publish-npm.yml + publish-mcp-registry.yml trigger in
-          # parallel on the same tag push. mcp-publisher's `publish`
-          # step validates server.json's packages[].version against the
-          # npm registry's published-versions index. npm has a 5-30s
-          # CDN propagation delay after a publish completes. When the
-          # registry workflow reaches `publish` before npm's CDN has
-          # indexed the new version, mcp-publisher returns:
+          # Two trigger paths converge here:
+          # (a) push:tags: v* — fires in parallel with publish-npm.
+          #     npm CDN may not have propagated yet when this fires.
+          # (b) workflow_run on publish-npm completed — fires AFTER
+          #     publish-npm's publish step succeeded. npm CDN HAS
+          #     propagated. First attempt usually succeeds.
+          # (c) workflow_dispatch — manual operator rerun. Same as (a).
           #
-          #   NPM package '@opitacode/dark-memory-mcp' exists, but
-          #   version '2.6.0' was not found (status: 404).
+          # The retry budget covers path (a)/(c). Path (b) almost always
+          # succeeds on attempt 1; the retry is a no-op safety net.
           #
-          # Fix (v2.6.1, operator-approved decision agent_memory id=80):
-          # retry up to 3 times with 30s waits between attempts. Total
-          # worst-case runtime is ~90s of retries + the publish itself;
-          # for the common case (npm propagates <30s) the publish
-          # succeeds on the first retry.
-          #
-          # Why retry and not `workflow_run`: workflow_run would
-          # require moving publish-mcp-registry to a separate trigger
-          # and breaks manual workflow_dispatch reruns (used after a
-          # bad server.json push). Retry inside the existing step
-          # preserves both trigger paths AND adds resilience.
-          MAX_ATTEMPTS=3
-          RETRY_DELAY=30
+          # v2.6.1 retry: 3 × 30s = 90s worst case. v2.7.1 bump per
+          # agent_memory id=93 follow-up: 5 × 60s = 300s worst case,
+          # which comfortably covers npm's 5-30s CDN propagation plus
+          # the longest historical flake (~180s in v2.6.0 publish).
+          MAX_ATTEMPTS=5
+          RETRY_DELAY=60
           for attempt in $(seq 1 $MAX_ATTEMPTS); do
-            echo "::group::mcp-publisher publish (attempt $attempt/$MAX_ATTEMPTS)"
+            echo "::group::mcp-publisher publish (attempt $attempt/$MAX_ATTEMPTS, trigger=${{ github.event_name }})"
             if ./mcp-publisher publish; then
               echo "::endgroup::"
               echo "Published on attempt $attempt"
