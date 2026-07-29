@@ -1,0 +1,94 @@
+# Pre-check CI: verify all version-stamped files match the git tag before
+# any publish workflow spawns. Single source of truth so a mismatched
+# version fails fast (~$5s, no matrix, no build) instead of after each
+# expensive publish job.
+#
+# Why this exists: the v2.7.0-alpha ship (commit 0c031fb) required 5
+# commits because package.json + server.json + canonicalWireOrder() drifted
+# from the canonical version. Catching the drift in one place here saves
+# 4 retry commits per release. Operator fix: run `bash scripts/bump-version.sh`
+# locally, commit, push, force-move tag (workflow re-triggers).
+#
+# This is intentionally appenditive (does NOT remove the existing
+# per-platform version check in publish-npm.yml). Defense in depth: this
+# workflow fails first with the canonical list, per-job check is the
+# last line of defense.
+name: precheck-version
+
+on:
+  push:
+    tags: ['v*']
+
+# Required: tags use restricted refs, must explicitly grant.
+permissions:
+  contents: read
+
+jobs:
+  version-check:
+    name: Verify package.json + server.json match tag ${{ github.ref_name }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check Node.js available
+        run: node --version
+
+      - name: Verify all version-stamped files match tag
+        run: |
+          # Strip "refs/tags/v" prefix → bare version (e.g., "2.7.0-alpha").
+          TAG="${GITHUB_REF#refs/tags/v}"
+          echo "Tag under verification: $TAG"
+
+          # Files that must declare the same version as the git tag.
+          # Match the same set that scripts/bump-version.sh writes:
+          #   - 1 wrapper (npm/wrapper/package.json)
+          #   - 6 platform packages (one per OS/arch pair)
+          #   - 1 server.json (MCP Registry)
+          FILES=(
+            "npm/wrapper/package.json"
+            "npm/platform-darwin-x64/package.json"
+            "npm/platform-darwin-arm64/package.json"
+            "npm/platform-linux-x64/package.json"
+            "npm/platform-linux-arm64/package.json"
+            "npm/platform-win32-x64/package.json"
+            "npm/platform-win32-arm64/package.json"
+            "server.json"
+          )
+
+          FAILED=0
+          for f in "${FILES[@]}"; do
+            if [ ! -f "$f" ]; then
+              echo "::error::$f does not exist (was it renamed?)"
+              FAILED=1
+              continue
+            fi
+            # Extract version. For package.json use node (handles nested
+            # fields if ever needed). For server.json use node too (JSON).
+            V=$(node -p "require('./$f').version" 2>&1) || {
+              echo "::error::$f: failed to parse JSON: $V"
+              FAILED=1
+              continue
+            }
+            if [ "$V" != "$TAG" ]; then
+              echo "::error::$f version=$V != tag=$TAG"
+              FAILED=1
+            else
+              echo "  OK $f → $V"
+            fi
+          done
+
+          if [ "$FAILED" -ne 0 ]; then
+            echo ""
+            echo "::group::Fix: bump versions to match tag"
+            echo "Run locally then commit + force-move the tag:"
+            echo "  bash scripts/bump-version.sh $TAG"
+            echo "  git add -A && git commit -m 'chore: bump versions to $TAG'"
+            echo "  git push origin main"
+            echo "  git tag -d $TAG && git push origin :refs/tags/$TAG"
+            echo "  git tag $TAG && git push origin $TAG"
+            echo "::endgroup::"
+            exit 1
+          fi
+
+          echo ""
+          echo "All version-stamped files match tag $TAG ✓"
