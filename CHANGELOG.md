@@ -6,6 +6,33 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [2.7.1] — 2026-07-29
+
+Deferred cleanup after the 2.7.0-alpha ship (which required 5 commits to land due to version-drift + race-condition failure modes). No wire-contract changes — same 39 canonical tools, same schemas, same schema_version. All changes are CI hardening + tests.
+
+### Fixed
+
+- **`TestV261_RegistryPublishRetryLoop` retry-budget assertions updated to match new 5×60s budget**. The test was hardcoded to `MAX_ATTEMPTS=3`/`RETRY_DELAY=30` from the v2.6.1 race fix; v2.7.1 bumped the retry loop to `5×60s` per agent_memory id=93 follow-up. Test now asserts the values are within the documented contract (`MAX_ATTEMPTS in [3, 5]`, `RETRY_DELAY >= 30`) so future bumps don't break it.
+
+### Added
+
+- **`internal/tools/canonical_staleness_test.go`** — `TestCanonicalWireOrder_NotStale` catches the drift between the hand-maintained `canonicalWireOrder()` helper in the conformance test and the canonical `tools.CanonicalOrder()`. This was root cause #1 of the v2.7.0-alpha 4-iteration cycle: every new tool required hand-editing a string list in a separate file, and one was missed. The new test compares the two on length + membership + position. Runs in <100ms with no live server. Validated against intentional-stale inputs (3 distinct error messages on miss).
+- **`internal/orchestration/recommended_models.go`** — per-provider entries for the two new Judge eval types (`mindset_compose`, `mindset_quality`) for the 4 main providers (anthropic, openai, google, deepseek). The other 6 providers fall through to the default. No more model-name resolution failure on those eval types for the supported providers.
+- **`.github/workflows/precheck-version.yml`** — new workflow, single source of truth for tag/version match. Triggers on `push: tags: v*`, verifies all 8 version-stamped files (1 wrapper + 6 platforms + server.json) declare the same `version` as the git tag. On mismatch: emits one `##[error]` per file (each renders as a red annotation in the PR) plus a `::group::Fix:` block with copy-pasteable operator recipe, then `exit 1`. Cost: ~2s on failure, ~3s on success. Appenditive (does not remove the per-workflow version checks in `publish-npm.yml`).
+
+### Changed
+
+- **`.github/workflows/publish-mcp-registry.yml`** — added `workflow_run` trigger on `publish-npm` completion (in addition to `push: tags: v*`). The registry job now skips if the upstream `publish-npm` `conclusion != 'success'` instead of attempting to publish a version that doesn't exist on npm yet. Retry loop bumped from `MAX_ATTEMPTS=3` × `RETRY_DELAY=30s` to `5 × 60s` per agent_memory id=93 (the 2.7.0-alpha race exhausted the previous budget when publish-npm failed).
+- **`scripts/bump-version.sh`** — parameterized (`bash scripts/bump-version.sh <new-version>` instead of hardcoded `2.6.2 → 2.7.0-alpha`). Auto-discovers `OLD` from `npm/wrapper/package.json`. Validates `NEW` matches semver-ish regex. Verifies every file declares the new version after sed (catches partial failures). Prints next-step commands for the operator.
+
+### Lessons captured for future releases
+
+1. Always run `bash scripts/bump-version.sh <version>` BEFORE tagging.
+2. If `precheck-version` CI fails, the error message lists ALL mismatched files in one place.
+3. Per-workflow version checks in `publish-npm.yml` / `publish-mcp-registry.yml` remain as defense in depth — DO NOT remove.
+
+---
+
 ## [2.7.0-alpha] — 2026-07-28
 
 ### Added — Phase 1 delegation primitive: dark_memory_mindset_apply

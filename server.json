@@ -3,12 +3,12 @@
   "name": "io.github.Opita-Code/dark-memory-mcp",
   "title": "dark-memory-mcp",
   "description": "Persistent memory + vibe-loop engine for AI agents. Single Go binary, SQLite-backed, stdio MCP.",
-      "version": "2.7.0-alpha",
+      "version": "2.7.1",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@opitacode/dark-memory-mcp",
-  "version": "2.7.0-alpha",
+  "version": "2.7.1",
       "transport": {
         "type": "stdio"
       }
