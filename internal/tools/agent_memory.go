@@ -189,41 +189,70 @@ func RegisterAgentMemory(reg *Registry, orch *orchestration.Orchestrator, st sto
 // v2.1.0 list. The orchestrator's List path takes a flat
 // AgentMemoryListInput below.
 //
-// FTS5 escape helper: FTS5 has reserved operators (AND, OR, NOT, NEAR,
-// parentheses, quotes, colons). For v2.1.0 we do a simple escape:
-//   - strip double quotes (FTS5 phrase boundaries) by doubling them
-//     inside the term
-//   - reject input containing unescaped parentheses or colons
-// This is conservative; a full tokenizer-aware escape is F49.
+// FTS5 escape helper: wraps each whitespace-separated token in FTS5
+// phrase quotes (double quotes). Per SQLite FTS5 docs §3.1 (sqlite.org/fts5.html),
+// barewords are restricted to [a-zA-Z0-9_] — any other character
+// (including `.`, `-`, `:`, parens, etc.) MUST be quoted. Wrapping each
+// token in quotes makes the query syntax-safe regardless of input.
+//
+// Pattern adopted from gwicho38/legal-workspace-mcp's _prepare_fts_query
+// (deepwiki.com/gwicho38/legal-workspace-mcp/3.2.1-sqlite-fts5-and-bm25).
+//
+// Trade-offs:
+//   - Quote-wrap is more robust than a char allowlist (no string to
+//     maintain when new chars appear in user input).
+//   - Quoted phrases match as literal token sequences, so "v2.8.0"
+//     matches docs containing the literal "v2.8.0" (not 3 separate
+//     tokens v2, 8, 0).
+//   - Embedded double quotes inside a token are escaped SQL-style by
+//     doubling: `"` → `""`.
+//   - AND/OR/NOT/NEAR reserved words are safe inside quotes (FTS5
+//     treats them as literal tokens within phrases).
+//
+// Length-prefix matching (`jira*`) is preserved by appending `*`
+// **outside** the closing quote when the token ends in `*`. So
+// input "jira*" becomes `"jira"*` (FTS5 prefix phrase query).
+//
+// Empty/whitespace-only queries are rejected. Length limit per token
+// is 256 chars to avoid pathological inputs.
 func escapeFTS5(q string) (string, error) {
 	q = strings.TrimSpace(q)
 	if q == "" {
 		return "", fmt.Errorf("empty query")
 	}
-	// Reject inputs that look like injection attempts. We allow
-	// alphanumeric, whitespace, dot, dash, underscore, slash, plus.
-	for _, r := range q {
-		switch {
-		case r >= 'a' && r <= 'z':
-		case r >= 'A' && r <= 'Z':
-		case r >= '0' && r <= '9':
-		case r == ' ' || r == '\t' || r == '.' || r == '-' || r == '_' || r == '/' || r == '+' || r == '*':
-		default:
-			return "", fmt.Errorf("fts5: invalid character %q in query", r)
-		}
-	}
-	// Conservative: don't allow standalone AND/OR/NOT/NEAR at the
-	// start of a token (FTS5 reserved words).
 	tokens := strings.Fields(q)
-	for _, t := range tokens {
-		upper := strings.ToUpper(t)
-		switch upper {
-		case "AND", "OR", "NOT", "NEAR":
-			return "", fmt.Errorf("fts5: reserved word %q not allowed in query", t)
-		}
+	if len(tokens) == 0 {
+		return "", fmt.Errorf("empty query")
 	}
-	return q, nil
+	parts := make([]string, 0, len(tokens))
+	for _, t := range tokens {
+		// Length-prefix support: if user wrote "jira*" they want
+		// the FTS5 prefix phrase syntax `"jira"*`. Strip the `*`
+		// before quoting and reapply after.
+		prefix := strings.HasSuffix(t, "*")
+		core := t
+		if prefix {
+			core = strings.TrimSuffix(t, "*")
+		}
+		if len(core) == 0 {
+			continue
+		}
+		if len(core) > 256 {
+			return "", fmt.Errorf("fts5: token %q exceeds 256 chars", t)
+		}
+		// Escape embedded double quotes by doubling them (FTS5 spec).
+		escaped := strings.ReplaceAll(core, `"`, `""`)
+		parts = append(parts, `"`+escaped+`"`+map[bool]string{true: "*", false: ""}[prefix])
+	}
+	if len(parts) == 0 {
+		return "", fmt.Errorf("empty query")
+	}
+	return strings.Join(parts, " "), nil
 }
+
+// retained reserved-word check is intentionally NOT here: with quote-wrap,
+// AND/OR/NOT/NEAR inside a phrase are literal tokens, not operators.
+// See the docs comment above for the rationale.
 
 // nowFunc is a package-level seam for tests. Default is time.Now.
 var nowFunc = func() time.Time { return time.Now().UTC() }

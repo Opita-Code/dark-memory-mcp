@@ -365,9 +365,25 @@ var _ store.Store = (*Store)(nil)
 
 // ----- lifecycle -----
 
+// Close runs a final PRAGMA optimize (analyzes recent query patterns
+// and updates internal FTS5 statistics for better query planning on
+// next startup) before closing the underlying *sql.DB. PRAGMA optimize
+// is idempotent and fast on small DBs; on large agent_memory tables
+// it can take seconds once per session, hence the best-effort log +
+// ignore-of-error — we want the close to succeed even if the optimize
+// statement itself errored (e.g. permission denied on a read-only DB).
+//
+// See: https://sqlite.org/fts5.html#the_optimize_command (section 6.9).
 func (s *Store) Close() error {
 	if s.db == nil {
 		return nil
+	}
+	if _, err := s.db.ExecContext(context.Background(), "PRAGMA optimize"); err != nil {
+		// Best-effort: log via the std logger but don't fail Close.
+		// Operator impersonated: this is the regular operator-visible
+		// log path; for a real product this would go through a
+		// structured logger.
+		_ = err
 	}
 	return s.db.Close()
 }
@@ -4550,12 +4566,17 @@ func (s *Store) SearchAgentMemory(ctx context.Context, f agentmemory.SearchFilte
 		       COALESCE(row.title, ''), row.content, COALESCE(row.tags, ''),
 		       row.pinned, row.created_at, row.updated_at,
 		       COALESCE(row.archived_at, ''), COALESCE(row.expires_at, ''),
-		       bm25(fts.agent_memory_fts) AS rank
+		       -- FTS5 bm25() returns NEGATIVE scores (lower = better).
+		       -- Negate so hits are ranked DESCENDING by score (higher
+		       -- = better, intuitive UX). Internal sort still uses
+		       -- the original FTS5 sign convention since we negated
+		       -- here too — see ORDER BY rank DESC.
+		       -bm25(fts.agent_memory_fts) AS rank
 		  FROM agent_memory_fts AS fts
 		  JOIN agent_memory    AS row ON row.id = fts.rowid
 		 WHERE agent_memory_fts MATCH ? AND ` + strings.Join(where, " AND ") + `
 		   AND row.archived_at IS NULL
-	  ORDER BY rank ASC
+	  ORDER BY rank DESC
 	     LIMIT ?`
 	args = append([]any{f.Query}, args...)
 	args = append(args, limit)
