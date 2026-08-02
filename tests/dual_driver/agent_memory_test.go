@@ -445,6 +445,97 @@ func TestAgentMemory_Search_BM25(t *testing.T) {
 	}
 }
 
+// TestAgentMemory_Search_PorterStemming exercises the v22 porter
+// unicode61 tokenizer. Morphology-equivalent words ("running" ↔ "runs")
+// collapse to the same stem ("run") and both rows surface for the same
+// FTS5 query.
+//
+// PR-1 of the v2.9.0 plan (row 160). LOW risk. Backward compat: result
+// SET unchanged for unambiguous queries; only ranking differs when
+// stems collide.
+//
+// Note on porter scope: the standard 1980 Porter stemmer collapses
+// inflectional suffixes (-s, -ing, -ed, etc) but does NOT recognize
+// irregular past-tense ("ran" stems to itself, not "run"). This test
+// verifies the documented behavior — "runs" finds "running" and vice
+// versa — not the broader irregular-verb case.
+func TestAgentMemory_Search_PorterStemming(t *testing.T) {
+	st, cleanup := openAgentMemoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	// Three rows:
+	//   - row A: contains the inflected form "running"
+	//   - row B: contains the inflected form "runs"
+	//   - row C: contains the bare form "run"
+	//   - row D: control, no overlap with the run*-family at all
+	rows := []*agentmemory.AgentMemory{
+		makeRow("alice", "note", "the running dog"),
+		makeRow("alice", "note", "she runs every morning"),
+		makeRow("alice", "note", "go for a run today"),
+		makeRow("alice", "note", "completely unrelated content about cats"),
+	}
+	for i, r := range rows {
+		if _, err := st.SaveAgentMemory(ctx, wcFor("alice", "test"), r); err != nil {
+			t.Fatalf("save row %d: %v", i, err)
+		}
+	}
+
+	// Query "runs": with porter, this stems to "run" alongside the
+	// indexed stems of "running", "runs", and "run". All three run*-
+	// family rows should match; the cats row should NOT (porter is
+	// stem-based, not substring; "cats" stems to "cat", not "run").
+	hits, err := st.SearchAgentMemory(ctx, agentmemory.SearchFilters{Query: "runs"})
+	if err != nil {
+		t.Fatalf("search runs: %v", err)
+	}
+	if len(hits) != 3 {
+		t.Errorf("porter: search 'runs' should match 3 run*-family rows, got %d", len(hits))
+		for i, h := range hits {
+			t.Logf("hit %d: id=%d content=%q", i, h.ID, h.Content)
+		}
+	}
+	for _, h := range hits {
+		if strings.Contains(h.Content, "cats") {
+			t.Errorf("porter: search 'runs' should NOT match unrelated cats row (porter is stem-based, got id=%d)", h.ID)
+		}
+	}
+}
+
+// TestAgentMemory_Search_BaselineExact is the control: exact-form
+// queries still work and still match the row containing the literal
+// token. Confirms we did not regress the v2.8.0-alpha behavior on
+// queries that have no morphology ambiguity.
+func TestAgentMemory_Search_BaselineExact(t *testing.T) {
+	st, cleanup := openAgentMemoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	rows := []*agentmemory.AgentMemory{
+		makeRow("alice", "note", "running dog"),
+		makeRow("alice", "note", "lazy fox"),
+	}
+	for i, r := range rows {
+		if _, err := st.SaveAgentMemory(ctx, wcFor("alice", "test"), r); err != nil {
+			t.Fatalf("save row %d: %v", i, err)
+		}
+	}
+
+	hits, err := st.SearchAgentMemory(ctx, agentmemory.SearchFilters{Query: "running"})
+	if err != nil {
+		t.Fatalf("search running: %v", err)
+	}
+	if len(hits) != 1 {
+		t.Errorf("baseline: search 'running' should match exactly 1 row, got %d", len(hits))
+		for i, h := range hits {
+			t.Logf("hit %d: id=%d content=%q", i, h.ID, h.Content)
+		}
+	}
+	if len(hits) >= 1 && !strings.Contains(hits[0].Content, "running dog") {
+		t.Errorf("baseline: search 'running' matched wrong content: %q", hits[0].Content)
+	}
+}
+
 func TestAgentMemory_Search_EmptyQueryRejected(t *testing.T) {
 	st, cleanup := openAgentMemoryDB(t)
 	defer cleanup()
