@@ -84,7 +84,7 @@ var InstallClients = []string{
 // companion docs for. Order is stable for tests.
 var CompanionTools = []string{
 	"dark-research",
-	"dark-copilot",
+	"[FUTURE-MCP-N]",
 }
 
 // TotalResources returns the total number of resources + resource
@@ -164,7 +164,7 @@ func RegisterAll(srv *server.MCPServer) error {
 	for _, client := range InstallClients {
 		uri := URIPrefix + "install/" + client + ".md"
 		name := "Install dark-memory-mcp on " + client
-		desc := "Step-by-step install guide for the " + client + " harness. Covers dark-memory, optional companion MCPs (dark-research, dark-copilot), and how to bootstrap the operating manual."
+		desc := "Step-by-step install guide for the " + client + " harness. Covers dark-memory, optional companion MCPs (dark-research, [FUTURE-MCP-N]), and how to bootstrap the operating manual."
 		fsPath := "install/" + client + ".md"
 
 		tmpl := mcp.NewResourceTemplate(

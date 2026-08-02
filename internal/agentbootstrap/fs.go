@@ -104,7 +104,7 @@ func LoadFSWithWarn() (fs.FS, error) {
 // validateOverrideDir checks that the directory exists, is a directory,
 // and contains the expected bootstrap files (SYSTEM_PROMPT.md +
 // COMPATIBILITY_MATRIX.md + install/{6 clients}.md + companions/{
-// dark-research, dark-copilot }.md).
+// dark-research, [FUTURE-MCP-N] }.md).
 //
 // This is the same set of files that the embedded fs provides; the
 // check is intentional. An operator override that lacks any of these
@@ -129,7 +129,7 @@ func validateOverrideDir(dir string) error {
 		"install/cursor.md",
 		"install/continue.md",
 		"companions/dark-research.md",
-		"companions/dark-copilot.md",
+		"companions/[FUTURE-MCP-N].md",
 	}
 	for _, rel := range required {
 		if _, err := os.Stat(filepath.Join(dir, rel)); err != nil {

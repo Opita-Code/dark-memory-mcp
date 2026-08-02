@@ -45,9 +45,9 @@ Claude Desktop has no terminal. To do OSINT or browser-based research, install t
       "command": "npx",
       "args": ["-y", "@opitacode/dark-research-mcp"]
     },
-    "dark-copilot": {
+    "[FUTURE-MCP-N]": {
       "command": "npx",
-      "args": ["-y", "@opitacode/dark-copilot-mcp"]
+      "args": ["-y", "@opitacode/[FUTURE-MCP-N]-mcp"]
     }
   }
 }

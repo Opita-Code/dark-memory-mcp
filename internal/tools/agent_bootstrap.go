@@ -9,7 +9,7 @@
 //
 // These tools let any harness discover the dark-memory operating
 // manual (canonical + harness-specific), detect missing companion
-// MCPs (dark-research, dark-copilot), and inspect what the MCP can
+// MCPs (dark-research, [FUTURE-MCP-N]), and inspect what the MCP can
 // infer about the harness's runtime (client name, version, transport,
 // negotiated spec version).
 //
@@ -175,7 +175,7 @@ type companionMeta struct {
 }
 
 // knownCompanions is the curated list of companions the MCP recommends.
-// The user picked option A (just dark-research + dark-copilot; no
+// The user picked option A (just dark-research + [FUTURE-MCP-N]; no
 // generic mcpfinder-style fallback). Order is stable for tests.
 var knownCompanions = []companionMeta{
 	{
@@ -185,10 +185,10 @@ var knownCompanions = []companionMeta{
 		ResourcePath:   "companions/dark-research.md",
 	},
 	{
-		Name:           "dark-copilot",
+		Name:           "[FUTURE-MCP-N]",
 		Rationale:      "Real Chromium browser for JS-gated pages, interactive controls, and form submission. WebFetch alone can't handle CAPTCHAs, JS-gated dashboards, or interactive flows. Use this when web fetch fails or you need to click/type/scroll.",
-		InstallSnippet: "npm install -g @opitacode/dark-copilot-mcp",
-		ResourcePath:   "companions/dark-copilot.md",
+		InstallSnippet: "npm install -g @opitacode/[FUTURE-MCP-N]-mcp",
+		ResourcePath:   "companions/[FUTURE-MCP-N].md",
 	},
 }
 
@@ -228,7 +228,7 @@ func RegisterAgentBootstrap(reg *Registry) {
 				},
 				"target": map[string]any{
 					"type":        "string",
-					"description": "For install_guide: claude-desktop | claude-code | opencode | cline | cursor | continue. For companion: dark-research | dark-copilot. Required for those surfaces; ignored otherwise.",
+					"description": "For install_guide: claude-desktop | claude-code | opencode | cline | cursor | continue. For companion: dark-research | [FUTURE-MCP-N]. Required for those surfaces; ignored otherwise.",
 				},
 				"force_embedded": map[string]any{
 					"type":        "boolean",
@@ -240,7 +240,7 @@ func RegisterAgentBootstrap(reg *Registry) {
 		handlerAgentBootstrap))
 
 	reg.Add(BindSimple("agent_recommend_companions",
-		"Reads the harness's clientInfo and returns a structured list of recommended companion MCPs (dark-research, dark-copilot). Read-only: never auto-installs. Use this on first connect to learn what the harness should install for full functionality.",
+		"Reads the harness's clientInfo and returns a structured list of recommended companion MCPs (dark-research, [FUTURE-MCP-N]). Read-only: never auto-installs. Use this on first connect to learn what the harness should install for full functionality.",
 		MustJSONSchema(map[string]any{
 			"type":       "object",
 			"properties": map[string]any{},
