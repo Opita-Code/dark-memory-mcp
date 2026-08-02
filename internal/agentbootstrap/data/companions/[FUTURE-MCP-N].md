@@ -1,16 +1,16 @@
-# dark-copilot-mcp — companion real-browser tool
+# [FUTURE-MCP-N]-mcp — companion real-browser tool
 
 > Bootstrap version 1. For dark-memory-mcp v2.6.0+.
 
 ## What it is
 
-`dark-copilot-mcp` exposes a real Chromium browser to MCP-native harnesses via 18 tools: navigate, click, type, scroll, snapshot_dom, execute_js, screenshot, screenshot_element, network_list, console_get, storage_get, sources_list/get, modify_dom, manipulate_storage, override_geo, inject_script, raw_event.
+`[FUTURE-MCP-N]-mcp` exposes a real Chromium browser to MCP-native harnesses via 18 tools: navigate, click, type, scroll, snapshot_dom, execute_js, screenshot, screenshot_element, network_list, console_get, storage_get, sources_list/get, modify_dom, manipulate_storage, override_geo, inject_script, raw_event.
 
 It uses lazy-launch + LIFO shutdown: Chrome boots on the first tool call that needs it, and exits when the session closes.
 
 ## When to recommend it
 
-Call `dark_memory_agent_recommend_companions()` and recommend `dark-copilot` if:
+Call `dark_memory_agent_recommend_companions()` and recommend `[FUTURE-MCP-N]` if:
 
 - The user needs to interact with a JS-gated page (SPA, dashboard, captcha, login flow).
 - The harness has no real browser (Claude Desktop, Claude Code's WebFetch is read-only).
@@ -26,7 +26,7 @@ Call `dark_memory_agent_recommend_companions()` and recommend `dark-copilot` if:
 ## Install
 
 ```bash
-npm install -g @opitacode/dark-copilot-mcp
+npm install -g @opitacode/[FUTURE-MCP-N]-mcp
 ```
 
 Add to your harness's MCP config:
@@ -34,9 +34,9 @@ Add to your harness's MCP config:
 ```json
 {
   "mcpServers": {
-    "dark-copilot": {
+    "[FUTURE-MCP-N]": {
       "command": "npx",
-      "args": ["-y", "@opitacode/dark-copilot-mcp"]
+      "args": ["-y", "@opitacode/[FUTURE-MCP-N]-mcp"]
     }
   }
 }
@@ -47,11 +47,11 @@ Add to your harness's MCP config:
 ```bash
 # after install
 dark_memory_agent_recommend_companions
-# → should show "dark-copilot" as present
+# → should show "[FUTURE-MCP-N]" as present
 
 # then test:
-mcp__dark-copilot__navigate("https://example.com")
-mcp__dark-copilot__snapshot_dom(selector="h1", max_bytes=2000)
+mcp__[FUTURE-MCP-N]__navigate("https://example.com")
+mcp__[FUTURE-MCP-N]__snapshot_dom(selector="h1", max_bytes=2000)
 ```
 
 ## R5 — OSINT primary-source gate
@@ -60,8 +60,8 @@ Any browser-scraped claim about a third-party product's version/release/CVE MUST
 
 ## R6 — Vibe-flow gate for browser output
 
-A dark-copilot tool result is never returned to the operator directly — pipe through `spec_create` → `tool_call` → `artifact_log` → `drift_judge` → `drift_log` → `persist`. Exception: pure read-only sanity checks may return directly.
+A [FUTURE-MCP-N] tool result is never returned to the operator directly — pipe through `spec_create` → `tool_call` → `artifact_log` → `drift_judge` → `drift_log` → `persist`. Exception: pure read-only sanity checks may return directly.
 
 ## Coexistence note
 
-`dark-copilot-mcp` is in a separate coexistence group (browser-automation). It does NOT route through `dark-memory-mcp`'s policy gateway — it's a peer tool, not a managed one.
+`[FUTURE-MCP-N]-mcp` is in a separate coexistence group (browser-automation). It does NOT route through `dark-memory-mcp`'s policy gateway — it's a peer tool, not a managed one.

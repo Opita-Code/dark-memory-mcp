@@ -37,14 +37,14 @@ import "fmt"
 //
 //   - The resource URIs the harness can read directly.
 //   - The 3 self-bootstrap tools introduced in v2.6.0.
-//   - Cross-references to dark-research and dark-copilot companion MCPs.
+//   - Cross-references to dark-research and [FUTURE-MCP-N] companion MCPs.
 //
 // Operators who want to override the cross-feature text can do so by
 // editing this function. The version is interpolated so the LLM
 // always knows which MCP version emitted the hint.
 func CrossFeatureHints(version string) string {
 	return fmt.Sprintf(
-		"dark-memory-mcp v%s self-bootstraps via resources (read dark-memory://docs/system-prompt.md) and via 3 tools: dark_memory_agent_bootstrap (returns the markdown content of any resource by surface+target), dark_memory_agent_recommend_companions (detects your harness and recommends missing companion MCPs), dark_memory_agent_detect_environment (returns what the MCP can infer about your runtime). Companion MCPs: @opitacode/dark-research-mcp (OSINT) and @opitacode/dark-copilot-mcp (real Chromium browser).",
+		"dark-memory-mcp v%s self-bootstraps via resources (read dark-memory://docs/system-prompt.md) and via 3 tools: dark_memory_agent_bootstrap (returns the markdown content of any resource by surface+target), dark_memory_agent_recommend_companions (detects your harness and recommends missing companion MCPs), dark_memory_agent_detect_environment (returns what the MCP can infer about your runtime). Companion MCPs: @opitacode/dark-research-mcp (OSINT) and @opitacode/[FUTURE-MCP-N]-mcp (real Chromium browser).",
 		version,
 	)
 }

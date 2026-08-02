@@ -28,9 +28,9 @@ You have at least one MCP server: `dark-memory-mcp`. It exposes the canonical **
 |---|---|---|
 | **dark-memory-mcp** | Memory + audit trail + drift detection + governance | Always (required) |
 | **dark-research-mcp** | OSINT: web, academic, code, CVE, IP, geo, news | When you need to research something |
-| **dark-copilot-mcp** | Real Chromium browser for JS-gated pages, interactive controls | When web fetch isn't enough |
+| **[FUTURE-MCP-N]-mcp** | Real Chromium browser for JS-gated pages, interactive controls | When web fetch isn't enough |
 
-**You might or might not have dark-research and dark-copilot.** Call `dark_memory_agent_recommend_companions()` to find out and get install guidance.
+**You might or might not have dark-research and [FUTURE-MCP-N].** Call `dark_memory_agent_recommend_companions()` to find out and get install guidance.
 
 ---
 
@@ -49,7 +49,7 @@ You have at least one MCP server: `dark-memory-mcp`. It exposes the canonical **
 
 For companion tool docs (when to use them, install links), read:
 - `dark-memory://docs/companions/dark-research.md`
-- `dark-memory://docs/companions/dark-copilot.md`
+- `dark-memory://docs/companions/[FUTURE-MCP-N].md`
 
 ---
 
@@ -228,7 +228,7 @@ Returns the content of a resource by name. Use this when:
 - You want to read a companion doc
 
 **Input:** `surface` = `"system_prompt" | "compatibility_matrix" | "install_guide" | "companion" | "all"`
-**For `install_guide` and `companion`:** pass `target` = `"claude-desktop" | "claude-code" | "opencode" | "cline" | "cursor" | "continue"` or `"dark-research" | "dark-copilot"`.
+**For `install_guide` and `companion`:** pass `target` = `"claude-desktop" | "claude-code" | "opencode" | "cline" | "cursor" | "continue"` or `"dark-research" | "[FUTURE-MCP-N]"`.
 
 **Output:** markdown text.
 
@@ -240,13 +240,13 @@ Reads your harness `clientInfo` (legacy spec from `initialize.clientInfo`, new s
 {
   "harness": {"name": "claude-desktop", "title": "Claude Desktop", "version": "1.0.0", "spec_detected": "2025-06-18"},
   "companions_present": ["dark-research"],
-  "companions_missing": ["dark-copilot"],
+  "companions_missing": ["[FUTURE-MCP-N]"],
   "recommendations": [
     {
-      "name": "dark-copilot",
+      "name": "[FUTURE-MCP-N]",
       "rationale": "Real Chromium browser for JS-gated pages and interactive controls. Web fetch alone can't handle CAPTCHAs, JS-gated dashboards, or interactive flows.",
-      "install_snippet": "npm install -g @opitacode/dark-copilot-mcp",
-      "docs_uri": "dark-memory://docs/companions/dark-copilot.md"
+      "install_snippet": "npm install -g @opitacode/[FUTURE-MCP-N]-mcp",
+      "docs_uri": "dark-memory://docs/companions/[FUTURE-MCP-N].md"
     }
   ],
   "limitations": [

@@ -16,14 +16,14 @@ claude mcp add dark-memory -- npx -y @opitacode/dark-memory-mcp
 
 ```bash
 claude mcp add dark-research -- npx -y @opitacode/dark-research-mcp
-claude mcp add dark-copilot -- npx -y @opitacode/dark-copilot-mcp
+claude mcp add [FUTURE-MCP-N] -- npx -y @opitacode/[FUTURE-MCP-N]-mcp
 ```
 
 Claude Code has a Bash tool, so you can also install directly:
 
 ```bash
 npm install -g @opitacode/dark-research-mcp
-npm install -g @opitacode/dark-copilot-mcp
+npm install -g @opitacode/[FUTURE-MCP-N]-mcp
 ```
 
 ## 4. Bootstrap the operating manual
@@ -46,4 +46,4 @@ Read dark-memory://docs/system-prompt.md
 claude mcp list
 ```
 
-Should show `dark-memory` (and optionally `dark-research`, `dark-copilot`) as connected.
+Should show `dark-memory` (and optionally `dark-research`, `[FUTURE-MCP-N]`) as connected.

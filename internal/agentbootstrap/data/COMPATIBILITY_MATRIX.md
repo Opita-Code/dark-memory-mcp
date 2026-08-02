@@ -40,14 +40,14 @@ You are limited to:
 - Whatever is already in dark-memory (recall + agent_memory)
 - Whatever the MCP can do offline (drift detection, governance, audits)
 
-You cannot do OSINT. The `dark_memory_agent_recommend_companions()` tool will recommend `dark-research-mcp` (which provides web fetch via its own MCP server) and/or `dark-copilot-mcp` (real browser for JS-gated pages).
+You cannot do OSINT. The `dark_memory_agent_recommend_companions()` tool will recommend `dark-research-mcp` (which provides web fetch via its own MCP server) and/or `[FUTURE-MCP-N]-mcp` (real browser for JS-gated pages).
 
 ### If your harness has a real terminal
 
 You can install companion MCPs yourself:
 ```bash
 npm install -g @opitacode/dark-research-mcp
-npm install -g @opitacode/dark-copilot-mcp
+npm install -g @opitacode/[FUTURE-MCP-N]-mcp
 ```
 
 Then add them to your MCP config (see your harness's install guide).
@@ -60,7 +60,7 @@ Then add them to your MCP config (see your harness's install guide).
 - Consumer-grade; no terminal
 - Reads `instructions` reliably
 - For OSINT, install `dark-research-mcp` (no terminal needed — runs as MCP)
-- For browser-based OSINT, install `dark-copilot-mcp` (no terminal needed)
+- For browser-based OSINT, install `[FUTURE-MCP-N]-mcp` (no terminal needed)
 
 ### Claude Code
 - Developer-grade; full Bash

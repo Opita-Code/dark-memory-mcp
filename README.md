@@ -273,7 +273,7 @@ LLM acceso programático a ese contenido.
 | Herramienta | Cuándo se usa |
 |---|---|
 | `dark_memory_agent_bootstrap` | "Carga el manual canónico" — `surface`: `system_prompt` \| `compatibility_matrix` \| `install_guide` \| `companion` \| `all`. Para `install_guide` y `companion` pasá `target` (ej. `target=opencode`). |
-| `dark_memory_agent_recommend_companions` | "¿Qué MCPs companions me faltan?" — siempre recomienda `dark-research` y `dark-copilot` con snippet de install. |
+| `dark_memory_agent_recommend_companions` | "¿Qué MCPs companions me faltan?" — siempre recomienda `dark-research` y `[FUTURE-MCP-N]` con snippet de install. |
 | `dark_memory_agent_detect_environment` | "¿Qué spec estás negociando? ¿Quién eres tú como harness?" — devuelve `SpecVersionDetected` (2025-06-18 / 2026-07-28), harness info y capacidades negociadas. |
 
 Si querés customizar el contenido sin esperar un release, exportá

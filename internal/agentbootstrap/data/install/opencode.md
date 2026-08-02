@@ -34,7 +34,7 @@ opencode is developer-grade with full Bash. You can install everything via npm:
 
 ```bash
 npm install -g @opitacode/dark-research-mcp
-npm install -g @opitacode/dark-copilot-mcp
+npm install -g @opitacode/[FUTURE-MCP-N]-mcp
 ```
 
 Then add them to `opencode.json` the same way.
@@ -57,4 +57,4 @@ To avoid having to bootstrap on every session, set up a custom agent in opencode
 opencode mcp list
 ```
 
-Should show `dark-memory` (and optionally `dark-research`, `dark-copilot`) as connected.
+Should show `dark-memory` (and optionally `dark-research`, `[FUTURE-MCP-N]`) as connected.
