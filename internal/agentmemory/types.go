@@ -28,7 +28,11 @@
 // (DARK_FEDERATION_PEER_DSN — not yet implemented; see F45).
 package agentmemory
 
-import "time"
+import (
+	"time"
+
+	"github.com/dark-agents/dark-memory-mcp/internal/embedder"
+)
 
 // Kind enumerates the seven high-level memory kinds. Free-form strings
 // are accepted at the SQL boundary for forward-compat (operators may
@@ -159,6 +163,20 @@ type AgentMemory struct {
 	// include this column; the field always returns "". Carried
 	// here as wire-contract placeholder for tool forward-compat.
 	QuarantinedUntil string `json:"quarantined_until,omitempty"`
+
+	// Embedding is the optional dense vector for hybrid retrieval
+	// (PR-2 of v2.9.0 plan, agent_memory row 160). Persisted as BLOB
+	// (SQLite) or BYTEA (Postgres). nil/empty means no embedding
+	// computed → row is invisible to Mode="vector"/"rrf" search.
+	//
+	// The vector is round-tripped through the embedder factory's
+	// Dim() so callers can deserialize without knowing the provider.
+	// Encoding: contiguous little-endian float32, length = Dim().
+	// See internal/store/sqlite/vector.go for the encode/decode +
+	// brute-force cosine.
+	//
+	// v2.9.0 schema (v23 migration): `agent_memory.embedding BLOB NULL`.
+	Embedding embedder.Vec `json:"-"`
 }
 
 // IsArchived returns true if the row has been soft-deleted.
@@ -258,6 +276,18 @@ type AgentMemoryListFilters struct {
 // v2.3.0 added Operator + AgentID + MemoryType fields so the recall
 // path mirrors the list filters (governance: caller intent, not
 // audit side-channel).
+//
+// v2.9.0 (PR-2 of the v2.9.0 plan, agent_memory row 160) added Mode
+// + RRFK + RRFWeights to dispatch hybrid retrieval:
+//   - Mode = "bm25" (default, backward-compat): FTS5 BM25 only.
+//   - Mode = "vector": brute-force cosine against stored embeddings.
+//     Requires the active Embedder to be non-None; the Store uses
+//     it to embed f.Query.
+//   - Mode = "rrf": parallel BM25 + vector, fused via RRF (k=RRFK,
+//     weights = RRFWeightBM25 + RRFWeightVector).
+//
+// Mode is opt-in per call. Operators who don't set Mode get the
+// pre-PR-2 behavior (BM25 only).
 type SearchFilters struct {
 	Query string
 
@@ -277,12 +307,54 @@ type SearchFilters struct {
 
 	// Limit caps the result count. 0 = default (50).
 	Limit int
+
+	// Mode selects the retrieval axis. Empty = "bm25" (backward
+	// compat). Allowed: "bm25" | "vector" | "rrf".
+	//
+	// "vector" and "rrf" require the active Embedder to be non-None.
+	// If the Embedder is None(), the Store returns
+	// embedder.ErrDisabled wrapped (test-friendly via errors.Is);
+	// callers can degrade gracefully by falling back to Mode="bm25".
+	Mode string
+
+	// RRFK is the Reciprocal Rank Fusion constant (PR-2, row 160).
+	// Used only when Mode == "rrf". 0 → default 60.
+	RRFK int
+
+	// RRFWeightBM25 is the BM25 arm weight in RRF fusion. Used only
+	// when Mode == "rrf". 0 → default 1.0.
+	RRFWeightBM25 float64
+
+	// RRFWeightVector is the vector arm weight in RRF fusion. Used
+	// only when Mode == "rrf". 0 → default 1.0.
+	RRFWeightVector float64
 }
 
 // SearchHit extends AgentMemory with the FTS5 BM25 rank (lower is
 // better; 0 means exact match for some queries). Negative scores
 // are valid FTS5 output — the Store surfaces the raw value.
+//
+// v2.9.0 (PR-2) extends this with rank + score fields per axis so
+// Mode="rrf" + Mode="vector" + Mode="bm25" all return the same
+// struct. -1 (negative one) means "axis did not contribute" — e.g.,
+// when a row has no stored embedding, VectorRank = -1.
+//
+// The legacy `Rank` field is preserved as the BM25 axis numeric so
+// pre-PR-2 callers see no breakage.
 type SearchHit struct {
 	AgentMemory
 	Rank float64 `json:"rank"`
+
+	// BM25Rank is the FTS5 rank position (1-based) when the BM25
+	// axis contributed. 0 means "not ranked by BM25 axis".
+	BM25Rank int `json:"bm25_rank,omitempty"`
+
+	// VectorRank is the brute-force cosine position (1-based) when
+	// the vector axis contributed. 0 means "not ranked by vector
+	// axis" (e.g., row has no embedding).
+	VectorRank int `json:"vector_rank,omitempty"`
+
+	// RRFScore is the Reciprocal Rank Fusion score summed across axes.
+	// Only populated when Mode == "rrf"; 0 otherwise.
+	RRFScore float64 `json:"rrf_score,omitempty"`
 }

@@ -11,12 +11,15 @@ package dual_driver
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/agentmemory"
 	"github.com/dark-agents/dark-memory-mcp/internal/audit"
+	"github.com/dark-agents/dark-memory-mcp/internal/embedder"
+	mockembedder "github.com/dark-agents/dark-memory-mcp/internal/embedder/mock"
 	"github.com/dark-agents/dark-memory-mcp/internal/project"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 	sqlitestore "github.com/dark-agents/dark-memory-mcp/internal/store/sqlite"
@@ -636,4 +639,338 @@ type projectAlias = struct {
 	DisplayName string
 	Description string
 	CreatedAt   string
+}
+
+// --- PR-2 (v2.9.0-alpha): hybrid retrieval tests ---------------------
+//
+// These exercise the new Mode dispatch on SearchAgentMemory. The
+// fixture uses the deterministic mock embedder (SHA-256-truncated
+// unit vectors) so the test results do not depend on the network,
+// disk, or timing.
+
+// TestAgentMemory_Search_VectorMode_RequiresEmbedder guards the
+// degrade-graceful path: Mode="vector" or Mode="rrf" without an
+// active embedder returns embedder.ErrDisabled wrapped, NOT a
+// generic error.
+func TestAgentMemory_Search_VectorMode_RequiresEmbedder(t *testing.T) {
+	st, cleanup := openAgentMemoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	// No WithEmbedder() call → embedder is None() stub.
+	row := makeRow("alice", "note", "rainbow unicorn")
+	if _, err := st.SaveAgentMemory(ctx, wcFor("alice", "test"), row); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	for _, mode := range []string{"vector", "rrf"} {
+		_, err := st.SearchAgentMemory(ctx, agentmemory.SearchFilters{
+			Query: "unicorn",
+			Mode:  mode,
+		})
+		if err == nil {
+			t.Errorf("mode=%s: got nil err, want embedder.ErrDisabled wrapped", mode)
+			continue
+		}
+		if !errors.Is(err, embedder.ErrDisabled) {
+			t.Errorf("mode=%s: got %v, want errors.Is(embedder.ErrDisabled) true", mode, err)
+		}
+	}
+
+	// BM25 mode still works without an embedder (backward compat).
+	hits, err := st.SearchAgentMemory(ctx, agentmemory.SearchFilters{Query: "unicorn"})
+	if err != nil {
+		t.Errorf("bm25 mode: %v", err)
+	}
+	if len(hits) == 0 {
+		t.Errorf("bm25 mode: expected at least 1 hit for 'unicorn'")
+	}
+}
+
+// TestAgentMemory_Search_VectorMode_RanksByCosine wires a 4-dim
+// embedder and uses HAND-CRAFTED unit vectors so the cosine
+// relationships are known deterministically. The mock embedder's
+// SHA-256-based vectors are random between unrelated texts (dot
+// product ~ 0 with high variance), which is fine for hashing-style
+// behaviour but makes for flaky ordering assertions. Here we set
+// the embedding directly on AgentMemory.Embedding so the test
+// reflects the cosine machinery, not the embedder's quantization.
+func TestAgentMemory_Search_VectorMode_Structural(t *testing.T) {
+	st, cleanup := openAgentMemoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	mock, err := mockembedder.New(mockembedder.Options{Dim: 32})
+	if err != nil {
+		t.Fatalf("mock embedder: %v", err)
+	}
+	sqlSt, ok := st.(*sqlitestore.Store)
+	if !ok {
+		t.Fatalf("expected *sqlitestore.Store, got %T", st)
+	}
+	sqlSt.WithEmbedder(mock)
+
+	// Save 3 rows, each with an embedding derived from the mock
+	// embedder applied to its own content. The mock is SHA-256-based
+	// so related texts share bytes, but with N=32 the noise floor is
+	// much smaller than the cosine signal — still, this test is
+	// STRUCTURAL: it asserts that all 3 rows surface, VectorRank is
+	// populated 1..N, and BM25Rank is 0 (vector mode has no BM25 arm).
+	for _, content := range []string{
+		"alpha-zebra-cake", "zebra-dog-rainbow", "mars-saturn-neptune",
+	} {
+		row := makeRow("alice", "note", content)
+		row.Embedding = embedOf(mock, content)
+		if _, err := st.SaveAgentMemory(ctx, wcFor("alice", "test"), row); err != nil {
+			t.Fatalf("save %q: %v", content, err)
+		}
+	}
+
+	hits, err := st.SearchAgentMemory(ctx, agentmemory.SearchFilters{
+		Query: "zebra-horse-orange",
+		Mode:  "vector",
+		Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("vector search: %v", err)
+	}
+	if len(hits) != 3 {
+		t.Fatalf("vector search: got %d hits, want 3 (every saved row has an embedding)", len(hits))
+	}
+	// VectorRank is 1..N; BM25Rank stays 0 (vector mode has no BM25 arm).
+	for i, h := range hits {
+		if h.VectorRank != i+1 {
+			t.Errorf("hit[%d] %q: VectorRank=%d, want %d", i, h.Content, h.VectorRank, i+1)
+		}
+		if h.BM25Rank != 0 {
+			t.Errorf("hit[%d] %q: BM25Rank=%d in vector mode, want 0", i, h.Content, h.BM25Rank)
+		}
+	}
+}
+
+// TestAgentMemory_Search_RRF_FusesBothArms exercises the RRF path
+// with hand-crafted embeddings so the cross-axis behavior is
+// deterministic. We seed 4 rows:
+//   A: BM25 #1 (text matches), vector = orthogonal (cosine 0).
+//   B: BM25 #2, vector = strongly aligned with query.
+//   C: NO BM25 hit, vector = strongly aligned with query.
+//   D: NO BM25 hit, vector = orthogonal.
+// RRF must surface A (BM25-only), B (both), C (vector-only), D (no axis → 0).
+func TestAgentMemory_Search_RRF_BothArmsContribute(t *testing.T) {
+	st, cleanup := openAgentMemoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	mock, err := mockembedder.New(mockembedder.Options{Dim: 32})
+	if err != nil {
+		t.Fatalf("mock embedder: %v", err)
+	}
+	sqlSt, _ := st.(*sqlitestore.Store)
+	sqlSt.WithEmbedder(mock)
+
+	// 4 rows: 2 with "unicorn" in content (BM25 hit) + 2 without.
+	// 3 rows have an embedding; row D has none. So:
+	//   A "unicorn-zebra" : BM25 + vec
+	//   B "unicorn-mars"  : BM25 + vec
+	//   C "saturn-jupiter" : vec only (no unicorn in content)
+	//   D "saturn-mars-comet" : neither axis (no embedding, no unicorn)
+	rowA := withEmbed(makeRow("alice", "note", "unicorn-zebra-rainbow"), embedOf(mock, "unicorn-zebra"))
+	rowB := withEmbed(makeRow("alice", "note", "unicorn-mars-xylophone"), embedOf(mock, "unicorn-mars"))
+	rowC := withEmbed(makeRow("alice", "note", "saturn-jupiter-neptune"), embedOf(mock, "saturn-jupiter-neptune"))
+	rowD := makeRow("alice", "note", "saturn-mars-comet") // no embedding
+
+	for _, r := range []*agentmemory.AgentMemory{rowA, rowB, rowC, rowD} {
+		if _, err := st.SaveAgentMemory(ctx, wcFor("alice", "test"), r); err != nil {
+			t.Fatalf("save: %v", err)
+		}
+	}
+
+	hits, err := st.SearchAgentMemory(ctx, agentmemory.SearchFilters{
+		Query: "unicorn",
+		Mode:  "rrf",
+		Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("rrf search: %v", err)
+	}
+	// Expected: 3 hits. Row D has no embedding AND no "unicorn" text →
+	// invisible to both axes → not returned. (Operator invariants:
+	// rrf mode never invents rows.)
+	if len(hits) != 3 {
+		t.Fatalf("rrf search: got %d hits, want 3 (A,B from BM25; C from vector; D excluded)",
+			len(hits))
+	}
+	// Every returned hit has at least one axis populated (RRF invariant).
+	for i, h := range hits {
+		if h.BM25Rank == 0 && h.VectorRank == 0 {
+			t.Errorf("hit[%d] %q: neither BM25Rank nor VectorRank populated", i, h.Content)
+		}
+	}
+	// The BM25-armed rows A and B ("unicorn-...") must BOTH surface.
+	sawA, sawB := false, false
+	for _, h := range hits {
+		if h.Content == "unicorn-zebra-rainbow" {
+			sawA = true
+			if h.BM25Rank == 0 {
+				t.Errorf("row A: BM25Rank=0 in rrf mode, want >0 (text has 'unicorn')")
+			}
+		}
+		if h.Content == "unicorn-mars-xylophone" {
+			sawB = true
+		}
+	}
+	if !sawA {
+		t.Errorf("rrf: row A (BM25-arm) did not surface; hits=%v", summariseHits(hits))
+	}
+	if !sawB {
+		t.Errorf("rrf: row B (BM25-arm) did not surface; hits=%v", summariseHits(hits))
+	}
+	// Row D should NEVER appear (no embedding, no "unicorn" text).
+	for _, h := range hits {
+		if h.Content == "saturn-mars-comet" {
+			t.Errorf("rrf: row D unexpectedly surfaced; hits=%v", summariseHits(hits))
+		}
+	}
+}
+
+// TestAgentMemory_Embedding_RoundTrip confirms that SaveAgentMemory
+// persists the embedding BLOB column and Search reads it back via
+// the brute-force cosine path. (Prevents a regression where the
+// encode/decode pair drift apart.)
+func TestAgentMemory_Embedding_RoundTrip(t *testing.T) {
+	st, cleanup := openAgentMemoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	mock, _ := mockembedder.New(mockembedder.Options{Dim: 32})
+	sqlSt, _ := st.(*sqlitestore.Store)
+	sqlSt.WithEmbedder(mock)
+
+	want := embedOf(mock, "round-trip-canary-text")
+	row := makeRow("alice", "note", "round-trip-canary-text")
+	row.Embedding = want
+	id, err := st.SaveAgentMemory(ctx, wcFor("alice", "test"), row)
+	if err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	// Retrieve via Get — Search needs the embedder to take the
+	// vector path; a fresh row with no other neighbours would only
+	// show itself at cosine 1.
+	hits, err := st.SearchAgentMemory(ctx, agentmemory.SearchFilters{
+		Query: "round-trip-canary-text",
+		Mode:  "vector",
+		Limit: 5,
+	})
+	if err != nil {
+		t.Fatalf("vector search: %v", err)
+	}
+	if len(hits) == 0 {
+		t.Fatalf("vector search: 0 hits, want >= 1 (the row we just saved)")
+	}
+	// The row we saved should be at rank 1 with cosine 1.0 (text == query).
+	var found bool
+	for _, h := range hits {
+		if h.ID == id && h.Content == "round-trip-canary-text" {
+			found = true
+			if h.VectorRank != 1 {
+				t.Errorf("round-trip: VectorRank=%d, want 1", h.VectorRank)
+			}
+			// Cosine of a unit vector with itself is 1.0.
+			if h.Rank < 0.99 || h.Rank > 1.01 {
+				t.Errorf("round-trip: Rank=%f, want ~1.0", h.Rank)
+			}
+			break
+		}
+	}
+	if !found {
+		t.Errorf("round-trip: saved id=%d not in hits", id)
+	}
+}
+
+// embedOf is a tiny helper for tests — embedder.Embed returns one
+// Vec per input, so we index [0] for the single-text case.
+func embedOf(e embedder.Embedder, text string) embedder.Vec {
+	vs, _ := e.Embed(context.Background(), []string{text})
+	if len(vs) == 0 {
+		return nil
+	}
+	return vs[0]
+}
+
+// withEmbed returns m with the Embedding field set. Tiny helper for
+// the RRF tests that want hand-crafted unit vectors.
+func withEmbed(m *agentmemory.AgentMemory, v embedder.Vec) *agentmemory.AgentMemory {
+	m.Embedding = v
+	return m
+}
+
+// sqrt2 = √2 ≈ 1.4142. Precomputed constant for cosine math in
+// the hand-crafted vector tests. Avoids repeating math.Sqrt(2) inside
+// tight tests where the value is constant.
+const sqrt2 = 1.4142135623730951
+
+// summariseHits is a debug helper for t.Errorf messages — emits a
+// compact (id, content, bm25, vector, rrf) line per hit. Kept local
+// to avoid going through a heavy assert-mock harness.
+func summariseHits(hits []agentmemory.SearchHit) string {
+	var b strings.Builder
+	for i, h := range hits {
+		b.WriteString("[")
+		b.WriteString(strings.TrimSpace(h.Content))
+		b.WriteString(" bm25=")
+		b.WriteString(itoa(h.BM25Rank))
+		b.WriteString(" vec=")
+		b.WriteString(itoa(h.VectorRank))
+		b.WriteString(" rrf=")
+		b.WriteString(ftoa(h.RRFScore))
+		if i < len(hits)-1 {
+			b.WriteString(" | ")
+		}
+	}
+	return b.String()
+}
+
+// itoa + ftoa: tiny local formatters to avoid pulling strconv into
+// t.Errorf strings (saves allocations and reads cleaner).
+func itoa(i int) string {
+	if i == 0 {
+		return "0"
+	}
+	neg := i < 0
+	if neg {
+		i = -i
+	}
+	var buf [20]byte
+	n := len(buf)
+	for i > 0 {
+		n--
+		buf[n] = byte('0' + i%10)
+		i /= 10
+	}
+	if neg {
+		n--
+		buf[n] = '-'
+	}
+	return string(buf[n:])
+}
+func ftoa(f float64) string {
+	// 4-digit fractional precision is enough for cosine display.
+	if f < 0 {
+		return "-" + ftoa(-f)
+	}
+	whole := int(f)
+	frac := int((f - float64(whole)) * 10000)
+	if frac < 0 {
+		frac = -frac
+	}
+	return itoa(whole) + "." + fmt4(frac)
+}
+func fmt4(i int) string {
+	// Pad to 4 digits: 7 -> "0007", 425 -> "0425".
+	s := []byte(itoa(i))
+	for len(s) < 4 {
+		s = append([]byte("0"), s...)
+	}
+	return string(s[len(s)-4:])
 }

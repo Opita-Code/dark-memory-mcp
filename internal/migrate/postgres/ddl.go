@@ -624,4 +624,20 @@ CREATE TABLE IF NOT EXISTS active_subagents (
 CREATE INDEX IF NOT EXISTS idx_active_subagents_lookup ON active_subagents (project_id, operator);
 `,
 	},
+	{
+		// v23 — agent_memory_embedding (PR-2 of v2.9.0 plan).
+		// Mirror of sqlite v23; BYTEA on Postgres vs BLOB on SQLite.
+		// Encoding: little-endian float32, length = embedder.Dim().
+		// See internal/store/sqlite/vector.go for encode/decode (used
+		// by both drivers via the shared serialize helper).
+		//
+		// Postgres porter stemming (v22 in sqlite) was explicitly
+		// deferred from PR-12 to a follow-up that wires the
+		// tsvector + snowball stemmer equivalent; not addressed here.
+		Version: 23,
+		Name:    "agent_memory_embedding",
+		Up: `
+ALTER TABLE agent_memory ADD COLUMN IF NOT EXISTS embedding BYTEA;
+`,
+	},
 }

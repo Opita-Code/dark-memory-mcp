@@ -28,6 +28,7 @@ _ "modernc.org/sqlite"
 	"github.com/dark-agents/dark-memory-mcp/internal/atomic"
 	"github.com/dark-agents/dark-memory-mcp/internal/audit"
 	"github.com/dark-agents/dark-memory-mcp/internal/constitution"
+	"github.com/dark-agents/dark-memory-mcp/internal/embedder"
 	"github.com/dark-agents/dark-memory-mcp/internal/migrate"
 	migratesqlite "github.com/dark-agents/dark-memory-mcp/internal/migrate/sqlite"
 	"github.com/dark-agents/dark-memory-mcp/internal/mods"
@@ -358,6 +359,45 @@ type Store struct {
 	// project context"; reads return store.ErrSessionRequired. Set via
 	// SetActiveProject. Defaults to "default" on first Open.
 	activeProject string
+
+	// embedder is the active embedder for hybrid retrieval (PR-2 of
+	// v2.9.0 plan). Defaults to embedder.None() so absent embedder
+	// == none stub (Mode="bm25" works; Mode="vector"/"rrf" returns
+	// embedder.ErrDisabled wrapped). Operators who want hybrid axis
+	// wire the active embedder via WithEmbedder at boot.
+	//
+	// The embedder is a struct field (not a global) so multi-Store
+	// deployments can have per-project embedders matching row 164's
+	// per-tenant embedder vision; recall.NewSingleton is the
+	// recommended seam for that pattern.
+	embedder embedder.Embedder
+}
+
+// WithEmbedder returns s after recording e as the active embedder.
+// Thread-safe: the assignment is guarded by s.mu. The recommended
+// pattern is `store.WithEmbedder(embedder.FactoryAuto())` once at
+// boot, before any Search call that uses Mode="vector" or Mode="rrf".
+//
+// Returns s so the call can be chained after NewStore.
+func (s *Store) WithEmbedder(e embedder.Embedder) *Store {
+	if e == nil {
+		e = embedder.None()
+	}
+	s.mu.Lock()
+	s.embedder = e
+	s.mu.Unlock()
+	return s
+}
+
+// Embedder returns the active embedder. Mostly for tests + the
+// recall orchestrator (which uses it to inspect Kind for health_ping).
+func (s *Store) Embedder() embedder.Embedder {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.embedder == nil {
+		return embedder.None()
+	}
+	return s.embedder
 }
 
 // Compile-time assertion that *Store satisfies store.Store.
@@ -4042,12 +4082,14 @@ func (s *Store) SaveAgentMemory(ctx context.Context, wc store.WriteContext, m *a
 		res, err := tx.ExecContext(ctx, `
 			INSERT INTO agent_memory (
 				project_id, session_id, operator, agent_id, kind, memory_type,
-				title, content, tags, pinned, created_at, updated_at, expires_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				title, content, tags, pinned, created_at, updated_at, expires_at,
+				embedding
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			projectID, nullString(m.SessionID), m.Operator, nullString(m.AgentID),
 			m.Kind, nullString(m.MemoryType),
 			nullString(m.Title), m.Content, nullString(m.Tags),
 			boolToInt(m.Pinned), now, now, nullString(m.ExpiresAt),
+			encodeVec(m.Embedding),
 		)
 		if err != nil {
 			return fmt.Errorf("agent_memory: insert: %w", err)
@@ -4517,6 +4559,32 @@ func (s *Store) ListAgentMemory(ctx context.Context, f agentmemory.AgentMemoryLi
 // scope by identity (Mem0 agent_id semantics) AND by Mem0 memory
 // class. Without these the recall path was returning rows from every
 // agent in the project, defeating the cross-session isolation.
+// SearchAgentMemory runs an FTS5 BM25-ranked search over
+// content+title+tags. Returns hits in rank ASCENDING order (FTS5
+// bm25 is monotonic — lower rank = better match).
+//
+// Empty query returns ErrInvalidArgument. Caller should escape FTS5
+// operators (the tool layer does this; see internal/tools/agent_memory.go).
+//
+// v2.3.0 added Operator + AgentID + MemoryType filters so recall can
+// scope by identity (Mem0 agent_id semantics) AND by Mem0 memory
+// class. Without these the recall path was returning rows from every
+// agent in the project, defeating the cross-session isolation.
+//
+// v2.9.0 (PR-2 of the v2.9.0 plan, agent_memory row 160) added Mode
+// dispatch:
+//   - Mode = "" or "bm25" (default): pure FTS5 BM25 over content+title+tags.
+//   - Mode = "vector": brute-force cosine against stored embeddings.
+//     Requires the active embedder (Store.Embedder()) to be non-None.
+//   - Mode = "rrf": BM25 + vector arms run in parallel, fused via
+//     RRF (Cormack et al., 2009) with k=RRFK (default 60) and
+//     weights RRFWeightBM25 / RRFWeightVector (default 1.0 each).
+//
+// All non-bm25 modes share the same agent_memory rows + INV-7
+// project scope. Rows without an embedding contribute only to the
+// BM25 arm; rows without text (no FTS5 hit) contribute only to the
+// vector arm. The dispatcher returns embedder.ErrDisabled wrapped
+// when the embedder is None(); callers can fall back to Mode="bm25".
 func (s *Store) SearchAgentMemory(ctx context.Context, f agentmemory.SearchFilters) ([]agentmemory.SearchHit, error) {
 	if err := s.requireProject(); err != nil {
 		return nil, err
@@ -4527,6 +4595,32 @@ func (s *Store) SearchAgentMemory(ctx context.Context, f agentmemory.SearchFilte
 	if f.MemoryType != "" && !agentmemory.ValidMemoryType(f.MemoryType) {
 		return nil, fmt.Errorf("sqlite: SearchAgentMemory: invalid memory_type filter %q", f.MemoryType)
 	}
+
+	// Mode dispatch (PR-2). Empty == bm25; unknown strings are an
+	// error so typos surface at the call site instead of silently
+	// falling back to bm25.
+	mode := f.Mode
+	if mode == "" {
+		mode = "bm25"
+	}
+	switch mode {
+	case "bm25":
+		return s.searchByBM25(ctx, f)
+	case "vector":
+		return s.searchByVector(ctx, f)
+	case "rrf":
+		return s.searchByRRF(ctx, f)
+	default:
+		return nil, fmt.Errorf("sqlite: SearchAgentMemory: unknown mode %q (use 'bm25', 'vector', or 'rrf')", f.Mode)
+	}
+}
+
+// searchByBM25 is the pre-PR-2 path: FTS5 BM25 over content+title+tags.
+// Extracted from the original SearchAgentMemory body when the Mode
+// dispatch landed in PR-2. Behavior unchanged: returns hits in rank
+// ASCENDING order (FTS5 bm25 is monotonic; -bm25() is negated in the
+// SELECT so callers see "higher rank = better match" intuitively).
+func (s *Store) searchByBM25(ctx context.Context, f agentmemory.SearchFilters) ([]agentmemory.SearchHit, error) {
 	activeProject := s.ActiveProject()
 
 	limit := f.Limit
