@@ -39,7 +39,6 @@ package embedder
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"sync"
 )
@@ -192,19 +191,138 @@ func FactoryAt(ctx context.Context, opts *FactoryOptions) (Embedder, error) {
 
 // factoryInner builds the configured adapter without sync wrapping.
 // Kept private so the only public entrypoint is Factory/FactoryAt.
+//
+// Adapters register themselves via RegisterAdapter in their init();
+// this breaks the would-be import cycle (embedder ↔ openai / onnx
+// / mock). The registry shape is private to embedder — adapter
+// packages only see RegisterAdapter.
 func factoryInner() (Embedder, error) {
 	switch DefaultKind() {
 	case KindNone:
 		return None(), nil
-	case KindOpenAI, KindONNX:
-		// Adapters land in a follow-up commit (openai.go / onnx.go).
-		// For now, signal "adapter not yet wired" and let Factory fall
-		// back to the disabled stub. The signal is recognized but not
-		// surfaced until the adapter packages ship.
-		return nil, fmt.Errorf("embedder: %s adapter not yet wired (commit pending)", DefaultKind())
+	case KindOpenAI, KindONNX, KindMock:
+		// Adapters register themselves in init() (see e.g. the
+		// openai package's init).
+		adapterMu.RLock()
+		factory, ok := adapters[DefaultKind()]
+		adapterMu.RUnlock()
+		if !ok {
+			// Adapter not registered (likely compile-time
+			// pruning or a future kind string). Fall back
+			// gracefully.
+			return None(), nil
+		}
+		return factory(Options{})
 	default:
 		return None(), nil
 	}
+}
+
+// FactoryAuto is the v2.9.0 PR-2 boot-time entry point. It skips the
+// env-var literal routing of Factory() and uses env-var presence as
+// signal: if OPENAI_API_KEY is set, return an OpenAI adapter; if
+// DARK_HOME/models/all-MiniLM-L6-v2_int8.onnx exists, return an ONNX
+// adapter; otherwise return the disabled stub.
+//
+// Unlike Factory(), FactoryAuto intentionally uses the harness's
+// existing env state (per row 163 + row 164 §1: "we never ask for new
+// API keys"). The .mcpb installer wires the harness's existing
+// OPENAI_API_KEY into the dark-memory process at install time; the
+// user does NOT type the key in chat.
+//
+// Order of precedence (v2.9.0; row 164 §2's full ladder is deferred
+// to PR-2.1 because it requires parsing per-harness config files):
+//
+//	1. OPENAI_API_KEY set                       → OpenAI text-embedding-3-small (1536d)
+//	2. neither set                              → None() stub (BM25-only path)
+//
+// Future PR-2.1 may add:
+//	3. ~/.config/opencode/config.toml provider  → OpenAI-compatible endpoint
+//	4. ~/.config/claude/settings.json provider  → Voyage AI voyage-3 (Anthropic partner)
+//	5. ~/.codex/config.toml                     → OpenAI (mirrors step 1)
+//	6. ~/.ollama on localhost:11434             → Ollama nomic-embed-text/mxbai
+//	7. bundled ONNX (model_quantized.onnx)      → offline default
+//
+// Returns a *SyncEmbedder wrapper so concurrent use is safe.
+//
+// Never returns an error — every fall-through is to a working stub.
+// Operators who want loud failure should check DefaultKind or the
+// result of Factory at boot and bail there.
+func FactoryAuto() Embedder {
+	if os.Getenv("OPENAI_API_KEY") != "" {
+		// Best-effort: a missing/invalid key still produces a
+		// working *Sync that errors at first Embed call (not at
+		// boot). Operators see the issue on first use.
+		if e := registeredAdapter(KindOpenAI); e != nil {
+			return NewSync(e)
+		}
+	}
+	// Future PR-2.1: also try ONNX bundle here when the model file
+	// exists in $DARK_HOME/models/. For now: stub.
+	return NewSync(None())
+}
+
+// KindMock is the canonical identifier for the deterministic test
+// adapter (internal/embedder/mock). Never honored by FactoryAuto;
+// only meaningful to tests that pre-build an Embedder directly.
+const KindMock = "mock"
+
+// Options is the per-adapter option bag passed at New() time. The
+// factory uses a fresh zero value for env-driven defaults; tests
+// may pass a custom Options for fine control. Adapter packages
+// type-assert to their own Options struct.
+type Options struct{}
+
+// adapters is the registry mapping kind string → factory function.
+// Adapters call RegisterAdapter(kind, factory) in their init(); the
+// factory is consulted only via factoryInner / FactoryAuto.
+var (
+	adapterMu sync.RWMutex
+	adapters  = map[string]func(Options) (Embedder, error){}
+)
+
+// RegisterAdapter records a factory under kind. The embedder
+// factory calls this when DefaultKind() returns kind. Re-registering
+// the same kind replaces the prior factory (intentional; lets tests
+// override the production factory with a deterministic mock).
+//
+// Adapter packages should call this from init() — see
+// internal/embedder/openai/openai.go for the canonical example.
+func RegisterAdapter(kind string, factory func(Options) (Embedder, error)) {
+	adapterMu.Lock()
+	defer adapterMu.Unlock()
+	adapters[kind] = factory
+}
+
+// registeredAdapter returns a fresh Embedder instance from the
+// registered factory for kind. Used by FactoryAuto only; never
+// errors on missing factory — falls through to None() at the
+// call site.
+func registeredAdapter(kind string) Embedder {
+	adapterMu.RLock()
+	factory, ok := adapters[kind]
+	adapterMu.RUnlock()
+	if !ok {
+		return nil
+	}
+	e, err := factory(Options{})
+	if err != nil {
+		return None()
+	}
+	return e
+}
+
+// ResetAdapterRegistry clears the registry. For tests only — never
+// call from production code. The reset allows a test to assert
+// against a fresh kind→factory mapping without inheriting whatever
+// the previous test registered.
+//
+// Not exported via any user-facing code path; tests use it via
+// embedder_reset_test.go.
+func resetAdapterRegistry() {
+	adapterMu.Lock()
+	defer adapterMu.Unlock()
+	adapters = map[string]func(Options) (Embedder, error){}
 }
 
 // FactoryOptions is the integration seam for adapter overrides. The

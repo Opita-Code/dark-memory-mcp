@@ -948,4 +948,41 @@ CREATE TRIGGER IF NOT EXISTS agent_memory_au2 AFTER UPDATE ON agent_memory BEGIN
 INSERT INTO agent_memory_fts(agent_memory_fts) VALUES('rebuild');
 `,
 	},
+	{
+		// v23 - agent_memory_embedding: hybrid retrieval (PR-2 of v2.9.0 plan,
+		// agent_memory row 160). Adds an opaque BLOB column to agent_memory
+		// that holds the dense vector (little-endian float32, length =
+		// embedder.Dim()) for vector / rrf modes.
+		//
+		// Storage is in-process: text NEVER leaves the operator's machine
+		// for the embedding call (only the embedder call's destination
+		// receives it; per row 163 "data and cache are local-first" the
+		// embedding column itself stays on disk). Per-agent flow:
+		//   - Save path: when embedder != None, callers can populate
+		//     AgentMemory.Embedding from the embedder.Prerendered
+		//     hint (see internal/store/sqlite/store.go:SaveAgentMemory).
+		//     Embedding is optional — rows saved with no embedding
+		//     are invisible to Mode=vector/rrf but still visible to
+		//     Mode=bm25.
+		//   - Search path: when Mode=vector/rrf, the Store loads all rows
+		//     in scope with embedding IS NOT NULL, computes cosine in
+		//     process, and ranks. sqlite-vec / pgvector deferred to
+		//     v2.9.1+ per row 160.
+		//
+		// BLOB (vs TEXT or REAL[]) chosen for portability: SQLite has
+		// no native f32 array type, but the engine has been byte
+		// stable on BLOB ordering since forever. Decoders use
+		// binary.LittleEndian.Uint32 -> math.Float32frombits.
+		//
+		// Idempotency: ALTER TABLE ADD COLUMN with no DEFAULT is
+		// naturally idempotent only across binary-equal columns;
+		// applyOne (F37) tolerates the SQLite "duplicate column
+		// name" error class, so re-running this migration on a DB
+		// that already has the column is safe (treated as warning).
+		Version: 23,
+		Name:    "agent_memory_embedding",
+		Up: `
+ALTER TABLE agent_memory ADD COLUMN embedding BLOB;
+`,
+	},
 }
