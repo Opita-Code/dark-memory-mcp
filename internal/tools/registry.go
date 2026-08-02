@@ -267,6 +267,11 @@ var canonicalToolOrder = []string{
 	"admin_migrate", "admin_schema_status", "admin_vacuum",
 	// L6-VLP (1) - DMAP v1.1
 	"vlp_handle_event",
+	// EMBEDDER (1) - v2.9.0-alpha PR-2. Consent gate for hybrid
+	// retrieval per row 164 §3. Single call per project boot —
+	// returns the verbatim prompt the harness's LLM should surface
+	// when no embedder is detected at first search.
+	"embedder_setup_prompt",
 }
 
 // WirePrefix is prepended to every bare tool name on the wire. Per

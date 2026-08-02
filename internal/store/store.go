@@ -17,6 +17,7 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/atomic"
 	"github.com/dark-agents/dark-memory-mcp/internal/audit"
 	"github.com/dark-agents/dark-memory-mcp/internal/constitution"
+	"github.com/dark-agents/dark-memory-mcp/internal/embedder"
 	"github.com/dark-agents/dark-memory-mcp/internal/mods"
 	"github.com/dark-agents/dark-memory-mcp/internal/project"
 	"github.com/dark-agents/dark-memory-mcp/internal/research"
@@ -213,6 +214,14 @@ type Store interface {
 	Close() error
 	Ping(ctx context.Context) error
 	DriverName() string
+
+	// Embedder returns the active embedder for hybrid retrieval
+	// (v2.9.0-alpha PR-2, agent_memory row 163/164). Default impl
+	// returns embedder.None() when none is wired. Operators wire
+	// via Store.WithEmbedder() at boot. The interface method is
+	// intentionally present even on Postgres so tools can
+	// introspect Kind/Dim for hybrid retrieval decisions.
+	Embedder() embedder.Embedder
 
 	// --- Migrations ---
 	Migrate(ctx context.Context) error

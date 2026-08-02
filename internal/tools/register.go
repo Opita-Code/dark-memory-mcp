@@ -82,6 +82,14 @@ func RegisterAll(reg *Registry, orch *orchestration.Orchestrator, st store.Store
 	// through the Judge orchestrator (eval_type=mindset_compose +
 	// eval_type=mindset_quality) for full audit trail.
 	RegisterMindset(reg, orch, st)
+	// EMBEDDER (1) — v2.9.0-alpha PR-2. Hybrid retrieval consent gate.
+	// The handler casts st to an embedder-introspector interface so
+	// stores without the embedder field still register the tool with
+	// a no-embedder fallback (status="ask" — correct: no embedder →
+	// ask the user). Per row 164 §3, the tool surfaces the verbatim
+	// prompt text the harness's LLM should display to the operator
+	// when dark-memory boots without a detected provider.
+	RegisterEmbedderSetup(reg, st)
 	// 5A.ii.b.2.c.1 (v2.0.1): construct the FrameSource ONCE at boot
 	// and share it between the recall tool and the Gate (server.Gate).
 	// Pre-2.0.1, recall built a fresh CachedSource per invocation; that

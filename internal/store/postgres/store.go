@@ -52,6 +52,7 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/atomic"
 	"github.com/dark-agents/dark-memory-mcp/internal/audit"
 	"github.com/dark-agents/dark-memory-mcp/internal/constitution"
+	"github.com/dark-agents/dark-memory-mcp/internal/embedder"
 	"github.com/dark-agents/dark-memory-mcp/internal/migrate"
 	migratepostgres "github.com/dark-agents/dark-memory-mcp/internal/migrate/postgres"
 	"github.com/dark-agents/dark-memory-mcp/internal/mods"
@@ -318,6 +319,36 @@ type Store struct {
 	// project_id; the migration v7 RLS policies enforce the filter at
 	// the DB level using the dark_mem.project_id session setting.
 	activeProject string
+
+	// embedder is the Postgres parity for v2.9.0 PR-2 (hybrid retrieval).
+	// Same shape as the sqlite Store: defaults to embedder.None();
+	// wire via WithEmbedder at boot. Postgres vector search mirrors
+	// SQLite's brute-force cosine; see internal/store/sqlite/vector.go
+	// for the math, which the Postgres store path mirrors 1:1.
+	embedder embedder.Embedder
+}
+
+// WithEmbedder returns s after recording e as the active embedder.
+// Mirrors the sqlite Store.WithEmbedder exactly; the two Store
+// implementations are wire-equal from the operator's POV.
+func (s *Store) WithEmbedder(e embedder.Embedder) *Store {
+	if e == nil {
+		e = embedder.None()
+	}
+	s.mu.Lock()
+	s.embedder = e
+	s.mu.Unlock()
+	return s
+}
+
+// Embedder returns the active embedder (Postgres parity with sqlite).
+func (s *Store) Embedder() embedder.Embedder {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.embedder == nil {
+		return embedder.None()
+	}
+	return s.embedder
 }
 
 func (s *Store) runMigrations(ctx context.Context) error {
