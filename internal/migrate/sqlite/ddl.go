@@ -411,7 +411,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_vlp_state_project_session
     ON vlp_state(project_id, session_id);
 `,
 	},
-{
+	{
 		// v10 — audit project composite index (debt-elimination, F33).
 		// Note: the write_audit.project_id column was already added by
 		// migration v7 ("project_namespace") when the rest of the
@@ -756,7 +756,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_memory_kind ON agent_memory (project_id, ki
 CREATE VIRTUAL TABLE IF NOT EXISTS agent_memory_fts USING fts5(
     content, title, tags,
     content='agent_memory', content_rowid='id',
-    tokenize='unicode61'
+    tokenize='porter unicode61'
 );
 CREATE TRIGGER IF NOT EXISTS agent_memory_ai AFTER INSERT ON agent_memory BEGIN INSERT INTO agent_memory_fts(rowid, content, title, tags) VALUES (new.id, new.content, COALESCE(new.title,''), COALESCE(new.tags,'')); END;
 CREATE TRIGGER IF NOT EXISTS agent_memory_ad AFTER DELETE ON agent_memory BEGIN INSERT INTO agent_memory_fts(agent_memory_fts, rowid, content, title, tags) VALUES('delete', old.id, old.content, COALESCE(old.title,''), COALESCE(old.tags,'')); END;
@@ -904,6 +904,48 @@ CREATE TABLE IF NOT EXISTS active_subagents (
     UNIQUE (project_id, operator, subagent_id)
 );
 CREATE INDEX IF NOT EXISTS idx_active_subagents_lookup ON active_subagents (project_id, operator);
+`,
+	},
+	{
+		// v22 - porter_stemming: rebuild agent_memory_fts with porter
+		// unicode61 tokenizer so morphology-equivalent words
+		// ("running", "runs", "ran") collapse to the same stem and
+		// rank for the same FTS5 query.
+		//
+		// PR-1 of the v2.9.0 plan (row 160); LOW risk. Backward
+		// compat: result SET unchanged; only BM25 ranking differs.
+		// Operators on v2.8.0-alpha see different ordering for stem
+		// collisions, identical results for unambiguous queries.
+		//
+		// FTS5 does not support ALTER TABLE on the tokenizer of an
+		// existing virtual table; we must DROP + CREATE VIRTUAL
+		// TABLE. The source data is preserved (it's in
+		// agent_memory which we never touch). After the recreate,
+		// INSERT 'rebuild' tells FTS5 to repopulate from the
+		// content='agent_memory' external content table.
+		//
+		// Idempotency: IF EXISTS / IF NOT EXISTS on every DDL.
+		// If somehow re-applied (e.g. operator manually unmarks v22
+		// from schema_migrations), the migration is a no-op plus
+		// a re-index, both safe.
+		//
+		// Postgres parity: see internal/migrate/postgres/ddl.go
+		// for the tsvector + snowball stemmer equivalent (deferred
+		// to a follow-up commit; this PR is SQLite-only).
+		Version: 22,
+		Name:    "porter_stemming",
+		Up: `
+DROP TABLE IF EXISTS agent_memory_fts;
+CREATE VIRTUAL TABLE IF NOT EXISTS agent_memory_fts USING fts5(
+    content, title, tags,
+    content='agent_memory', content_rowid='id',
+    tokenize='porter unicode61'
+);
+CREATE TRIGGER IF NOT EXISTS agent_memory_ai AFTER INSERT ON agent_memory BEGIN INSERT INTO agent_memory_fts(rowid, content, title, tags) VALUES (new.id, new.content, COALESCE(new.title,''), COALESCE(new.tags,'')); END;
+CREATE TRIGGER IF NOT EXISTS agent_memory_ad AFTER DELETE ON agent_memory BEGIN INSERT INTO agent_memory_fts(agent_memory_fts, rowid, content, title, tags) VALUES('delete', old.id, old.content, COALESCE(old.title,''), COALESCE(old.tags,'')); END;
+CREATE TRIGGER IF NOT EXISTS agent_memory_au1 BEFORE UPDATE ON agent_memory BEGIN INSERT INTO agent_memory_fts(agent_memory_fts, rowid, content, title, tags) VALUES('delete', old.id, old.content, COALESCE(old.title,''), COALESCE(old.tags,'')); END;
+CREATE TRIGGER IF NOT EXISTS agent_memory_au2 AFTER UPDATE ON agent_memory BEGIN INSERT INTO agent_memory_fts(rowid, content, title, tags) VALUES (new.id, new.content, COALESCE(new.title,''), COALESCE(new.tags,'')); END;
+INSERT INTO agent_memory_fts(agent_memory_fts) VALUES('rebuild');
 `,
 	},
 }
