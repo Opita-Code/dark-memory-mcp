@@ -605,6 +605,232 @@ func (o *Orchestrator) AgentMemoryEntities(ctx context.Context, in AgentMemoryEn
 	return &AgentMemoryEntitiesOutput{ID: in.ID, Entities: ents}, nil
 }
 
+// --- Delegate (v2.9.3) ---------------------------------------------
+
+// AgentMemoryDelegateInput is the request to prepare a delegation
+// context for a sub-agent the parent is about to spawn. The tool:
+//
+//  1. Registers the subagent binding (C2 active_subagents table).
+//  2. Builds a curated context block (session metadata + pinned
+//     memories + open todos, truncated to a token budget).
+//  3. Returns a ready-to-inject markdown string the parent embeds
+//     in the sub-agent's task prompt.
+//
+// Gated by DARK_MEMORY_V280=1 (same gate as subagent_register /
+// subagent_unregister).
+type AgentMemoryDelegateInput struct {
+	Operator        string `json:"operator"`
+	SubagentID      string `json:"subagent_id"`
+	TaskDescription string `json:"task_description"`
+	// IncludePinned / IncludeTodos are *bool so "unset" (default
+	// true, per the tool schema) is distinguishable from an explicit
+	// false. Zero-value bool would silently disable both sections
+	// for callers that omit them (v2.9.3 bug caught in review).
+	IncludePinned *bool `json:"include_pinned,omitempty"`
+	IncludeTodos  *bool `json:"include_todos,omitempty"`
+	// MaxTokens is *int for the same reason: nil = schema default
+	// 2000; &0 = omit context sections (session metadata only);
+	// &N = explicit budget (clamp [0, 8000]).
+	MaxTokens  *int   `json:"max_tokens,omitempty"`
+	TTLSeconds int    `json:"ttl_seconds,omitempty"`
+}
+
+// AgentMemoryDelegateOutput is the delegation package: the
+// ready-to-inject context block + the counters the parent can use to
+// verify what was included.
+type AgentMemoryDelegateOutput struct {
+	SubagentID        string `json:"subagent_id"`
+	ParentAgentID     string `json:"parent_agent_id"`
+	DelegationContext string `json:"delegation_context"`
+	PinnedCount       int    `json:"pinned_count"`
+	TodoCount         int    `json:"todo_count"`
+	Truncated         bool   `json:"truncated"`
+	SessionID         string `json:"session_id"`
+	ProjectID         string `json:"project_id"`
+	RegisteredAt      string `json:"registered_at"`
+}
+
+// AgentMemoryDelegate prepares the delegation context for a sub-agent
+// spawn. The parent generates an opaque subagent_id (uuid), calls
+// this tool, and injects the returned DelegationContext into the
+// sub-agent's task prompt. The subagent binding is registered in the
+// same call (C2), so any agent_memory_save the sub-agent makes is
+// tagged with subagent_id — never the parent's agent_id.
+//
+// Error contract:
+//   - ErrInvalidState when DARK_MEMORY_V280 is off (same as
+//     subagent_register).
+//   - errMissingField("operator"|"subagent_id"|"task_description")
+//     on missing input.
+//   - ErrInvalidState when no active project or session (the gate
+//     enforces this on the wire; this check keeps the orchestrator
+//     safe when called directly in tests).
+func (o *Orchestrator) AgentMemoryDelegate(ctx context.Context, in AgentMemoryDelegateInput) (*AgentMemoryDelegateOutput, error) {
+	if !v280Enabled() {
+		return nil, fmt.Errorf("agent_memory_delegate: %w (DARK_MEMORY_V280 not enabled)", store.ErrInvalidState)
+	}
+	if strings.TrimSpace(in.Operator) == "" {
+		return nil, errMissingField("operator")
+	}
+	if strings.TrimSpace(in.SubagentID) == "" {
+		return nil, errMissingField("subagent_id")
+	}
+	if strings.TrimSpace(in.TaskDescription) == "" {
+		return nil, errMissingField("task_description")
+	}
+
+	// Active project + session required. The gate enforces this on
+	// the wire (RequiresActiveSession default); the explicit check
+	// keeps direct-orchestrator test paths honest.
+	projID := o.Store.ActiveProject()
+	if projID == "" {
+		return nil, fmt.Errorf("agent_memory_delegate: %w: no active project", store.ErrInvalidState)
+	}
+	sessID, err := o.Store.GetActiveSession(ctx, projID)
+	if err != nil || sessID == "" {
+		return nil, fmt.Errorf("agent_memory_delegate: %w: no active session", store.ErrInvalidState)
+	}
+
+	// Resolve parent agent_id (the principal's identity at spawn
+	// time; the subagent's writes are tagged with SubagentID, not
+	// this — C2 isolation).
+	parentAgentID := o.resolveActiveAgentID(ctx, "")
+
+	// TTL clamp [60, 86400], default 3600 (same as SubagentRegister).
+	ttl := in.TTLSeconds
+	if ttl <= 0 {
+		ttl = 3600
+	}
+	if ttl < 60 {
+		ttl = 60
+	}
+	if ttl > 86400 {
+		ttl = 86400
+	}
+
+	// Register the subagent binding (C2 active_subagents).
+	wc := store.WriteContext{
+		Actor:     in.Operator,
+		WritePath: "AgentMemoryDelegate",
+	}
+	row := &store.ActiveSubagent{
+		Operator:      in.Operator,
+		SubagentID:    in.SubagentID,
+		ParentAgentID: parentAgentID,
+		TTLSeconds:    ttl,
+	}
+	if _, err := o.Store.SetActiveSubagent(ctx, wc, row); err != nil {
+		return nil, fmt.Errorf("agent_memory_delegate: %w", err)
+	}
+
+	// Build the curated delegation context.
+	ctxBlock := o.buildDelegationContext(ctx, in, parentAgentID, sessID, projID)
+
+	return &AgentMemoryDelegateOutput{
+		SubagentID:        in.SubagentID,
+		ParentAgentID:     parentAgentID,
+		DelegationContext: ctxBlock.Block,
+		PinnedCount:       ctxBlock.PinnedCount,
+		TodoCount:         ctxBlock.TodoCount,
+		Truncated:         ctxBlock.Truncated,
+		SessionID:         sessID,
+		ProjectID:         projID,
+		RegisteredAt:      time.Now().UTC().Format(time.RFC3339),
+	}, nil
+}
+
+// delegationContextBlock is the intermediate shape from
+// buildDelegationContext: the composed markdown + the inclusion
+// counters.
+type delegationContextBlock struct {
+	Block       string
+	PinnedCount int
+	TodoCount   int
+	Truncated   bool
+}
+
+// buildDelegationContext composes the delegation_context markdown
+// block. Session metadata + usage instructions are always present;
+// pinned memories + open todos are included per IncludePinned /
+// IncludeTodos, truncated to MaxTokens (0 = omit context sections).
+//
+// Reuses the B1 ContextRecap truncation machinery (applyContextRecapBudget)
+// so the delegation view of the project's memory is consistent with
+// what session_start's ContextRecap would show the parent.
+func (o *Orchestrator) buildDelegationContext(
+	ctx context.Context,
+	in AgentMemoryDelegateInput,
+	parentAgentID, sessID, projID string,
+) delegationContextBlock {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "## dark-memory context (auto-generated)\n\n")
+	fmt.Fprintf(&sb, "You are a sub-agent operating inside dark-memory's governance framework.\n")
+	fmt.Fprintf(&sb, "Use the dark-memory MCP tools to save findings, search knowledge, and maintain an audit trail.\n\n")
+	fmt.Fprintf(&sb, "| Field | Value |\n|---|---|\n")
+	fmt.Fprintf(&sb, "| Session | %s |\n", sessID)
+	fmt.Fprintf(&sb, "| Project | %s |\n", projID)
+	fmt.Fprintf(&sb, "| Your sub-agent id | %s |\n", in.SubagentID)
+	fmt.Fprintf(&sb, "| Parent agent | %s |\n\n", parentAgentID)
+	fmt.Fprintf(&sb, "### How to use dark-memory\n\n")
+	fmt.Fprintf(&sb, "- **Save findings**: `dark_memory_agent_memory_save(operator=%q, kind=\"finding\"|\"observation\"|\"decision\", title=\"...\", content=\"...\", bind_session=true)`\n", in.Operator)
+	fmt.Fprintf(&sb, "- **Search knowledge**: `dark_memory_agent_memory_recall(operator=%q, query=\"your search terms\")`\n", in.Operator)
+	fmt.Fprintf(&sb, "- **List open todos**: `dark_memory_agent_memory_list(kind=\"todo\", scope=\"project\")`\n")
+	fmt.Fprintf(&sb, "- **Resume this session**: `dark_memory_session_resume(session_id=%q)`\n\n", sessID)
+
+	// Token budget: nil = schema default 2000; &0 = omit context
+	// sections (session metadata only); &N = clamp [0, 8000].
+	maxTokens := 2000
+	if in.MaxTokens != nil {
+		maxTokens = *in.MaxTokens
+	}
+	if maxTokens > 8000 {
+		maxTokens = 8000
+	}
+
+	// IncludePinned / IncludeTodos default to TRUE when unset
+	// (nil pointer). Only an explicit false disables the section.
+	includePinned := in.IncludePinned == nil || *in.IncludePinned
+	includeTodos := in.IncludeTodos == nil || *in.IncludeTodos
+
+	var pinned, openTodos []agentmemory.AgentMemory
+	if maxTokens > 0 && includePinned {
+		pinned, _ = o.listPinnedForVibe(ctx, "", parentAgentID, 10)
+	}
+	if maxTokens > 0 && includeTodos {
+		openTodos, _ = o.listOpenTodosForVibe(ctx, parentAgentID, 20)
+	}
+
+	block := delegationContextBlock{}
+	if len(pinned) == 0 && len(openTodos) == 0 {
+		block.Block = sb.String()
+		return block
+	}
+
+	recap := &ContextRecap{
+		PinnedMemories: pinned,
+		OpenTodos:      openTodos,
+	}
+	// maxTokens is already defaulted + clamped above; pass it
+	// straight to the B1 truncation helper.
+	recap = o.applyContextRecapBudget(ctx, recap, false, maxTokens)
+	if recap != nil {
+		block.PinnedCount = len(recap.PinnedMemories)
+		block.TodoCount = len(recap.OpenTodos)
+		block.Truncated = recap.Truncated
+		if len(recap.PinnedMemories) > 0 {
+			sb.WriteString("### Relevant context from parent session\n\n")
+			sb.WriteString(formatPinnedForRecap(recap.PinnedMemories))
+			sb.WriteString("\n")
+		}
+		if len(recap.OpenTodos) > 0 {
+			sb.WriteString(formatTodosForRecap(recap.OpenTodos))
+			sb.WriteString("\n")
+		}
+	}
+	block.Block = sb.String()
+	return block
+}
+
 // --- helpers --------------------------------------------------------
 
 // latestAuditIDForRow returns the most recent write_audit.id for the

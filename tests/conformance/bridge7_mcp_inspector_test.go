@@ -124,7 +124,7 @@ func TestBridge7_Initialize(t *testing.T) {
 }
 
 // TestBridge7_ListToolsCanonical asserts tools/list returns exactly
-// 43 tools in the canonical RFC D-9 namespace order (bridge.4).
+// 44 tools in the canonical RFC D-9 namespace order (bridge.4).
 //
 // v1.2.0: PROJECT namespace (1 tool: project_create) inserted at
 // index 0, before SESSION.
@@ -147,6 +147,8 @@ func TestBridge7_Initialize(t *testing.T) {
 // v2.9.0-alpha PR-3: AGENT_MEMORY grew 8 → 9 with agent_memory_entities
 // (id-only read of the agent_memory_entities side-table); canonical
 // count is now 43.
+// v2.9.3: AGENT_MEMORY grew 9 → 10 with agent_memory_delegate
+// (sub-agent delegation context handoff); canonical count is now 44.
 //
 // This is the wire-format regression for the bug we caught during
 // the W4A polish: mcp-go's handleListTools sorts alphabetically;
@@ -171,8 +173,8 @@ func TestBridge7_ListToolsCanonical(t *testing.T) {
 		t.Fatalf("list tools: %v", err)
 	}
 
-	if len(result.Tools) != 43 {
-		t.Fatalf("tool count: want 43 (v2.9.0-alpha PR-3 added agent_memory_entities to AGENT_MEMORY, taking canonical to 43; pre-PR-3 was 42 in v2.9.0-alpha PR-2 with EMBEDDER; v2.8.0-alpha was 41 with subagent_register + subagent_unregister; v2.7.0-alpha was 39 with MINDSET; pre-v2.7.0 was 38 in v2.6.0, 35 in v2.3.0, 34 in v2.1.0), got %d", len(result.Tools))
+	if len(result.Tools) != 44 {
+		t.Fatalf("tool count: want 44 (v2.9.3 added agent_memory_delegate to AGENT_MEMORY, taking canonical to 44; pre-v2.9.3 was 43 in v2.9.0-alpha PR-3 with entities; 42 in v2.9.0-alpha PR-2 with EMBEDDER; v2.8.0-alpha was 41 with subagent_register + subagent_unregister; v2.7.0-alpha was 39 with MINDSET; pre-v2.7.0 was 38 in v2.6.0, 35 in v2.3.0, 34 in v2.1.0), got %d", len(result.Tools))
 	}
 
 	want := canonicalWireOrder()
@@ -289,8 +291,8 @@ func TestBridge7_CallToolErrorPath(t *testing.T) {
 }
 
 // canonicalWireOrder is the wire-format (dark_memory_*) version of
-// the 43-tool canonical order (v2.9.0-alpha PR-3; was 42 in
-// v2.9.0-alpha PR-2, 41 in v2.8.0-alpha, 39 in v2.7.0-alpha, 38 in
+// the 44-tool canonical order (v2.9.3; was 43 in v2.9.0-alpha PR-3,
+// 42 in v2.9.0-alpha PR-2, 41 in v2.8.0-alpha, 39 in v2.7.0-alpha, 38 in
 // v2.6.0, 35 in v2.3.0, 34 in v2.1.x, 29 in v2.0.x, 28 in v1.3.x,
 // 27 in v1.2.x, 26 in v1.1.x), mirrored from
 // internal/tools/registry.go so this test doesn't depend on the
@@ -316,6 +318,8 @@ func TestBridge7_CallToolErrorPath(t *testing.T) {
 // v2.9.0-alpha PR-3: AGENT_MEMORY grew 8 → 9 with agent_memory_entities
 // (id-only read of the agent_memory_entities side-table). New canonical
 // count = 43.
+// v2.9.3: AGENT_MEMORY grew 9 → 10 with agent_memory_delegate
+// (delegation context for sub-agent spawns). New canonical count = 44.
 func canonicalWireOrder() []string {
 	bare := []string{
 		// PROJECT (1) — v1.2.0
@@ -330,10 +334,10 @@ func canonicalWireOrder() []string {
 		"vibe_publish", "vibe_spec", "pipeline_status", "resolve_drift",
 		// CONTEXT (4) — v2.0.0 grew from 3 to 4 with `recall`
 		"artifact_context", "spec_context", "session_context", "recall",
-		// AGENT_MEMORY (9) — v2.1.0 (5) + v2.3.0 (1: recall) +
+		// AGENT_MEMORY (10) — v2.1.0 (5) + v2.3.0 (1: recall) +
 		// v2.8.0-alpha C2 (2: subagent register/unregister) +
-		// v2.9.0-alpha PR-3 (1: entities).
-		"agent_memory_save", "agent_memory_list", "agent_memory_recall", "agent_memory_get", "agent_memory_update", "agent_memory_archive", "agent_memory_entities", "subagent_register", "subagent_unregister",
+		// v2.9.0-alpha PR-3 (1: entities) + v2.9.3 (1: delegate).
+		"agent_memory_save", "agent_memory_list", "agent_memory_recall", "agent_memory_get", "agent_memory_update", "agent_memory_archive", "agent_memory_delegate", "agent_memory_entities", "subagent_register", "subagent_unregister",
 		// MINDSET (1) — v2.7.0-alpha
 		"mindset_apply",
 		// JUDGE (3)
