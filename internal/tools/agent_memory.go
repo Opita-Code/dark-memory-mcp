@@ -140,9 +140,18 @@ func RegisterAgentMemory(reg *Registry, orch *orchestration.Orchestrator, st sto
 		"Update an agent memory's mutable fields (content/title/tags/pinned/expires_at/memory_type). Operator + project + agent_id are immutable.",
 		MustJSONSchema(map[string]any{
 			"type":     "object",
-			"required": []string{"id"},
+			// Row 189 (2026-08-03): orchestrator requires operator
+			// (orchestration/agent_memory.go:504) for INV-1 audit
+			// attribution. The schema previously declared only `id`
+			// as required, so a harness that follows the schema and
+			// sends id-only would hit errMissingField("operator")
+			// downstream with no Field envelope. Declare operator
+			// here so the harness's input validation surfaces the
+			// requirement BEFORE the orchestrator sees the call.
+			"required": []string{"id", "operator"},
 			"properties": map[string]any{
 				"id":          map[string]any{"type": "integer"},
+				"operator":    map[string]any{"type": "string", "description": "Operator id (INV-1 audit). Required."},
 				"title":       map[string]any{"type": "string"},
 				"content":     map[string]any{"type": "string"},
 				"tags":        map[string]any{"type": "string"},
@@ -159,9 +168,14 @@ func RegisterAgentMemory(reg *Registry, orch *orchestration.Orchestrator, st sto
 		"Soft-delete an agent memory (sets archived_at). Recoverable with list(include_archived=true).",
 		MustJSONSchema(map[string]any{
 			"type":     "object",
-			"required": []string{"id"},
+			// Row 189 (2026-08-03): same fix as update — orchestrator
+			// requires operator (orchestration/agent_memory.go:550)
+			// for INV-1 audit. Declare operator in the schema so
+			// harness validation catches the omission up-front.
+			"required": []string{"id", "operator"},
 			"properties": map[string]any{
-				"id": map[string]any{"type": "integer"},
+				"id":       map[string]any{"type": "integer"},
+				"operator": map[string]any{"type": "string", "description": "Operator id (INV-1 audit). Required."},
 			},
 		}),
 		func(ctx context.Context, in orchestration.AgentMemoryArchiveInput) (*orchestration.AgentMemoryArchiveOutput, error) {

@@ -14,6 +14,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 	"github.com/dark-agents/dark-memory-mcp/internal/vibeflow"
@@ -84,7 +85,12 @@ func RegisterContext(reg *Registry, _ /* orch */ interface{}, st store.Store) {
 			if sess == nil {
 				return nil, store.ErrNotFound
 			}
-			return sessionStatusFromSession(sess), nil
+			// Mirror session_status env handling (closes row 168 cross-tool
+			// consistency: session_context MUST honor the same env vars so
+			// the operator who tunes DARK_SESSION_HEARTBEAT_TIMEOUT gets the
+			// same numbers across both session-status surfaces).
+			threshold, hb := resolveClosingSoonConfig()
+			return sessionStatusFromSession(sess, threshold, hb, time.Now().UTC()), nil
 		}))
 }
 

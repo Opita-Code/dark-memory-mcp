@@ -6,6 +6,49 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [2.9.2-alpha] — 2026-08-03
+
+**End-of-day consolidation pass** — closes the row 166/167/168 backlog (open since v2.9.0-alpha), fixes row 189 (schema/orchestrator mismatch), and lands defensive coverage for both regressions. No new architecture; no migration; two wire-protocol changes (schema-required tightening + new session_status fields) + two stale-verification items.
+
+### ⚠️ Wire-protocol changes (NOT pure UX)
+
+This PR tightens two wire contracts. Harnesses integrating against dark-memory MUST be updated:
+
+1. **`agent_memory_update` + `agent_memory_archive` schemas now require `operator`** — previously declared only `id` as required; orchestrators always required `operator` (orchestration/agent_memory.go:504, 550). A harness that was sending id-only payloads and getting `errMissingField("operator")` from the orchestrator with no Field envelope will now get a schema-level rejection at harness validation time. **Required update**: include `operator` in all `dark_memory_agent_memory_update` and `dark_memory_agent_memory_archive` calls.
+
+2. **`session_status` gains `closing_soon` + `seconds_until_close`** — new envelope fields. `omitempty` so they don't appear on closed sessions; existing callers that ignore unknown fields are unaffected.
+
+### Fixed
+
+- **`session_status` closing_soon warning** (row 168) — `SessionStatusResult` gains `closing_soon: bool` and `seconds_until_close: int`. Computed against `last_heartbeat_at + heartbeat_timeout - now` (env `DARK_SESSION_HEARTBEAT_TIMEOUT`, default 300s). `closing_soon=true` when `seconds_until_close <= 30s` (env `DARK_SESSION_CLOSING_SOON_THRESHOLD`, default 30s). Closed sessions skip the countdown (omitempty zeros). **Clamping behavior**: when the deadline is already in the past (sweeper hasn't run yet), `seconds_until_close` clamps to 0 and `closing_soon=true` so harnesses know the session is overdue for closure. Harnesses can now warn operators BEFORE the sweeper closes an idle session — closing the row 168 "3 wasted restarts in one synthesis" UX debt. Implementation: `internal/tools/session.go` (new helper + BindStore closure rewires), `internal/tools/context.go` (session_context projection picks up the same fields AND now honors the same env vars — operator-set `DARK_SESSION_HEARTBEAT_TIMEOUT` is observed consistently across both `session_status` and `session_context`; previously `session_context` was hardcoded to defaults).
+- **`agent_memory_update` + `agent_memory_archive` schema/orchestrator mismatch** (row 189) — both tools' JSON schemas declared only `id` as required, but the orchestrators also require `operator` (orchestration/agent_memory.go:504, 550) for INV-1 audit. A harness that followed the published schema and sent id-only would hit `errMissingField("operator")` from the orchestrator with no Field envelope in the wire response — same SHAPE as row 167's symptom but different cause. Fix: add `"operator"` to the `required` array in both schemas. `internal/tools/agent_memory.go:142, 162`.
+
+### Migration note (row 189, why v2.9.2-alpha not v3.0.0-alpha)
+
+The **orchestrator contract did not change** in this fix — `internal/orchestration/agent_memory.go:504, 550` have always required `operator` for INV-1 audit attribution since the INV-1 invariant landed (v1.x). What changed is the **schema surface**: the JSON schema for `agent_memory_update` + `agent_memory_archive` previously declared only `id` as required, even though the orchestrator would reject id-only payloads. The schema was the inconsistent surface, not the orchestrator.
+
+**No working harness is broken by this change.** Harnesses that already send `operator` (the correct path) are unaffected — schema-level validation passes, orchestrator-level validation passes. Harnesses that were sending id-only and getting `errMissingField("operator")` from the orchestrator with no Field envelope will now see a clearer schema-level rejection at harness validation time (structured ToolError instead of unfielded rejection). This is a *better* error surface, not a worse one.
+
+If you operate a harness that was sending id-only payloads and somehow seeing success (against the orchestrator's intent), that harness was already broken under INV-1 and the schema change forces it back to a correct shape. No migration script is needed — `operator` was always mandatory; we just made the schema honest about it.
+
+**Why not v3.0.0-alpha?** Major version bumps are reserved for orchestrator contract changes (new required fields, removed tools, redesigned APIs). This is a schema-alignment-with-existing-orchestrator-contract fix, which is a PATCH-level concern under semver. The orchestrator's INV-1 invariant pre-dates this fix; we're aligning the schema to match what the orchestrator has always enforced.
+
+### Verified stale (no fix needed)
+
+- **Row 166 (`vibe_spec.tasks` Form B parser)** — F36 (v1.2.1) fixed the dispatch order. `parseTasksField` at `internal/orchestration/vibe_spec.go:115` correctly handles Form A (`[`) first; all 6 unit tests in `TestParseTasksField_*` PASS. Symptom does not reproduce.
+- **Row 167 (`agent_memory_update` ErrInvalidArgument)** — wire reproduction at `tests/orchestration/agent_memory_wire_update_test.go` (5 tests, all PASS): same-operator title-only + 4.4 KB content-only + pinned-only all succeed; legitimate missing-field paths still return Field-tagged ErrInvalidArgument. Symptom does not reproduce. Separate finding: `latestAuditIDForRow` stub returns 0 (F47 documented debt) — NOT row 167.
+
+### Added
+
+- **`tests/orchestration/agent_memory_wire_update_test.go`** — 5 wire reproduction tests for row 167 (verifies the stale path + pins the missing-field paths).
+- **`internal/tools/session_status_test.go`** — 11 unit tests for row 168 (covers fresh/near-deadline/overdue/open/idle/closed_clean/closed_aborted/empty-hb/malformed-hb/config-defaults/env-overrides/go-syntax).
+
+### Known issues (not in this release)
+
+- `latestAuditIDForRow` stub returns 0 for `AgentMemorySave.AuditID` + `AgentMemoryUpdate.AuditID` — F47 documented debt. The audit row IS written atomically (INV-1) but the orchestrator can't surface its id without a new Store method. Tracked separately from row 167.
+
+---
+
 ## [2.9.1-alpha] — 2026-08-03
 
 **Hybrid Retrieval: ONNX bundle + harness-aware ladder** — closes PR-2.1 of the v2.9.0 plan (agent_memory row 160 deferred items + row 164 §2 amendment). Closes the "vibe-coder must read docs to install dark-memory" failure mode: bundled ONNX means offline-first works zero-config; harness detection picks the right preferred rung without operator intervention.
@@ -53,9 +96,9 @@ PR-2.1 requires **CGO_ENABLED=1** at build time. CI (Ubuntu 22.04) ships `gcc` b
 
 ### Known issues (not in this release)
 
-- `vibe_spec.tasks` Form B parser rejects JSON arrays (governance gate cannot run via helper) — row 166, end-of-day.
-- `agent_memory_update` returns `ErrInvalidArgument` for same-operator longer content — row 167, end-of-day.
-- Session auto-close race (~5 min inactivity → `ErrFrameStaleTooFar`) — row 168, end-of-day.
+- `vibe_spec.tasks` Form B parser rejects JSON arrays (governance gate cannot run via helper) — row 166, **closed in v2.9.2-alpha**.
+- `agent_memory_update` returns `ErrInvalidArgument` for same-operator longer content — row 167, **closed in v2.9.2-alpha** (was already fixed in transit; wire regression tests added).
+- Session auto-close race (~5 min inactivity → `ErrFrameStaleTooFar`) — row 168, **closed in v2.9.2-alpha** (`closing_soon` warning surface).
 - `go test ./internal/embedder/onnx` TestEmbedAfterClose skipped on Windows (yalue runtime holds a DLL handle that prevents `t.TempDir` cleanup). The integration path works; only the cleanup pattern is affected.
 
 ---
