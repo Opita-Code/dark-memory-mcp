@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/agentmemory"
+	"github.com/dark-agents/dark-memory-mcp/internal/audit"
 	"github.com/dark-agents/dark-memory-mcp/internal/entity"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 )
@@ -557,7 +558,6 @@ func (o *Orchestrator) AgentMemoryArchive(ctx context.Context, in AgentMemoryArc
 	}
 	if err := o.Store.ArchiveAgentMemory(ctx, wc, in.ID); err != nil {
 		return nil, err
-		return nil, err
 	}
 	// Re-fetch to surface the canonical archived_at timestamp.
 	got, err := o.Store.GetAgentMemory(ctx, in.ID)
@@ -611,21 +611,31 @@ func (o *Orchestrator) AgentMemoryEntities(ctx context.Context, in AgentMemoryEn
 // given table_name + row_id. Best-effort: errors are swallowed (the
 // caller doesn't fail the user-facing operation on a transient audit
 // lookup miss). Returns 0 if no audit row is found.
+//
+// F47 (closed 2026-08-03): was a stub returning 0; now narrows
+// ListWrites with TableName + RowID filters and returns the latest
+// audit row's id (ListWrites orders by id DESC, so the first row
+// wins).
 func (o *Orchestrator) latestAuditIDForRow(ctx context.Context, table string, rowID int64) (int64, error) {
-	// We don't have a typed Store method for this; the Orchestrator's
-	// only Store dependency is the abstract interface. Instead of
-	// adding one, use the active project's project_id + a delegated
-	// helper. The simplest approach: query via a Store.ListWrites call
-	// with a tight filter.
-	//
-	// For v2.1.0 we accept "audit_id may be 0" as a documented
-	// limitation; F47 tracks adding a typed method.
 	if o.Store == nil {
 		return 0, nil
 	}
-	// Best-effort 0 — the Store enforces INV-1; we just can't
-	// surface the id without a new method.
-	return 0, nil
+	if rowID <= 0 {
+		return 0, nil
+	}
+	rows, err := o.Store.ListWrites(ctx, audit.ListFilters{
+		TableName: table,
+		RowID:     rowID,
+		Limit:     1,
+	})
+	if err != nil {
+		// Transient lookup miss — caller continues without audit_id.
+		return 0, nil
+	}
+	if len(rows) == 0 {
+		return 0, nil
+	}
+	return rows[0].ID, nil
 }
 
 // errMissingField is the canonical "field X is required" error. It
