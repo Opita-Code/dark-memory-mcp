@@ -6,6 +6,60 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [2.9.1-alpha] — 2026-08-03
+
+**Hybrid Retrieval: ONNX bundle + harness-aware ladder** — closes PR-2.1 of the v2.9.0 plan (agent_memory row 160 deferred items + row 164 §2 amendment). Closes the "vibe-coder must read docs to install dark-memory" failure mode: bundled ONNX means offline-first works zero-config; harness detection picks the right preferred rung without operator intervention.
+
+### Added
+
+- **Bundled ONNX adapter** (PR-2.1, replaces the PR-2 stub) — `internal/embedder/onnx` is now a real local embedding adapter backed by `model_quantized.onnx` (Xenova/all-MiniLM-L6-v2 int8, **22.97 MB**, SHA-pinned `afdb6f1a…`) via `yalue/onnxruntime_go v1.21.0` + ONNX Runtime **1.22.0**. Libonnxruntime per-platform bundled via `//go:embed` with build tags: `windows-amd64` (12.4 MB), `linux-amd64` (21.0 MB), `darwin-arm64` (33.5 MB). Per-binary footprint: **+47 MB** (model + runtime for the build target). Total across all platform distributions: **+89 MB**. SHA verification on extract; idempotent cache at `$DARK_HOME/{models,libonnxruntime}/`.
+- **Harness detector** (`internal/embedder/detect`) — env-var-first probe ladder: `CLAUDE_CODE` → claude-code harness (prefers Voyage AI); `OPENCODE_VERSION` / `OPENCODE_CONFIG` → opencode (prefers OpenAI); `CODEX_HOME` → codex (prefers OpenAI); `OLLAMA_HOST` env var + 500ms TCP probe of `127.0.0.1:11434` → ollama. `Result{Kind, ConfigPath, Source}` is LLM-readable (used in `embedder_setup_prompt` for the consent recommendation).
+- **Voyage AI adapter** (`internal/embedder/voyage`) — Voyage AI voyage-3 (1024d), `VOYAGE_API_KEY` env var, 5s/10s + 1 retry on 5xx/429. Preferred rung when harness detection identifies Claude Code.
+- **Ollama adapter** (`internal/embedder/ollama`) — localhost:11434 `/api/embeddings` (nomic-embed-text 768d), 4-way bounded parallelism, no API key. Preferred rung when OLLAMA_HOST is set or a local daemon is reachable.
+- **Harness-aware FactoryAuto() ladder** — per row 164 §2: (1) manual `DARK_MEMORY_EMBEDDER` override; (2) harness-detected preferred rung; (3) bundled ONNX offline default; (4) `OPENAI_API_KEY` last rung; (5) `None()` stub. New `tryKind()` walks the ladder rung-by-rung and falls through on `ErrKeyMissing`/`ErrDisabled`.
+- **Consent prompt surface** — `dark_memory_embedder_setup_prompt` now returns `Harness` + `HarnessSource` + a `Recommended: true` flag on the harness-native rung. The LLM can highlight the recommended rung without violating the row 164 §3 "surface verbatim" rule.
+- **`docs/embedders/{install.md,onnx.md,voyage.md,ollama.md}`** — LLM-readable install docs per row 164 §4.
+
+### Changed
+
+- **`internal/embedder/embedder.go`** — adds `KindVoyage` + `KindOllama` constants; `FactoryAuto()` rewritten with the harness-aware ladder (was: env-presence auto-detect only).
+- **`internal/tools/embedder_setup.go`** — `ConsentStatus` gains `Harness` + `HarnessSource` + per-choice `Recommended` flag. `consentPromptVerbatim` now interpolates the detected harness name.
+- **`internal/embedder/detect/detect.go`** — new package, 5 probes (claude-code / opencode / codex / ollama / unknown). No new deps. `Result.String()` includes the detection source for debug.
+- **`internal/embedder/onnx/{onnx,embed,wordpiece}.go`** — real impl. CGO via `yalue/onnxruntime_go`. ~430 LoC of WordPiece tokenization + session management + SHA verification.
+- **`go.mod`** — adds `github.com/yalue/onnxruntime_go v1.21.0`.
+
+### Bundle footprint
+
+| Asset | Size | Build-tag-gated |
+|---|---|---|
+| `model_quantized.onnx` (Xenova/all-MiniLM-L6-v2 int8) | 22.97 MB | yes (always embedded) |
+| `onnxruntime.dll` (Windows amd64) | 12.42 MB | `windows && amd64` |
+| `libonnxruntime.so.1.22.0` (Linux amd64) | 21.04 MB | `linux && amd64` |
+| `libonnxruntime.1.22.0.dylib` (Darwin arm64) | 33.48 MB | `darwin && arm64` |
+
+**Per-binary increase: +47 MB** (model + one platform's libonnxruntime). Cross-distribution footprint: +89 MB.
+
+### Deferred to v2.9.2+ (PR-3.1)
+
+- `drift_judge` MCP integration for entity extraction (PR-3 ships the deterministic local extractor; PR-3.1 swaps the body without changing the `Source` tag taxonomy).
+- Postgres vector/RRF dispatch mirror (PR-2 ships schema + read parity; PR-3.1 picks up runtime save + filter parity for entities).
+- `sqlite-vec` / `pgvector` for production-scale vector search.
+- Postgres porter stemming (v22 in sqlite is `unicode61`+`porter`; Postgres needs `tsvector` + `snowball`).
+- Mem0 compatibility mode extension to new axes.
+
+### Build requirements
+
+PR-2.1 requires **CGO_ENABLED=1** at build time. CI (Ubuntu 22.04) ships `gcc` by default. Local Windows builds need a C compiler; install MinGW (`winget install BrechtSanders.WinLibs.POSIX.UCRT` ships WinLibs MinGW).
+
+### Known issues (not in this release)
+
+- `vibe_spec.tasks` Form B parser rejects JSON arrays (governance gate cannot run via helper) — row 166, end-of-day.
+- `agent_memory_update` returns `ErrInvalidArgument` for same-operator longer content — row 167, end-of-day.
+- Session auto-close race (~5 min inactivity → `ErrFrameStaleTooFar`) — row 168, end-of-day.
+- `go test ./internal/embedder/onnx` TestEmbedAfterClose skipped on Windows (yalue runtime holds a DLL handle that prevents `t.TempDir` cleanup). The integration path works; only the cleanup pattern is affected.
+
+---
+
 ## [2.9.0-alpha] — 2026-08-03
 
 **Hybrid Retrieval** — closes the v2.9.0 plan (agent_memory row 160). Three PRs land behind per-axis opt-in (BM25 stays the default). Schema: v22 (porter_stemming) → v23 (agent_memory_embedding) → v24 (agent_memory_entities). Canonical tool count: 41 → **42**. Wire contract appenditive, zero breaking changes. Embedder layer refreshes via init-time `RegisterAdapter` registry to break the embedder ↔ adapter import cycle.
