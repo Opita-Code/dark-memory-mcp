@@ -182,6 +182,32 @@ func RegisterAgentMemory(reg *Registry, orch *orchestration.Orchestrator, st sto
 			return orch.AgentMemoryArchive(ctx, in)
 		}))
 
+	// v2.9.3: agent_memory_delegate — prepare a delegation context for
+	// a sub-agent spawn. Registers the subagent binding (C2) AND
+	// returns a ready-to-inject markdown block (session metadata +
+	// curated pinned memories + open todos). The parent embeds the
+	// returned delegation_context in the sub-agent's task prompt so
+	// the sub-agent inherits dark-memory context instead of starting
+	// blind. Gated by DARK_MEMORY_V280=1 (same as subagent_register).
+	reg.Add(BindOrchestrator("agent_memory_delegate",
+		"Prepare a delegation context for a sub-agent spawn (v2.9.3). Registers the subagent binding (C2) and returns a ready-to-inject markdown block — session metadata + curated pinned memories + open todos — that the parent embeds in the sub-agent's task prompt so the sub-agent inherits dark-memory context instead of starting blind. Gated by DARK_MEMORY_V280=1.",
+		MustJSONSchema(map[string]any{
+			"type":     "object",
+			"required": []string{"operator", "subagent_id", "task_description"},
+			"properties": map[string]any{
+				"operator":         map[string]any{"type": "string", "description": "Operator id (INV-1 audit). Required."},
+				"subagent_id":      map[string]any{"type": "string", "description": "Opaque uuid the parent generates for this sub-agent. Required."},
+				"task_description": map[string]any{"type": "string", "description": "What the sub-agent should do. Used for context selection. Required."},
+				"include_pinned":   map[string]any{"type": "boolean", "default": true, "description": "Include pinned memories in the delegation context."},
+				"include_todos":    map[string]any{"type": "boolean", "default": true, "description": "Include open todos in the delegation context."},
+				"max_tokens":       map[string]any{"type": "integer", "default": 2000, "minimum": 0, "maximum": 8000, "description": "Context recap token budget. 0 = no context, just session metadata."},
+				"ttl_seconds":      map[string]any{"type": "integer", "default": 3600, "minimum": 60, "maximum": 86400, "description": "Subagent binding TTL (clamp 60..86400; default 3600 = 1h)."},
+			},
+		}),
+		func(ctx context.Context, in orchestration.AgentMemoryDelegateInput) (*orchestration.AgentMemoryDelegateOutput, error) {
+			return orch.AgentMemoryDelegate(ctx, in)
+		}))
+
 	// v2.9.0-alpha PR-3 (agent_memory row 160). Read the extracted
 	// entity list for one row. Returns nil entities when the row
 	// has no entities (extract_entities was not set on Save).

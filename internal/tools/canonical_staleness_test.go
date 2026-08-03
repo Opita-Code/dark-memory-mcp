@@ -123,12 +123,13 @@ func canonicalWireOrderBares() []string {
 		"vibe_publish", "vibe_spec", "pipeline_status", "resolve_drift",
 		// CONTEXT (4) — v2.0.0 grew from 3 to 4 with `recall`
 		"artifact_context", "spec_context", "session_context", "recall",
-		// AGENT_MEMORY (9) — v2.1.0 (5) + v2.3.0 (1: recall) +
+		// AGENT_MEMORY (10) — v2.1.0 (5) + v2.3.0 (1: recall) +
 		// v2.8.0-alpha C2 (2: subagent register/unregister bindings
 		// for active_subagents table) +
 		// v2.9.0-alpha PR-3 (1: entities, id-only read of the
-		// agent_memory_entities side-table).
-		"agent_memory_save", "agent_memory_list", "agent_memory_recall", "agent_memory_get", "agent_memory_update", "agent_memory_archive", "agent_memory_entities", "subagent_register", "subagent_unregister",
+		// agent_memory_entities side-table) +
+		// v2.9.3 (1: delegate, delegation context for sub-agent spawns).
+		"agent_memory_save", "agent_memory_list", "agent_memory_recall", "agent_memory_get", "agent_memory_update", "agent_memory_archive", "agent_memory_delegate", "agent_memory_entities", "subagent_register", "subagent_unregister",
 		// MINDSET (1) — v2.7.0-alpha
 		"mindset_apply",
 		// JUDGE (3)

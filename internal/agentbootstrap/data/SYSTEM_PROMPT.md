@@ -175,6 +175,28 @@ When `DARK_MEMORY_V280=1`, pass `spawn_subagent=true` + `subagent_id=<opaque-uui
 - To register/clear a binding manually (e.g. after an external subagent tool), use `dark_memory_subagent_register(operator, subagent_id, parent_agent_id?, ttl_seconds?)` and `dark_memory_subagent_unregister(operator, subagent_id)`.
 - TTL clamp: [60, 86400]. Default 3600 (1h).
 
+**v2.9.3 — `agent_memory_delegate` (context handoff for subagent spawns):**
+
+When you spawn a subagent via your harness's Task tool, the subagent
+starts with a fresh context — it does NOT inherit your session, your
+pinned memories, or your open todos. The hard delegation rule is: the
+delegation must use the same brain. Fix the handoff explicitly:
+
+1. Generate an opaque `subagent_id` (uuid).
+2. Call `dark_memory_agent_memory_delegate(operator=<you>, subagent_id=<uuid>, task_description="<what the subagent should do>")`.
+3. It registers the C2 binding AND returns `delegation_context` — a
+   ready-to-inject markdown block with session metadata + curated
+   pinned memories + open todos.
+4. Embed `delegation_context` verbatim in the subagent's task prompt.
+5. After the subagent returns, review its writes via
+   `dark_memory_agent_memory_list(scope=session, operator=<you>)`
+   (rows written by the subagent carry `subagent_id`, not your
+   agent_id — C2 isolation keeps them out of your ContextRecap).
+
+Options: `include_pinned` / `include_todos` (default true),
+`max_tokens` (default 2000; 0 = metadata only),
+`ttl_seconds` (default 3600). Gated by `DARK_MEMORY_V280=1`.
+
 ---
 
 ## 6. Cross-project isolation (v2.8.0-alpha D5 — INV-7)

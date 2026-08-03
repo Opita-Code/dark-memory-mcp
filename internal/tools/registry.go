@@ -192,7 +192,7 @@ func (r *Registry) CountExtras() int {
 //	AGENT_BOOTSTRAP  (3)  - bootstrap, recommend_companions, detect_environment (v2.6.0)
 //	VIBE             (4)  - publish, spec, pipeline_status, resolve_drift
 //	CONTEXT          (4)  - artifact_context, spec_context, session_context, recall
-//	AGENT_MEMORY     (6)  - save, list, recall, get, update, archive (v2.1.0 + v2.3.0)
+//	AGENT_MEMORY     (10) - save, list, recall, get, update, archive, delegate, entities, subagent_register, subagent_unregister (v2.1.0 + v2.3.0 + v2.9.3)
 //	MINDSET          (1)  - mindset_apply                        (v2.7.0-alpha, procedural + judge-validated)
 //	JUDGE            (3)  - judge, consensus, judgment_history
 //	POLICY           (2)  - active_policy, load_constitution
@@ -200,7 +200,7 @@ func (r *Registry) CountExtras() int {
 //	ADMIN            (3)  - admin_migrate, admin_schema_status, admin_vacuum
 //	L6-VLP           (1)  - vlp_handle_event          (DMAP v1.1 spec 193)
 //
-// Total: 1+4+3+3+4+4+6+1+3+2+4+3+1 = 39.
+// Total: 1+4+3+3+4+4+10+1+3+2+4+3+1 = 44.
 //
 //   - PROJECT was added in v1.2.0 to close the bootstrap loop
 //     (operators can now provision a tenant from inside the MCP
@@ -254,7 +254,10 @@ var canonicalToolOrder = []string{
 	// subagent_id for agent_id resolution when set).
 	// v2.9.0-alpha PR-3 added agent_memory_entities (id-only read of
 	// the agent_memory_entities side-table). Returned for one row id.
-	"agent_memory_save", "agent_memory_list", "agent_memory_recall", "agent_memory_get", "agent_memory_update", "agent_memory_archive", "agent_memory_entities", "subagent_register", "subagent_unregister",
+	// v2.9.3 added agent_memory_delegate (prepares a delegation context
+	// for sub-agent spawns; registers the C2 binding + returns the
+	// ready-to-inject markdown block).
+	"agent_memory_save", "agent_memory_list", "agent_memory_recall", "agent_memory_get", "agent_memory_update", "agent_memory_archive", "agent_memory_delegate", "agent_memory_entities", "subagent_register", "subagent_unregister",
 	// MINDSET (1) - v2.7.0-alpha. Procedural composition with judge-validated
 	// system prompts for subagent delegation. Cache hit returns in <50ms with
 	// 0 LLM calls; cache miss loops composition + validation up to
