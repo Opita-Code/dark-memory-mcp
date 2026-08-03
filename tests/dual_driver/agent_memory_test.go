@@ -631,6 +631,233 @@ func fakeProject(id string) projectAlias {
 	return p
 }
 
+// --- PR-3 (v2.9.0-alpha): entity extraction tests ---------------------
+//
+// These exercise the agent_memory_entities side table wired in
+// PR-3. The fixture populates AgentMemory.Entities directly
+// (bypassing the orchestrator's entity.Extract step) so the
+// tests are deterministic and don't depend on the extractor's
+// internal logic (which has its own unit suite in
+// internal/entity/entity_test.go).
+
+// TestAgentMemory_Entities_RoundTrip asserts that SaveAgentMemory
+// persists entity rows in the SAME tx as the main INSERT, and
+// GetAgentMemoryEntities retrieves them by row id, sorted by
+// entity ASC.
+func TestAgentMemory_Entities_RoundTrip(t *testing.T) {
+	st, cleanup := openAgentMemoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	row := makeRow("alice", "note", "dark memory project")
+	row.Entities = []agentmemory.Entity{
+		{Value: "dark", Source: agentmemory.Entity{}.Source, Confidence: 1.0},
+		{Value: "memory", Source: agentmemory.Entity{}.Source, Confidence: 1.0},
+		{Value: "project", Source: agentmemory.Entity{}.Source, Confidence: 1.0},
+	}
+	// Force deterministic source so the assertion is explicit.
+	for i := range row.Entities {
+		row.Entities[i].Source = "deterministic"
+	}
+	id, err := st.SaveAgentMemory(ctx, wcFor("alice", "test"), row)
+	if err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	ents, err := st.GetAgentMemoryEntities(ctx, id)
+	if err != nil {
+		t.Fatalf("get entities: %v", err)
+	}
+	if len(ents) != 3 {
+		t.Errorf("entities count: got %d, want 3", len(ents))
+	}
+	// Stored values are lowercased (per store-side contract).
+	want := []string{"dark", "memory", "project"}
+	for i, e := range ents {
+		if e.Value != want[i] {
+			t.Errorf("entity[%d]: got %q, want %q", i, e.Value, want[i])
+		}
+		if e.Source != "deterministic" {
+			t.Errorf("entity[%d].source: got %q, want deterministic", i, e.Source)
+		}
+		if e.Confidence != 1.0 {
+			t.Errorf("entity[%d].confidence: got %f, want 1.0", i, e.Confidence)
+		}
+	}
+}
+
+// TestAgentMemory_Entities_NoExtractBackwardCompat asserts that
+// SaveAgentMemory WITHOUT the transient Entities field writes
+// zero entity rows (pre-PR-3 behavior).
+func TestAgentMemory_Entities_NoExtractBackwardCompat(t *testing.T) {
+	st, cleanup := openAgentMemoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	row := makeRow("alice", "note", "dark memory project")
+	row.Entities = nil // explicitly empty
+	id, err := st.SaveAgentMemory(ctx, wcFor("alice", "test"), row)
+	if err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	ents, err := st.GetAgentMemoryEntities(ctx, id)
+	if err != nil {
+		t.Fatalf("get entities: %v", err)
+	}
+	if len(ents) != 0 {
+		t.Errorf("no-extract backward compat: got %d entities, want 0", len(ents))
+	}
+}
+
+// TestAgentMemory_Search_FilterByEntities seeds 4 rows with
+// distinct entity sets, then asserts that BM25 search with
+// f.Entities filter prunes rows whose entity sets don't
+// superset the filter list.
+//
+// The test does NOT depend on which row wins the BM25 axis — it
+// only checks that the filter prunes correctly. Filter semantics
+// are AND across the entity list (row 160 PR-3).
+func TestAgentMemory_Search_FilterByEntities(t *testing.T) {
+	st, cleanup := openAgentMemoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	// Four rows with overlapping content + distinct entities.
+	// Using "memory" as the BM25 query term so all four rows
+	// surface under BM25; the entity filter then prunes.
+	type fixture struct {
+		content string
+		ents    []agentmemory.Entity
+	}
+	withSrc := func(values []string) []agentmemory.Entity {
+		out := make([]agentmemory.Entity, len(values))
+		for i, v := range values {
+			out[i] = agentmemory.Entity{Value: v, Source: "deterministic", Confidence: 1.0}
+		}
+		return out
+	}
+	fixtures := []fixture{
+		{content: "memory one dark",       ents: withSrc([]string{"dark", "memory"})},
+		{content: "memory two light",      ents: withSrc([]string{"light", "memory"})},
+		{content: "memory three zany",     ents: withSrc([]string{"memory", "zany"})},
+		{content: "memory four empty",     ents: nil}, // no entities → invisible to filter
+	}
+	for _, f := range fixtures {
+		row := makeRow("alice", "note", f.content)
+		row.Entities = f.ents
+		if _, err := st.SaveAgentMemory(ctx, wcFor("alice", "test"), row); err != nil {
+			t.Fatalf("save %q: %v", f.content, err)
+		}
+	}
+
+	// Filter: ["memory", "dark"] — only the first row has both.
+	hits, err := st.SearchAgentMemory(ctx, agentmemory.SearchFilters{
+		Query:    "memory",
+		Entities: []string{"memory", "dark"},
+	})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(hits) != 1 {
+		t.Errorf("AND filter: got %d hits, want 1 (only 'memory one dark')", len(hits))
+	}
+	if len(hits) == 1 && hits[0].Content != "memory one dark" {
+		t.Errorf("AND filter: got %q, want %q", hits[0].Content, "memory one dark")
+	}
+
+	// Filter: ["memory"] alone — three rows match (any with the
+	// "memory" entity), except "memory four empty" (no entities).
+	hits2, err := st.SearchAgentMemory(ctx, agentmemory.SearchFilters{
+		Query:    "memory",
+		Entities: []string{"memory"},
+	})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(hits2) != 3 {
+		t.Errorf("single-entity filter: got %d hits, want 3", len(hits2))
+	}
+	// Verify "memory four empty" is absent (no entities).
+	for _, h := range hits2 {
+		if h.Content == "memory four empty" {
+			t.Errorf("row with no entities should be excluded by entity filter")
+		}
+	}
+}
+
+// TestAgentMemory_Entities_IdempotentRerun asserts that
+// re-running the orchestrator's extractor on the same row +
+// saving again does NOT duplicate entity rows (ON CONFLICT
+// DO NOTHING semantics on the (mem_id, entity) PK).
+func TestAgentMemory_Entities_IdempotentRerun(t *testing.T) {
+	st, cleanup := openAgentMemoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	row := makeRow("alice", "note", "dark memory")
+	row.Entities = []agentmemory.Entity{
+		{Value: "dark", Source: "deterministic", Confidence: 1.0},
+		{Value: "memory", Source: "deterministic", Confidence: 1.0},
+	}
+	id, err := st.SaveAgentMemory(ctx, wcFor("alice", "test"), row)
+	if err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	// Re-save the same entities (simulating a re-extract + re-save
+	// by the orchestrator on row update). With ON CONFLICT
+	// DO NOTHING, the count should stay at 2.
+	row.ID = id
+	if _, err := st.SaveAgentMemory(ctx, wcFor("alice", "test"), row); err != nil {
+		t.Fatalf("save (re-run): %v", err)
+	}
+
+	ents, err := st.GetAgentMemoryEntities(ctx, id)
+	if err != nil {
+		t.Fatalf("get entities: %v", err)
+	}
+	if len(ents) != 2 {
+		t.Errorf("idempotent rerun: got %d entities, want 2", len(ents))
+	}
+}
+
+// TestAgentMemory_GetAgentMemoryEntities_CrossProjectNil asserts
+// that cross-project reads return nil entities (INV-7). The row
+// exists in a different project → entities are NOT surfaced.
+func TestAgentMemory_GetAgentMemoryEntities_CrossProjectNil(t *testing.T) {
+	st, cleanup := openAgentMemoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	row := makeRow("alice", "note", "memory content")
+	row.Entities = []agentmemory.Entity{
+		{Value: "memory", Source: "deterministic", Confidence: 1.0},
+	}
+	id, err := st.SaveAgentMemory(ctx, wcFor("alice", "test"), row)
+	if err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	// Switch to a different project. The row + its entities are
+	// NOT visible to this project.
+	if err := st.CreateProject(ctx, projectForCreate(fakeProject("other-project"))); err != nil {
+		t.Fatalf("create other-project: %v", err)
+	}
+	if err := st.SetActiveProject(ctx, "other-project"); err != nil {
+		t.Fatalf("switch project: %v", err)
+	}
+	defer st.SetActiveProject(ctx, "default") // restore for cleanup
+
+	ents, err := st.GetAgentMemoryEntities(ctx, id)
+	if err != nil {
+		t.Fatalf("cross-project get: %v", err)
+	}
+	if len(ents) != 0 {
+		t.Errorf("cross-project visibility: got %d entities, want 0", len(ents))
+	}
+}
+
 // projectAlias mirrors the small subset of project.Project the
 // store.CreateProject needs. Using a type alias avoids an import
 // in test code.

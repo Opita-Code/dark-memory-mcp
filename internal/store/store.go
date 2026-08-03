@@ -597,7 +597,22 @@ type Store interface {
 	// derived from the WriteContext / active project — the caller
 	// (orchestration layer) MUST NOT pass them as args to avoid
 	// cross-tenant injection. Returns the new row id.
+	//
+	// v2.9.0 PR-3 (agent_memory row 160): when m.Entities is non-empty
+	// (transient field, populated by the orchestrator's extractor
+	// when AgentMemorySaveInput.ExtractEntities=true), the store
+	// writes the entities to agent_memory_entities in the same tx.
+	// nil/empty Entities → backward-compat (no entity rows).
 	SaveAgentMemory(ctx context.Context, wc WriteContext, m *agentmemory.AgentMemory) (int64, error)
+
+	// GetAgentMemoryEntities returns the entity list for one row,
+	// sorted by entity ASC. Returns nil (not an error) when the
+	// row has no entities or doesn't exist (idempotent). Caller
+	// is responsible for cross-project auth: the Store limits
+	// visibility to the active project via mem_id + project_id.
+	//
+	// v2.9.0 PR-3.
+	GetAgentMemoryEntities(ctx context.Context, memID int64) ([]agentmemory.Entity, error)
 
 	// GetAgentMemory returns the row by id, enforcing project
 	// isolation (INV-7): a row from a different project returns

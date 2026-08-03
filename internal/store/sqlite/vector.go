@@ -299,7 +299,8 @@ func (s *Store) searchByVector(ctx context.Context, f agentmemory.SearchFilters)
 		}
 		out = append(out, hit)
 	}
-	return out, nil
+	// v2.9.0 PR-3: optional entity-axis filter (AND semantics).
+	return s.applyEntityFilter(ctx, out, f.Entities)
 }
 
 // searchByRRF runs BM25 + vector arms in parallel, fuses via RRF.
@@ -406,7 +407,9 @@ func (s *Store) searchByRRF(ctx context.Context, f agentmemory.SearchFilters) ([
 		}
 		out = append(out, hit)
 	}
-	return out, nil
+	// v2.9.0 PR-3: optional entity-axis filter (AND semantics). The
+	// RRF score is preserved through the prune.
+	return s.applyEntityFilter(ctx, out, f.Entities)
 }
 
 // embeddingRows is the pre-loaded pair of AgentMemory metadata plus

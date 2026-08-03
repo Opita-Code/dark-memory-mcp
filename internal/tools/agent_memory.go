@@ -167,6 +167,23 @@ func RegisterAgentMemory(reg *Registry, orch *orchestration.Orchestrator, st sto
 		func(ctx context.Context, in orchestration.AgentMemoryArchiveInput) (*orchestration.AgentMemoryArchiveOutput, error) {
 			return orch.AgentMemoryArchive(ctx, in)
 		}))
+
+	// v2.9.0-alpha PR-3 (agent_memory row 160). Read the extracted
+	// entity list for one row. Returns nil entities when the row
+	// has no entities (extract_entities was not set on Save).
+	// Cross-project reads return nil (INV-7).
+	reg.Add(BindOrchestrator("agent_memory_entities",
+		"Get the extracted entity list for one agent_memory row. v2.9.0-alpha PR-3. Returns {id, entities: [{entity, source, confidence, model}]} or nil entities when the row has none. Read-only.",
+		MustJSONSchema(map[string]any{
+			"type":     "object",
+			"required": []string{"id"},
+			"properties": map[string]any{
+				"id": map[string]any{"type": "integer", "description": "Row id (agent_memory.id). Returns nil entities when the row has no entities."},
+			},
+		}),
+		func(ctx context.Context, in orchestration.AgentMemoryEntitiesInput) (*orchestration.AgentMemoryEntitiesOutput, error) {
+			return orch.AgentMemoryEntities(ctx, in)
+		}))
 }
 
 // --- Orchestrator input/output shapes --------------------------------

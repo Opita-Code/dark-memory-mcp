@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/embedder"
+	"github.com/dark-agents/dark-memory-mcp/internal/entity"
 )
 
 // Kind enumerates the seven high-level memory kinds. Free-form strings
@@ -177,12 +178,41 @@ type AgentMemory struct {
 	//
 	// v2.9.0 schema (v23 migration): `agent_memory.embedding BLOB NULL`.
 	Embedding embedder.Vec `json:"-"`
+
+	// Entities is a transient field (json:"-") carrying the
+	// extracted entity list for THIS row's content + title + tags.
+	// Populated by the orchestrator (via internal/entity.Extract)
+	// only when AgentMemorySaveInput.ExtractEntities = true; the
+	// Store writes them to the agent_memory_entities side table in
+	// the same tx as the main INSERT.
+	//
+	// PR-3 of v2.9.0 plan (agent_memory row 160). Backward compat:
+	// when Entities is nil/empty, no rows land in
+	// agent_memory_entities — pre-PR-3 callers see no change.
+	//
+	// Source tag is "deterministic" for PR-3 (the local heuristic
+	// from internal/entity); PR-3.1 will add Source="drift_judge:..."
+	// once the LLM-driven extractor lands.
+	Entities []entity.Entity `json:"-"`
 }
 
 // IsArchived returns true if the row has been soft-deleted.
 func (m *AgentMemory) IsArchived() bool {
 	return m.ArchivedAt != ""
 }
+
+// Entity is one extracted noun phrase from a row's payload. It
+// is a Go type alias for entity.Entity so callers (orchestrator,
+// store, tool) can share the same shape without an explicit
+// import dance. The internal/entity package owns the producer
+// logic (deterministic extractor for PR-3, drift_judge bridge
+// for PR-3.1).
+//
+// v2.9.0 PR-3 (agent_memory row 160). The Source tag distinguishes
+// rows: "deterministic" for PR-3, "drift_judge:<prompt>" for
+// PR-3.1. Confidence is always 1.0 for PR-3 (no model to score
+// against); future LLM-driven extractors emit 0 < c < 1.
+type Entity = entity.Entity
 
 // CreatedAtTime parses the CreatedAt RFC3339Nano string. Returns
 // zero time + false on parse error (callers can decide whether to
@@ -328,6 +358,26 @@ type SearchFilters struct {
 	// RRFWeightVector is the vector arm weight in RRF fusion. Used
 	// only when Mode == "rrf". 0 → default 1.0.
 	RRFWeightVector float64
+
+	// Entities restricts to rows that have ALL the listed entity
+	// strings in their extracted entity set (case-insensitive
+	// equality, AND semantics). Empty = unfiltered (row 160 PR-3
+	// backward compat: Entity filter is opt-in).
+	//
+	// Implementation: EXISTS join on agent_memory_entities
+	// (mem_id, entity) WHERE entity IN (...). Rows without
+	// entities never appear when this filter is non-empty.
+	//
+	// Examples:
+	//   Entities: ["dark-memory", "vector-search"] returns rows
+	//   extracted with both entities.
+	//   Entities: ["openai"] returns rows that mention OpenAI as
+	//   an entity. Stored values are lowercase per the entity
+	//   package contract (caller must lowercase before passing
+	//   to keep filter deterministic across case variants — or
+	//   the Store does the lowercase on its side; see PR-3
+	//   reader note).
+	Entities []string
 }
 
 // SearchHit extends AgentMemory with the FTS5 BM25 rank (lower is

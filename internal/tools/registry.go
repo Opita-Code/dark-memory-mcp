@@ -250,6 +250,9 @@ var canonicalToolOrder = []string{
 	// data plane; wraps SearchAgentMemory with FTS5 escape done in
 	// the orchestrator layer).
 	"agent_memory_save", "agent_memory_list", "agent_memory_recall", "agent_memory_get", "agent_memory_update", "agent_memory_archive",
+	// v2.9.0-alpha PR-3 added agent_memory_entities (id-only read of
+	// the agent_memory_entities side-table). Returned for one row id.
+	"agent_memory_entities",
 	// MINDSET (1) - v2.7.0-alpha. Procedural composition with judge-validated
 	// system prompts for subagent delegation. Cache hit returns in <50ms with
 	// 0 LLM calls; cache miss loops composition + validation up to
