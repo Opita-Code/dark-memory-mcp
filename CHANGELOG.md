@@ -6,6 +6,48 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [2.9.0-alpha] — 2026-08-03
+
+**Hybrid Retrieval** — closes the v2.9.0 plan (agent_memory row 160). Three PRs land behind per-axis opt-in (BM25 stays the default). Schema: v22 (porter_stemming) → v23 (agent_memory_embedding) → v24 (agent_memory_entities). Canonical tool count: 41 → **42**. Wire contract appenditive, zero breaking changes. Embedder layer refreshes via init-time `RegisterAdapter` registry to break the embedder ↔ adapter import cycle.
+
+### Added
+
+- **A1 Porter Stemming** (PR-1, v22 migration) — FTS5 tokenizer `unicode61` → `porter unicode61` for fresh-DB default; idempotent rebuild for existing schemas. Adds `TestSearchAgentMemory_PorterStemming` (stem equivalence `running ↔ runs ↔ ran`) + control test that baseline FTS5 still finds exact forms. Backward compat: result SET unchanged; only ranking differs. Operators see different BM25 ordering, not different rows.
+- **A2 Vector Search + RRF** (PR-2, v23 migration) — `SearchFilters.Mode = "bm25" | "vector" | "rrf"` (default `"bm25"`). Brute-force cosine in-process for v2.9.0; `sqlite-vec` / `pgvector` deferred to v2.9.1+. Embedder factory refreshes: `FactoryAuto()` does env-presence auto-detect (`OPENAI_API_KEY` → OpenAI text-embedding-3-small). New adapters: `internal/embedder/openai` (real, 5s/10s + 1 retry on 5xx/429), `internal/embedder/mock` (deterministic SHA-256-truncated unit vectors for tests), `internal/embedder/onnx` (PR-2.1 stub returning `ErrDisabled` with a "ships in PR-2.1" hint). `RRFRank` helper (Cormack et al., 2009) with `k=60`, weights default 1.0 each axis.
+- **A3 Entity Matching** (PR-3, v24 migration) — new `agent_memory_entities` side table (mem_id FK ON DELETE CASCADE, entity, source, confidence, model, created_at, PK `(mem_id, entity)`). New `SearchFilters.Entities []string` (AND-semantics filter); new MCP tool `dark_memory_agent_memory_entities(mem_id)` reads the entity list for one row. `internal/entity` package ships a deterministic local extractor (lowercase + stopword + minLen + dedup + frequency-ranked). `Source` tag = `"deterministic"` for PR-3; PR-3.1 swaps for a `drift_judge` bridge without contract change. Backward compat: extraction opt-in (`m.Entities = nil` → zero entity rows written).
+- **A4 Embedder Consent Gate** (PR-2) — new MCP tool `dark_memory_embedder_setup_prompt` returns `{Status, Kind, Dim, Prompt, Choices}`. Per row 164 §3, when dark-memory boots without a detected provider AND `OPENAI_API_KEY` unset, the harness's LLM surfaces the verbatim consent question to the operator. Choices persist to `agent_memory` so dark-memory never asks again unless config drifts.
+- **`store.Store.Embedder()` interface method** — any driver must implement. Both SQLite + Postgres provide a non-blocking stub default (`embedder.None()`) until `WithEmbedder()` is called at boot.
+- **TestMigrate_V23EmbeddingColumn + TestMigrate_V24EntitiesTable** — schema-level coverage for the two new migrations (BLOB round-trip + ON CONFLICT DO NOTHING idempotency).
+
+### Changed
+
+- **`internal/embedder/embedder.go`** — `RegisterAdapter(kind, factory)` registry breaks the would-be import cycle (embedder ↔ openai / onnx / mock). Each adapter registers itself in `init()`. `FactoryAuto()` picks OpenAI when `OPENAI_API_KEY` is present, else falls back to `None()`. `Options` struct is the typed parameter surface for adapter-specific overrides.
+- **`internal/agentmemory/types.go`** — `SearchFilters` gains `{Mode, RRFK, RRFWeightBM25, RRFWeightVector, Entities}`. `SearchHit` gains `{BM25Rank, VectorRank, RRFScore}` (pre-PR-2 callers see zero change). `AgentMemory` gains transient `Embedding` + `Entities` fields (json:"-") populated by the embedder/extractor paths.
+- **`internal/store/sqlite/store.go` + `internal/store/postgres/store.go`** — `SaveAgentMemory` writes embedding + entity rows in the SAME tx as the main INSERT (atomic per row 160 PR-2/PR-3 specs). `SearchAgentMemory` post-prunes by `Entities` filter across all 3 modes (preserves rank order). `GetAgentMemoryEntities(mem_id)` is the read path on both drivers.
+- **`internal/tools/registry.go`** — canonical order gains the new `embedder_setup_prompt` (EMBEDDER group) + `agent_memory_entities` (AGENT_MEMORY group). Canonical tool count: 41 → 42.
+
+### Deferred to v2.9.1+ (PR-2.1 + PR-3.1)
+
+- Bundled ONNX model (`model_quantized.onnx`, ~22.97 MB) + `libonnxruntime` per-platform → ~+95 MB binary footprint (row 162).
+- Harness-aware factory dispatch ladder per row 164 §2 (OpenCode → Claude → Codex → Ollama → bundled ONNX → `OPENAI_API_KEY` last rung).
+- Postgres vector/RRF dispatch mirror (PR-2 ships schema + read; PR-2.1 picks up runtime; PR-3.1 picks up Postgres save + filter for entities).
+- drift_judge MCP integration for entity extraction (PR-3's local heuristic + PR-3.1's drift_judge bridge — same `Source` tag taxonomy).
+- `sqlite-vec` / `pgvector` for production-scale vector search (v2.9.1+ drop-in acceleration).
+- Postgres porter stemming (v22 in sqlite): tsvector + snowball stemmer equivalent.
+- Mem0 compatibility mode extension to new axes (existing compat mode covers the BM25 axis).
+
+### Fixed
+
+- **H-4 lint compliance** — `scripts/lint-no-private-projects.ps1` exits 0 on the v2.8.0-alpha-dev branch post-PR-13 (renamed the BLOCKLIST placeholder identifier to `[FUTURE-MCP-N]` across 16 tracked files + 1 file rename; pre-existing 17-leak debt closed).
+
+### Known issues (not in this release)
+
+- `vibe_spec.tasks` Form B parser rejects JSON arrays (governance gate cannot run via helper) — row 166, end-of-day.
+- `agent_memory_update` returns `ErrInvalidArgument` for same-operator longer content — row 167, end-of-day.
+- Session auto-close race (~5 min inactivity → `ErrFrameStaleTooFar`) — row 168, end-of-day.
+
+---
+
 ## [2.8.0-alpha] — 2026-07-29
 
 **Memory Timing & Coordination** — closes the "agent and subagents don't write/read agent_memory at the right moments" failure mode documented in agent_memory id=106 (28 edge cases across 6 categories, OSINT-grounded against Mem0/LangMem/Zep/Letta/arxiv:2605.08460). Five P1 features land behind a single feature flag (`DARK_MEMORY_V280=1`, default off in v2.7.x compat). Schema: v20 → **v21** (one new table). Canonical tool count: 39 → **41**. Wire contract appenditive, zero breaking changes.
