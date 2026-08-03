@@ -39,8 +39,11 @@ package embedder
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"sync"
+
+	"github.com/dark-agents/dark-memory-mcp/internal/embedder/detect"
 )
 
 // Vec is one embedding vector. Length is implementation-defined (384
@@ -91,6 +94,15 @@ const KindOpenAI = "openai"
 
 // KindONNX is the canonical identifier for the ONNX local adapter.
 const KindONNX = "onnx"
+
+// KindVoyage is the canonical identifier for the Voyage AI adapter.
+// PR-2.1 (row 164 §2): preferred rung for claude-code harness.
+const KindVoyage = "voyage"
+
+// KindOllama is the canonical identifier for the local Ollama adapter.
+// PR-2.1 (row 164 §2): preferred rung when OLLAMA_HOST is set or a
+// local daemon is reachable on 127.0.0.1:11434.
+const KindOllama = "ollama"
 
 // ErrDisabled is returned by the disabled stub's Embed method. It
 // signals to callers that hybrid retrieval is intentionally off. The
@@ -218,11 +230,19 @@ func factoryInner() (Embedder, error) {
 	}
 }
 
-// FactoryAuto is the v2.9.0 PR-2 boot-time entry point. It skips the
-// env-var literal routing of Factory() and uses env-var presence as
-// signal: if OPENAI_API_KEY is set, return an OpenAI adapter; if
-// DARK_HOME/models/all-MiniLM-L6-v2_int8.onnx exists, return an ONNX
-// adapter; otherwise return the disabled stub.
+// FactoryAuto is the v2.9.1-alpha PR-2.1 boot-time entry point. It
+// walks the harness-aware ladder per row 164 §2 and picks the first
+// rung whose adapter constructor succeeds.
+//
+// Order of precedence (v2.9.1-alpha PR-2.1):
+//
+//	1. DARK_MEMORY_EMBEDDER manual override (any kind, registered).
+//	2. Harness-detected preferred rung (claude-code → voyage;
+//	   opencode/codex → openai; ollama → ollama).
+//	3. Bundled ONNX (always available, offline default).
+//	4. OPENAI_API_KEY last rung (backward compat with PR-2).
+//	5. None() stub (BM25-only path; the only path that "succeeds"
+//	   with zero configuration).
 //
 // Unlike Factory(), FactoryAuto intentionally uses the harness's
 // existing env state (per row 163 + row 164 §1: "we never ask for new
@@ -230,36 +250,57 @@ func factoryInner() (Embedder, error) {
 // OPENAI_API_KEY into the dark-memory process at install time; the
 // user does NOT type the key in chat.
 //
-// Order of precedence (v2.9.0; row 164 §2's full ladder is deferred
-// to PR-2.1 because it requires parsing per-harness config files):
-//
-//	1. OPENAI_API_KEY set                       → OpenAI text-embedding-3-small (1536d)
-//	2. neither set                              → None() stub (BM25-only path)
-//
-// Future PR-2.1 may add:
-//	3. ~/.config/opencode/config.toml provider  → OpenAI-compatible endpoint
-//	4. ~/.config/claude/settings.json provider  → Voyage AI voyage-3 (Anthropic partner)
-//	5. ~/.codex/config.toml                     → OpenAI (mirrors step 1)
-//	6. ~/.ollama on localhost:11434             → Ollama nomic-embed-text/mxbai
-//	7. bundled ONNX (model_quantized.onnx)      → offline default
-//
 // Returns a *SyncEmbedder wrapper so concurrent use is safe.
 //
 // Never returns an error — every fall-through is to a working stub.
 // Operators who want loud failure should check DefaultKind or the
 // result of Factory at boot and bail there.
 func FactoryAuto() Embedder {
-	if os.Getenv("OPENAI_API_KEY") != "" {
-		// Best-effort: a missing/invalid key still produces a
-		// working *Sync that errors at first Embed call (not at
-		// boot). Operators see the issue on first use.
-		if e := registeredAdapter(KindOpenAI); e != nil {
+	// 1. Manual override (DARK_MEMORY_EMBEDDER).
+	if k := DefaultKind(); k != KindNone {
+		if e, err := tryKind(k); err == nil {
 			return NewSync(e)
 		}
 	}
-	// Future PR-2.1: also try ONNX bundle here when the model file
-	// exists in $DARK_HOME/models/. For now: stub.
+
+	// 2. Harness-detected preferred rung.
+	harness := detect.Probe()
+	if pref := harness.PreferredEmbedder(); pref != "none" {
+		if e, err := tryKind(pref); err == nil {
+			return NewSync(e)
+		}
+	}
+
+	// 3. Bundled ONNX (offline default; row 163 amendment).
+	if e, err := tryKind(KindONNX); err == nil {
+		return NewSync(e)
+	}
+
+	// 4. OPENAI_API_KEY last rung (backward compat with PR-2).
+	if os.Getenv("OPENAI_API_KEY") != "" {
+		if e, err := tryKind(KindOpenAI); err == nil {
+			return NewSync(e)
+		}
+	}
+
+	// 5. Stub (always succeeds).
 	return NewSync(None())
+}
+
+// tryKind attempts to instantiate the registered adapter for kind.
+// Returns (Embedder, nil) on success; (nil, error) if the kind is
+// not registered OR the adapter constructor returned an error
+// (typically ErrKeyMissing, ErrDisabled, or a real failure).
+//
+// Used by FactoryAuto to walk the ladder rung-by-rung.
+func tryKind(kind string) (Embedder, error) {
+	adapterMu.RLock()
+	factory, ok := adapters[kind]
+	adapterMu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("embedder: kind %q not registered", kind)
+	}
+	return factory(Options{})
 }
 
 // KindMock is the canonical identifier for the deterministic test
