@@ -245,14 +245,16 @@ var canonicalToolOrder = []string{
 	"vibe_publish", "vibe_spec", "pipeline_status", "resolve_drift",
 	// CONTEXT (4) - v2.0.0 (5A.ii.b.2.c): `recall` added.
 	"artifact_context", "spec_context", "session_context", "recall",
-	// AGENT_MEMORY (6) - v2.1.0 (Mem0-aligned data plane): 5 tools.
+	// AGENT_MEMORY (9) - v2.1.0 (Mem0-aligned data plane): 5 tools.
 	// v2.3.0 added agent_memory_recall (the missing consumer for the
 	// data plane; wraps SearchAgentMemory with FTS5 escape done in
 	// the orchestrator layer).
-	"agent_memory_save", "agent_memory_list", "agent_memory_recall", "agent_memory_get", "agent_memory_update", "agent_memory_archive",
+	// v2.8.0-alpha C2 added subagent_register + subagent_unregister
+	// (active_subagents table bindings; agent_memory_save uses
+	// subagent_id for agent_id resolution when set).
 	// v2.9.0-alpha PR-3 added agent_memory_entities (id-only read of
 	// the agent_memory_entities side-table). Returned for one row id.
-	"agent_memory_entities",
+	"agent_memory_save", "agent_memory_list", "agent_memory_recall", "agent_memory_get", "agent_memory_update", "agent_memory_archive", "agent_memory_entities", "subagent_register", "subagent_unregister",
 	// MINDSET (1) - v2.7.0-alpha. Procedural composition with judge-validated
 	// system prompts for subagent delegation. Cache hit returns in <50ms with
 	// 0 LLM calls; cache miss loops composition + validation up to

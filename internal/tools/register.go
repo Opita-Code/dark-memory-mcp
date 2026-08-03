@@ -176,14 +176,18 @@ func RegisterAll(reg *Registry, orch *orchestration.Orchestrator, st store.Store
 	// agent_bootstrap, agent_recommend_companions, agent_detect_environment).
 	// v2.7.0-alpha: bumped from 38 → 39 (added MINDSET namespace:
 	// mindset_apply — procedural + judge-validated subagent prompts).
+	// v2.9.0-alpha PR-3: bumped from 39 → 40 (added agent_memory_entities
+	// for the agent_memory_entities side-table read path).
+	// v2.9.0-alpha PR-2: bumped from 40 → 41 (added embedder_setup_prompt
+	// for the row 164 §3 consent gate).
 	canonical := CanonicalOrder()
 	for _, name := range canonical {
 		if reg.Get(name) == nil {
 			return nil, fmt.Errorf("tools: RegisterAll: missing tool %q (canonical order violation)", name)
 		}
 	}
-	if got := len(reg.ListCanonical()); got != 39 {
-		return nil, fmt.Errorf("tools: RegisterAll: expected 39 tools, got %d", got)
+	if got := len(reg.ListCanonical()); got != 43 {
+		return nil, fmt.Errorf("tools: RegisterAll: expected 43 tools, got %d", got)
 	}
 	return src, nil
 }

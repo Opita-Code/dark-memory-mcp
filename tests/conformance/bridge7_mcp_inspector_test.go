@@ -82,7 +82,14 @@ func spawnServer(t *testing.T) (*mcpclient.Client, string) {
 // flaky when run as part of the full suite. Bumped from 10s to 30s
 // across all 4 tests below. Re-ran 2x consecutively after the fix
 // (13.622s) — no flake.
-const bridgeTimeout = 30 * time.Second
+//
+// v2.9.1-alpha bump: 30s → 60s. The bundled ONNX adapter (PR-2.1)
+// adds libonnxruntime dlopen + libsqlite3 cold-open during boot,
+// pushing the typical wall-clock to ~35-50s on a busy Windows
+// runner with no `onnxruntime.dll` system cache. End-of-day
+// consolidation: doc this in CONTRIBUTING.md so operators know
+// why `go test ./tests/conformance/...` needs patience.
+const bridgeTimeout = 60 * time.Second
 
 // TestBridge7_Initialize asserts that the initialize handshake
 // succeeds, the server version is reported, and coexistence_group
@@ -117,7 +124,7 @@ func TestBridge7_Initialize(t *testing.T) {
 }
 
 // TestBridge7_ListToolsCanonical asserts tools/list returns exactly
-// 38 tools in the canonical RFC D-9 namespace order (bridge.4).
+// 43 tools in the canonical RFC D-9 namespace order (bridge.4).
 //
 // v1.2.0: PROJECT namespace (1 tool: project_create) inserted at
 // index 0, before SESSION.
@@ -130,6 +137,16 @@ func TestBridge7_Initialize(t *testing.T) {
 // v2.6.0: AGENT_BOOTSTRAP namespace (3 tools: agent_bootstrap,
 // agent_recommend_companions, agent_detect_environment) inserted
 // between RESEARCH and VIBE; canonical count is now 38.
+// v2.7.0-alpha: MINDSET namespace (1 tool: mindset_apply) inserted
+// between AGENT_MEMORY and JUDGE; canonical count is now 39.
+// v2.8.0-alpha: AGENT_MEMORY grew 6 → 8 with subagent_register +
+// subagent_unregister (C2 subagent scope handoff bindings); canonical
+// count is now 41.
+// v2.9.0-alpha PR-2: EMBEDDER namespace (1 tool: embedder_setup_prompt
+// consent gate, row 164 §3) appended; canonical count is now 42.
+// v2.9.0-alpha PR-3: AGENT_MEMORY grew 8 → 9 with agent_memory_entities
+// (id-only read of the agent_memory_entities side-table); canonical
+// count is now 43.
 //
 // This is the wire-format regression for the bug we caught during
 // the W4A polish: mcp-go's handleListTools sorts alphabetically;
@@ -154,8 +171,8 @@ func TestBridge7_ListToolsCanonical(t *testing.T) {
 		t.Fatalf("list tools: %v", err)
 	}
 
-	if len(result.Tools) != 41 {
-		t.Fatalf("tool count: want 41 (v2.8.0-alpha added subagent_register + subagent_unregister; v2.7.0-alpha was 39 with MINDSET namespace; pre-v2.7.0 was 38 in v2.6.0, 35 in v2.3.0, 34 in v2.1.0), got %d", len(result.Tools))
+	if len(result.Tools) != 43 {
+		t.Fatalf("tool count: want 43 (v2.9.0-alpha PR-3 added agent_memory_entities to AGENT_MEMORY, taking canonical to 43; pre-PR-3 was 42 in v2.9.0-alpha PR-2 with EMBEDDER; v2.8.0-alpha was 41 with subagent_register + subagent_unregister; v2.7.0-alpha was 39 with MINDSET; pre-v2.7.0 was 38 in v2.6.0, 35 in v2.3.0, 34 in v2.1.0), got %d", len(result.Tools))
 	}
 
 	want := canonicalWireOrder()
@@ -272,9 +289,10 @@ func TestBridge7_CallToolErrorPath(t *testing.T) {
 }
 
 // canonicalWireOrder is the wire-format (dark_memory_*) version of
-// the 41-tool canonical order (v2.8.0-alpha; was 39 in v2.7.0-alpha,
-// 38 in v2.6.0, 35 in v2.3.0, 34 in v2.1.x, 29 in v2.0.x, 28 in
-// v1.3.x, 27 in v1.2.x, 26 in v1.1.x), mirrored from
+// the 43-tool canonical order (v2.9.0-alpha PR-3; was 42 in
+// v2.9.0-alpha PR-2, 41 in v2.8.0-alpha, 39 in v2.7.0-alpha, 38 in
+// v2.6.0, 35 in v2.3.0, 34 in v2.1.x, 29 in v2.0.x, 28 in v1.3.x,
+// 27 in v1.2.x, 26 in v1.1.x), mirrored from
 // internal/tools/registry.go so this test doesn't depend on the
 // library's internal package (it tests the wire format, not the
 // library shape).
@@ -293,6 +311,11 @@ func TestBridge7_CallToolErrorPath(t *testing.T) {
 // v2.8.0-alpha: subagent_register + subagent_unregister appended to
 // the AGENT_MEMORY namespace (C2 subagent-scope-handoff). New canonical
 // count = 41.
+// v2.9.0-alpha PR-2: EMBEDDER namespace (1 tool: embedder_setup_prompt,
+// consent gate per row 164 §3) appended. New canonical count = 42.
+// v2.9.0-alpha PR-3: AGENT_MEMORY grew 8 → 9 with agent_memory_entities
+// (id-only read of the agent_memory_entities side-table). New canonical
+// count = 43.
 func canonicalWireOrder() []string {
 	bare := []string{
 		// PROJECT (1) — v1.2.0
@@ -307,8 +330,10 @@ func canonicalWireOrder() []string {
 		"vibe_publish", "vibe_spec", "pipeline_status", "resolve_drift",
 		// CONTEXT (4) — v2.0.0 grew from 3 to 4 with `recall`
 		"artifact_context", "spec_context", "session_context", "recall",
-		// AGENT_MEMORY (6) — v2.1.0 (5) + v2.3.0 (1: recall)
-		"agent_memory_save", "agent_memory_list", "agent_memory_recall", "agent_memory_get", "agent_memory_update", "agent_memory_archive",
+		// AGENT_MEMORY (9) — v2.1.0 (5) + v2.3.0 (1: recall) +
+		// v2.8.0-alpha C2 (2: subagent register/unregister) +
+		// v2.9.0-alpha PR-3 (1: entities).
+		"agent_memory_save", "agent_memory_list", "agent_memory_recall", "agent_memory_get", "agent_memory_update", "agent_memory_archive", "agent_memory_entities", "subagent_register", "subagent_unregister",
 		// MINDSET (1) — v2.7.0-alpha
 		"mindset_apply",
 		// JUDGE (3)
@@ -321,8 +346,8 @@ func canonicalWireOrder() []string {
 		"admin_migrate", "admin_schema_status", "admin_vacuum",
 		// L6-VLP (1) — DMAP v1.1
 		"vlp_handle_event",
-		// SUBAGENT (2) — v2.8.0-alpha (appended after L6-VLP per registry implementation)
-		"subagent_register", "subagent_unregister",
+		// EMBEDDER (1) — v2.9.0-alpha PR-2 (consent gate, row 164 §3).
+		"embedder_setup_prompt",
 	}
 	out := make([]string, len(bare))
 	for i, b := range bare {

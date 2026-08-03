@@ -123,8 +123,12 @@ func canonicalWireOrderBares() []string {
 		"vibe_publish", "vibe_spec", "pipeline_status", "resolve_drift",
 		// CONTEXT (4) — v2.0.0 grew from 3 to 4 with `recall`
 		"artifact_context", "spec_context", "session_context", "recall",
-		// AGENT_MEMORY (6) — v2.1.0 (5) + v2.3.0 (1: recall)
-		"agent_memory_save", "agent_memory_list", "agent_memory_recall", "agent_memory_get", "agent_memory_update", "agent_memory_archive",
+		// AGENT_MEMORY (9) — v2.1.0 (5) + v2.3.0 (1: recall) +
+		// v2.8.0-alpha C2 (2: subagent register/unregister bindings
+		// for active_subagents table) +
+		// v2.9.0-alpha PR-3 (1: entities, id-only read of the
+		// agent_memory_entities side-table).
+		"agent_memory_save", "agent_memory_list", "agent_memory_recall", "agent_memory_get", "agent_memory_update", "agent_memory_archive", "agent_memory_entities", "subagent_register", "subagent_unregister",
 		// MINDSET (1) — v2.7.0-alpha
 		"mindset_apply",
 		// JUDGE (3)
@@ -137,6 +141,11 @@ func canonicalWireOrderBares() []string {
 		"admin_migrate", "admin_schema_status", "admin_vacuum",
 		// L6-VLP (1) — DMAP v1.1
 		"vlp_handle_event",
+		// EMBEDDER (1) — v2.9.0-alpha PR-2. Consent gate for hybrid
+		// retrieval per row 164 §3. Single call per project boot —
+		// returns the verbatim prompt the harness's LLM should surface
+		// when no embedder is detected at first search.
+		"embedder_setup_prompt",
 	}
 }
 
