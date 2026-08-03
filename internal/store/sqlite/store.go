@@ -577,6 +577,17 @@ func (s *Store) ListWrites(ctx context.Context, f audit.ListFilters) ([]audit.Wr
 		q += ` AND id > ?`
 		args = append(args, f.SinceID)
 	}
+	// F47: target table + row_id filters. When TableName is set, the
+	// lookup is narrowed to audit rows for a specific data row, which
+	// is what latestAuditIDForRow needs.
+	if f.TableName != "" {
+		q += ` AND table_name = ?`
+		args = append(args, f.TableName)
+	}
+	if f.RowID > 0 {
+		q += ` AND row_id = ?`
+		args = append(args, f.RowID)
+	}
 	if f.Limit <= 0 {
 		f.Limit = 50
 	}

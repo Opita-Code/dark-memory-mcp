@@ -605,6 +605,15 @@ func (s *Store) ListWrites(ctx context.Context, f audit.ListFilters) ([]audit.Wr
 		q += ` AND id > $` + intToStr(len(args)+1)
 		args = append(args, f.SinceID)
 	}
+	// F47: target table + row_id filters (parity with SQLite impl).
+	if f.TableName != "" {
+		q += ` AND table_name = $` + intToStr(len(args)+1)
+		args = append(args, f.TableName)
+	}
+	if f.RowID > 0 {
+		q += ` AND row_id = $` + intToStr(len(args)+1)
+		args = append(args, f.RowID)
+	}
 	if f.Limit <= 0 {
 		f.Limit = 50
 	}

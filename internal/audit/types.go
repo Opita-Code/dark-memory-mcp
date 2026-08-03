@@ -54,5 +54,7 @@ type ListFilters struct {
 	WritePath string
 	SessionID string
 	ProjectID string // INV-7 — empty = caller accepts cross-project rows
+	TableName string // F47: target table filter (e.g. "agent_memory"). Empty = any.
+	RowID     int64  // F47: target row id filter. 0 = any. Paired with TableName.
 	Limit     int
 }
