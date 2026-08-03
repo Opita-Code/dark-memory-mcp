@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/agentmemory"
+	"github.com/dark-agents/dark-memory-mcp/internal/entity"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 )
 
@@ -51,6 +52,13 @@ type AgentMemorySaveInput struct {
 	Pinned      bool   `json:"pinned,omitempty"`
 	ExpiresAt   string `json:"expires_at,omitempty"`
 	BindSession bool   `json:"bind_session,omitempty"`
+
+	// ExtractEntities (v2.9.0 PR-3, agent_memory row 160) runs the
+	// deterministic extractor (internal/entity) on
+	// content+title+tags and writes the result to
+	// agent_memory_entities IN THE SAME tx as the main INSERT.
+	// Default false: backward-compat with PR-0..PR-2 callers.
+	ExtractEntities bool `json:"extract_entities,omitempty"`
 }
 
 // AgentMemorySaveOutput is the row as stored (with project_id +
@@ -127,6 +135,16 @@ func (o *Orchestrator) AgentMemorySave(ctx context.Context, in AgentMemorySaveIn
 		if sid, err := o.Store.GetActiveSession(ctx, o.Store.ActiveProject()); err == nil && sid != "" {
 			m.SessionID = sid
 		}
+	}
+	// v2.9.0 PR-3 (agent_memory row 160): when ExtractEntities is
+	// true, run the deterministic extractor (internal/entity) on
+	// content+title+tags and populate the transient m.Entities
+	// field. The Store persists the entity rows in the SAME tx as
+	// the main INSERT (atomic with the row per row 160 PR-3 spec).
+	// PR-3 minimum uses the local heuristic; PR-3.1 swaps the body
+	// for a drift_judge bridge without touching the contract.
+	if in.ExtractEntities {
+		m.Entities = entity.Extract(in.Content, in.Title, in.Tags)
 	}
 	id, err := o.Store.SaveAgentMemory(ctx, wc, m)
 	if err != nil {
@@ -539,6 +557,7 @@ func (o *Orchestrator) AgentMemoryArchive(ctx context.Context, in AgentMemoryArc
 	}
 	if err := o.Store.ArchiveAgentMemory(ctx, wc, in.ID); err != nil {
 		return nil, err
+		return nil, err
 	}
 	// Re-fetch to surface the canonical archived_at timestamp.
 	got, err := o.Store.GetAgentMemory(ctx, in.ID)
@@ -551,6 +570,39 @@ func (o *Orchestrator) AgentMemoryArchive(ctx context.Context, in AgentMemoryArc
 		return &AgentMemoryArchiveOutput{ID: in.ID, ArchivedAt: ""}, nil
 	}
 	return &AgentMemoryArchiveOutput{ID: in.ID, ArchivedAt: got.ArchivedAt}, nil
+}
+
+// --- Entities (v2.9.0-alpha PR-3) ----------------------------------
+
+// AgentMemoryEntitiesInput is the request to fetch the extracted
+// entity list for one agent_memory row. v2.9.0 PR-3.
+type AgentMemoryEntitiesInput struct {
+	ID int64 `json:"id"`
+}
+
+// AgentMemoryEntitiesOutput is the row id + the entity list.
+// Entities is nil when the row has no extracted entities (most
+// common pre-PR-3 caller; extract_entities was unset on Save).
+type AgentMemoryEntitiesOutput struct {
+	ID       int64                `json:"id"`
+	Entities []agentmemory.Entity `json:"entities"`
+}
+
+// AgentMemoryEntities returns the extracted entity list for one
+// row. Cross-project reads return nil entities (INV-7). The Store
+// enforces project isolation on the side-table join.
+func (o *Orchestrator) AgentMemoryEntities(ctx context.Context, in AgentMemoryEntitiesInput) (*AgentMemoryEntitiesOutput, error) {
+	if in.ID <= 0 {
+		return nil, errMissingField("id")
+	}
+	ents, err := o.Store.GetAgentMemoryEntities(ctx, in.ID)
+	if err != nil {
+		return nil, err
+	}
+	if ents == nil {
+		return &AgentMemoryEntitiesOutput{ID: in.ID, Entities: []agentmemory.Entity{}}, nil
+	}
+	return &AgentMemoryEntitiesOutput{ID: in.ID, Entities: ents}, nil
 }
 
 // --- helpers --------------------------------------------------------

@@ -985,4 +985,60 @@ INSERT INTO agent_memory_fts(agent_memory_fts) VALUES('rebuild');
 ALTER TABLE agent_memory ADD COLUMN embedding BLOB;
 `,
 	},
+	{
+		// v24 - agent_memory_entities: PR-3 of the v2.9.0 plan
+		// (agent_memory row 160). Adds a side table that holds
+		// extracted entities per agent_memory row. The headlining
+		// entity.value is lowercase + deduped per the entity
+		// package contract (internal/entity).
+		//
+		// Schema rationale:
+		//   - mem_id INTEGER NOT NULL REFERENCES agent_memory(id)
+		//     ON DELETE CASCADE: row-level cleanup. When a row is
+		//     hard-deleted, the entities go too. Soft-delete
+		//     (archive via set archived_at) keeps entities intact,
+		//     matching the agent_memory search visibility rules.
+		//   - entity TEXT NOT NULL: lowercase canonical form. Store-
+		//     side enforces lowercasing before INSERT.
+		//   - source TEXT NOT NULL: producer tag ("deterministic"
+		//     for PR-3, "drift_judge:<prompt>" for PR-3.1).
+		//   - confidence REAL NOT NULL: 0..1 (PR-3 always emits 1.0).
+		//   - model TEXT: producer model id; empty for PR-3.
+		//   - created_at TEXT NOT NULL: RFC3339Nano UTC.
+		//   - PRIMARY KEY (mem_id, entity): no duplicate entity per
+		//     row, regardless of source. Operators wanting per-
+		//     source rows would alter this PK in PR-3.x.
+		//
+		// Idempotency: CREATE TABLE IF NOT EXISTS on the table +
+		// CREATE INDEX IF NOT EXISTS on the indexes. Re-running
+		// this migration is a no-op on a v24+ schema.
+		//
+		// Search axis impact: SearchAgentMemory joins
+		// agent_memory_entities when SearchFilters.Entities is
+		// non-empty, filtering by EXISTS + mem_id IN (the result
+		// of the FTS5 BM25 arm). Operators who don't set
+		// Entities see no change.
+		//
+		// Backward compat (per row 160 PR-3): extraction is
+		// OPT-IN. SaveAgentMemory only writes entities when the
+		// caller sets ExtractEntities=true (or its new equivalent
+		// in the orchestrator). Pre-PR-3 callers (without the
+		// flag) write zero entity rows → invisible to the entity
+		// axis but unchanged otherwise.
+		Version: 24,
+		Name:    "agent_memory_entities",
+		Up: `
+CREATE TABLE IF NOT EXISTS agent_memory_entities (
+    mem_id     INTEGER NOT NULL REFERENCES agent_memory(id) ON DELETE CASCADE,
+    entity     TEXT    NOT NULL,
+    source     TEXT    NOT NULL,
+    confidence REAL    NOT NULL DEFAULT 1.0,
+    model      TEXT,
+    created_at TEXT    NOT NULL,
+    PRIMARY KEY (mem_id, entity)
+);
+CREATE INDEX IF NOT EXISTS idx_agent_memory_entities_entity    ON agent_memory_entities (entity);
+CREATE INDEX IF NOT EXISTS idx_agent_memory_entities_mem_id   ON agent_memory_entities (mem_id);
+`,
+	},
 }

@@ -4099,6 +4099,30 @@ func (s *Store) SaveAgentMemory(ctx context.Context, wc store.WriteContext, m *a
 			return fmt.Errorf("agent_memory: last insert id: %w", err)
 		}
 
+		// v2.9.0 PR-3: when m.Entities is non-empty (transient field,
+		// populated by the orchestrator's extractor), write the
+		// entity rows IN THE SAME tx. Source tag is "deterministic"
+		// for PR-3; future PR-3.1 wires drift_judge (or similar).
+		// ON CONFLICT (mem_id, entity) DO NOTHING — re-running the
+		// extractor on the same row produces no duplicate rows; the
+		// dedupe is idempotent at the schema layer.
+		if len(m.Entities) > 0 {
+			for _, ent := range m.Entities {
+				if ent.Value == "" {
+					continue
+				}
+				entLower := strings.ToLower(ent.Value)
+				if _, err := tx.ExecContext(ctx, `
+					INSERT INTO agent_memory_entities (mem_id, entity, source, confidence, model, created_at)
+					VALUES (?, ?, ?, ?, ?, ?)
+					ON CONFLICT (mem_id, entity) DO NOTHING`,
+					id, entLower, ent.Source, ent.Confidence, nullString(ent.Model), now,
+				); err != nil {
+					return fmt.Errorf("agent_memory_entities: insert: %w", err)
+				}
+			}
+		}
+
 		// INV-1: write_audit row in the same tx.
 		if wc.WritePath == "" {
 			wc.WritePath = "SaveAgentMemory"
@@ -4620,6 +4644,11 @@ func (s *Store) SearchAgentMemory(ctx context.Context, f agentmemory.SearchFilte
 // dispatch landed in PR-2. Behavior unchanged: returns hits in rank
 // ASCENDING order (FTS5 bm25 is monotonic; -bm25() is negated in the
 // SELECT so callers see "higher rank = better match" intuitively).
+//
+// v2.9.0 PR-3 (agent_memory row 160): when f.Entities is non-empty,
+// the result is post-filtered by s.applyEntityFilter (AND semantics
+// across the entity list, case-insensitive). The post-filter
+// preserves the original BM25 ranking; the filter only prunes.
 func (s *Store) searchByBM25(ctx context.Context, f agentmemory.SearchFilters) ([]agentmemory.SearchHit, error) {
 	activeProject := s.ActiveProject()
 
@@ -4698,7 +4727,8 @@ func (s *Store) searchByBM25(ctx context.Context, f agentmemory.SearchFilters) (
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("agent_memory: search rows: %w", err)
 	}
-	return out, nil
+	// v2.9.0 PR-3: optional entity-axis filter (AND semantics).
+	return s.applyEntityFilter(ctx, out, f.Entities)
 }
 
 // nullString returns nil if s is empty, else &s. Used so empty

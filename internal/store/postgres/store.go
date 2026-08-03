@@ -351,6 +351,49 @@ func (s *Store) Embedder() embedder.Embedder {
 	return s.embedder
 }
 
+// GetAgentMemoryEntities returns the entity list for one row,
+// sorted by entity ASC. Returns nil (not an error) when the row
+// has no entities or doesn't exist in the active project (idempotent).
+//
+// v2.9.0 PR-3 (agent_memory row 160). Postgres mirror of the
+// sqlite implementation. Cross-project reads return nil (INV-7).
+//
+// PR-3 minimum: the entity table itself ships in v24 (this turn);
+// the Save-time entity write path on Postgres ships in PR-3.1
+// (mirrors the deferred sqlite→postgres dispatch symmetry per
+// row 160 PR-3 cross-cutting note).
+func (s *Store) GetAgentMemoryEntities(ctx context.Context, memID int64) ([]agentmemory.Entity, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	if memID <= 0 {
+		return nil, nil
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT ent.entity, ent.source, ent.confidence, COALESCE(ent.model, '')
+		  FROM agent_memory_entities ent
+		  JOIN agent_memory        row ON row.id = ent.mem_id
+		 WHERE ent.mem_id = $1 AND row.project_id = $2
+		 ORDER BY ent.entity ASC`,
+		memID, s.activeProject)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: agent_memory_entities: query: %w", err)
+	}
+	defer rows.Close()
+	var out []agentmemory.Entity
+	for rows.Next() {
+		var e agentmemory.Entity
+		if err := rows.Scan(&e.Value, &e.Source, &e.Confidence, &e.Model); err != nil {
+			return nil, fmt.Errorf("postgres: agent_memory_entities: scan: %w", err)
+		}
+		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres: agent_memory_entities: rows: %w", err)
+	}
+	return out, nil
+}
+
 func (s *Store) runMigrations(ctx context.Context) error {
 	// Use pgx's connection to run migrations (raw exec).
 	conn, err := s.pool.Acquire(ctx)

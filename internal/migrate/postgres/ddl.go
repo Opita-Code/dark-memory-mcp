@@ -640,4 +640,32 @@ CREATE INDEX IF NOT EXISTS idx_active_subagents_lookup ON active_subagents (proj
 ALTER TABLE agent_memory ADD COLUMN IF NOT EXISTS embedding BYTEA;
 `,
 	},
+	{
+		// v24 - agent_memory_entities (PR-3 of v2.9.0 plan).
+		// Mirror of sqlite v24. Postgres parity: same column
+		// names + types except REAL → DOUBLE PRECISION for the
+		// confidence column (Postgres convention; SQLite REAL is
+		// already 8-byte IEEE-754 so the values are 1:1).
+		//
+		// Composite primary key (mem_id, entity) cascades on
+		// agent_memory delete (mirrors sqlite). Indexes on entity
+		// (search filter) and mem_id (entity-list per row).
+		//
+		// Idempotent via IF NOT EXISTS on table + indexes.
+		Version: 24,
+		Name:    "agent_memory_entities",
+		Up: `
+CREATE TABLE IF NOT EXISTS agent_memory_entities (
+    mem_id     BIGINT NOT NULL REFERENCES agent_memory(id) ON DELETE CASCADE,
+    entity     TEXT   NOT NULL,
+    source     TEXT   NOT NULL,
+    confidence DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+    model      TEXT,
+    created_at TEXT   NOT NULL,
+    PRIMARY KEY (mem_id, entity)
+);
+CREATE INDEX IF NOT EXISTS idx_agent_memory_entities_entity  ON agent_memory_entities (entity);
+CREATE INDEX IF NOT EXISTS idx_agent_memory_entities_mem_id ON agent_memory_entities (mem_id);
+`,
+	},
 }
