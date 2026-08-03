@@ -10,6 +10,8 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 **End-of-day consolidation pass** — closes the row 166/167/168 backlog (open since v2.9.0-alpha), fixes row 189 (schema/orchestrator mismatch), and lands defensive coverage for both regressions. No new architecture; no migration; two wire-protocol changes (schema-required tightening + new session_status fields) + two stale-verification items.
 
+**v2.9.2-alpha also includes PR-17 (canonical-staleness-fix)** — `canonicalToolOrder` and `RegisterAll` cardinality guard bumped to 43 (was 39; canonical was actually 41 since v2.9.0-alpha). Without PR-17, the v2.9.2-alpha binary fails at boot with `RegisterAll: expected 39 tools, got 41`. PR-17 brings all four canonical mirrors (canonicalToolOrder, canonicalWireOrderBares, DefaultToolGrants, conformance canonicalWireOrder + RegisterAll cardinality) to 43 tools. Plus `bridgeTimeout` bumped 30s → 60s to accommodate libonnxruntime cold-open during boot.
+
 ### ⚠️ Wire-protocol changes (NOT pure UX)
 
 This PR tightens two wire contracts. Harnesses integrating against dark-memory MUST be updated:
