@@ -17,6 +17,13 @@
 // Cost: N LLM calls. Default N=3. Max N=7 (per dark_ssd_consensus
 // spec). Callers should use JudgeConsensus sparingly — it is
 // roughly N× the cost of a single Judge call.
+//
+// Latency (v2.11.0): the N samples run CONCURRENTLY, so wall-clock
+// latency is ~1 sample (plus per-sample retry/backoff), not N×.
+// Partial failure degrades instead of aborting: failed samples are
+// reported via Degraded + FailedSampleIndices and the modal fraction
+// is computed against the requested N (survivors never overstate
+// agreement).
 package orchestration
 
 import (
@@ -25,6 +32,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/ssd"
@@ -76,6 +84,14 @@ type JudgeConsensusResult struct {
 	NextAction      string                 `json:"next_action"`      // publish | reconcile | human_gate
 	Samples         []JudgeConsensusSample `json:"samples"`          // per-sample breakdown
 	Reasoning       string                 `json:"reasoning"`
+	// Degraded (v2.11.0) is true when at least one sample failed and
+	// the consensus was computed from the survivors. The modal
+	// fraction is still computed against the REQUESTED N, so a
+	// minority of successes never overstates agreement.
+	Degraded bool `json:"degraded"`
+	// FailedSampleIndices (v2.11.0) lists the 0-based indices of
+	// samples that failed (empty when not degraded).
+	FailedSampleIndices []int `json:"failed_sample_indices,omitempty"`
 }
 
 // JudgeConsensus runs the Judge N times and aggregates. See package
@@ -108,52 +124,96 @@ func (o *Orchestrator) JudgeConsensus(ctx context.Context, in JudgeConsensusInpu
 		return nil, fmt.Errorf("%w: judge_consensus content contains canary token", store.ErrCanaryInPayload)
 	}
 
-	// 3. Run N samples. Sequential today; if the orchestrator gains a
-	// concurrency knob, the N samples can fan out (LLM clients are
-	// stateless; safe for concurrent calls given typical clients
-	// are HTTP or [drift-judge-daemon] pool).
+	// 3. Run N samples CONCURRENTLY (v2.11.0). Sequential used to
+	// cost N × per-call latency and a single sample failure killed
+	// the whole consensus. Now each sample runs in its own
+	// goroutine: LLM clients are stateless, the selector is
+	// RWMutex-guarded, and the SQLite store serializes writes at the
+	// driver (SetMaxOpenConns(1)), so parallel Judge calls are safe.
+	// Per-sample retry/backoff lives in the LLM client.
+	//
+	// Partial failure DEGRADES instead of aborting: failed samples
+	// are recorded in FailedSampleIndices; the modal fraction is
+	// still computed against the REQUESTED N, so a minority of
+	// successes naturally forces needs_human (never overstates
+	// agreement).
 	wc := store.WriteContext{
 		Actor:     "orchestrator_judge_consensus",
 		WritePath: "JudgeConsensus",
 	}
 	now := o.now().Format(time.RFC3339Nano)
+
+	type sampleOutcome struct {
+		sample JudgeConsensusSample
+		err    error
+	}
+	outcomes := make([]sampleOutcome, n)
+
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			jOut, jerr := o.Judge(ctx, JudgeInput{
+				EvalType:   in.EvalType,
+				TargetType: in.TargetType,
+				TargetID:   in.TargetID,
+				Content:    in.Content,
+				Model:      in.Model,
+				// v2.4.2: forward AgentID so each sample gets the same
+				// agent-scoped enrichment (brand_match + compliance_check).
+				AgentID: in.AgentID,
+				// v2.4.2: forward NoEnrich so all N samples share the
+				// same opt-out semantics (raw content vs enriched).
+				NoEnrich: in.NoEnrich,
+			})
+			if jerr != nil {
+				outcomes[i].err = jerr
+				return
+			}
+			v := parseDriftVerdict(jOut.VerdictJSON, jOut.Confidence)
+			outcomes[i].sample = JudgeConsensusSample{
+				SampleIndex:  i,
+				EvaluationID: jOut.EvaluationID,
+				Verdict:      v,
+				Confidence:   jOut.Confidence,
+				VerdictJSON:  jOut.VerdictJSON,
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	// Aggregate the survivors (order-preserving; samples keep their
+	// original indices).
 	samples := make([]JudgeConsensusSample, 0, n)
 	verdicts := make(map[string]int)
 	confSum := float64(0)
-
-	for i := 0; i < n; i++ {
-		jOut, jerr := o.Judge(ctx, JudgeInput{
-			EvalType:   in.EvalType,
-			TargetType: in.TargetType,
-			TargetID:   in.TargetID,
-			Content:    in.Content,
-			Model:      in.Model,
-			// v2.4.2: forward AgentID so each sample gets the same
-			// agent-scoped enrichment (brand_match + compliance_check).
-			AgentID: in.AgentID,
-			// v2.4.2: forward NoEnrich so all N samples share the
-			// same opt-out semantics (raw content vs enriched).
-			NoEnrich: in.NoEnrich,
-		})
-		if jerr != nil {
-			return nil, fmt.Errorf("judge_consensus: sample %d/%d failed: %w", i+1, n, jerr)
+	var failed []int
+	for i := range outcomes {
+		if outcomes[i].err != nil {
+			failed = append(failed, i)
+			continue
 		}
-		v := parseDriftVerdict(jOut.VerdictJSON, jOut.Confidence)
-		samples = append(samples, JudgeConsensusSample{
-			SampleIndex:  i,
-			EvaluationID: jOut.EvaluationID,
-			Verdict:      v,
-			Confidence:   jOut.Confidence,
-			VerdictJSON:  jOut.VerdictJSON,
-		})
-		verdicts[v]++
-		confSum += float64(jOut.Confidence)
+		s := outcomes[i].sample
+		samples = append(samples, s)
+		verdicts[s.Verdict]++
+		confSum += float64(s.Confidence)
 	}
 
-	// 4. Compute modal verdict + fraction.
+	if len(samples) == 0 {
+		first := "unknown"
+		if outcomes[0].err != nil {
+			first = outcomes[0].err.Error()
+		}
+		return nil, fmt.Errorf("judge_consensus: all %d samples failed (first error: %s)", n, first)
+	}
+
+	// 4. Compute modal verdict + fraction. ModalFraction uses the
+	// REQUESTED n (not len(samples)) so failed samples count as
+	// non-votes.
 	modalVerdict, modalCount := modalVerdictFromCounts(verdicts)
 	modalFraction := float32(modalCount) / float32(n)
-	avgConfidence := float32(confSum / float64(n))
+	avgConfidence := float32(confSum / float64(len(samples)))
 
 	// 5. Compute confidence interval (sample std dev).
 	stddev := stdDevConfidence(samples, avgConfidence)
@@ -178,8 +238,14 @@ func (o *Orchestrator) JudgeConsensus(ctx context.Context, in JudgeConsensusInpu
 		Verdict:          finalVerdict,
 		NextAction:       nextActionForVerdict(finalVerdict),
 		Samples:          samples,
+		Degraded:         len(failed) > 0,
+		FailedSampleIndices: failed,
 		Reasoning: fmt.Sprintf("modal=%s (%d/%d, fraction=%.2f); avg_conf=%.3f; stddev=%.3f; interval=[%.3f, %.3f]",
 			modalVerdict, modalCount, n, modalFraction, avgConfidence, stddev, low, high),
+	}
+	if result.Degraded {
+		result.Reasoning += fmt.Sprintf("; DEGRADED: %d sample(s) failed (indices %v)",
+			len(failed), failed)
 	}
 
 	// 7. Persist the consensus SDDEvaluation row (with :consensus
@@ -270,6 +336,8 @@ func clamp01(v float32) float32 {
 //	  "fraction": 0.92,
 //	  "avg_confidence": 0.88,
 //	  "stddev_confidence": 0.03,
+//	  "degraded": false,
+//	  "failed": [1],            // only when degraded
 //	  "samples": [...],
 //	  "n": 3
 //	}
@@ -284,6 +352,8 @@ func consensusVerdictJSON(r *JudgeConsensusResult) string {
 		Fraction         float32       `json:"fraction"`
 		AvgConfidence    float32       `json:"avg_confidence"`
 		StdDevConfidence float32       `json:"stddev_confidence"`
+		Degraded         bool          `json:"degraded"`
+		Failed           []int         `json:"failed,omitempty"`
 		N                int           `json:"n"`
 		Samples          []sampleJSON  `json:"samples"`
 	}
@@ -292,6 +362,8 @@ func consensusVerdictJSON(r *JudgeConsensusResult) string {
 		Fraction:         r.ModalFraction,
 		AvgConfidence:    r.AvgConfidence,
 		StdDevConfidence: r.StdDevConfidence,
+		Degraded:         r.Degraded,
+		Failed:           r.FailedSampleIndices,
 		N:                len(r.Samples),
 	}
 	for _, s := range r.Samples {
@@ -316,6 +388,19 @@ func consensusVerdictJSON(r *JudgeConsensusResult) string {
 	writeFloat(&b, "fraction", o.Fraction)
 	writeFloat(&b, "avg_confidence", o.AvgConfidence)
 	writeFloat(&b, "stddev_confidence", o.StdDevConfidence)
+	if o.Degraded {
+		b.WriteString(`"degraded":true,`)
+		b.WriteString(`"failed":[`)
+		for i, f := range o.Failed {
+			if i > 0 {
+				b.WriteString(",")
+			}
+			b.WriteString(fmt.Sprintf("%d", f))
+		}
+		b.WriteString(`],`)
+	} else {
+		b.WriteString(`"degraded":false,`)
+	}
 	b.WriteString(`"n":`)
 	b.WriteString(fmt.Sprintf("%d", o.N))
 	b.WriteString(`,"samples":[`)

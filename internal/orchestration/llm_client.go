@@ -22,16 +22,159 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
-// driftJudgeDaemonTimeout bounds the HTTP call to DARK_DRIFT_JUDGE_DAEMON_URL/v1/messages.
-// Kept conservative; matches verify-llm-pipeline.ps1 stage 2 timeout.
-const driftJudgeDaemonTimeout = 60 * time.Second
+// Judge call budget configuration (v2.11.0 update):
+//
+//   - DARK_JUDGE_TIMEOUT_MS — base per-attempt timeout in
+//     milliseconds (default 120000 = 2min; was a hardcoded 60s for
+//     every eval_type). The per-attempt timeout is base × eval_type
+//     multiplier (see judgeTimeoutForEval), so a heavy drift_judge
+//     gets more headroom than a quick pii_detect.
+//   - DARK_JUDGE_RETRY_COUNT — transient-failure retries per call
+//     (default 2 → up to 3 attempts total; clamped [0, 5]).
+//     Retried: timeout, net errors, HTTP 429, HTTP 5xx. Not
+//     retried: 4xx (except 429), URL/marshal errors.
+//
+// Both are read at serve time (per call) so operators can tune
+// without a restart.
+const (
+	defaultJudgeTimeoutMS = 120000
+	defaultJudgeRetryCount = 2
+	maxJudgeRetryCount     = 5
+)
+
+// judgeBaseTimeout returns the base per-attempt timeout from
+// DARK_JUDGE_TIMEOUT_MS (default 2min).
+func judgeBaseTimeout() time.Duration {
+	ms := defaultJudgeTimeoutMS
+	if v := os.Getenv("DARK_JUDGE_TIMEOUT_MS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			ms = n
+		}
+	}
+	return time.Duration(ms) * time.Millisecond
+}
+
+// judgeTimeoutMultipliers scales the base timeout per eval_type.
+// Reasoning-heavy eval_types get more headroom; pattern-matching
+// eval_types fail fast instead of hanging.
+var judgeTimeoutMultipliers = map[string]float64{
+	"drift_judge":           1.5,
+	"compliance_check":      1.0,
+	"brand_match":           0.8,
+	"grounding_check":       1.2,
+	"pii_detect":            0.5,
+	"prompt_injection_scan": 0.5,
+	"mindset_compose":       1.5,
+	"mindset_quality":       1.0,
+}
+
+// judgeTimeoutForEval is the per-attempt timeout for one eval_type.
+func judgeTimeoutForEval(evalType string) time.Duration {
+	m := judgeTimeoutMultipliers[evalType]
+	if m <= 0 {
+		m = 1.0
+	}
+	return time.Duration(float64(judgeBaseTimeout()) * m)
+}
+
+// judgeRetryCount returns the transient-failure retry budget from
+// DARK_JUDGE_RETRY_COUNT (default 2, clamped [0, 5]).
+func judgeRetryCount() int {
+	n := defaultJudgeRetryCount
+	if v := os.Getenv("DARK_JUDGE_RETRY_COUNT"); v != "" {
+		if p, err := strconv.Atoi(v); err == nil && p >= 0 {
+			n = p
+		}
+	}
+	if n > maxJudgeRetryCount {
+		n = maxJudgeRetryCount
+	}
+	return n
+}
+
+// backoffForAttempt returns the sleep before retry attempt N
+// (attempt >= 1): 1s, 2s, 4s, ... capped at 8s, with ±25% jitter so
+// concurrent retries don't thundering-herd the endpoint.
+func backoffForAttempt(attempt int) time.Duration {
+	d := time.Duration(1<<uint(attempt-1)) * time.Second
+	if d > 8*time.Second {
+		d = 8 * time.Second
+	}
+	return time.Duration(float64(d) * (0.75 + 0.5*rand.Float64()))
+}
+
+// sleepWithContext sleeps for d, or returns ctx.Err() if the context
+// is done first (abortable backoff — the harness can cancel a retry
+// storm).
+func sleepWithContext(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
+}
+
+// judgeHTTPStatusError carries a non-200 HTTP response so the retry
+// machinery can classify it (429 + 5xx retryable; other 4xx fail
+// fast). Error() keeps the historical "judge: HTTP N: body" shape.
+type judgeHTTPStatusError struct {
+	status int
+	body   string
+}
+
+func (e *judgeHTTPStatusError) Error() string {
+	return fmt.Sprintf("judge: HTTP %d: %s", e.status, e.body)
+}
+
+// isRetryableError reports whether a judge call failure is transient
+// enough to retry: deadline exceeded, net timeouts, HTTP 429, or
+// HTTP 5xx. Everything else (4xx, URL errors, marshal errors) fails
+// fast.
+func isRetryableError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	var st *judgeHTTPStatusError
+	if errors.As(err, &st) {
+		return st.status == http.StatusTooManyRequests || st.status >= 500
+	}
+	return false
+}
+
+// judgeHTTPClient is the shared HTTP client for all judge calls. No
+// Timeout on the client — the per-attempt deadline comes from the
+// per-attempt context (judgeTimeoutForEval), so every retry gets a
+// fresh budget. The transport is pooled across eval_types and
+// baseURLs (was a fresh &http.Client per call).
+var judgeHTTPClient = &http.Client{
+	Transport: &http.Transport{
+		MaxIdleConnsPerHost: 8,
+		MaxConnsPerHost:     16,
+		IdleConnTimeout:     90 * time.Second,
+	},
+}
 
 // JudgeRequest is the structured input to a Judge call. The
 // orchestrator fills it from the JudgeInput plus a per-eval_type
@@ -276,7 +419,40 @@ func (s *SelfHarnessClient) judgeViaHTTP(ctx context.Context, req JudgeRequest, 
 	}
 
 	endpointStr := strings.TrimRight(baseURL, "/") + "/v1/messages"
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpointStr, bytes.NewReader(bodyBytes))
+
+	// Retry loop (v2.11.0): transient failures (timeout, net, 429,
+	// 5xx) retry up to judgeRetryCount() times with jittered
+	// exponential backoff. Each attempt gets its own fresh timeout
+	// budget via judgeViaHTTPAttempt. Non-retryable errors fail
+	// fast.
+	retries := judgeRetryCount()
+	var lastErr error
+	for attempt := 0; attempt <= retries; attempt++ {
+		if attempt > 0 {
+			if err := sleepWithContext(ctx, backoffForAttempt(attempt)); err != nil {
+				return nil, fmt.Errorf("judge: retry %d backoff: %w", attempt, err)
+			}
+		}
+		resp, err := s.judgeViaHTTPAttempt(ctx, bodyBytes, endpointStr, authValue, judgeTimeoutForEval(req.EvalType), model)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+		if !isRetryableError(err) {
+			return nil, err
+		}
+	}
+	return nil, lastErr
+}
+
+// judgeViaHTTPAttempt performs ONE POST with its own timeout budget
+// and parses the response. Extracted from judgeViaHTTP so the retry
+// loop can give every attempt a fresh deadline.
+func (s *SelfHarnessClient) judgeViaHTTPAttempt(ctx context.Context, bodyBytes []byte, endpointStr, authValue string, timeout time.Duration, model string) (*JudgeResponse, error) {
+	attemptCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	httpReq, err := http.NewRequestWithContext(attemptCtx, http.MethodPost, endpointStr, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("judge: build http request: %w", err)
 	}
@@ -285,8 +461,7 @@ func (s *SelfHarnessClient) judgeViaHTTP(ctx context.Context, req JudgeRequest, 
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
 
-	httpClient := &http.Client{Timeout: driftJudgeDaemonTimeout}
-	httpResp, err := httpClient.Do(httpReq)
+	httpResp, err := judgeHTTPClient.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("judge: http request: %w", err)
 	}
@@ -300,7 +475,7 @@ func (s *SelfHarnessClient) judgeViaHTTP(ctx context.Context, req JudgeRequest, 
 	if httpResp.StatusCode != http.StatusOK {
 		// 503 with empty pool is a legitimate daemon signal: pool is
 		// drained, harvest cycle will refill. Surface the message.
-		return nil, fmt.Errorf("judge: HTTP %d: %s", httpResp.StatusCode, truncateForErr(string(respBytes), 512))
+		return nil, &judgeHTTPStatusError{status: httpResp.StatusCode, body: truncateForErr(string(respBytes), 512)}
 	}
 
 	// Parse response. Three shapes:
@@ -409,14 +584,21 @@ func truncateForErr(s string, max int) string {
 // MockLLMClient is a deterministic in-memory LLMClient for tests.
 // It returns the configured verdict + confidence on every Judge call.
 // If Err is set, returns the error (used for "canary rejection" tests).
+//
+// Concurrency (v2.11.0): JudgeConsensus runs N samples in parallel,
+// so a single mock may be invoked from multiple goroutines. Calls is
+// incremented atomically (reads/writes with untyped constants keep
+// working); LastReq is mutex-guarded last-write-wins.
 type MockLLMClient struct {
 	Name_       string
 	VerdictJSON string
 	Confidence  float32
 	Model       string
 	Err         error
-	Calls       int
+	Calls       int32
 	LastReq     JudgeRequest
+
+	mu sync.Mutex // guards LastReq
 }
 
 // Name implements LLMClient.
@@ -424,8 +606,10 @@ func (m *MockLLMClient) Name() string { return m.Name_ }
 
 // Judge implements LLMClient.
 func (m *MockLLMClient) Judge(ctx context.Context, req JudgeRequest) (*JudgeResponse, error) {
-	m.Calls++
+	atomic.AddInt32(&m.Calls, 1)
+	m.mu.Lock()
 	m.LastReq = req
+	m.mu.Unlock()
 	if m.Err != nil {
 		return nil, m.Err
 	}

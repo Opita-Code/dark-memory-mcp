@@ -138,8 +138,11 @@ func TestJudgeViaDriftJudgeDaemon_MockLLMFormat(t *testing.T) {
 // TestJudgeViaDriftJudgeDaemon_PoolEmpty503 verifies that a 503 (daemon
 // pool drained) is surfaced as a real error, NOT ErrNoLLMAvailable.
 // This preserves the original source philosophy of surfacing failures
-// instead of silently degrading.
+// instead of silently degrading. Retries are disabled so the test
+// exercises a single attempt (retry behavior is covered by
+// llm_client_retry_test.go).
 func TestJudgeViaDriftJudgeDaemon_PoolEmpty503(t *testing.T) {
+	t.Setenv("DARK_JUDGE_RETRY_COUNT", "0")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_, _ = w.Write([]byte(`{"type":"error","error":{"type":"api_error","message":"all keys failed"}}`))

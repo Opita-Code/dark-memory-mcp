@@ -12,6 +12,7 @@ import (
 	"errors"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1461,12 +1462,12 @@ func TestJudgeConsensus_Majority(t *testing.T) {
 		t.Fatalf("set: %v", err)
 	}
 
-	calls := 0
+	calls := int32(0)
 	mock := &togglingMock{
 		OnJudge: func(req orchestration.JudgeRequest) (*orchestration.JudgeResponse, error) {
-			calls++
+			c := atomic.AddInt32(&calls, 1)
 			v := `{"aligned":true,"confidence":0.9}`
-			if calls == 3 {
+			if c == 3 {
 				v = `{"aligned":false,"confidence":0.8,"drift_items":["missing_doc"]}`
 			}
 			return &orchestration.JudgeResponse{VerdictJSON: v, Confidence: 0.9, Model: "mock", Provider: "mock"}, nil
@@ -1509,12 +1510,12 @@ func TestJudgeConsensus_LowAgreement(t *testing.T) {
 		t.Fatalf("set: %v", err)
 	}
 
-	calls := 0
+	calls := int32(0)
 	mock := &togglingMock{
 		OnJudge: func(req orchestration.JudgeRequest) (*orchestration.JudgeResponse, error) {
-			calls++
+			c := atomic.AddInt32(&calls, 1)
 			v := `{"aligned":true,"confidence":0.9}`
-			if calls%2 == 0 {
+			if c%2 == 0 {
 				v = `{"aligned":false,"confidence":0.85}`
 			}
 			return &orchestration.JudgeResponse{VerdictJSON: v, Confidence: 0.9, Model: "mock", Provider: "mock"}, nil
@@ -1555,11 +1556,11 @@ func TestJudgeConsensus_ConfidenceInterval(t *testing.T) {
 	}
 
 	confidences := []float32{0.7, 0.8, 0.9}
-	idx := 0
+	idx := int32(0)
 	mock := &togglingMock{
 		OnJudge: func(req orchestration.JudgeRequest) (*orchestration.JudgeResponse, error) {
-			c := confidences[idx%len(confidences)]
-			idx++
+			i := atomic.AddInt32(&idx, 1)
+			c := confidences[(i-1)%int32(len(confidences))]
 			return &orchestration.JudgeResponse{
 				VerdictJSON: `{"aligned":true}`,
 				Confidence:  c,
