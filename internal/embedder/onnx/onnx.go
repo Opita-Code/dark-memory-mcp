@@ -102,6 +102,34 @@ type Options struct {
 	DarkHome string
 }
 
+// envOnce + envErr guard yalue's ONNX Runtime environment, which is a
+// PROCESS SINGLETON: InitializeEnvironment() panics/errors if called a
+// second time in the same process. New() can be called multiple times
+// per process (multiple embedder instances, tests, factory retries),
+// so the initialization is done exactly once. Subsequent New() calls
+// reuse the singleton environment and create their own session.
+var (
+	envOnce sync.Once
+	envErr  error
+)
+
+// initEnvironment points yalue at the extracted shared library and
+// initializes the ONNX Runtime environment exactly once per process.
+// The error of the first attempt is sticky: a failed environment init
+// cannot be retried (the singleton is poisoned), so every caller sees
+// the same error and fails fast instead of retrying in a loop.
+func initEnvironment(libPath string) error {
+	envOnce.Do(func() {
+		// Point yalue/onnxruntime_go at our extracted shared lib
+		// BEFORE initializing the environment. SetSharedLibraryPath
+		// is a global setter; the environment binds to it at
+		// InitializeEnvironment time.
+		onnxruntime.SetSharedLibraryPath(libPath)
+		envErr = onnxruntime.InitializeEnvironment()
+	})
+	return envErr
+}
+
 // New constructs the ONNX adapter. Returns embedder.ErrDisabled on
 // unsupported platforms; returns a typed error on SHA mismatch or
 // session construction failure.
@@ -126,12 +154,9 @@ func New(opts Options) (embedder.Embedder, error) {
 		return nil, fmt.Errorf("embedder.onnx: runtime cache: %w", err)
 	}
 
-	// Point yalue/onnxruntime_go at our extracted shared lib BEFORE
-	// initializing the environment. SetSharedLibraryPath is a global
-	// setter; subsequent sessions in the same process reuse it.
-	onnxruntime.SetSharedLibraryPath(libPath)
-
-	if err := onnxruntime.InitializeEnvironment(); err != nil {
+	// Initialize the process-singleton ONNX Runtime environment.
+	// Safe to call from concurrent New()s: envOnce serializes.
+	if err := initEnvironment(libPath); err != nil {
 		return nil, fmt.Errorf("embedder.onnx: init environment: %w", err)
 	}
 
@@ -323,10 +348,6 @@ type onnxAdapter struct {
 
 	closeMu sync.Mutex
 	closed  bool
-
-	// initOnce ensures InitializeEnvironment is called exactly once
-	// per process. Subsequent New() calls reuse the singleton.
-	initOnce sync.Once
 }
 
 // Kind returns KindONNX.
