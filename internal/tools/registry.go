@@ -1,6 +1,6 @@
 // Package tools — registry.go: the Tool type and the canonical Registry.
 //
-// Per BRIDGE_AND_COEXISTENCE.md §3 (spec 164, bridge.4), the 49 tools
+// Per BRIDGE_AND_COEXISTENCE.md §3 (spec 164, bridge.4), the canonical tools
 // are emitted in tools/list in a fixed canonical order. The order is
 // NOT alphabetical — it follows the RFC D-9 namespace grouping plus
 // the L6-VLP namespace (DMAP v1.1 spec 193) and the newer namespaces
@@ -60,7 +60,7 @@ type Registry struct {
 	order  []string // canonical order, fixed at construction
 }
 
-// NewRegistry constructs an empty Registry with the canonical 49-tool
+// NewRegistry constructs an empty Registry with the canonical
 // order pre-registered (tools may not exist yet; ListCanonical will
 // return placeholders that the server filters out at startup).
 func NewRegistry() *Registry {
@@ -124,19 +124,50 @@ func (r *Registry) Names() []string {
 
 // CanonicalOrder returns the fixed canonical tool order (spec 164,
 // bridge.4). Used by tests that want to assert "did we register all
-// 29 in the right order".
-//
-// 5A.ii.b.2.c: bumped from 28 to 29 (added `recall`).
+// the tools in the right order". The count is len(canonicalToolOrder)
+// — derived, never hardcoded.
 func CanonicalOrder() []string {
 	out := make([]string, len(canonicalToolOrder))
 	copy(out, canonicalToolOrder)
 	return out
 }
 
+// NamespaceGroups returns a copy of the canonical namespace grouping
+// (source of truth: canonicalNamespaces). Consumers that render the
+// namespace overview (SYSTEM_PROMPT.md, README tool tables, tests)
+// derive counts from this — never hardcode them.
+func NamespaceGroups() []NamespaceGroup {
+	out := make([]NamespaceGroup, len(canonicalNamespaces))
+	for i, ns := range canonicalNamespaces {
+		names := make([]string, len(ns.Tools))
+		copy(names, ns.Tools)
+		out[i] = NamespaceGroup{Name: ns.Name, Tools: names}
+	}
+	return out
+}
+
+// NamespaceCount returns the number of namespaces in the canonical
+// surface (len(canonicalNamespaces)).
+func NamespaceCount() int {
+	return len(canonicalNamespaces)
+}
+
+// NamespaceCounts returns namespace name → tool count, derived from
+// the namespace grouping. Used to render the namespace overview table
+// without hardcoding per-namespace counts.
+func NamespaceCounts() map[string]int {
+	out := make(map[string]int, len(canonicalNamespaces))
+	for _, ns := range canonicalNamespaces {
+		out[ns.Name] = len(ns.Tools)
+	}
+	return out
+}
+
 // ListExtras returns registered tools that are NOT in the canonical
 // order. Used by the server bootstrap to register armed-mode
 // extras (e.g. the L7-REDTEAM namespace) without polluting the
-// canonical 49-tool surface (v2.11.0; was 28 in v1.3.0, 26 in v1.1.x).
+// canonical surface (count derived from canonicalNamespaces; 28 in
+// v1.3.0, 26 in v1.1.x historically).
 //
 // The returned order is alphabetical by name (stable across runs;
 // no canonical-order contract for extras).
@@ -179,8 +210,19 @@ func (r *Registry) CountExtras() int {
 	return c
 }
 
-// canonicalToolOrder is the fixed tool order (bare names, no
-// "dark_memory_" prefix; the server prepends on wire).
+// NamespaceGroup is one namespace in the canonical surface: its name
+// and the bare tool names that belong to it, in canonical order.
+type NamespaceGroup struct {
+	Name  string
+	Tools []string
+}
+
+// canonicalNamespaces is the SINGLE source of truth for the canonical
+// tool surface. The flattened tool order (canonicalToolOrder) is
+// derived from this structure; per-namespace counts, the namespace
+// count, and the namespace overview table in SYSTEM_PROMPT.md are all
+// derived from it too. Never hardcode a count anywhere else — adding
+// a tool here propagates to every consumer automatically.
 //
 // Per RFC D-9 + BRIDGE_AND_COEXISTENCE.md §3 (bridge.4), v2.6.0:
 //
@@ -199,8 +241,7 @@ func (r *Registry) CountExtras() int {
 //	ERROR_OBS        (4)  - error_list, error_get, error_summary, error_resolve (v2.11.0, spec 757)
 //	ADMIN            (3)  - admin_migrate, admin_schema_status, admin_vacuum
 //	L6-VLP           (1)  - vlp_handle_event          (DMAP v1.1 spec 193)
-//
-// Total: 1+4+3+3+4+4+10+1+1+3+2+4+4+3+1 = 49.
+//	EMBEDDER         (1)  - embedder_setup_prompt     (v2.9.0-alpha PR-2)
 //
 //   - PROJECT was added in v1.2.0 to close the bootstrap loop
 //     (operators can now provision a tenant from inside the MCP
@@ -209,7 +250,7 @@ func (r *Registry) CountExtras() int {
 //     discovery order is project_create  session_start  .;
 //     harness callers that iterate the canonical list get
 //     project_create first.
-//   - OBSERVABILITY grew from 3  4 in v1.3.0 with `health_ping`.
+//   - OBSERVABILITY grew from 3 to 4 in v1.3.0 with `health_ping`.
 //     Health_ping is the operator-facing liveness probe; it is a
 //     SIBLING of memory_state, not a replacement, because the two
 //     have different latency budgets and different side-effect
@@ -231,73 +272,140 @@ func (r *Registry) CountExtras() int {
 //      "what resources can I read?" (agent_bootstrap)
 //      "what does my runtime look like?" (detect_environment)
 //      "now I can do real work" (vibe_publish, etc.).
-var canonicalToolOrder = []string{
-	// PROJECT (1) - v1.2.0
-	"project_create",
-	// SESSION (4)
-	"session_start", "session_resume", "session_status", "session_close",
-	// RESEARCH (3)
-	"research_topic", "research_recall", "research_resume_thread",
-	// AGENT_BOOTSTRAP (3) - v2.6.0. 3 self-bootstrap tools that
-	// teach any harness how to use the MCP without external docs.
-	"agent_bootstrap", "agent_recommend_companions", "agent_detect_environment",
-	// VIBE (4)
-	"vibe_publish", "vibe_spec", "pipeline_status", "resolve_drift",
-	// CONTEXT (4) - v2.0.0 (5A.ii.b.2.c): `recall` added.
-	"artifact_context", "spec_context", "session_context", "recall",
-	// AGENT_MEMORY (9) - v2.1.0 (Mem0-aligned data plane): 5 tools.
-	// v2.3.0 added agent_memory_recall (the missing consumer for the
-	// data plane; wraps SearchAgentMemory with FTS5 escape done in
-	// the orchestrator layer).
-	// v2.8.0-alpha C2 added subagent_register + subagent_unregister
-	// (active_subagents table bindings; agent_memory_save uses
-	// subagent_id for agent_id resolution when set).
-	// v2.9.0-alpha PR-3 added agent_memory_entities (id-only read of
-	// the agent_memory_entities side-table). Returned for one row id.
-	// v2.9.3 added agent_memory_delegate (prepares a delegation context
-	// for sub-agent spawns; registers the C2 binding + returns the
-	// ready-to-inject markdown block).
-	"agent_memory_save", "agent_memory_list", "agent_memory_recall", "agent_memory_get", "agent_memory_update", "agent_memory_archive", "agent_memory_delegate", "agent_memory_entities", "subagent_register", "subagent_unregister",
-	// MINDSET (1) - v2.7.0-alpha. Procedural composition with judge-validated
-	// system prompts for subagent delegation. Cache hit returns in <50ms with
-	// 0 LLM calls; cache miss loops composition + validation up to
-	// DARK_MINDSET_MAX_ITERATIONS times, each persisting SDDEvaluation rows
-	// for full audit trail. Positioned between AGENT_MEMORY (the data plane
-	// it caches against) and JUDGE (the validator).
-	"mindset_apply",
-	// DELEGATION (1) - Wave 5C. delegate_intent decides whether the
-	// orchestrator handles an intent inline, delegates it to
-	// sub-agents, or refuses (A1: Memory decides). Runs the
-	// DelegationRouter's DECIDE→PLAN→MIND→CURATE pipeline and
-	// returns ready-to-spawn material (system_prompt + curated
-	// delegation context + C2 subagent binding). Positioned between
-	// MINDSET (the prompt engine it consumes) and JUDGE (the
-	// validator that drift-checks the synthesized output).
-	"delegate_intent",
-	// JUDGE (3)
-	"judge", "consensus", "judgment_history",
-	// POLICY (2)
-	"active_policy", "load_constitution",
-	// OBSERVABILITY (4) - v1.3.0: health_ping added
-	"memory_state", "writes", "anomalies", "health_ping",
-	// ERROR_OBS (4) - v2.11.0 (spec 757, Wave 5D). Error Observatory:
-	// durable, classified, backlog-able error capture. error_list =
-	// backlog view (filters); error_get = one cluster; error_summary =
-	// aggregate metrics (global scope); error_resolve = operator
-	// triage. Positioned right after OBSERVABILITY (it IS
-	// observability — the durable error plane the other tools
-	// surface). Store-bound, no orchestrator layer.
-	"error_list", "error_get", "error_summary", "error_resolve",
-	// ADMIN (3)
-	"admin_migrate", "admin_schema_status", "admin_vacuum",
-	// L6-VLP (1) - DMAP v1.1
-	"vlp_handle_event",
-	// EMBEDDER (1) - v2.9.0-alpha PR-2. Consent gate for hybrid
-	// retrieval per row 164 §3. Single call per project boot —
-	// returns the verbatim prompt the harness's LLM should surface
-	// when no embedder is detected at first search.
-	"embedder_setup_prompt",
+var canonicalNamespaces = []NamespaceGroup{
+	{
+		Name:  "PROJECT",
+		Tools: []string{"project_create"}, // v1.2.0
+	},
+	{
+		Name:  "SESSION",
+		Tools: []string{"session_start", "session_resume", "session_status", "session_close"},
+	},
+	{
+		Name:  "RESEARCH",
+		Tools: []string{"research_topic", "research_recall", "research_resume_thread"},
+	},
+	{
+		// v2.6.0. 3 self-bootstrap tools that teach any harness how to
+		// use the MCP without external docs.
+		Name:  "AGENT_BOOTSTRAP",
+		Tools: []string{"agent_bootstrap", "agent_recommend_companions", "agent_detect_environment"},
+	},
+	{
+		Name:  "VIBE",
+		Tools: []string{"vibe_publish", "vibe_spec", "pipeline_status", "resolve_drift"},
+	},
+	{
+		// v2.0.0 (5A.ii.b.2.c): `recall` added.
+		Name:  "CONTEXT",
+		Tools: []string{"artifact_context", "spec_context", "session_context", "recall"},
+	},
+	{
+		// v2.1.0 (Mem0-aligned data plane): 5 tools.
+		// v2.3.0 added agent_memory_recall (the missing consumer for the
+		// data plane; wraps SearchAgentMemory with FTS5 escape done in
+		// the orchestrator layer).
+		// v2.8.0-alpha C2 added subagent_register + subagent_unregister
+		// (active_subagents table bindings; agent_memory_save uses
+		// subagent_id for agent_id resolution when set).
+		// v2.9.0-alpha PR-3 added agent_memory_entities (id-only read of
+		// the agent_memory_entities side-table). Returned for one row id.
+		// v2.9.3 added agent_memory_delegate (prepares a delegation context
+		// for sub-agent spawns; registers the C2 binding + returns the
+		// ready-to-inject markdown block).
+		Name: "AGENT_MEMORY",
+		Tools: []string{
+			"agent_memory_save", "agent_memory_list", "agent_memory_recall", "agent_memory_get", "agent_memory_update", "agent_memory_archive", "agent_memory_delegate", "agent_memory_entities", "subagent_register", "subagent_unregister",
+		},
+	},
+	{
+		// v2.7.0-alpha. Procedural composition with judge-validated
+		// system prompts for subagent delegation. Cache hit returns in <50ms
+		// with 0 LLM calls; cache miss loops composition + validation up to
+		// DARK_MINDSET_MAX_ITERATIONS times, each persisting SDDEvaluation
+		// rows for full audit trail. Positioned between AGENT_MEMORY (the
+		// data plane it caches against) and JUDGE (the validator).
+		Name:  "MINDSET",
+		Tools: []string{"mindset_apply"},
+	},
+	{
+		// Wave 5C. delegate_intent decides whether the orchestrator
+		// handles an intent inline, delegates it to sub-agents, or refuses
+		// (A1: Memory decides). Runs the DelegationRouter's
+		// DECIDE→PLAN→MIND→CURATE pipeline and returns ready-to-spawn
+		// material (system_prompt + curated delegation context + C2
+		// subagent binding). Positioned between MINDSET (the prompt engine
+		// it consumes) and JUDGE (the validator that drift-checks the
+		// synthesized output).
+		Name:  "DELEGATION",
+		Tools: []string{"delegate_intent"},
+	},
+	{
+		Name:  "JUDGE",
+		Tools: []string{"judge", "consensus", "judgment_history"},
+	},
+	{
+		Name:  "POLICY",
+		Tools: []string{"active_policy", "load_constitution"},
+	},
+	{
+		// v1.3.0: health_ping added
+		Name:  "OBSERVABILITY",
+		Tools: []string{"memory_state", "writes", "anomalies", "health_ping"},
+	},
+	{
+		// v2.11.0 (spec 757, Wave 5D). Error Observatory: durable,
+		// classified, backlog-able error capture. error_list = backlog
+		// view (filters); error_get = one cluster; error_summary =
+		// aggregate metrics (global scope); error_resolve = operator
+		// triage. Positioned right after OBSERVABILITY (it IS
+		// observability — the durable error plane the other tools
+		// surface). Store-bound, no orchestrator layer.
+		Name:  "ERROR_OBS",
+		Tools: []string{"error_list", "error_get", "error_summary", "error_resolve"},
+	},
+	{
+		Name:  "ADMIN",
+		Tools: []string{"admin_migrate", "admin_schema_status", "admin_vacuum"},
+	},
+	{
+		// DMAP v1.1
+		Name:  "L6-VLP",
+		Tools: []string{"vlp_handle_event"},
+	},
+	{
+		// v2.9.0-alpha PR-2. Consent gate for hybrid retrieval per row
+		// 164 §3. Single call per project boot — returns the verbatim
+		// prompt the harness's LLM should surface when no embedder is
+		// detected at first search.
+		Name:  "EMBEDDER",
+		Tools: []string{"embedder_setup_prompt"},
+	},
 }
+
+// flattenCanonicalNamespaces flattens canonicalNamespaces into the
+// bare-name canonical order. The flatten happens once at package init
+// (canonicalToolOrder below); the order is deterministic because
+// canonicalNamespaces is a fixed slice.
+func flattenCanonicalNamespaces() []string {
+	var total int
+	for _, ns := range canonicalNamespaces {
+		total += len(ns.Tools)
+	}
+	out := make([]string, 0, total)
+	for _, ns := range canonicalNamespaces {
+		out = append(out, ns.Tools...)
+	}
+	return out
+}
+
+// canonicalToolOrder is the fixed tool order (bare names, no
+// "dark_memory_" prefix; the server prepends on wire). DERIVED from
+// canonicalNamespaces — never edit this slice directly; edit
+// canonicalNamespaces instead. The order is part of the public
+// contract: changing it is a breaking change for any harness that
+// indexes by position.
+var canonicalToolOrder = flattenCanonicalNamespaces()
 
 // WirePrefix is prepended to every bare tool name on the wire. Per
 // BRIDGE_AND_COEXISTENCE.md §2, "All public MCP tools use prefix
@@ -310,7 +418,7 @@ func WireName(bare string) string {
 }
 
 // CanonicalPosition returns the index of wireName in the canonical
-// 49-tool order, or -1 if not found. Used by tools/list filters that
+// order, or -1 if not found. Used by tools/list filters that
 // need to re-sort the alphabetically-sorted output of mcp-go's
 // handleListTools back to the RFC D-9 namespace-grouped order.
 func CanonicalPosition(wireName string) int {

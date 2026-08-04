@@ -1,6 +1,6 @@
 # dark-research-mcp — companion OSINT tool
 
-> Bootstrap version 1. For dark-memory-mcp v2.6.0+.
+> Bootstrap version {{.BootstrapVersion}}. For dark-memory-mcp v{{.Version}}+.
 
 ## What it is
 

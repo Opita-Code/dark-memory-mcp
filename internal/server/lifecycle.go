@@ -7,7 +7,7 @@
 //	  2. open Store via runtime.Open
 //	  3. Store.Open runs migrations + constitution watchdog (INV-4)
 //	  4. safety.NewCanary → install on Store (INV-3)
-//	  5. mcp.NewServer → register all 49 tools
+//	  5. mcp.NewServer → register all canonical tools
 //	  6. stdio transport
 //	  7. boot_reconcile (Wave 5E.iii) — one sweep to catch sessions
 //	     left behind by a crashed prior harness
@@ -102,9 +102,10 @@ type BootState struct {
 }
 
 // Boot runs the 6-step boot sequence. Steps 1-4 happen here; step 5
-// (register 49 tools) is the caller's responsibility because the
-// registry is populated by the per-namespace tool files at package
-// init time (or via explicit Register* calls in tests). Step 6 is
+// (register the canonical tools) is the caller's responsibility
+// because the registry is populated by the per-namespace tool files
+// at package init time (or via explicit Register* calls in tests).
+// Step 6 is
 // ServeStdio (separate, called after Boot returns).
 //
 // On any failure, Boot cleans up partial state and returns an error

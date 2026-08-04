@@ -17,13 +17,17 @@
 //	    v
 //	Store / Safety
 //
-// Per RFC D-9 + DMAP v1.1 spec 193, the MCP surface is exactly 26
-// intent-driven tools in 9 namespaces (SESSION / RESEARCH / VIBE /
-// CONTEXT / JUDGE / POLICY / OBSERVABILITY / ADMIN / L6-VLP). The
-// L6-VLP namespace (vlp_handle_event) was added in v1.1.0 to expose
-// the VLP state machine to MCP harnesses. Per
-// BRIDGE_AND_COEXISTENCE.md §3 (spec 164, bridge.4), the canonical tool
-// order is fixed and emitted in tools/list.
+// Per RFC D-9 + DMAP v1.1 spec 193, the MCP surface is the canonical
+// set of intent-driven tools grouped in namespaces (SESSION / RESEARCH
+// / VIBE / CONTEXT / JUDGE / POLICY / OBSERVABILITY / ADMIN / L6-VLP
+// plus the newer PROJECT / AGENT_BOOTSTRAP / AGENT_MEMORY / MINDSET /
+// DELEGATION / ERROR_OBS / EMBEDDER namespaces). The L6-VLP namespace
+// (vlp_handle_event) was added in v1.1.0 to expose the VLP state
+// machine to MCP harnesses. Per BRIDGE_AND_COEXISTENCE.md §3 (spec
+// 164, bridge.4), the canonical tool order is fixed and emitted in
+// tools/list. The authoritative namespace + tool list is
+// canonicalNamespaces in registry.go — counts are derived from it,
+// never hardcoded.
 package tools
 
 // ToolResponse is the canonical shape every tool returns. Matches

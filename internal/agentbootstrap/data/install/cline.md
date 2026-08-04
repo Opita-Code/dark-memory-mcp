@@ -1,6 +1,6 @@
 # Install on Cline
 
-> Bootstrap version 3. For dark-memory-mcp v2.11.0+.
+> Bootstrap version {{.BootstrapVersion}}. For dark-memory-mcp v{{.Version}}+.
 
 ## 1. Locate your config
 

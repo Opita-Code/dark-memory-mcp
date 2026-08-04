@@ -1,5 +1,5 @@
 // Package tools — federation.go: wires the dark_memory_federation_lookup
-// tool as an EXTRA (not part of the canonical 28; same model as the
+// tool as an EXTRA (not part of the canonical order; same model as the
 // armed-mode redteam extras).
 //
 // F7 motivation: the dark-memory and dark-research MCPs use two physically
@@ -61,7 +61,7 @@ type FederationLookupResult struct {
 }
 
 // RegisterFederation wires federation_lookup into the registry as an
-// extra (not in canonical order; surfaces after the canonical 28 in
+// extra (not in canonical order; surfaces after the canonical set in
 // tools/list). Safe to call when no peer is configured: the tool still
 // registers but every call returns a "peer disabled" response.
 func RegisterFederation(reg *Registry) {

@@ -78,7 +78,7 @@ import (
 //
 // # Security note
 //
-// These defaults grant access to all 34 MCP tools plus global
+// These defaults grant access to all canonical MCP tools plus global
 // read-only project scope. This is INTERIM/DEVELOPMENT-ONLY
 // behavior — operators MUST NOT enable this fallback in
 // production. The expected production posture is: no fallback

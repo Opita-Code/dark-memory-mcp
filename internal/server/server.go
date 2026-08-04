@@ -3,9 +3,9 @@
 // binary uses (see ../../cmd/dark-mem-mcp/main.go).
 //
 // Per RFC §6 step 5, after Boot returns the caller is expected to
-// (a) register all 49 tools (this is where per-namespace tool files
-// come in — see internal/tools/*.go), then (b) call ServeStdio to
-// block on the stdio MCP transport.
+// (a) register all canonical tools (this is where per-namespace tool
+// files come in — see internal/tools/*.go), then (b) call ServeStdio
+// to block on the stdio MCP transport.
 //
 // Tool registration is explicit (Register* functions below) rather
 // than init-time magic. This keeps the boot sequence greppable and
@@ -132,7 +132,11 @@ func New(ctx context.Context) (*Server, error) {
 	// compatibility matrix, 6 install guides, 2 companion docs). This
 	// must happen AFTER mcpSrv construction (AddResource needs the
 	// server instance). Idempotent for the lifetime of the process.
-	if err := agentbootstrap.RegisterAll(mcpSrv); err != nil {
+	//
+	// The template context is built from the live sources of truth
+	// (tools.BuildBootstrapData) so the served documents always
+	// reflect the current tool surface + schema version.
+	if err := agentbootstrap.RegisterAll(mcpSrv, tools.BuildBootstrapData()); err != nil {
 		return nil, fmt.Errorf("server.New: register agentbootstrap resources: %w", err)
 	}
 
@@ -166,15 +170,19 @@ func New(ctx context.Context) (*Server, error) {
 // Desktop + Claude Code honor it. The canonical bootstrap path is the
 // dark-memory://docs/* resources.
 func BuildInstructions(coexistenceGroup, version string) string {
+	// The tool count is derived from the live registry — never
+	// hardcoded — so the instructions field can't drift from the
+	// actual surface when tools are added.
+	n := len(tools.CanonicalOrder())
 	base := fmt.Sprintf(
-		"dark-memory-mcp server. coexistence_group=%s policy_gateway=true (spec 164 bridge.2 cx.v3). Canonical 38-tool order preserved per spec 164 bridge.4 + DMAP v1.1 spec 193 Layer 6 (v2.6.0 bump: +3 AGENT_BOOTSTRAP tools; pre-v2.6.0 had 35). This server is the policy gateway for the dark-agents/memory coexistence group; harnesses detecting another dark-agents/* peer (dark-research-mcp with coexistence_group=dark-agents/research, policy_gateway=false) should route dark_* calls through this gateway for persona shaping, capability checks, and drift-at-write. Version=%s.",
-		coexistenceGroup, version,
+		"dark-memory-mcp server. coexistence_group=%s policy_gateway=true (spec 164 bridge.2 cx.v3). Canonical %d-tool order preserved per spec 164 bridge.4 + DMAP v1.1 spec 193 Layer 6. This server is the policy gateway for the dark-agents/memory coexistence group; harnesses detecting another dark-agents/* peer (dark-research-mcp with coexistence_group=dark-agents/research, policy_gateway=false) should route dark_* calls through this gateway for persona shaping, capability checks, and drift-at-write. Version=%s.",
+		coexistenceGroup, n, version,
 	)
 	crossFeature := agentbootstrap.CrossFeatureHints(version)
 	return base + " " + crossFeature
 }
 
-// RegisterAll iterates the canonical 49-tool list and registers each
+// RegisterAll iterates the canonical tool list and registers each
 // tool present in the Registry with the mcp-go server. Tools not yet
 // added are silently skipped (the canonical order is the contract;
 // the actual set is the intersection of canonical ∩ registered).
