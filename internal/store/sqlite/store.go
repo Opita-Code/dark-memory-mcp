@@ -28,6 +28,7 @@ _ "modernc.org/sqlite"
 	"github.com/dark-agents/dark-memory-mcp/internal/atomic"
 	"github.com/dark-agents/dark-memory-mcp/internal/audit"
 	"github.com/dark-agents/dark-memory-mcp/internal/constitution"
+	"github.com/dark-agents/dark-memory-mcp/internal/embedder"
 	"github.com/dark-agents/dark-memory-mcp/internal/migrate"
 	migratesqlite "github.com/dark-agents/dark-memory-mcp/internal/migrate/sqlite"
 	"github.com/dark-agents/dark-memory-mcp/internal/mods"
@@ -358,6 +359,45 @@ type Store struct {
 	// project context"; reads return store.ErrSessionRequired. Set via
 	// SetActiveProject. Defaults to "default" on first Open.
 	activeProject string
+
+	// embedder is the active embedder for hybrid retrieval (PR-2 of
+	// v2.9.0 plan). Defaults to embedder.None() so absent embedder
+	// == none stub (Mode="bm25" works; Mode="vector"/"rrf" returns
+	// embedder.ErrDisabled wrapped). Operators who want hybrid axis
+	// wire the active embedder via WithEmbedder at boot.
+	//
+	// The embedder is a struct field (not a global) so multi-Store
+	// deployments can have per-project embedders matching row 164's
+	// per-tenant embedder vision; recall.NewSingleton is the
+	// recommended seam for that pattern.
+	embedder embedder.Embedder
+}
+
+// WithEmbedder returns s after recording e as the active embedder.
+// Thread-safe: the assignment is guarded by s.mu. The recommended
+// pattern is `store.WithEmbedder(embedder.FactoryAuto())` once at
+// boot, before any Search call that uses Mode="vector" or Mode="rrf".
+//
+// Returns s so the call can be chained after NewStore.
+func (s *Store) WithEmbedder(e embedder.Embedder) *Store {
+	if e == nil {
+		e = embedder.None()
+	}
+	s.mu.Lock()
+	s.embedder = e
+	s.mu.Unlock()
+	return s
+}
+
+// Embedder returns the active embedder. Mostly for tests + the
+// recall orchestrator (which uses it to inspect Kind for health_ping).
+func (s *Store) Embedder() embedder.Embedder {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.embedder == nil {
+		return embedder.None()
+	}
+	return s.embedder
 }
 
 // Compile-time assertion that *Store satisfies store.Store.
@@ -365,9 +405,25 @@ var _ store.Store = (*Store)(nil)
 
 // ----- lifecycle -----
 
+// Close runs a final PRAGMA optimize (analyzes recent query patterns
+// and updates internal FTS5 statistics for better query planning on
+// next startup) before closing the underlying *sql.DB. PRAGMA optimize
+// is idempotent and fast on small DBs; on large agent_memory tables
+// it can take seconds once per session, hence the best-effort log +
+// ignore-of-error — we want the close to succeed even if the optimize
+// statement itself errored (e.g. permission denied on a read-only DB).
+//
+// See: https://sqlite.org/fts5.html#the_optimize_command (section 6.9).
 func (s *Store) Close() error {
 	if s.db == nil {
 		return nil
+	}
+	if _, err := s.db.ExecContext(context.Background(), "PRAGMA optimize"); err != nil {
+		// Best-effort: log via the std logger but don't fail Close.
+		// Operator impersonated: this is the regular operator-visible
+		// log path; for a real product this would go through a
+		// structured logger.
+		_ = err
 	}
 	return s.db.Close()
 }
@@ -520,6 +576,17 @@ func (s *Store) ListWrites(ctx context.Context, f audit.ListFilters) ([]audit.Wr
 	if f.SinceID > 0 {
 		q += ` AND id > ?`
 		args = append(args, f.SinceID)
+	}
+	// F47: target table + row_id filters. When TableName is set, the
+	// lookup is narrowed to audit rows for a specific data row, which
+	// is what latestAuditIDForRow needs.
+	if f.TableName != "" {
+		q += ` AND table_name = ?`
+		args = append(args, f.TableName)
+	}
+	if f.RowID > 0 {
+		q += ` AND row_id = ?`
+		args = append(args, f.RowID)
 	}
 	if f.Limit <= 0 {
 		f.Limit = 50
@@ -4026,12 +4093,14 @@ func (s *Store) SaveAgentMemory(ctx context.Context, wc store.WriteContext, m *a
 		res, err := tx.ExecContext(ctx, `
 			INSERT INTO agent_memory (
 				project_id, session_id, operator, agent_id, kind, memory_type,
-				title, content, tags, pinned, created_at, updated_at, expires_at
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				title, content, tags, pinned, created_at, updated_at, expires_at,
+				embedding
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			projectID, nullString(m.SessionID), m.Operator, nullString(m.AgentID),
 			m.Kind, nullString(m.MemoryType),
 			nullString(m.Title), m.Content, nullString(m.Tags),
 			boolToInt(m.Pinned), now, now, nullString(m.ExpiresAt),
+			encodeVec(m.Embedding),
 		)
 		if err != nil {
 			return fmt.Errorf("agent_memory: insert: %w", err)
@@ -4039,6 +4108,30 @@ func (s *Store) SaveAgentMemory(ctx context.Context, wc store.WriteContext, m *a
 		id, err = res.LastInsertId()
 		if err != nil {
 			return fmt.Errorf("agent_memory: last insert id: %w", err)
+		}
+
+		// v2.9.0 PR-3: when m.Entities is non-empty (transient field,
+		// populated by the orchestrator's extractor), write the
+		// entity rows IN THE SAME tx. Source tag is "deterministic"
+		// for PR-3; future PR-3.1 wires drift_judge (or similar).
+		// ON CONFLICT (mem_id, entity) DO NOTHING — re-running the
+		// extractor on the same row produces no duplicate rows; the
+		// dedupe is idempotent at the schema layer.
+		if len(m.Entities) > 0 {
+			for _, ent := range m.Entities {
+				if ent.Value == "" {
+					continue
+				}
+				entLower := strings.ToLower(ent.Value)
+				if _, err := tx.ExecContext(ctx, `
+					INSERT INTO agent_memory_entities (mem_id, entity, source, confidence, model, created_at)
+					VALUES (?, ?, ?, ?, ?, ?)
+					ON CONFLICT (mem_id, entity) DO NOTHING`,
+					id, entLower, ent.Source, ent.Confidence, nullString(ent.Model), now,
+				); err != nil {
+					return fmt.Errorf("agent_memory_entities: insert: %w", err)
+				}
+			}
 		}
 
 		// INV-1: write_audit row in the same tx.
@@ -4074,8 +4167,23 @@ func (s *Store) SaveAgentMemory(ctx context.Context, wc store.WriteContext, m *a
 }
 
 // GetAgentMemory returns the row by id, enforcing project isolation.
-// A row from a different project returns (nil, nil) — same as "not
-// found" — to avoid leaking existence.
+//
+// Behavior matrix:
+//   - Row in active project             → (*AgentMemory, nil)
+//   - Row in different project          → (nil, *CrossProjectAccessError) [v2.8.0-alpha]
+//   - Row does not exist                → (nil, nil)
+//   - id <= 0                           → (nil, nil)
+//
+// v2.8.0-alpha change: pre-v2.8.0, case 2 returned (nil, nil) —
+// indistinguishable from case 3. The drift_judge on spec 681 flagged
+// this as a bug-magnet (an LLM might infer "doesn't exist" from a
+// cross-project get and silently re-create). The new error code lets
+// callers distinguish "wrong project" from "doesn't exist" via
+// errors.Is(err, store.ErrCrossProjectAccess).
+//
+// Gated by DARK_MEMORY_V280 env flag at the orchestrator layer:
+// when OFF, the orchestrator catches *CrossProjectAccessError and
+// converts to (nil, nil) for v2.7.x compat.
 func (s *Store) GetAgentMemory(ctx context.Context, id int64) (*agentmemory.AgentMemory, error) {
 	if err := s.requireProject(); err != nil {
 		return nil, err
@@ -4100,10 +4208,25 @@ func (s *Store) GetAgentMemory(ctx context.Context, id int64) (*agentmemory.Agen
 		&m.AgentID, &m.Kind, &m.MemoryType,
 		&m.Title, &m.Content, &m.Tags, &pinned,
 		&m.CreatedAt, &m.UpdatedAt, &m.ArchivedAt, &m.ExpiresAt); err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("agent_memory: get: %w", err)
+		}
+		// Row not in active project. Check if it exists elsewhere
+		// (v2.8.0-alpha: distinguish cross-project from non-existent).
+		var rowProject string
+		err := s.db.QueryRowContext(ctx,
+			`SELECT project_id FROM agent_memory WHERE id = ?`, id).Scan(&rowProject)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("agent_memory: get: %w", err)
+		if err != nil {
+			return nil, fmt.Errorf("agent_memory: cross-project probe: %w", err)
+		}
+		return nil, &store.CrossProjectAccessError{
+			RequestedProject: activeProject,
+			RowProject:       rowProject,
+			RowID:            id,
+		}
 	}
 	m.Pinned = pinned != 0
 	return &m, nil
@@ -4471,6 +4594,32 @@ func (s *Store) ListAgentMemory(ctx context.Context, f agentmemory.AgentMemoryLi
 // scope by identity (Mem0 agent_id semantics) AND by Mem0 memory
 // class. Without these the recall path was returning rows from every
 // agent in the project, defeating the cross-session isolation.
+// SearchAgentMemory runs an FTS5 BM25-ranked search over
+// content+title+tags. Returns hits in rank ASCENDING order (FTS5
+// bm25 is monotonic — lower rank = better match).
+//
+// Empty query returns ErrInvalidArgument. Caller should escape FTS5
+// operators (the tool layer does this; see internal/tools/agent_memory.go).
+//
+// v2.3.0 added Operator + AgentID + MemoryType filters so recall can
+// scope by identity (Mem0 agent_id semantics) AND by Mem0 memory
+// class. Without these the recall path was returning rows from every
+// agent in the project, defeating the cross-session isolation.
+//
+// v2.9.0 (PR-2 of the v2.9.0 plan, agent_memory row 160) added Mode
+// dispatch:
+//   - Mode = "" or "bm25" (default): pure FTS5 BM25 over content+title+tags.
+//   - Mode = "vector": brute-force cosine against stored embeddings.
+//     Requires the active embedder (Store.Embedder()) to be non-None.
+//   - Mode = "rrf": BM25 + vector arms run in parallel, fused via
+//     RRF (Cormack et al., 2009) with k=RRFK (default 60) and
+//     weights RRFWeightBM25 / RRFWeightVector (default 1.0 each).
+//
+// All non-bm25 modes share the same agent_memory rows + INV-7
+// project scope. Rows without an embedding contribute only to the
+// BM25 arm; rows without text (no FTS5 hit) contribute only to the
+// vector arm. The dispatcher returns embedder.ErrDisabled wrapped
+// when the embedder is None(); callers can fall back to Mode="bm25".
 func (s *Store) SearchAgentMemory(ctx context.Context, f agentmemory.SearchFilters) ([]agentmemory.SearchHit, error) {
 	if err := s.requireProject(); err != nil {
 		return nil, err
@@ -4481,6 +4630,37 @@ func (s *Store) SearchAgentMemory(ctx context.Context, f agentmemory.SearchFilte
 	if f.MemoryType != "" && !agentmemory.ValidMemoryType(f.MemoryType) {
 		return nil, fmt.Errorf("sqlite: SearchAgentMemory: invalid memory_type filter %q", f.MemoryType)
 	}
+
+	// Mode dispatch (PR-2). Empty == bm25; unknown strings are an
+	// error so typos surface at the call site instead of silently
+	// falling back to bm25.
+	mode := f.Mode
+	if mode == "" {
+		mode = "bm25"
+	}
+	switch mode {
+	case "bm25":
+		return s.searchByBM25(ctx, f)
+	case "vector":
+		return s.searchByVector(ctx, f)
+	case "rrf":
+		return s.searchByRRF(ctx, f)
+	default:
+		return nil, fmt.Errorf("sqlite: SearchAgentMemory: unknown mode %q (use 'bm25', 'vector', or 'rrf')", f.Mode)
+	}
+}
+
+// searchByBM25 is the pre-PR-2 path: FTS5 BM25 over content+title+tags.
+// Extracted from the original SearchAgentMemory body when the Mode
+// dispatch landed in PR-2. Behavior unchanged: returns hits in rank
+// ASCENDING order (FTS5 bm25 is monotonic; -bm25() is negated in the
+// SELECT so callers see "higher rank = better match" intuitively).
+//
+// v2.9.0 PR-3 (agent_memory row 160): when f.Entities is non-empty,
+// the result is post-filtered by s.applyEntityFilter (AND semantics
+// across the entity list, case-insensitive). The post-filter
+// preserves the original BM25 ranking; the filter only prunes.
+func (s *Store) searchByBM25(ctx context.Context, f agentmemory.SearchFilters) ([]agentmemory.SearchHit, error) {
 	activeProject := s.ActiveProject()
 
 	limit := f.Limit
@@ -4520,12 +4700,17 @@ func (s *Store) SearchAgentMemory(ctx context.Context, f agentmemory.SearchFilte
 		       COALESCE(row.title, ''), row.content, COALESCE(row.tags, ''),
 		       row.pinned, row.created_at, row.updated_at,
 		       COALESCE(row.archived_at, ''), COALESCE(row.expires_at, ''),
-		       bm25(fts.agent_memory_fts) AS rank
+		       -- FTS5 bm25() returns NEGATIVE scores (lower = better).
+		       -- Negate so hits are ranked DESCENDING by score (higher
+		       -- = better, intuitive UX). Internal sort still uses
+		       -- the original FTS5 sign convention since we negated
+		       -- here too — see ORDER BY rank DESC.
+		       -bm25(fts.agent_memory_fts) AS rank
 		  FROM agent_memory_fts AS fts
 		  JOIN agent_memory    AS row ON row.id = fts.rowid
 		 WHERE agent_memory_fts MATCH ? AND ` + strings.Join(where, " AND ") + `
 		   AND row.archived_at IS NULL
-	  ORDER BY rank ASC
+	  ORDER BY rank DESC
 	     LIMIT ?`
 	args = append([]any{f.Query}, args...)
 	args = append(args, limit)
@@ -4553,7 +4738,8 @@ func (s *Store) SearchAgentMemory(ctx context.Context, f agentmemory.SearchFilte
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("agent_memory: search rows: %w", err)
 	}
-	return out, nil
+	// v2.9.0 PR-3: optional entity-axis filter (AND semantics).
+	return s.applyEntityFilter(ctx, out, f.Entities)
 }
 
 // nullString returns nil if s is empty, else &s. Used so empty
@@ -4573,4 +4759,303 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// --- active_subagents (v2.8.0-alpha, migration v21) -----------------
+//
+// These 4 methods implement the C2 subagent-scope-handoff contract.
+// The orchestrator (mindset_apply, agent_memory_save) is the policy
+// layer; this is the storage primitive. See
+// internal/orchestration/mindset_apply.go for the spawn_subagent path
+// and internal/orchestration/agent_memory.go for the agent_id
+// resolution chain that consults GetActiveSubagent.
+
+// SetActiveSubagent inserts-or-refreshes the (project_id, operator,
+// subagent_id) row. New spawn OR re-spawn with same subagent_id both
+// call this; PRIMARY KEY ON CONFLICT REPLACE handles both. TTL
+// defaults to 3600s if row.TTLSeconds <= 0; clamp is the orchestrator's
+// responsibility (60..86400). Emits a write_audit row (INV-1).
+func (s *Store) SetActiveSubagent(ctx context.Context, wc store.WriteContext, row *store.ActiveSubagent) (int64, error) {
+	if err := s.requireProject(); err != nil {
+		return 0, err
+	}
+	if row == nil {
+		return 0, fmt.Errorf("sqlite: SetActiveSubagent: nil row")
+	}
+	if strings.TrimSpace(row.SubagentID) == "" {
+		return 0, fmt.Errorf("sqlite: SetActiveSubagent: subagent_id required")
+	}
+	if strings.TrimSpace(row.Operator) == "" {
+		return 0, fmt.Errorf("sqlite: SetActiveSubagent: operator required")
+	}
+	projectID := projectIDOrActive(wc.ProjectID, s.activeProject)
+	ttl := row.TTLSeconds
+	if ttl <= 0 {
+		ttl = 3600
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var id int64
+	err := s.runInTx(ctx, func(tx *sql.Tx) error {
+		// INSERT OR REPLACE on the PRIMARY KEY (project_id, operator,
+		// subagent_id). Refreshing spawned_at + parent_agent_id +
+		// ttl_seconds — same row, fresh TTL.
+		res, err := tx.ExecContext(ctx, `
+			INSERT OR REPLACE INTO active_subagents (
+				project_id, operator, subagent_id, parent_agent_id,
+				spawned_at, ttl_seconds
+			) VALUES (?, ?, ?, ?, ?, ?)`,
+			projectID, row.Operator, row.SubagentID, row.ParentAgentID,
+			now, ttl)
+		if err != nil {
+			return fmt.Errorf("active_subagents: upsert: %w", err)
+		}
+		id, err = res.LastInsertId()
+		if err != nil {
+			return fmt.Errorf("active_subagents: last insert id: %w", err)
+		}
+
+		// INV-1: write_audit row in the same tx.
+		if wc.WritePath == "" {
+			wc.WritePath = "SetActiveSubagent"
+		}
+		if err := s.recordWriteLockedTx(ctx, tx, audit.WriteEvent{
+			TableName:       "active_subagents",
+			RowID:           id,
+			ProjectID:       projectID,
+			Actor:           wc.Actor,
+			SessionID:       "",
+			WritePath:       wc.WritePath,
+			ConstitutionID:  wc.ConstitutionID,
+			ConstitutionVer: wc.ConstitutionVer,
+			CreatedAt:       now,
+		}, ""); err != nil {
+			return fmt.Errorf("active_subagents: audit: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	row.ID = id
+	row.ProjectID = projectID
+	row.SpawnedAt = now
+	row.TTLSeconds = ttl
+	return id, nil
+}
+
+// GetActiveSubagent returns the most-recent non-expired active
+// subagent for (active_project, operator). "Most-recent" = latest
+// spawned_at. Returns (nil, nil) when none active or all expired.
+//
+// Filter happens in Go (not SQL) because we need to compare
+// (spawned_at + ttl_seconds) to now, and SQLite date arithmetic
+// with strftime is brittle (timezone edge cases on TEXT RFC3339Nano
+// values). One row by (project_id, operator) is small enough that
+// the in-Go filter is fine.
+func (s *Store) GetActiveSubagent(ctx context.Context, operator string) (*store.ActiveSubagent, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(operator) == "" {
+		return nil, nil
+	}
+	activeProject := s.ActiveProject()
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, project_id, operator, subagent_id, parent_agent_id,
+		       spawned_at, ttl_seconds
+		  FROM active_subagents
+		 WHERE project_id = ? AND operator = ?
+		 ORDER BY spawned_at DESC
+		 LIMIT 1`, activeProject, operator)
+	if err != nil {
+		return nil, fmt.Errorf("active_subagents: get: %w", err)
+	}
+	defer rows.Close()
+
+	if !rows.Next() {
+		return nil, nil
+	}
+
+	var row store.ActiveSubagent
+	if err := rows.Scan(&row.ID, &row.ProjectID, &row.Operator, &row.SubagentID,
+		&row.ParentAgentID, &row.SpawnedAt, &row.TTLSeconds); err != nil {
+		return nil, fmt.Errorf("active_subagents: scan: %w", err)
+	}
+
+	// TTL filter (Go-side; defense-in-depth if sweeper missed one).
+	if isExpired(row.SpawnedAt, row.TTLSeconds) {
+		return nil, nil
+	}
+	return &row, nil
+}
+
+// ClearActiveSubagent removes the (project_id, operator, subagent_id)
+// binding. Returns store.ErrNotFound if no matching row (no rows
+// affected). Emits a write_audit row (INV-1).
+func (s *Store) ClearActiveSubagent(ctx context.Context, wc store.WriteContext, operator, subagentID string) error {
+	if err := s.requireProject(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(operator) == "" {
+		return fmt.Errorf("sqlite: ClearActiveSubagent: operator required")
+	}
+	if strings.TrimSpace(subagentID) == "" {
+		return fmt.Errorf("sqlite: ClearActiveSubagent: subagent_id required")
+	}
+	projectID := projectIDOrActive(wc.ProjectID, s.activeProject)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	err := s.runInTx(ctx, func(tx *sql.Tx) error {
+		// Fetch the row first so we can audit by its ID + the
+		// parent_agent_id for provenance.
+		var rowID int64
+		var parentAgentID string
+		if err := tx.QueryRowContext(ctx, `
+			SELECT id, parent_agent_id
+			  FROM active_subagents
+			 WHERE project_id = ? AND operator = ? AND subagent_id = ?`,
+			projectID, operator, subagentID,
+		).Scan(&rowID, &parentAgentID); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return store.ErrNotFound
+			}
+			return fmt.Errorf("active_subagents: lookup: %w", err)
+		}
+
+		res, err := tx.ExecContext(ctx, `
+			DELETE FROM active_subagents
+			 WHERE project_id = ? AND operator = ? AND subagent_id = ?`,
+			projectID, operator, subagentID)
+		if err != nil {
+			return fmt.Errorf("active_subagents: delete: %w", err)
+		}
+		n, _ := res.RowsAffected()
+		if n == 0 {
+			return store.ErrNotFound
+		}
+
+		// INV-1: write_audit row in the same tx.
+		if wc.WritePath == "" {
+			wc.WritePath = "ClearActiveSubagent"
+		}
+		now := time.Now().UTC().Format(time.RFC3339Nano)
+		if err := s.recordWriteLockedTx(ctx, tx, audit.WriteEvent{
+			TableName:       "active_subagents",
+			RowID:           rowID,
+			ProjectID:       projectID,
+			Actor:           wc.Actor,
+			SessionID:       "",
+			WritePath:       wc.WritePath,
+			ConstitutionID:  wc.ConstitutionID,
+			ConstitutionVer: wc.ConstitutionVer,
+			CreatedAt:       now,
+		}, ""); err != nil {
+			return fmt.Errorf("active_subagents: audit: %w", err)
+		}
+		return nil
+	})
+	return err
+}
+
+// SweepExpiredSubagents deletes rows where spawned_at + ttl_seconds <
+// now across ALL projects (no active_project filter; the sweeper is
+// project-agnostic — TTL is a per-row clock). Called from
+// orchestrator-level SessionStart hook. Returns deleted count.
+// Idempotent.
+func (s *Store) SweepExpiredSubagents(ctx context.Context) (int64, error) {
+	// Fetch candidate rows + filter in Go (consistent with
+	// GetActiveSubagent's date-math avoidance).
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT id, project_id, operator, subagent_id, spawned_at, ttl_seconds
+		  FROM active_subagents`)
+	if err != nil {
+		return 0, fmt.Errorf("active_subagents: sweep-select: %w", err)
+	}
+	type cand struct {
+		id        int64
+		projectID string
+		operator  string
+		subagent  string
+	}
+	var cands []cand
+	for rows.Next() {
+		var c cand
+		var spawnedAt string
+		var ttl int
+		if err := rows.Scan(&c.id, &c.projectID, &c.operator, &c.subagent, &spawnedAt, &ttl); err != nil {
+			rows.Close()
+			return 0, fmt.Errorf("active_subagents: sweep-scan: %w", err)
+		}
+		if isExpired(spawnedAt, ttl) {
+			cands = append(cands, c)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("active_subagents: sweep-rows: %w", err)
+	}
+
+	if len(cands) == 0 {
+		return 0, nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var deleted int64
+	for _, c := range cands {
+		err := s.runInTx(ctx, func(tx *sql.Tx) error {
+			res, err := tx.ExecContext(ctx, `
+				DELETE FROM active_subagents
+				 WHERE id = ? AND project_id = ? AND operator = ? AND subagent_id = ?`,
+				c.id, c.projectID, c.operator, c.subagent)
+			if err != nil {
+				return fmt.Errorf("active_subagents: sweep-delete: %w", err)
+			}
+			n, _ := res.RowsAffected()
+			if n > 0 {
+				deleted++
+				// INV-1: write_audit row in the same tx.
+				now := time.Now().UTC().Format(time.RFC3339Nano)
+				if err := s.recordWriteLockedTx(ctx, tx, audit.WriteEvent{
+					TableName:       "active_subagents",
+					RowID:           c.id,
+					ProjectID:       c.projectID,
+					Actor:           "system/sweeper",
+					SessionID:       "",
+					WritePath:       "SweepExpiredSubagents",
+					ConstitutionID:  "",
+					ConstitutionVer: "",
+					CreatedAt:       now,
+				}, ""); err != nil {
+					return fmt.Errorf("active_subagents: sweep-audit: %w", err)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return deleted, err
+		}
+	}
+	return deleted, nil
+}
+
+// isExpired reports whether (RFC3339Nano spawnedAt + ttlSeconds) is
+// before now. Returns true on parse errors (defensive: a row with
+// bad data is treated as expired so the sweeper reaps it).
+func isExpired(spawnedAt string, ttlSeconds int) bool {
+	t, err := time.Parse(time.RFC3339Nano, spawnedAt)
+	if err != nil {
+		return true
+	}
+	expiry := t.Add(time.Duration(ttlSeconds) * time.Second)
+	return time.Now().UTC().After(expiry)
 }

@@ -1,6 +1,6 @@
 {
   "name": "@opitacode/dark-memory-mcp-win32-x64",
-  "version": "2.7.1",
+  "version": "2.9.3-alpha",
   "description": "dark-memory-mcp binary for Windows (x86_64)",
   "license": "MIT",
   "main": "index.js",

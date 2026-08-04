@@ -17,8 +17,10 @@
 #   1. $DARK_VERSION env var (operator override for canary builds).
 #   2. `git describe --tags --always --dirty` output.
 #        - "v1.3.2" → "1.3.2"
+#        - "v1.3.2-alpha" → "1.3.2-alpha"  (pre-release suffix)
+#        - "v1.3.2-rc.1" → "1.3.2-rc.1"   (release-candidate suffix)
 #        - "v1.3.2-3-gabc1234" → "1.3.2-3-gabc1234" (N commits past tag)
-#        - "v1.3.2-dirty" → "1.3.2-dirty" (working tree had changes)
+#        - "v1.3.2-alpha-3-gabc1234-dirty" → "1.3.2-alpha-3-gabc1234-dirty"
 #        - "abc1234" (no tag) → "0.0.0-dev-abc1234"
 #   3. If git is unavailable: print "dev" with a warning to stderr.
 #
@@ -57,19 +59,14 @@ else
     if command -v git >/dev/null 2>&1; then
         if git describe --tags --always --dirty >/dev/null 2>&1; then
             describe="$(git describe --tags --always --dirty)"
-            if [[ "$describe" =~ ^v?([0-9]+\.[0-9]+\.[0-9]+)(-([0-9]+)-g([0-9a-f]+))?(-dirty)?$ ]]; then
-                tag="${BASH_REMATCH[1]}"
-                commits="${BASH_REMATCH[3]:-}"
-                sha="${BASH_REMATCH[4]:-}"
-                dirty="${BASH_REMATCH[5]:-}"
-                if [[ -n "$commits" && -n "$sha" ]]; then
-                    version="${tag}-${commits}-g${sha}${dirty}"
-                else
-                    version="${tag}${dirty}"
-                fi
+            # Strip optional leading 'v' so the regex below stays simple.
+            stripped="${describe#v}"
+            # Accept: X.Y.Z optional pre-release (alpha|beta|rc.N) optional -N-gSHA optional -dirty
+            if [[ "$stripped" =~ ^([0-9]+\.[0-9]+\.[0-9]+)(-(alpha|beta|rc\.[0-9]+))?(-([0-9]+)-g([0-9a-f]+))?(-dirty)?$ ]]; then
+                version="$stripped"
                 source="git"
-            elif [[ "$describe" =~ ^[0-9a-f]+$ ]]; then
-                version="0.0.0-dev-${describe}"
+            elif [[ "$stripped" =~ ^[0-9a-f]+$ ]]; then
+                version="0.0.0-dev-${stripped}"
                 source="git-sha-only"
             else
                 version="dev"

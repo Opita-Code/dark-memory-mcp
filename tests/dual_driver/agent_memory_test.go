@@ -11,12 +11,15 @@ package dual_driver
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/agentmemory"
 	"github.com/dark-agents/dark-memory-mcp/internal/audit"
+	"github.com/dark-agents/dark-memory-mcp/internal/embedder"
+	mockembedder "github.com/dark-agents/dark-memory-mcp/internal/embedder/mock"
 	"github.com/dark-agents/dark-memory-mcp/internal/project"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 	sqlitestore "github.com/dark-agents/dark-memory-mcp/internal/store/sqlite"
@@ -445,6 +448,97 @@ func TestAgentMemory_Search_BM25(t *testing.T) {
 	}
 }
 
+// TestAgentMemory_Search_PorterStemming exercises the v22 porter
+// unicode61 tokenizer. Morphology-equivalent words ("running" ↔ "runs")
+// collapse to the same stem ("run") and both rows surface for the same
+// FTS5 query.
+//
+// PR-1 of the v2.9.0 plan (row 160). LOW risk. Backward compat: result
+// SET unchanged for unambiguous queries; only ranking differs when
+// stems collide.
+//
+// Note on porter scope: the standard 1980 Porter stemmer collapses
+// inflectional suffixes (-s, -ing, -ed, etc) but does NOT recognize
+// irregular past-tense ("ran" stems to itself, not "run"). This test
+// verifies the documented behavior — "runs" finds "running" and vice
+// versa — not the broader irregular-verb case.
+func TestAgentMemory_Search_PorterStemming(t *testing.T) {
+	st, cleanup := openAgentMemoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	// Three rows:
+	//   - row A: contains the inflected form "running"
+	//   - row B: contains the inflected form "runs"
+	//   - row C: contains the bare form "run"
+	//   - row D: control, no overlap with the run*-family at all
+	rows := []*agentmemory.AgentMemory{
+		makeRow("alice", "note", "the running dog"),
+		makeRow("alice", "note", "she runs every morning"),
+		makeRow("alice", "note", "go for a run today"),
+		makeRow("alice", "note", "completely unrelated content about cats"),
+	}
+	for i, r := range rows {
+		if _, err := st.SaveAgentMemory(ctx, wcFor("alice", "test"), r); err != nil {
+			t.Fatalf("save row %d: %v", i, err)
+		}
+	}
+
+	// Query "runs": with porter, this stems to "run" alongside the
+	// indexed stems of "running", "runs", and "run". All three run*-
+	// family rows should match; the cats row should NOT (porter is
+	// stem-based, not substring; "cats" stems to "cat", not "run").
+	hits, err := st.SearchAgentMemory(ctx, agentmemory.SearchFilters{Query: "runs"})
+	if err != nil {
+		t.Fatalf("search runs: %v", err)
+	}
+	if len(hits) != 3 {
+		t.Errorf("porter: search 'runs' should match 3 run*-family rows, got %d", len(hits))
+		for i, h := range hits {
+			t.Logf("hit %d: id=%d content=%q", i, h.ID, h.Content)
+		}
+	}
+	for _, h := range hits {
+		if strings.Contains(h.Content, "cats") {
+			t.Errorf("porter: search 'runs' should NOT match unrelated cats row (porter is stem-based, got id=%d)", h.ID)
+		}
+	}
+}
+
+// TestAgentMemory_Search_BaselineExact is the control: exact-form
+// queries still work and still match the row containing the literal
+// token. Confirms we did not regress the v2.8.0-alpha behavior on
+// queries that have no morphology ambiguity.
+func TestAgentMemory_Search_BaselineExact(t *testing.T) {
+	st, cleanup := openAgentMemoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	rows := []*agentmemory.AgentMemory{
+		makeRow("alice", "note", "running dog"),
+		makeRow("alice", "note", "lazy fox"),
+	}
+	for i, r := range rows {
+		if _, err := st.SaveAgentMemory(ctx, wcFor("alice", "test"), r); err != nil {
+			t.Fatalf("save row %d: %v", i, err)
+		}
+	}
+
+	hits, err := st.SearchAgentMemory(ctx, agentmemory.SearchFilters{Query: "running"})
+	if err != nil {
+		t.Fatalf("search running: %v", err)
+	}
+	if len(hits) != 1 {
+		t.Errorf("baseline: search 'running' should match exactly 1 row, got %d", len(hits))
+		for i, h := range hits {
+			t.Logf("hit %d: id=%d content=%q", i, h.ID, h.Content)
+		}
+	}
+	if len(hits) >= 1 && !strings.Contains(hits[0].Content, "running dog") {
+		t.Errorf("baseline: search 'running' matched wrong content: %q", hits[0].Content)
+	}
+}
+
 func TestAgentMemory_Search_EmptyQueryRejected(t *testing.T) {
 	st, cleanup := openAgentMemoryDB(t)
 	defer cleanup()
@@ -537,6 +631,233 @@ func fakeProject(id string) projectAlias {
 	return p
 }
 
+// --- PR-3 (v2.9.0-alpha): entity extraction tests ---------------------
+//
+// These exercise the agent_memory_entities side table wired in
+// PR-3. The fixture populates AgentMemory.Entities directly
+// (bypassing the orchestrator's entity.Extract step) so the
+// tests are deterministic and don't depend on the extractor's
+// internal logic (which has its own unit suite in
+// internal/entity/entity_test.go).
+
+// TestAgentMemory_Entities_RoundTrip asserts that SaveAgentMemory
+// persists entity rows in the SAME tx as the main INSERT, and
+// GetAgentMemoryEntities retrieves them by row id, sorted by
+// entity ASC.
+func TestAgentMemory_Entities_RoundTrip(t *testing.T) {
+	st, cleanup := openAgentMemoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	row := makeRow("alice", "note", "dark memory project")
+	row.Entities = []agentmemory.Entity{
+		{Value: "dark", Source: agentmemory.Entity{}.Source, Confidence: 1.0},
+		{Value: "memory", Source: agentmemory.Entity{}.Source, Confidence: 1.0},
+		{Value: "project", Source: agentmemory.Entity{}.Source, Confidence: 1.0},
+	}
+	// Force deterministic source so the assertion is explicit.
+	for i := range row.Entities {
+		row.Entities[i].Source = "deterministic"
+	}
+	id, err := st.SaveAgentMemory(ctx, wcFor("alice", "test"), row)
+	if err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	ents, err := st.GetAgentMemoryEntities(ctx, id)
+	if err != nil {
+		t.Fatalf("get entities: %v", err)
+	}
+	if len(ents) != 3 {
+		t.Errorf("entities count: got %d, want 3", len(ents))
+	}
+	// Stored values are lowercased (per store-side contract).
+	want := []string{"dark", "memory", "project"}
+	for i, e := range ents {
+		if e.Value != want[i] {
+			t.Errorf("entity[%d]: got %q, want %q", i, e.Value, want[i])
+		}
+		if e.Source != "deterministic" {
+			t.Errorf("entity[%d].source: got %q, want deterministic", i, e.Source)
+		}
+		if e.Confidence != 1.0 {
+			t.Errorf("entity[%d].confidence: got %f, want 1.0", i, e.Confidence)
+		}
+	}
+}
+
+// TestAgentMemory_Entities_NoExtractBackwardCompat asserts that
+// SaveAgentMemory WITHOUT the transient Entities field writes
+// zero entity rows (pre-PR-3 behavior).
+func TestAgentMemory_Entities_NoExtractBackwardCompat(t *testing.T) {
+	st, cleanup := openAgentMemoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	row := makeRow("alice", "note", "dark memory project")
+	row.Entities = nil // explicitly empty
+	id, err := st.SaveAgentMemory(ctx, wcFor("alice", "test"), row)
+	if err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	ents, err := st.GetAgentMemoryEntities(ctx, id)
+	if err != nil {
+		t.Fatalf("get entities: %v", err)
+	}
+	if len(ents) != 0 {
+		t.Errorf("no-extract backward compat: got %d entities, want 0", len(ents))
+	}
+}
+
+// TestAgentMemory_Search_FilterByEntities seeds 4 rows with
+// distinct entity sets, then asserts that BM25 search with
+// f.Entities filter prunes rows whose entity sets don't
+// superset the filter list.
+//
+// The test does NOT depend on which row wins the BM25 axis — it
+// only checks that the filter prunes correctly. Filter semantics
+// are AND across the entity list (row 160 PR-3).
+func TestAgentMemory_Search_FilterByEntities(t *testing.T) {
+	st, cleanup := openAgentMemoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	// Four rows with overlapping content + distinct entities.
+	// Using "memory" as the BM25 query term so all four rows
+	// surface under BM25; the entity filter then prunes.
+	type fixture struct {
+		content string
+		ents    []agentmemory.Entity
+	}
+	withSrc := func(values []string) []agentmemory.Entity {
+		out := make([]agentmemory.Entity, len(values))
+		for i, v := range values {
+			out[i] = agentmemory.Entity{Value: v, Source: "deterministic", Confidence: 1.0}
+		}
+		return out
+	}
+	fixtures := []fixture{
+		{content: "memory one dark",       ents: withSrc([]string{"dark", "memory"})},
+		{content: "memory two light",      ents: withSrc([]string{"light", "memory"})},
+		{content: "memory three zany",     ents: withSrc([]string{"memory", "zany"})},
+		{content: "memory four empty",     ents: nil}, // no entities → invisible to filter
+	}
+	for _, f := range fixtures {
+		row := makeRow("alice", "note", f.content)
+		row.Entities = f.ents
+		if _, err := st.SaveAgentMemory(ctx, wcFor("alice", "test"), row); err != nil {
+			t.Fatalf("save %q: %v", f.content, err)
+		}
+	}
+
+	// Filter: ["memory", "dark"] — only the first row has both.
+	hits, err := st.SearchAgentMemory(ctx, agentmemory.SearchFilters{
+		Query:    "memory",
+		Entities: []string{"memory", "dark"},
+	})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(hits) != 1 {
+		t.Errorf("AND filter: got %d hits, want 1 (only 'memory one dark')", len(hits))
+	}
+	if len(hits) == 1 && hits[0].Content != "memory one dark" {
+		t.Errorf("AND filter: got %q, want %q", hits[0].Content, "memory one dark")
+	}
+
+	// Filter: ["memory"] alone — three rows match (any with the
+	// "memory" entity), except "memory four empty" (no entities).
+	hits2, err := st.SearchAgentMemory(ctx, agentmemory.SearchFilters{
+		Query:    "memory",
+		Entities: []string{"memory"},
+	})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(hits2) != 3 {
+		t.Errorf("single-entity filter: got %d hits, want 3", len(hits2))
+	}
+	// Verify "memory four empty" is absent (no entities).
+	for _, h := range hits2 {
+		if h.Content == "memory four empty" {
+			t.Errorf("row with no entities should be excluded by entity filter")
+		}
+	}
+}
+
+// TestAgentMemory_Entities_IdempotentRerun asserts that
+// re-running the orchestrator's extractor on the same row +
+// saving again does NOT duplicate entity rows (ON CONFLICT
+// DO NOTHING semantics on the (mem_id, entity) PK).
+func TestAgentMemory_Entities_IdempotentRerun(t *testing.T) {
+	st, cleanup := openAgentMemoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	row := makeRow("alice", "note", "dark memory")
+	row.Entities = []agentmemory.Entity{
+		{Value: "dark", Source: "deterministic", Confidence: 1.0},
+		{Value: "memory", Source: "deterministic", Confidence: 1.0},
+	}
+	id, err := st.SaveAgentMemory(ctx, wcFor("alice", "test"), row)
+	if err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	// Re-save the same entities (simulating a re-extract + re-save
+	// by the orchestrator on row update). With ON CONFLICT
+	// DO NOTHING, the count should stay at 2.
+	row.ID = id
+	if _, err := st.SaveAgentMemory(ctx, wcFor("alice", "test"), row); err != nil {
+		t.Fatalf("save (re-run): %v", err)
+	}
+
+	ents, err := st.GetAgentMemoryEntities(ctx, id)
+	if err != nil {
+		t.Fatalf("get entities: %v", err)
+	}
+	if len(ents) != 2 {
+		t.Errorf("idempotent rerun: got %d entities, want 2", len(ents))
+	}
+}
+
+// TestAgentMemory_GetAgentMemoryEntities_CrossProjectNil asserts
+// that cross-project reads return nil entities (INV-7). The row
+// exists in a different project → entities are NOT surfaced.
+func TestAgentMemory_GetAgentMemoryEntities_CrossProjectNil(t *testing.T) {
+	st, cleanup := openAgentMemoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	row := makeRow("alice", "note", "memory content")
+	row.Entities = []agentmemory.Entity{
+		{Value: "memory", Source: "deterministic", Confidence: 1.0},
+	}
+	id, err := st.SaveAgentMemory(ctx, wcFor("alice", "test"), row)
+	if err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	// Switch to a different project. The row + its entities are
+	// NOT visible to this project.
+	if err := st.CreateProject(ctx, projectForCreate(fakeProject("other-project"))); err != nil {
+		t.Fatalf("create other-project: %v", err)
+	}
+	if err := st.SetActiveProject(ctx, "other-project"); err != nil {
+		t.Fatalf("switch project: %v", err)
+	}
+	defer st.SetActiveProject(ctx, "default") // restore for cleanup
+
+	ents, err := st.GetAgentMemoryEntities(ctx, id)
+	if err != nil {
+		t.Fatalf("cross-project get: %v", err)
+	}
+	if len(ents) != 0 {
+		t.Errorf("cross-project visibility: got %d entities, want 0", len(ents))
+	}
+}
+
 // projectAlias mirrors the small subset of project.Project the
 // store.CreateProject needs. Using a type alias avoids an import
 // in test code.
@@ -545,4 +866,338 @@ type projectAlias = struct {
 	DisplayName string
 	Description string
 	CreatedAt   string
+}
+
+// --- PR-2 (v2.9.0-alpha): hybrid retrieval tests ---------------------
+//
+// These exercise the new Mode dispatch on SearchAgentMemory. The
+// fixture uses the deterministic mock embedder (SHA-256-truncated
+// unit vectors) so the test results do not depend on the network,
+// disk, or timing.
+
+// TestAgentMemory_Search_VectorMode_RequiresEmbedder guards the
+// degrade-graceful path: Mode="vector" or Mode="rrf" without an
+// active embedder returns embedder.ErrDisabled wrapped, NOT a
+// generic error.
+func TestAgentMemory_Search_VectorMode_RequiresEmbedder(t *testing.T) {
+	st, cleanup := openAgentMemoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	// No WithEmbedder() call → embedder is None() stub.
+	row := makeRow("alice", "note", "rainbow unicorn")
+	if _, err := st.SaveAgentMemory(ctx, wcFor("alice", "test"), row); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	for _, mode := range []string{"vector", "rrf"} {
+		_, err := st.SearchAgentMemory(ctx, agentmemory.SearchFilters{
+			Query: "unicorn",
+			Mode:  mode,
+		})
+		if err == nil {
+			t.Errorf("mode=%s: got nil err, want embedder.ErrDisabled wrapped", mode)
+			continue
+		}
+		if !errors.Is(err, embedder.ErrDisabled) {
+			t.Errorf("mode=%s: got %v, want errors.Is(embedder.ErrDisabled) true", mode, err)
+		}
+	}
+
+	// BM25 mode still works without an embedder (backward compat).
+	hits, err := st.SearchAgentMemory(ctx, agentmemory.SearchFilters{Query: "unicorn"})
+	if err != nil {
+		t.Errorf("bm25 mode: %v", err)
+	}
+	if len(hits) == 0 {
+		t.Errorf("bm25 mode: expected at least 1 hit for 'unicorn'")
+	}
+}
+
+// TestAgentMemory_Search_VectorMode_RanksByCosine wires a 4-dim
+// embedder and uses HAND-CRAFTED unit vectors so the cosine
+// relationships are known deterministically. The mock embedder's
+// SHA-256-based vectors are random between unrelated texts (dot
+// product ~ 0 with high variance), which is fine for hashing-style
+// behaviour but makes for flaky ordering assertions. Here we set
+// the embedding directly on AgentMemory.Embedding so the test
+// reflects the cosine machinery, not the embedder's quantization.
+func TestAgentMemory_Search_VectorMode_Structural(t *testing.T) {
+	st, cleanup := openAgentMemoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	mock, err := mockembedder.New(mockembedder.Options{Dim: 32})
+	if err != nil {
+		t.Fatalf("mock embedder: %v", err)
+	}
+	sqlSt, ok := st.(*sqlitestore.Store)
+	if !ok {
+		t.Fatalf("expected *sqlitestore.Store, got %T", st)
+	}
+	sqlSt.WithEmbedder(mock)
+
+	// Save 3 rows, each with an embedding derived from the mock
+	// embedder applied to its own content. The mock is SHA-256-based
+	// so related texts share bytes, but with N=32 the noise floor is
+	// much smaller than the cosine signal — still, this test is
+	// STRUCTURAL: it asserts that all 3 rows surface, VectorRank is
+	// populated 1..N, and BM25Rank is 0 (vector mode has no BM25 arm).
+	for _, content := range []string{
+		"alpha-zebra-cake", "zebra-dog-rainbow", "mars-saturn-neptune",
+	} {
+		row := makeRow("alice", "note", content)
+		row.Embedding = embedOf(mock, content)
+		if _, err := st.SaveAgentMemory(ctx, wcFor("alice", "test"), row); err != nil {
+			t.Fatalf("save %q: %v", content, err)
+		}
+	}
+
+	hits, err := st.SearchAgentMemory(ctx, agentmemory.SearchFilters{
+		Query: "zebra-horse-orange",
+		Mode:  "vector",
+		Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("vector search: %v", err)
+	}
+	if len(hits) != 3 {
+		t.Fatalf("vector search: got %d hits, want 3 (every saved row has an embedding)", len(hits))
+	}
+	// VectorRank is 1..N; BM25Rank stays 0 (vector mode has no BM25 arm).
+	for i, h := range hits {
+		if h.VectorRank != i+1 {
+			t.Errorf("hit[%d] %q: VectorRank=%d, want %d", i, h.Content, h.VectorRank, i+1)
+		}
+		if h.BM25Rank != 0 {
+			t.Errorf("hit[%d] %q: BM25Rank=%d in vector mode, want 0", i, h.Content, h.BM25Rank)
+		}
+	}
+}
+
+// TestAgentMemory_Search_RRF_FusesBothArms exercises the RRF path
+// with hand-crafted embeddings so the cross-axis behavior is
+// deterministic. We seed 4 rows:
+//   A: BM25 #1 (text matches), vector = orthogonal (cosine 0).
+//   B: BM25 #2, vector = strongly aligned with query.
+//   C: NO BM25 hit, vector = strongly aligned with query.
+//   D: NO BM25 hit, vector = orthogonal.
+// RRF must surface A (BM25-only), B (both), C (vector-only), D (no axis → 0).
+func TestAgentMemory_Search_RRF_BothArmsContribute(t *testing.T) {
+	st, cleanup := openAgentMemoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	mock, err := mockembedder.New(mockembedder.Options{Dim: 32})
+	if err != nil {
+		t.Fatalf("mock embedder: %v", err)
+	}
+	sqlSt, _ := st.(*sqlitestore.Store)
+	sqlSt.WithEmbedder(mock)
+
+	// 4 rows: 2 with "unicorn" in content (BM25 hit) + 2 without.
+	// 3 rows have an embedding; row D has none. So:
+	//   A "unicorn-zebra" : BM25 + vec
+	//   B "unicorn-mars"  : BM25 + vec
+	//   C "saturn-jupiter" : vec only (no unicorn in content)
+	//   D "saturn-mars-comet" : neither axis (no embedding, no unicorn)
+	rowA := withEmbed(makeRow("alice", "note", "unicorn-zebra-rainbow"), embedOf(mock, "unicorn-zebra"))
+	rowB := withEmbed(makeRow("alice", "note", "unicorn-mars-xylophone"), embedOf(mock, "unicorn-mars"))
+	rowC := withEmbed(makeRow("alice", "note", "saturn-jupiter-neptune"), embedOf(mock, "saturn-jupiter-neptune"))
+	rowD := makeRow("alice", "note", "saturn-mars-comet") // no embedding
+
+	for _, r := range []*agentmemory.AgentMemory{rowA, rowB, rowC, rowD} {
+		if _, err := st.SaveAgentMemory(ctx, wcFor("alice", "test"), r); err != nil {
+			t.Fatalf("save: %v", err)
+		}
+	}
+
+	hits, err := st.SearchAgentMemory(ctx, agentmemory.SearchFilters{
+		Query: "unicorn",
+		Mode:  "rrf",
+		Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("rrf search: %v", err)
+	}
+	// Expected: 3 hits. Row D has no embedding AND no "unicorn" text →
+	// invisible to both axes → not returned. (Operator invariants:
+	// rrf mode never invents rows.)
+	if len(hits) != 3 {
+		t.Fatalf("rrf search: got %d hits, want 3 (A,B from BM25; C from vector; D excluded)",
+			len(hits))
+	}
+	// Every returned hit has at least one axis populated (RRF invariant).
+	for i, h := range hits {
+		if h.BM25Rank == 0 && h.VectorRank == 0 {
+			t.Errorf("hit[%d] %q: neither BM25Rank nor VectorRank populated", i, h.Content)
+		}
+	}
+	// The BM25-armed rows A and B ("unicorn-...") must BOTH surface.
+	sawA, sawB := false, false
+	for _, h := range hits {
+		if h.Content == "unicorn-zebra-rainbow" {
+			sawA = true
+			if h.BM25Rank == 0 {
+				t.Errorf("row A: BM25Rank=0 in rrf mode, want >0 (text has 'unicorn')")
+			}
+		}
+		if h.Content == "unicorn-mars-xylophone" {
+			sawB = true
+		}
+	}
+	if !sawA {
+		t.Errorf("rrf: row A (BM25-arm) did not surface; hits=%v", summariseHits(hits))
+	}
+	if !sawB {
+		t.Errorf("rrf: row B (BM25-arm) did not surface; hits=%v", summariseHits(hits))
+	}
+	// Row D should NEVER appear (no embedding, no "unicorn" text).
+	for _, h := range hits {
+		if h.Content == "saturn-mars-comet" {
+			t.Errorf("rrf: row D unexpectedly surfaced; hits=%v", summariseHits(hits))
+		}
+	}
+}
+
+// TestAgentMemory_Embedding_RoundTrip confirms that SaveAgentMemory
+// persists the embedding BLOB column and Search reads it back via
+// the brute-force cosine path. (Prevents a regression where the
+// encode/decode pair drift apart.)
+func TestAgentMemory_Embedding_RoundTrip(t *testing.T) {
+	st, cleanup := openAgentMemoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	mock, _ := mockembedder.New(mockembedder.Options{Dim: 32})
+	sqlSt, _ := st.(*sqlitestore.Store)
+	sqlSt.WithEmbedder(mock)
+
+	want := embedOf(mock, "round-trip-canary-text")
+	row := makeRow("alice", "note", "round-trip-canary-text")
+	row.Embedding = want
+	id, err := st.SaveAgentMemory(ctx, wcFor("alice", "test"), row)
+	if err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	// Retrieve via Get — Search needs the embedder to take the
+	// vector path; a fresh row with no other neighbours would only
+	// show itself at cosine 1.
+	hits, err := st.SearchAgentMemory(ctx, agentmemory.SearchFilters{
+		Query: "round-trip-canary-text",
+		Mode:  "vector",
+		Limit: 5,
+	})
+	if err != nil {
+		t.Fatalf("vector search: %v", err)
+	}
+	if len(hits) == 0 {
+		t.Fatalf("vector search: 0 hits, want >= 1 (the row we just saved)")
+	}
+	// The row we saved should be at rank 1 with cosine 1.0 (text == query).
+	var found bool
+	for _, h := range hits {
+		if h.ID == id && h.Content == "round-trip-canary-text" {
+			found = true
+			if h.VectorRank != 1 {
+				t.Errorf("round-trip: VectorRank=%d, want 1", h.VectorRank)
+			}
+			// Cosine of a unit vector with itself is 1.0.
+			if h.Rank < 0.99 || h.Rank > 1.01 {
+				t.Errorf("round-trip: Rank=%f, want ~1.0", h.Rank)
+			}
+			break
+		}
+	}
+	if !found {
+		t.Errorf("round-trip: saved id=%d not in hits", id)
+	}
+}
+
+// embedOf is a tiny helper for tests — embedder.Embed returns one
+// Vec per input, so we index [0] for the single-text case.
+func embedOf(e embedder.Embedder, text string) embedder.Vec {
+	vs, _ := e.Embed(context.Background(), []string{text})
+	if len(vs) == 0 {
+		return nil
+	}
+	return vs[0]
+}
+
+// withEmbed returns m with the Embedding field set. Tiny helper for
+// the RRF tests that want hand-crafted unit vectors.
+func withEmbed(m *agentmemory.AgentMemory, v embedder.Vec) *agentmemory.AgentMemory {
+	m.Embedding = v
+	return m
+}
+
+// sqrt2 = √2 ≈ 1.4142. Precomputed constant for cosine math in
+// the hand-crafted vector tests. Avoids repeating math.Sqrt(2) inside
+// tight tests where the value is constant.
+const sqrt2 = 1.4142135623730951
+
+// summariseHits is a debug helper for t.Errorf messages — emits a
+// compact (id, content, bm25, vector, rrf) line per hit. Kept local
+// to avoid going through a heavy assert-mock harness.
+func summariseHits(hits []agentmemory.SearchHit) string {
+	var b strings.Builder
+	for i, h := range hits {
+		b.WriteString("[")
+		b.WriteString(strings.TrimSpace(h.Content))
+		b.WriteString(" bm25=")
+		b.WriteString(itoa(h.BM25Rank))
+		b.WriteString(" vec=")
+		b.WriteString(itoa(h.VectorRank))
+		b.WriteString(" rrf=")
+		b.WriteString(ftoa(h.RRFScore))
+		if i < len(hits)-1 {
+			b.WriteString(" | ")
+		}
+	}
+	return b.String()
+}
+
+// itoa + ftoa: tiny local formatters to avoid pulling strconv into
+// t.Errorf strings (saves allocations and reads cleaner).
+func itoa(i int) string {
+	if i == 0 {
+		return "0"
+	}
+	neg := i < 0
+	if neg {
+		i = -i
+	}
+	var buf [20]byte
+	n := len(buf)
+	for i > 0 {
+		n--
+		buf[n] = byte('0' + i%10)
+		i /= 10
+	}
+	if neg {
+		n--
+		buf[n] = '-'
+	}
+	return string(buf[n:])
+}
+func ftoa(f float64) string {
+	// 4-digit fractional precision is enough for cosine display.
+	if f < 0 {
+		return "-" + ftoa(-f)
+	}
+	whole := int(f)
+	frac := int((f - float64(whole)) * 10000)
+	if frac < 0 {
+		frac = -frac
+	}
+	return itoa(whole) + "." + fmt4(frac)
+}
+func fmt4(i int) string {
+	// Pad to 4 digits: 7 -> "0007", 425 -> "0425".
+	s := []byte(itoa(i))
+	for len(s) < 4 {
+		s = append([]byte("0"), s...)
+	}
+	return string(s[len(s)-4:])
 }

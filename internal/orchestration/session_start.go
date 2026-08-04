@@ -20,6 +20,7 @@ package orchestration
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -38,6 +39,11 @@ import (
 // session. Optional; resolution priority is (1) this field, (2)
 // projects.default_agent_id, (3) empty string (no filter — v2.4.0
 // project-wide behavior).
+//
+// v2.8.0-alpha B1: ColdStart (skip ContextRecap) + ContextRecapTokens
+// (token budget for the recap; default 2000 when DARK_MEMORY_V280=1).
+// Both gated by the env flag; when off, the v2.7.x behavior is
+// preserved (recap fires unconditionally, no truncation).
 type SessionStartInput struct {
 	Operator        string `json:"operator"`
 	ProjectID       string `json:"project_id"`
@@ -50,6 +56,17 @@ type SessionStartInput struct {
 	// project-level default. Max 128 chars (matches project_create
 	// schema); not validated further.
 	AgentID string `json:"agent_id,omitempty"`
+	// ColdStart (v2.8.0-alpha B1) — when true, skip ContextRecap
+	// entirely. Useful for debug, subagent dispatch, or benchmarking
+	// (no prior decisions biasing the LLM). Default false.
+	ColdStart bool `json:"cold_start,omitempty"`
+	// ContextRecapTokens (v2.8.0-alpha B1) — token budget for the
+	// formatted ContextRecap. Default 2000 when V280=1, 0 = no
+	// truncation (legacy v2.7.x behavior). Clamped to [0, 8000] at
+	// the orchestrator layer. Truncation drops open todos first,
+	// then pinned (least recent). When truncation fires,
+	// ContextRecap.Truncated=true + TruncatedRows count dropped.
+	ContextRecapTokens int `json:"context_recap_tokens,omitempty"`
 }
 
 // SessionStartOutput is what SessionStart returns. SessionID is the
@@ -77,6 +94,12 @@ type SessionStartOutput struct {
 // starting blind. All fields are best-effort: an empty list (no
 // hits) means the project has no agent_memory rows yet (for the
 // resolved agent_id; see v2.4.1 ActiveAgentID).
+//
+// v2.8.0-alpha B1: Truncated + TruncatedRows + FormattedChars surface
+// the truncation result. Truncated=true when some rows were dropped
+// to fit the ContextRecapTokens budget; TruncatedRows is the count
+// dropped (informational); FormattedChars is the actual char count
+// of the formatted recap (budget = FormattedChars / 4 ≈ tokens).
 type ContextRecap struct {
 	// PinnedMemories is the list of pinned rows from
 	// agent_memory_list(scope=project, pinned_only=true, agent_id=...).
@@ -88,6 +111,14 @@ type ContextRecap struct {
 	// v2.4.1: filtered by resolved agent_id when set. Limited to
 	// 20 by default.
 	OpenTodos []agentmemory.AgentMemory `json:"open_todos,omitempty"`
+	// Truncated (v2.8.0-alpha B1) — true when rows were dropped to
+	// fit the ContextRecapTokens budget.
+	Truncated bool `json:"truncated,omitempty"`
+	// TruncatedRows (v2.8.0-alpha B1) — count of rows dropped.
+	TruncatedRows int `json:"truncated_rows,omitempty"`
+	// FormattedChars (v2.8.0-alpha B1) — actual char count of the
+	// formatted recap (4 chars ≈ 1 token).
+	FormattedChars int `json:"formatted_chars,omitempty"`
 }
 
 // SessionStart opens a session for the given operator + project.
@@ -179,6 +210,25 @@ func (o *Orchestrator) SessionStart(ctx context.Context, in SessionStartInput) (
 	// behavioral change).
 	recap := o.recapSessionStartMemory(ctx, activeAgentID)
 
+	// v2.8.0-alpha C2: sweep expired active_subagents on session
+	// start (precursor to F51 expired-rows sweeper for
+	// agent_memory). Best-effort — must NOT block session creation.
+	if v280Enabled() {
+		if swept, err := o.Store.SweepExpiredSubagents(ctx); err != nil {
+			log.Printf("dark-mem-mcp: session_start sweep_active_subagents err=%v", err)
+		} else if swept > 0 {
+			log.Printf("dark-mem-mcp: session_start swept %d expired subagent binding(s)", swept)
+		}
+	}
+
+	// v2.8.0-alpha B1: ColdStart + ContextRecapTokens. When
+	// DARK_MEMORY_V280=1, apply the token budget + skip-on-cold-start.
+	// When the flag is off, the recap fires unconditionally as in
+	// v2.7.x.
+	if v280Enabled() {
+		recap = o.applyContextRecapBudget(ctx, recap, in.ColdStart, in.ContextRecapTokens)
+	}
+
 	startedAt, _ := time.Parse(time.RFC3339Nano, now)
 	return &SessionStartOutput{
 		SessionID:      sess.SessionID,
@@ -209,4 +259,149 @@ func (o *Orchestrator) recapSessionStartMemory(ctx context.Context, agentID stri
 		PinnedMemories: pinned,
 		OpenTodos:      openTodos,
 	}
+}
+
+// applyContextRecapBudget is the v2.8.0-alpha B1 helper. Given a
+// freshly-built recap, returns either the same recap (legacy), a
+// nil recap (ColdStart), or a truncated recap (ContextRecapTokens
+// exceeded). Truncation policy: drop open todos first, then pinned
+// from the least-recent. Truncation counters are surfaced in the
+// result.
+//
+// Token estimate: 4 chars ≈ 1 token (rule of thumb for English text
+// in LLM context; rough but adequate for budget enforcement).
+func (o *Orchestrator) applyContextRecapBudget(
+	_ context.Context,
+	recap *ContextRecap,
+	coldStart bool,
+	tokenBudget int,
+) *ContextRecap {
+	if coldStart {
+		return nil
+	}
+	if recap == nil {
+		return nil
+	}
+
+	// Resolve budget. 0 = legacy v2.7.x (no truncation). Otherwise
+	// clamp to [0, 8000].
+	if tokenBudget <= 0 {
+		tokenBudget = 2000 // v2.8.0-alpha default
+	}
+	if tokenBudget > 8000 {
+		tokenBudget = 8000
+	}
+	charBudget := tokenBudget * 4
+
+	// Format the full recap and measure chars.
+	formattedPinned := formatPinnedForRecap(recap.PinnedMemories)
+	formattedTodos := formatTodosForRecap(recap.OpenTodos)
+	totalChars := len(formattedPinned) + len(formattedTodos)
+
+	if totalChars <= charBudget {
+		// Fits — just record the size.
+		recap.FormattedChars = totalChars
+		return recap
+	}
+
+	// Over budget — drop open todos first (less critical than
+	// pinned decisions). Then drop pinned from the tail.
+	remaining := charBudget
+	keptTodos := recap.OpenTodos
+	if len(formattedTodos) > remaining {
+		// Drop all todos (each is too big). Sub-budget = remaining
+		// already covers the open-todos full; since > remaining,
+		// we drop them all.
+		keptTodos = nil
+		// Now use the full budget for pinned.
+		remaining = charBudget
+	} else {
+		remaining -= len(formattedTodos)
+	}
+
+	keptPinned := recap.PinnedMemories
+	if len(formattedPinned) > remaining {
+		// Drop from the tail (least recent — listPinnedForVibe
+		// returns sorted by created_at DESC, so tail = oldest).
+		keptPinned, _ = truncatePinnedList(recap.PinnedMemories, remaining)
+	}
+
+	dropped := (len(recap.PinnedMemories) - len(keptPinned)) +
+		(len(recap.OpenTodos) - len(keptTodos))
+
+	formattedKeptPinned := formatPinnedForRecap(keptPinned)
+	formattedKeptTodos := formatTodosForRecap(keptTodos)
+	recap.PinnedMemories = keptPinned
+	recap.OpenTodos = keptTodos
+	recap.Truncated = true
+	recap.TruncatedRows = dropped
+	recap.FormattedChars = len(formattedKeptPinned) + len(formattedKeptTodos)
+	return recap
+}
+
+// formatPinnedForRecap renders pinned memories as a markdown block
+// for token estimation + future injection. The format mirrors what
+// the harness would inject into the system prompt.
+func formatPinnedForRecap(rows []agentmemory.AgentMemory) string {
+	if len(rows) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("# Pinned memories\n")
+	for i, r := range rows {
+		fmt.Fprintf(&sb, "%d. [%s] %s\n   %s\n",
+			i+1, r.Kind, titleOrEmpty(r.Title), truncate(r.Content, 200))
+	}
+	return sb.String()
+}
+
+// formatTodosForRecap renders open todos as a markdown block.
+func formatTodosForRecap(rows []agentmemory.AgentMemory) string {
+	if len(rows) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("# Open todos\n")
+	for i, r := range rows {
+		fmt.Fprintf(&sb, "%d. [%s] %s\n",
+			i+1, titleOrEmpty(r.Title), truncate(r.Content, 200))
+	}
+	return sb.String()
+}
+
+// titleOrEmpty returns the title if non-empty, else "(untitled)".
+func titleOrEmpty(t string) string {
+	if strings.TrimSpace(t) == "" {
+		return "(untitled)"
+	}
+	return t
+}
+
+// truncate caps s at max chars with "..." suffix when truncated.
+func truncate(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	if max <= 3 {
+		return s[:max]
+	}
+	return s[:max-3] + "..."
+}
+
+// truncatePinnedList returns the largest prefix of pinned whose
+// rendered chars fit in charBudget. listPinnedForVibe returns rows
+// sorted by created_at DESC; tail = oldest, which we drop first.
+func truncatePinnedList(pinned []agentmemory.AgentMemory, charBudget int) ([]agentmemory.AgentMemory, int) {
+	if charBudget <= 0 {
+		return nil, len(pinned)
+	}
+	// Try increasingly smaller prefixes.
+	for n := len(pinned); n > 0; n-- {
+		rendered := formatPinnedForRecap(pinned[:n])
+		if len(rendered) <= charBudget {
+			dropped := len(pinned) - n
+			return pinned[:n], dropped
+		}
+	}
+	return nil, len(pinned)
 }

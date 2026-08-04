@@ -52,6 +52,7 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/atomic"
 	"github.com/dark-agents/dark-memory-mcp/internal/audit"
 	"github.com/dark-agents/dark-memory-mcp/internal/constitution"
+	"github.com/dark-agents/dark-memory-mcp/internal/embedder"
 	"github.com/dark-agents/dark-memory-mcp/internal/migrate"
 	migratepostgres "github.com/dark-agents/dark-memory-mcp/internal/migrate/postgres"
 	"github.com/dark-agents/dark-memory-mcp/internal/mods"
@@ -318,6 +319,79 @@ type Store struct {
 	// project_id; the migration v7 RLS policies enforce the filter at
 	// the DB level using the dark_mem.project_id session setting.
 	activeProject string
+
+	// embedder is the Postgres parity for v2.9.0 PR-2 (hybrid retrieval).
+	// Same shape as the sqlite Store: defaults to embedder.None();
+	// wire via WithEmbedder at boot. Postgres vector search mirrors
+	// SQLite's brute-force cosine; see internal/store/sqlite/vector.go
+	// for the math, which the Postgres store path mirrors 1:1.
+	embedder embedder.Embedder
+}
+
+// WithEmbedder returns s after recording e as the active embedder.
+// Mirrors the sqlite Store.WithEmbedder exactly; the two Store
+// implementations are wire-equal from the operator's POV.
+func (s *Store) WithEmbedder(e embedder.Embedder) *Store {
+	if e == nil {
+		e = embedder.None()
+	}
+	s.mu.Lock()
+	s.embedder = e
+	s.mu.Unlock()
+	return s
+}
+
+// Embedder returns the active embedder (Postgres parity with sqlite).
+func (s *Store) Embedder() embedder.Embedder {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.embedder == nil {
+		return embedder.None()
+	}
+	return s.embedder
+}
+
+// GetAgentMemoryEntities returns the entity list for one row,
+// sorted by entity ASC. Returns nil (not an error) when the row
+// has no entities or doesn't exist in the active project (idempotent).
+//
+// v2.9.0 PR-3 (agent_memory row 160). Postgres mirror of the
+// sqlite implementation. Cross-project reads return nil (INV-7).
+//
+// PR-3 minimum: the entity table itself ships in v24 (this turn);
+// the Save-time entity write path on Postgres ships in PR-3.1
+// (mirrors the deferred sqlite→postgres dispatch symmetry per
+// row 160 PR-3 cross-cutting note).
+func (s *Store) GetAgentMemoryEntities(ctx context.Context, memID int64) ([]agentmemory.Entity, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	if memID <= 0 {
+		return nil, nil
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT ent.entity, ent.source, ent.confidence, COALESCE(ent.model, '')
+		  FROM agent_memory_entities ent
+		  JOIN agent_memory        row ON row.id = ent.mem_id
+		 WHERE ent.mem_id = $1 AND row.project_id = $2
+		 ORDER BY ent.entity ASC`,
+		memID, s.activeProject)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: agent_memory_entities: query: %w", err)
+	}
+	defer rows.Close()
+	var out []agentmemory.Entity
+	for rows.Next() {
+		var e agentmemory.Entity
+		if err := rows.Scan(&e.Value, &e.Source, &e.Confidence, &e.Model); err != nil {
+			return nil, fmt.Errorf("postgres: agent_memory_entities: scan: %w", err)
+		}
+		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres: agent_memory_entities: rows: %w", err)
+	}
+	return out, nil
 }
 
 func (s *Store) runMigrations(ctx context.Context) error {
@@ -530,6 +604,15 @@ func (s *Store) ListWrites(ctx context.Context, f audit.ListFilters) ([]audit.Wr
 	if f.SinceID > 0 {
 		q += ` AND id > $` + intToStr(len(args)+1)
 		args = append(args, f.SinceID)
+	}
+	// F47: target table + row_id filters (parity with SQLite impl).
+	if f.TableName != "" {
+		q += ` AND table_name = $` + intToStr(len(args)+1)
+		args = append(args, f.TableName)
+	}
+	if f.RowID > 0 {
+		q += ` AND row_id = $` + intToStr(len(args)+1)
+		args = append(args, f.RowID)
 	}
 	if f.Limit <= 0 {
 		f.Limit = 50
@@ -2401,4 +2484,25 @@ func (s *Store) ListAgentMemory(ctx context.Context, f agentmemory.AgentMemoryLi
 
 func (s *Store) SearchAgentMemory(ctx context.Context, f agentmemory.SearchFilters) ([]agentmemory.SearchHit, error) {
 	return nil, notImpl("SearchAgentMemory")
+}
+
+// v2.8.0-alpha — active_subagents. Postgres driver does not yet
+// implement agent_memory at all (see F50 tsvector+GIN backlog).
+// These stubs satisfy the Store interface so the build compiles
+// and harness wiring is complete; the runtime path will return
+// notImpl until the Postgres backplane is built out.
+func (s *Store) SetActiveSubagent(ctx context.Context, wc store.WriteContext, row *store.ActiveSubagent) (int64, error) {
+	return 0, notImpl("SetActiveSubagent")
+}
+
+func (s *Store) GetActiveSubagent(ctx context.Context, operator string) (*store.ActiveSubagent, error) {
+	return nil, notImpl("GetActiveSubagent")
+}
+
+func (s *Store) ClearActiveSubagent(ctx context.Context, wc store.WriteContext, operator, subagentID string) error {
+	return notImpl("ClearActiveSubagent")
+}
+
+func (s *Store) SweepExpiredSubagents(ctx context.Context) (int64, error) {
+	return 0, notImpl("SweepExpiredSubagents")
 }

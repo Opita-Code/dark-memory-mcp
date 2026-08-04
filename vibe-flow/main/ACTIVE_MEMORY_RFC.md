@@ -244,7 +244,7 @@ The legacy model has two states: `open` and `closed`. The pivoted model has five
 
 ### 4.3 Heartbeat protocol
 
-The harness calls `dark_memory_session_heartbeat(session_id)` every ~30s. The server updates `last_heartbeat_at`. If `now - last_heartbeat_at > HEARTBEAT_TIMEOUT` (env-configurable, default 300s = 5min):
+The harness calls `dark_memory_session_heartbeat(session_id)` every ~30s. The server updates `last_heartbeat_at`. If `now - last_heartbeat_at > HEARTBEAT_TIMEOUT` (env-configurable, default 60m — raised from 5m in v2.10.0 because interactive harnesses without periodic heartbeats were getting ACTIVE sessions closed mid-work; 60m of silence means the harness genuinely died, not that it paused to think):
 
 - A **sweeper goroutine** in `internal/scope/sweeper.go` runs every 60s and promotes stale `open` sessions to `closed_aborted`.
 - On server **boot**, an `boot_reconcile()` step does the same sweep after Store.Open(), so sessions abandoned by a previous server process are recovered at next start.
@@ -367,7 +367,7 @@ This is the "no silently-wrong behavior" contract from the constitution. Better 
 
 ### 5E — Session Lifecycle Resilience
 - After harness SIGKILL (simulated), new harness invocation calls `_recover` and gets `{recovered_from: ..., requires_consent: true, frame_preview: ...}`. Operator consents → `_resurrect` → work continues.
-- Sweeper promotes stale `open` to `closed_aborted` within 60s of `HEARTBEAT_TIMEOUT`.
+- Sweeper promotes stale `open` to `closed_aborted` within 60s of `HEARTBEAT_TIMEOUT` (default 60m since v2.10.0; was 5m).
 - `_close(reason='clean')` is terminal: subsequent `_resurrect` returns `ErrSessionNotResurrectable` with reasoning.
 - Closed_due_to_accident session resurrects the **same project_id** and **same operator** with the same grants (re-derived).
 

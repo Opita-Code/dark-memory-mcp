@@ -26,6 +26,8 @@ import (
 	"time"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/agentmemory"
+	"github.com/dark-agents/dark-memory-mcp/internal/audit"
+	"github.com/dark-agents/dark-memory-mcp/internal/entity"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 )
 
@@ -51,6 +53,13 @@ type AgentMemorySaveInput struct {
 	Pinned      bool   `json:"pinned,omitempty"`
 	ExpiresAt   string `json:"expires_at,omitempty"`
 	BindSession bool   `json:"bind_session,omitempty"`
+
+	// ExtractEntities (v2.9.0 PR-3, agent_memory row 160) runs the
+	// deterministic extractor (internal/entity) on
+	// content+title+tags and writes the result to
+	// agent_memory_entities IN THE SAME tx as the main INSERT.
+	// Default false: backward-compat with PR-0..PR-2 callers.
+	ExtractEntities bool `json:"extract_entities,omitempty"`
 }
 
 // AgentMemorySaveOutput is the row as stored (with project_id +
@@ -87,13 +96,28 @@ func (o *Orchestrator) AgentMemorySave(ctx context.Context, in AgentMemorySaveIn
 		return nil, fmt.Errorf("agent_memory_save: invalid memory_type %q", in.MemoryType)
 	}
 
+	// v2.8.0-alpha C2: when DARK_MEMORY_V280=1, the agent_id
+	// resolution priority chain extends with step 2 (active
+	// subagent_id). The caller-provided AgentID still wins
+	// (priority 1); only when the caller leaves AgentID empty do
+	// we consult the active_subagents table. When the flag is off,
+	// this falls back to the v2.7.x priority chain (caller >
+	// project default > "").
+	resolvedAgentID := in.AgentID
+	if v280Enabled() && strings.TrimSpace(resolvedAgentID) == "" {
+		activeOp := o.activeOperator(ctx)
+		if activeOp != "" {
+			resolvedAgentID = o.resolveActiveAgentIDWithSubagent(ctx, "", activeOp)
+		}
+	}
+
 	wc := store.WriteContext{
 		Actor:     in.Operator,
 		WritePath: "AgentMemorySave",
 	}
 	m := &agentmemory.AgentMemory{
 		Operator:   in.Operator,
-		AgentID:    in.AgentID,
+		AgentID:    resolvedAgentID,
 		Kind:       in.Kind,
 		MemoryType: in.MemoryType,
 		Title:      in.Title,
@@ -112,6 +136,16 @@ func (o *Orchestrator) AgentMemorySave(ctx context.Context, in AgentMemorySaveIn
 		if sid, err := o.Store.GetActiveSession(ctx, o.Store.ActiveProject()); err == nil && sid != "" {
 			m.SessionID = sid
 		}
+	}
+	// v2.9.0 PR-3 (agent_memory row 160): when ExtractEntities is
+	// true, run the deterministic extractor (internal/entity) on
+	// content+title+tags and populate the transient m.Entities
+	// field. The Store persists the entity rows in the SAME tx as
+	// the main INSERT (atomic with the row per row 160 PR-3 spec).
+	// PR-3 minimum uses the local heuristic; PR-3.1 swaps the body
+	// for a drift_judge bridge without touching the contract.
+	if in.ExtractEntities {
+		m.Entities = entity.Extract(in.Content, in.Title, in.Tags)
 	}
 	id, err := o.Store.SaveAgentMemory(ctx, wc, m)
 	if err != nil {
@@ -402,14 +436,35 @@ type AgentMemoryGetOutput struct {
 	Row agentmemory.AgentMemory `json:"row"`
 }
 
-// AgentMemoryGet returns one row by id. Cross-project reads return
-// ErrNotFound (the Store filters by active project).
+// AgentMemoryGet returns one row by id.
+//
+// v2.8.0-alpha D5: when DARK_MEMORY_V280=1, cross-project reads
+// return *store.CrossProjectAccessError (wrapping
+// store.ErrCrossProjectAccess). When the flag is off, the v2.7.x
+// behavior is preserved: cross-project reads return (nil, nil) just
+// like "not found" — to avoid leaking existence.
 func (o *Orchestrator) AgentMemoryGet(ctx context.Context, in AgentMemoryGetInput) (*AgentMemoryGetOutput, error) {
 	if in.ID <= 0 {
 		return nil, errMissingField("id")
 	}
 	row, err := o.Store.GetAgentMemory(ctx, in.ID)
 	if err != nil {
+		// v2.8.0-alpha D5: when the flag is on, propagate the typed
+		// CrossProjectAccessError directly — it implements Is(target)
+		// for the sentinel AND its Error() method carries the same
+		// diagnostic. When the flag is off, convert to ErrNotFound
+		// for v2.7.x backward compat (no existence leak).
+		//
+		// NOTE: previously this wrapped with fmt.Errorf("%w", sentinel)
+		// which dropped the typed struct, causing errors.As to fail in
+		// the tools layer. Direct return preserves the struct.
+		var cpe *store.CrossProjectAccessError
+		if errors.As(err, &cpe) {
+			if v280Enabled() {
+				return nil, cpe
+			}
+			return nil, store.ErrNotFound
+		}
 		return nil, err
 	}
 	if row == nil {
@@ -517,27 +572,296 @@ func (o *Orchestrator) AgentMemoryArchive(ctx context.Context, in AgentMemoryArc
 	return &AgentMemoryArchiveOutput{ID: in.ID, ArchivedAt: got.ArchivedAt}, nil
 }
 
+// --- Entities (v2.9.0-alpha PR-3) ----------------------------------
+
+// AgentMemoryEntitiesInput is the request to fetch the extracted
+// entity list for one agent_memory row. v2.9.0 PR-3.
+type AgentMemoryEntitiesInput struct {
+	ID int64 `json:"id"`
+}
+
+// AgentMemoryEntitiesOutput is the row id + the entity list.
+// Entities is nil when the row has no extracted entities (most
+// common pre-PR-3 caller; extract_entities was unset on Save).
+type AgentMemoryEntitiesOutput struct {
+	ID       int64                `json:"id"`
+	Entities []agentmemory.Entity `json:"entities"`
+}
+
+// AgentMemoryEntities returns the extracted entity list for one
+// row. Cross-project reads return nil entities (INV-7). The Store
+// enforces project isolation on the side-table join.
+func (o *Orchestrator) AgentMemoryEntities(ctx context.Context, in AgentMemoryEntitiesInput) (*AgentMemoryEntitiesOutput, error) {
+	if in.ID <= 0 {
+		return nil, errMissingField("id")
+	}
+	ents, err := o.Store.GetAgentMemoryEntities(ctx, in.ID)
+	if err != nil {
+		return nil, err
+	}
+	if ents == nil {
+		return &AgentMemoryEntitiesOutput{ID: in.ID, Entities: []agentmemory.Entity{}}, nil
+	}
+	return &AgentMemoryEntitiesOutput{ID: in.ID, Entities: ents}, nil
+}
+
+// --- Delegate (v2.9.3) ---------------------------------------------
+
+// AgentMemoryDelegateInput is the request to prepare a delegation
+// context for a sub-agent the parent is about to spawn. The tool:
+//
+//  1. Registers the subagent binding (C2 active_subagents table).
+//  2. Builds a curated context block (session metadata + pinned
+//     memories + open todos, truncated to a token budget).
+//  3. Returns a ready-to-inject markdown string the parent embeds
+//     in the sub-agent's task prompt.
+//
+// Gated by DARK_MEMORY_V280=1 (same gate as subagent_register /
+// subagent_unregister).
+type AgentMemoryDelegateInput struct {
+	Operator        string `json:"operator"`
+	SubagentID      string `json:"subagent_id"`
+	TaskDescription string `json:"task_description"`
+	// IncludePinned / IncludeTodos are *bool so "unset" (default
+	// true, per the tool schema) is distinguishable from an explicit
+	// false. Zero-value bool would silently disable both sections
+	// for callers that omit them (v2.9.3 bug caught in review).
+	IncludePinned *bool `json:"include_pinned,omitempty"`
+	IncludeTodos  *bool `json:"include_todos,omitempty"`
+	// MaxTokens is *int for the same reason: nil = schema default
+	// 2000; &0 = omit context sections (session metadata only);
+	// &N = explicit budget (clamp [0, 8000]).
+	MaxTokens  *int   `json:"max_tokens,omitempty"`
+	TTLSeconds int    `json:"ttl_seconds,omitempty"`
+}
+
+// AgentMemoryDelegateOutput is the delegation package: the
+// ready-to-inject context block + the counters the parent can use to
+// verify what was included.
+type AgentMemoryDelegateOutput struct {
+	SubagentID        string `json:"subagent_id"`
+	ParentAgentID     string `json:"parent_agent_id"`
+	DelegationContext string `json:"delegation_context"`
+	PinnedCount       int    `json:"pinned_count"`
+	TodoCount         int    `json:"todo_count"`
+	Truncated         bool   `json:"truncated"`
+	SessionID         string `json:"session_id"`
+	ProjectID         string `json:"project_id"`
+	RegisteredAt      string `json:"registered_at"`
+}
+
+// AgentMemoryDelegate prepares the delegation context for a sub-agent
+// spawn. The parent generates an opaque subagent_id (uuid), calls
+// this tool, and injects the returned DelegationContext into the
+// sub-agent's task prompt. The subagent binding is registered in the
+// same call (C2), so any agent_memory_save the sub-agent makes is
+// tagged with subagent_id — never the parent's agent_id.
+//
+// Error contract:
+//   - ErrInvalidState when DARK_MEMORY_V280 is off (same as
+//     subagent_register).
+//   - errMissingField("operator"|"subagent_id"|"task_description")
+//     on missing input.
+//   - ErrInvalidState when no active project or session (the gate
+//     enforces this on the wire; this check keeps the orchestrator
+//     safe when called directly in tests).
+func (o *Orchestrator) AgentMemoryDelegate(ctx context.Context, in AgentMemoryDelegateInput) (*AgentMemoryDelegateOutput, error) {
+	if !v280Enabled() {
+		return nil, fmt.Errorf("agent_memory_delegate: %w (DARK_MEMORY_V280 not enabled)", store.ErrInvalidState)
+	}
+	if strings.TrimSpace(in.Operator) == "" {
+		return nil, errMissingField("operator")
+	}
+	if strings.TrimSpace(in.SubagentID) == "" {
+		return nil, errMissingField("subagent_id")
+	}
+	if strings.TrimSpace(in.TaskDescription) == "" {
+		return nil, errMissingField("task_description")
+	}
+
+	// Active project + session required. The gate enforces this on
+	// the wire (RequiresActiveSession default); the explicit check
+	// keeps direct-orchestrator test paths honest.
+	projID := o.Store.ActiveProject()
+	if projID == "" {
+		return nil, fmt.Errorf("agent_memory_delegate: %w: no active project", store.ErrInvalidState)
+	}
+	sessID, err := o.Store.GetActiveSession(ctx, projID)
+	if err != nil || sessID == "" {
+		return nil, fmt.Errorf("agent_memory_delegate: %w: no active session", store.ErrInvalidState)
+	}
+
+	// Resolve parent agent_id (the principal's identity at spawn
+	// time; the subagent's writes are tagged with SubagentID, not
+	// this — C2 isolation).
+	parentAgentID := o.resolveActiveAgentID(ctx, "")
+
+	// TTL clamp [60, 86400], default 3600 (same as SubagentRegister).
+	ttl := in.TTLSeconds
+	if ttl <= 0 {
+		ttl = 3600
+	}
+	if ttl < 60 {
+		ttl = 60
+	}
+	if ttl > 86400 {
+		ttl = 86400
+	}
+
+	// Register the subagent binding (C2 active_subagents).
+	wc := store.WriteContext{
+		Actor:     in.Operator,
+		WritePath: "AgentMemoryDelegate",
+	}
+	row := &store.ActiveSubagent{
+		Operator:      in.Operator,
+		SubagentID:    in.SubagentID,
+		ParentAgentID: parentAgentID,
+		TTLSeconds:    ttl,
+	}
+	if _, err := o.Store.SetActiveSubagent(ctx, wc, row); err != nil {
+		return nil, fmt.Errorf("agent_memory_delegate: %w", err)
+	}
+
+	// Build the curated delegation context.
+	ctxBlock := o.buildDelegationContext(ctx, in, parentAgentID, sessID, projID)
+
+	return &AgentMemoryDelegateOutput{
+		SubagentID:        in.SubagentID,
+		ParentAgentID:     parentAgentID,
+		DelegationContext: ctxBlock.Block,
+		PinnedCount:       ctxBlock.PinnedCount,
+		TodoCount:         ctxBlock.TodoCount,
+		Truncated:         ctxBlock.Truncated,
+		SessionID:         sessID,
+		ProjectID:         projID,
+		RegisteredAt:      time.Now().UTC().Format(time.RFC3339),
+	}, nil
+}
+
+// delegationContextBlock is the intermediate shape from
+// buildDelegationContext: the composed markdown + the inclusion
+// counters.
+type delegationContextBlock struct {
+	Block       string
+	PinnedCount int
+	TodoCount   int
+	Truncated   bool
+}
+
+// buildDelegationContext composes the delegation_context markdown
+// block. Session metadata + usage instructions are always present;
+// pinned memories + open todos are included per IncludePinned /
+// IncludeTodos, truncated to MaxTokens (0 = omit context sections).
+//
+// Reuses the B1 ContextRecap truncation machinery (applyContextRecapBudget)
+// so the delegation view of the project's memory is consistent with
+// what session_start's ContextRecap would show the parent.
+func (o *Orchestrator) buildDelegationContext(
+	ctx context.Context,
+	in AgentMemoryDelegateInput,
+	parentAgentID, sessID, projID string,
+) delegationContextBlock {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "## dark-memory context (auto-generated)\n\n")
+	fmt.Fprintf(&sb, "You are a sub-agent operating inside dark-memory's governance framework.\n")
+	fmt.Fprintf(&sb, "Use the dark-memory MCP tools to save findings, search knowledge, and maintain an audit trail.\n\n")
+	fmt.Fprintf(&sb, "| Field | Value |\n|---|---|\n")
+	fmt.Fprintf(&sb, "| Session | %s |\n", sessID)
+	fmt.Fprintf(&sb, "| Project | %s |\n", projID)
+	fmt.Fprintf(&sb, "| Your sub-agent id | %s |\n", in.SubagentID)
+	fmt.Fprintf(&sb, "| Parent agent | %s |\n\n", parentAgentID)
+	fmt.Fprintf(&sb, "### How to use dark-memory\n\n")
+	fmt.Fprintf(&sb, "- **Save findings**: `dark_memory_agent_memory_save(operator=%q, kind=\"finding\"|\"observation\"|\"decision\", title=\"...\", content=\"...\", bind_session=true)`\n", in.Operator)
+	fmt.Fprintf(&sb, "- **Search knowledge**: `dark_memory_agent_memory_recall(operator=%q, query=\"your search terms\")`\n", in.Operator)
+	fmt.Fprintf(&sb, "- **List open todos**: `dark_memory_agent_memory_list(kind=\"todo\", scope=\"project\")`\n")
+	fmt.Fprintf(&sb, "- **Resume this session**: `dark_memory_session_resume(session_id=%q)`\n\n", sessID)
+
+	// Token budget: nil = schema default 2000; &0 = omit context
+	// sections (session metadata only); &N = clamp [0, 8000].
+	maxTokens := 2000
+	if in.MaxTokens != nil {
+		maxTokens = *in.MaxTokens
+	}
+	if maxTokens > 8000 {
+		maxTokens = 8000
+	}
+
+	// IncludePinned / IncludeTodos default to TRUE when unset
+	// (nil pointer). Only an explicit false disables the section.
+	includePinned := in.IncludePinned == nil || *in.IncludePinned
+	includeTodos := in.IncludeTodos == nil || *in.IncludeTodos
+
+	var pinned, openTodos []agentmemory.AgentMemory
+	if maxTokens > 0 && includePinned {
+		pinned, _ = o.listPinnedForVibe(ctx, "", parentAgentID, 10)
+	}
+	if maxTokens > 0 && includeTodos {
+		openTodos, _ = o.listOpenTodosForVibe(ctx, parentAgentID, 20)
+	}
+
+	block := delegationContextBlock{}
+	if len(pinned) == 0 && len(openTodos) == 0 {
+		block.Block = sb.String()
+		return block
+	}
+
+	recap := &ContextRecap{
+		PinnedMemories: pinned,
+		OpenTodos:      openTodos,
+	}
+	// maxTokens is already defaulted + clamped above; pass it
+	// straight to the B1 truncation helper.
+	recap = o.applyContextRecapBudget(ctx, recap, false, maxTokens)
+	if recap != nil {
+		block.PinnedCount = len(recap.PinnedMemories)
+		block.TodoCount = len(recap.OpenTodos)
+		block.Truncated = recap.Truncated
+		if len(recap.PinnedMemories) > 0 {
+			sb.WriteString("### Relevant context from parent session\n\n")
+			sb.WriteString(formatPinnedForRecap(recap.PinnedMemories))
+			sb.WriteString("\n")
+		}
+		if len(recap.OpenTodos) > 0 {
+			sb.WriteString(formatTodosForRecap(recap.OpenTodos))
+			sb.WriteString("\n")
+		}
+	}
+	block.Block = sb.String()
+	return block
+}
+
 // --- helpers --------------------------------------------------------
 
 // latestAuditIDForRow returns the most recent write_audit.id for the
 // given table_name + row_id. Best-effort: errors are swallowed (the
 // caller doesn't fail the user-facing operation on a transient audit
 // lookup miss). Returns 0 if no audit row is found.
+//
+// F47 (closed 2026-08-03): was a stub returning 0; now narrows
+// ListWrites with TableName + RowID filters and returns the latest
+// audit row's id (ListWrites orders by id DESC, so the first row
+// wins).
 func (o *Orchestrator) latestAuditIDForRow(ctx context.Context, table string, rowID int64) (int64, error) {
-	// We don't have a typed Store method for this; the Orchestrator's
-	// only Store dependency is the abstract interface. Instead of
-	// adding one, use the active project's project_id + a delegated
-	// helper. The simplest approach: query via a Store.ListWrites call
-	// with a tight filter.
-	//
-	// For v2.1.0 we accept "audit_id may be 0" as a documented
-	// limitation; F47 tracks adding a typed method.
 	if o.Store == nil {
 		return 0, nil
 	}
-	// Best-effort 0 — the Store enforces INV-1; we just can't
-	// surface the id without a new method.
-	return 0, nil
+	if rowID <= 0 {
+		return 0, nil
+	}
+	rows, err := o.Store.ListWrites(ctx, audit.ListFilters{
+		TableName: table,
+		RowID:     rowID,
+		Limit:     1,
+	})
+	if err != nil {
+		// Transient lookup miss — caller continues without audit_id.
+		return 0, nil
+	}
+	if len(rows) == 0 {
+		return 0, nil
+	}
+	return rows[0].ID, nil
 }
 
 // errMissingField is the canonical "field X is required" error. It

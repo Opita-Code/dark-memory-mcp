@@ -603,4 +603,69 @@ CREATE INDEX IF NOT EXISTS idx_agent_memory_kind ON agent_memory (project_id, ki
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS default_agent_id TEXT;
 `,
 	},
+	{
+		// v21 — active_subagents (v2.8.0-alpha).
+		// Mirror of sqlite v21. Postgres parity with IF NOT EXISTS
+		// on all DDL. See internal/migrate/sqlite/ddl.go for the
+		// full rationale (C2 subagent-scope-handoff + defense
+		// against arxiv:2605.08460 inheritance attacks).
+		Version: 21,
+		Name:    "active_subagents",
+		Up: `
+CREATE TABLE IF NOT EXISTS active_subagents (
+    project_id       TEXT NOT NULL,
+    operator         TEXT NOT NULL,
+    subagent_id      TEXT NOT NULL,
+    parent_agent_id  TEXT NOT NULL,
+    spawned_at       TIMESTAMP WITH TIME ZONE NOT NULL,
+    ttl_seconds      INTEGER NOT NULL DEFAULT 3600,
+    PRIMARY KEY (project_id, operator, subagent_id)
+);
+CREATE INDEX IF NOT EXISTS idx_active_subagents_lookup ON active_subagents (project_id, operator);
+`,
+	},
+	{
+		// v23 — agent_memory_embedding (PR-2 of v2.9.0 plan).
+		// Mirror of sqlite v23; BYTEA on Postgres vs BLOB on SQLite.
+		// Encoding: little-endian float32, length = embedder.Dim().
+		// See internal/store/sqlite/vector.go for encode/decode (used
+		// by both drivers via the shared serialize helper).
+		//
+		// Postgres porter stemming (v22 in sqlite) was explicitly
+		// deferred from PR-12 to a follow-up that wires the
+		// tsvector + snowball stemmer equivalent; not addressed here.
+		Version: 23,
+		Name:    "agent_memory_embedding",
+		Up: `
+ALTER TABLE agent_memory ADD COLUMN IF NOT EXISTS embedding BYTEA;
+`,
+	},
+	{
+		// v24 - agent_memory_entities (PR-3 of v2.9.0 plan).
+		// Mirror of sqlite v24. Postgres parity: same column
+		// names + types except REAL → DOUBLE PRECISION for the
+		// confidence column (Postgres convention; SQLite REAL is
+		// already 8-byte IEEE-754 so the values are 1:1).
+		//
+		// Composite primary key (mem_id, entity) cascades on
+		// agent_memory delete (mirrors sqlite). Indexes on entity
+		// (search filter) and mem_id (entity-list per row).
+		//
+		// Idempotent via IF NOT EXISTS on table + indexes.
+		Version: 24,
+		Name:    "agent_memory_entities",
+		Up: `
+CREATE TABLE IF NOT EXISTS agent_memory_entities (
+    mem_id     BIGINT NOT NULL REFERENCES agent_memory(id) ON DELETE CASCADE,
+    entity     TEXT   NOT NULL,
+    source     TEXT   NOT NULL,
+    confidence DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+    model      TEXT,
+    created_at TEXT   NOT NULL,
+    PRIMARY KEY (mem_id, entity)
+);
+CREATE INDEX IF NOT EXISTS idx_agent_memory_entities_entity  ON agent_memory_entities (entity);
+CREATE INDEX IF NOT EXISTS idx_agent_memory_entities_mem_id ON agent_memory_entities (mem_id);
+`,
+	},
 }
