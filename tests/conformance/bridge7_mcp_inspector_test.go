@@ -47,7 +47,7 @@ func TestMain(m *testing.M) {
 	// only appends). DARK_REDTEAM=armed registers the 3 redteam extras;
 	// DARK_FEDERATION_PEER_DSN registers the federation lookup. Without
 	// this, TestBridge7_ListToolsCanonical fails on dev machines that
-	// run with those vars set (52 = 49 + 3 redteam instead of 49).
+	// run with those vars set (canonical + extras instead of canonical).
 	if err := os.Setenv("DARK_REDTEAM", ""); err != nil {
 		panic(err)
 	}

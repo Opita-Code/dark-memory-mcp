@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dark-agents/dark-memory-mcp/internal/tools"
 )
 
 // TestWire_HealthPingShape verifies the dark_memory_health_ping tool
@@ -78,8 +80,12 @@ func TestWire_HealthPingShape(t *testing.T) {
 	if got.Runtime.PID <= 0 {
 		t.Errorf("runtime.pid=%d; want >0", got.Runtime.PID)
 	}
-	if got.Registry.CanonicalTools != 39 {
-		t.Errorf("registry.canonical_tools=%d; want 39 (v2.7.0-alpha contract — v2.7.0-alpha added MINDSET namespace 1 tool mindset_apply; pre-v2.7.0-alpha was 38 in v2.6.0, 35 in v2.3.0)", got.Registry.CanonicalTools)
+	// Derived from the live canonical order (see registry.go) — the
+	// probe must advertise exactly the canonical surface. Never a
+	// hardcoded count: adding a tool to canonicalNamespaces updates
+	// this automatically.
+	if got.Registry.CanonicalTools != len(tools.CanonicalOrder()) {
+		t.Errorf("registry.canonical_tools=%d; want %d (derived from tools.CanonicalOrder)", got.Registry.CanonicalTools, len(tools.CanonicalOrder()))
 	}
 	if got.LatencyMS <= 0 || got.LatencyMS > 5000 {
 		t.Errorf("latency_ms=%v; want >0 and <=5000ms (this is a liveness probe, not a benchmark)", got.LatencyMS)
