@@ -194,13 +194,14 @@ func (r *Registry) CountExtras() int {
 //	CONTEXT          (4)  - artifact_context, spec_context, session_context, recall
 //	AGENT_MEMORY     (10) - save, list, recall, get, update, archive, delegate, entities, subagent_register, subagent_unregister (v2.1.0 + v2.3.0 + v2.9.3)
 //	MINDSET          (1)  - mindset_apply                        (v2.7.0-alpha, procedural + judge-validated)
+//	DELEGATION       (1)  - delegate_intent                      (Wave 5C, A1: handle/delegate/refuse)
 //	JUDGE            (3)  - judge, consensus, judgment_history
 //	POLICY           (2)  - active_policy, load_constitution
 //	OBSERVABILITY    (4)  - memory_state, writes, anomalies, health_ping (v1.3.0)
 //	ADMIN            (3)  - admin_migrate, admin_schema_status, admin_vacuum
 //	L6-VLP           (1)  - vlp_handle_event          (DMAP v1.1 spec 193)
 //
-// Total: 1+4+3+3+4+4+10+1+3+2+4+3+1 = 44.
+// Total: 1+4+3+3+4+4+10+1+1+3+2+4+3+1 = 45.
 //
 //   - PROJECT was added in v1.2.0 to close the bootstrap loop
 //     (operators can now provision a tenant from inside the MCP
@@ -265,6 +266,15 @@ var canonicalToolOrder = []string{
 	// for full audit trail. Positioned between AGENT_MEMORY (the data plane
 	// it caches against) and JUDGE (the validator).
 	"mindset_apply",
+	// DELEGATION (1) - Wave 5C. delegate_intent decides whether the
+	// orchestrator handles an intent inline, delegates it to
+	// sub-agents, or refuses (A1: Memory decides). Runs the
+	// DelegationRouter's DECIDE→PLAN→MIND→CURATE pipeline and
+	// returns ready-to-spawn material (system_prompt + curated
+	// delegation context + C2 subagent binding). Positioned between
+	// MINDSET (the prompt engine it consumes) and JUDGE (the
+	// validator that drift-checks the synthesized output).
+	"delegate_intent",
 	// JUDGE (3)
 	"judge", "consensus", "judgment_history",
 	// POLICY (2)

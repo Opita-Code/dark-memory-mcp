@@ -82,6 +82,12 @@ func RegisterAll(reg *Registry, orch *orchestration.Orchestrator, st store.Store
 	// through the Judge orchestrator (eval_type=mindset_compose +
 	// eval_type=mindset_quality) for full audit trail.
 	RegisterMindset(reg, orch, st)
+	// DELEGATION (1) — Wave 5C. delegate_intent runs the
+	// DelegationRouter pipeline (DECIDE→PLAN→MIND→CURATE) and
+	// returns ready-to-spawn material per subtask. Consumes
+	// mindset_apply (MIND) + agent_memory_delegate (CURATE, C2
+	// binding). Gated by DARK_MEMORY_V280=1.
+	RegisterDelegation(reg, orch, st)
 	// EMBEDDER (1) — v2.9.0-alpha PR-2. Hybrid retrieval consent gate.
 	// The handler casts st to an embedder-introspector interface so
 	// stores without the embedder field still register the tool with
@@ -185,14 +191,16 @@ func RegisterAll(reg *Registry, orch *orchestration.Orchestrator, st store.Store
 	// already in CanonicalOrder but the guard lagged).
 	// v2.9.3: bumped from 43 → 44 (added agent_memory_delegate for
 	// sub-agent delegation context handoff).
+	// Wave 5C: bumped from 44 → 45 (added delegate_intent in the new
+	// DELEGATION namespace).
 	canonical := CanonicalOrder()
 	for _, name := range canonical {
 		if reg.Get(name) == nil {
 			return nil, fmt.Errorf("tools: RegisterAll: missing tool %q (canonical order violation)", name)
 		}
 	}
-	if got := len(reg.ListCanonical()); got != 44 {
-		return nil, fmt.Errorf("tools: RegisterAll: expected 44 tools, got %d", got)
+	if got := len(reg.ListCanonical()); got != 45 {
+		return nil, fmt.Errorf("tools: RegisterAll: expected 45 tools, got %d", got)
 	}
 	return src, nil
 }

@@ -132,6 +132,8 @@ func canonicalWireOrderBares() []string {
 		"agent_memory_save", "agent_memory_list", "agent_memory_recall", "agent_memory_get", "agent_memory_update", "agent_memory_archive", "agent_memory_delegate", "agent_memory_entities", "subagent_register", "subagent_unregister",
 		// MINDSET (1) — v2.7.0-alpha
 		"mindset_apply",
+		// DELEGATION (1) — Wave 5C
+		"delegate_intent",
 		// JUDGE (3)
 		"judge", "consensus", "judgment_history",
 		// POLICY (2)
