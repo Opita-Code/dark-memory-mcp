@@ -206,7 +206,7 @@ func TestEmbeddedFiles_Contract(t *testing.T) {
 		"install/cursor.md":                                             false,
 		"install/continue.md":                                           false,
 		"companions/dark-research.md":                                   false,
-		"companions/dark-copilot.md":                                    false,
+		"companions/[FUTURE-MCP-N].md":                                    false,
 	}
 
 	err := fs.WalkDir(src, ".", func(path string, d fs.DirEntry, err error) error {

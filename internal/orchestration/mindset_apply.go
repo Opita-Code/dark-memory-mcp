@@ -114,11 +114,28 @@ func resolveCacheTTL() time.Duration {
 //
 // Operator is optional and defaults to "orchestrator_mindset". It's
 // used for the write_audit row on cache writes (INV-1).
+//
+// v2.8.0-alpha C2: SpawnSubagent + SubagentID are the subagent-scope-
+// handoff knobs. When SpawnSubagent=true, after a successful composition
+// the orchestrator registers the subagent_id in the active_subagents
+// table (TTL 1h default) so that subsequent agent_memory_save calls
+// from the subagent get tagged with the subagent_id (NOT the
+// principal's agent_id). This quarantines subagent memory from the
+// principal's ContextRecap (defense-in-depth vs arxiv:2605.08460).
+// Gated by DARK_MEMORY_V280=1; when off, the fields are accepted but
+// ignored.
 type MindsetApplyInput struct {
 	VibeCase        string `json:"vibe_case"`
 	TaskDescription string `json:"task_description"`
 	ModelFloor      string `json:"model_floor,omitempty"`
 	Operator        string `json:"operator,omitempty"`
+	// SpawnSubagent (v2.8.0-alpha C2) — when true, registers the
+	// subagent_id in active_subagents after composition. Default false.
+	SpawnSubagent bool `json:"spawn_subagent,omitempty"`
+	// SubagentID (v2.8.0-alpha C2) — opaque uuid identifying the
+	// subagent. Required when SpawnSubagent=true. The subagent's
+	// agent_memory_save calls will be tagged with this id.
+	SubagentID string `json:"subagent_id,omitempty"`
 }
 
 // MindsetApplyOutput is the composed system_prompt + the validation verdict.
@@ -133,6 +150,14 @@ type MindsetApplyOutput struct {
 	JudgeVerdict          MindsetJudgeVerdict `json:"judge_verdict"`
 	CacheHit              bool                `json:"cache_hit"`
 	CategoryUsed          string              `json:"category_used"`
+	// SubagentID (v2.8.0-alpha C2) — echoes the registered subagent_id
+	// (only set when SpawnSubagent=true on the input AND registration
+	// succeeded). Empty string otherwise.
+	SubagentID string `json:"subagent_id,omitempty"`
+	// ParentAgentID (v2.8.0-alpha C2) — echoes the principal's resolved
+	// agent_id at spawn time. Useful for audit + write-back to the
+	// harness's subagent tool as "this is your principal's id".
+	ParentAgentID string `json:"parent_agent_id,omitempty"`
 }
 
 // MindsetJudgeVerdict is the validator's response (parsed from
@@ -237,11 +262,13 @@ func (o *Orchestrator) MindsetApply(ctx context.Context, in MindsetApplyInput) (
 
 		if verdict.Verdict == "aligned" {
 			// 6. Cache + return.
-			return o.cacheAndReturn(ctx, composed, verdict, iter, category, cacheTTL, key, in.Operator)
+			out, err := o.cacheAndReturn(ctx, composed, verdict, iter, category, cacheTTL, key, in.Operator)
+			return o.applySubagentHandoff(ctx, out, in), err
 		}
 		if verdict.Verdict == "needs_human" {
 			// Return best attempt; cache so next call doesn't re-run.
-			return o.cacheAndReturn(ctx, composed, verdict, iter, category, cacheTTL, key, in.Operator)
+			out, err := o.cacheAndReturn(ctx, composed, verdict, iter, category, cacheTTL, key, in.Operator)
+			return o.applySubagentHandoff(ctx, out, in), err
 		}
 		// drift_detected → loop with feedback
 	}
@@ -257,7 +284,66 @@ func (o *Orchestrator) MindsetApply(ctx context.Context, in MindsetApplyInput) (
 		lastVerdict.Verdict = "needs_human"
 		lastVerdict.Reasoning = fmt.Sprintf("max iterations (%d) exhausted; %s", maxIter, lastVerdict.Reasoning)
 	}
-	return o.cacheAndReturn(ctx, lastAttempt, lastVerdict, maxIter, category, cacheTTL, key, in.Operator)
+	out, err := o.cacheAndReturn(ctx, lastAttempt, lastVerdict, maxIter, category, cacheTTL, key, in.Operator)
+	return o.applySubagentHandoff(ctx, out, in), err
+}
+
+// applySubagentHandoff is the v2.8.0-alpha C2 hook. When the caller
+// passed SpawnSubagent=true (and DARK_MEMORY_V280=1), it registers
+// the subagent in active_subagents so subsequent agent_memory_save
+// calls from the subagent get tagged with the subagent_id instead
+// of the principal's agent_id. Defense-in-depth against
+// arxiv:2605.08460 inheritance attacks — see agent_memory.go and
+// the design doc artifact id=804.
+//
+// Best-effort: registration failure is logged but the result is
+// still returned (the composition was the important part).
+//
+// When SpawnSubagent=true but SubagentID is empty, returns an error
+// (the caller MUST supply the subagent_id — we won't generate one
+// because the principal's harness needs the id to inject into the
+// subagent tool call).
+func (o *Orchestrator) applySubagentHandoff(ctx context.Context, out *MindsetApplyOutput, in MindsetApplyInput) *MindsetApplyOutput {
+	if out == nil {
+		return nil
+	}
+	if !v280Enabled() || !in.SpawnSubagent {
+		return out
+	}
+	if strings.TrimSpace(in.SubagentID) == "" {
+		// Caller error — they must supply subagent_id when
+		// spawn_subagent=true. Return the composition result
+		// unchanged but set ParentAgentID empty so they can detect.
+		log.Printf("dark-mem-mcp: mindset_apply spawn_subagent=true but subagent_id empty; skipping registration")
+		return out
+	}
+	// Resolve the principal's agent_id for audit provenance.
+	parentAgentID := o.resolveActiveAgentID(ctx, "")
+	operator := in.Operator
+	if operator == "" {
+		operator = o.activeOperator(ctx)
+	}
+	if operator == "" {
+		log.Printf("dark-mem-mcp: mindset_apply spawn_subagent: no active operator; skipping registration")
+		return out
+	}
+	wc := store.WriteContext{
+		Actor:     operator,
+		WritePath: "MindsetApplySpawnSubagent",
+	}
+	row := &store.ActiveSubagent{
+		Operator:      operator,
+		SubagentID:    in.SubagentID,
+		ParentAgentID: parentAgentID,
+		TTLSeconds:    3600,
+	}
+	if _, err := o.Store.SetActiveSubagent(ctx, wc, row); err != nil {
+		log.Printf("dark-mem-mcp: mindset_apply spawn_subagent register err=%v (subagent_id=%s)", err, in.SubagentID)
+		return out
+	}
+	out.SubagentID = in.SubagentID
+	out.ParentAgentID = parentAgentID
+	return out
 }
 
 // --- composition step ---

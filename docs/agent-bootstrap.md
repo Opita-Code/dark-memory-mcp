@@ -43,7 +43,7 @@ demand to learn how to operate the server.
    L1  dark-memory://docs/   L3  dark-memory://docs/   L5  dark-memory://docs/
        system-prompt.md          install/{client}.md     companions/{name}.md
        (8.9 KB canonical         (per-harness install     (dark-research,
-        operating manual)         steps, x6 harnesses)     dark-copilot docs)
+        operating manual)         steps, x6 harnesses)     [FUTURE-MCP-N] docs)
 
    L2  dark-memory://docs/compatibility-matrix.md (per-harness feature matrix)
 
@@ -57,7 +57,7 @@ demand to learn how to operate the server.
 | L2 | Compatibility matrix | `dark-memory://docs/compatibility-matrix.md` | `assistant` | Per-harness feature matrix (instructions support, resources support, web fetch, terminal, etc.). Tells the LLM "if you're opencode, don't try the tools/curl path". |
 | L3 | Install URI templates | `dark-memory://docs/install/{client}.md` | `assistant` | One URI template per harness (claude-desktop, claude-code, opencode, cline, cursor, continue). LLM calls `agent_bootstrap` with `target=opencode` to get the install guide for that harness. |
 | L4 | `instructions` field | n/a (initialize response) | `assistant` | Best-effort. Appended to the existing coexistence_group string with cross-feature hints. Honored by Claude Desktop/Code (first session); discarded by opencode. |
-| L5 | Companion URI templates | `dark-memory://docs/companions/{name}.md` | `assistant` | One URI template per companion MCP (dark-research, dark-copilot). LLM calls `agent_bootstrap` with `target=dark-research` to learn when to install it. |
+| L5 | Companion URI templates | `dark-memory://docs/companions/{name}.md` | `assistant` | One URI template per companion MCP (dark-research, [FUTURE-MCP-N]). LLM calls `agent_bootstrap` with `target=dark-research` to learn when to install it. |
 
 Every resource is annotated with `audience: [assistant]` and
 `priority: 0.9` so harnesses can demote them under tight context
@@ -77,7 +77,7 @@ Read any resource by surface/target. Surfaces:
 | `system_prompt` | (ignored) | The canonical operating manual |
 | `compatibility_matrix` | (ignored) | Per-harness feature matrix |
 | `install_guide` | one of: `claude-desktop`, `claude-code`, `opencode`, `cline`, `cursor`, `continue` | Step-by-step install for that harness |
-| `companion` | one of: `dark-research`, `dark-copilot` | Why + how to install this companion MCP |
+| `companion` | one of: `dark-research`, `[FUTURE-MCP-N]` | Why + how to install this companion MCP |
 | `all` | (ignored) | Every surface as a map |
 
 Optional `force_embedded: true` bypasses the `DARK_AGENT_BOOTSTRAP_DIR`
@@ -92,9 +92,9 @@ returns:
 
 - Harness info (name, version, normalized short name, source spec).
 - Which companion MCPs are missing (always both: dark-research and
-  dark-copilot, since we cannot enumerate peer MCPs in the spec).
+  [FUTURE-MCP-N], since we cannot enumerate peer MCPs in the spec).
 - Rationale + install snippet + docs URI for each missing companion.
-- Limitations: we cannot detect whether dark-research or dark-copilot
+- Limitations: we cannot detect whether dark-research or [FUTURE-MCP-N]
   is *already* installed; we always recommend them.
 
 ### `dark_memory_agent_detect_environment`
@@ -135,7 +135,7 @@ LLM sees dark-memory-mcp in its tools list
         │
         ▼
   When you need to know about companions (dark-research,
-  dark-copilot), call `dark_memory_agent_recommend_companions`.
+  [FUTURE-MCP-N]), call `dark_memory_agent_recommend_companions`.
   When you need to know what the harness actually told the
   MCP at connect time, call `dark_memory_agent_detect_environment`.
 ```
@@ -173,7 +173,7 @@ install/cline.md
 install/cursor.md
 install/continue.md
 companions/dark-research.md
-companions/dark-copilot.md
+companions/[FUTURE-MCP-N].md
 ```
 
 If any file is missing or the directory is invalid, the server falls

@@ -73,3 +73,74 @@ func (o *Orchestrator) resolveActiveAgentID(ctx context.Context, requestedAgentI
 // via goimports; this no-op assignment prevents that even when
 // the package's only store-typed code is removed).
 var _ = store.ErrInvalidArgument
+
+// activeOperator returns the operator id (INV-1 audit identity) of
+// the currently-active session for the active project, or "" if no
+// session is active. Best-effort: errors swallowed (same policy as
+// resolveActiveAgentID).
+//
+// Used by:
+//   - resolveActiveAgentIDWithSubagent (C2 subagent priority chain)
+//   - SetActiveSubagent (writes the active_subagents row)
+//
+// Why not stored on the Orchestrator struct: sessions can be closed
+// and new ones opened without the orchestrator knowing. The source
+// of truth is projects.active_session_id, not an in-process cache.
+func (o *Orchestrator) activeOperator(ctx context.Context) string {
+	activeProject := o.Store.ActiveProject()
+	if activeProject == "" {
+		return ""
+	}
+	sessID, err := o.Store.GetActiveSession(ctx, activeProject)
+	if err != nil || sessID == "" {
+		return ""
+	}
+	sess, err := o.Store.GetSession(ctx, sessID)
+	if err != nil || sess == nil {
+		return ""
+	}
+	return sess.Operator
+}
+
+// resolveActiveAgentIDWithSubagent is the v2.8.0-alpha C2 subagent-
+// scope-handoff priority chain. Used by AgentMemorySave when
+// DARK_MEMORY_V280=1. Falls back to resolveActiveAgentID when the
+// flag is off (backward compat with v2.7.x).
+//
+// Priority chain (v2.8.0-alpha):
+//  1. caller-supplied AgentID on the request (per-call override)
+//  2. active subagent_id if any (NEW — see GetActiveSubagent)
+//  3. projects.default_agent_id (project-level default)
+//  4. Empty string (no agent filter — v2.4.0 behavior)
+//
+// SECURITY: step 2 is the defense-in-depth against arxiv:2605.08460
+// inheritance attacks. The subagent's writes are tagged with the
+// subagent's opaque uuid (NOT the principal's agent_id), so they
+// never appear in the principal's ContextRecap. A poisoned subagent
+// memory cannot contaminate the principal's pinned decisions.
+func (o *Orchestrator) resolveActiveAgentIDWithSubagent(ctx context.Context, requestedAgentID, operator string) string {
+	// Priority 1: caller override (always wins).
+	if strings.TrimSpace(requestedAgentID) != "" {
+		return requestedAgentID
+	}
+	// Priority 2: active subagent_id. Only when V280 is enabled
+	// AND we have a non-empty operator to look up by.
+	if v280Enabled() && strings.TrimSpace(operator) != "" {
+		sub, err := o.Store.GetActiveSubagent(ctx, operator)
+		if err == nil && sub != nil && strings.TrimSpace(sub.SubagentID) != "" {
+			return sub.SubagentID
+		}
+		// Swallow errors (best-effort; defense-in-depth is the
+		// sweeper, not this lookup).
+	}
+	// Priority 3: project default.
+	activeProject := o.Store.ActiveProject()
+	if activeProject == "" {
+		return ""
+	}
+	proj, err := o.Store.GetProject(ctx, activeProject)
+	if err != nil || proj == nil {
+		return ""
+	}
+	return proj.DefaultAgentID
+}

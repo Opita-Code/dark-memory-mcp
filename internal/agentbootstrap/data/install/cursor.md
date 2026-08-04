@@ -32,7 +32,7 @@ Add to `~/.cursor/mcp.json`:
   "mcpServers": {
     "dark-memory": {"command": "npx", "args": ["-y", "@opitacode/dark-memory-mcp"]},
     "dark-research": {"command": "npx", "args": ["-y", "@opitacode/dark-research-mcp"]},
-    "dark-copilot": {"command": "npx", "args": ["-y", "@opitacode/dark-copilot-mcp"]}
+    "[FUTURE-MCP-N]": {"command": "npx", "args": ["-y", "@opitacode/[FUTURE-MCP-N]-mcp"]}
   }
 }
 ```

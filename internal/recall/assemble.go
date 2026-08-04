@@ -94,13 +94,15 @@ const DefaultToolGrants = "project_create," + // PROJECT (1)
 	"agent_bootstrap,agent_recommend_companions,agent_detect_environment," + // AGENT_BOOTSTRAP (3) — v2.6.0
 	"vibe_publish,vibe_spec,pipeline_status,resolve_drift," + // VIBE (4)
 	"artifact_context,spec_context,session_context,recall," + // CONTEXT (4)
-	"agent_memory_save,agent_memory_list,agent_memory_recall,agent_memory_get,agent_memory_update,agent_memory_archive," + // AGENT_MEMORY (6) — v2.1.0 (5) + v2.3.0 (1: recall)
+	"agent_memory_save,agent_memory_list,agent_memory_recall,agent_memory_get,agent_memory_update,agent_memory_archive,agent_memory_delegate,agent_memory_entities,subagent_register,subagent_unregister," + // AGENT_MEMORY (10) — v2.1.0 (5) + v2.3.0 (1: recall) + v2.8.0-alpha C2 (2: subagent register/unregister) + v2.9.0-alpha PR-3 (1: entities) + v2.9.3 (1: delegate)
 	"mindset_apply," + // MINDSET (1) — v2.7.0-alpha
+	"delegate_intent," + // DELEGATION (1) — Wave 5C (A1: handle/delegate/refuse)
 	"judge,consensus,judgment_history," + // JUDGE (3)
 	"active_policy,load_constitution," + // POLICY (2)
 	"memory_state,writes,anomalies,health_ping," + // OBSERVABILITY (4)
 	"admin_migrate,admin_schema_status,admin_vacuum," + // ADMIN (3)
-	"vlp_handle_event" // L6-VLP (1) — DMAP v1.1
+	"vlp_handle_event," + // L6-VLP (1) — DMAP v1.1
+	"embedder_setup_prompt" // EMBEDDER (1) — v2.9.0-alpha PR-2 (consent gate, row 164 §3)
 
 // DefaultTone is the fallback persona tone when the active
 // constitution doesn't have a [tone] section. Used by PersonaFrame.

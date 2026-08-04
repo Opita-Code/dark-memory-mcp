@@ -40,20 +40,14 @@ function Resolve-GitDescribe {
         return @{ Version = 'dev'; Source = 'git-failed' }
     }
 
-    # Match: v1.2.3, v1.2.3-3-gabc1234, v1.2.3-dirty, v1.2.3-3-gabc1234-dirty, or bare SHA.
-    if ($describe -cmatch '^v?(\d+\.\d+\.\d+)(?:-(\d+)-g([0-9a-f]+))?(-dirty)?$') {
-        $tag = $Matches[1]
-        $commits = if ($Matches[2]) { $Matches[2] } else { '' }
-        $sha = if ($Matches[3]) { $Matches[3] } else { '' }
-        $dirty = if ($Matches[4]) { $Matches[4] } else { '' }
-        if ($commits -and $sha) {
-            $version = "$tag-$commits-g$sha$dirty"
-        } else {
-            $version = "$tag$dirty"
-        }
-        return @{ Version = $version; Source = 'git' }
-    } elseif ($describe -cmatch '^[0-9a-f]+$') {
-        return @{ Version = "0.0.0-dev-$describe"; Source = 'git-sha-only' }
+    # Strip optional leading 'v' so the regex below stays simple.
+    $stripped = if ($describe.StartsWith('v')) { $describe.Substring(1) } else { $describe }
+    # Accept: X.Y.Z optional pre-release (alpha|beta|rc.N) optional -N-gSHA optional -dirty
+    # or bare SHA.
+    if ($stripped -cmatch '^(\d+\.\d+\.\d+)(-(alpha|beta|rc\.\d+))?(-(\d+)-g([0-9a-f]+))?(-dirty)?$') {
+        return @{ Version = $stripped; Source = 'git' }
+    } elseif ($stripped -cmatch '^[0-9a-f]+$') {
+        return @{ Version = "0.0.0-dev-$stripped"; Source = 'git-sha-only' }
     } else {
         Write-Warning "inject-version: unparseable git describe: $describe"
         return @{ Version = 'dev'; Source = 'git-unparseable' }

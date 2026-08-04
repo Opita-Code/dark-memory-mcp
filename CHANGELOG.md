@@ -6,6 +6,299 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [2.10.0] — 2026-08-04
+
+**Wave 5C DelegationRouter + sweeper session fix.** Two separate but co-developed features: the DelegationRouter closes the delegation gap in the vibe-loop (PLAN.md §2.3, RFC §M7), and the sweeper default fix stops active sessions from being closed mid-work (row 168 root cause).
+
+### Added
+
+- **`dark_memory_delegate_intent` tool** (new DELEGATION namespace, 45th canonical tool) — the DelegationRouter A1 pipeline: DECIDE (HANDLE | DELEGATE | REFUSE per vibe_case) → PLAN (topological batching of ≤5 subtasks) → MIND (`mindset_apply` per subtask) → CURATE (`agent_memory_delegate` + C2 binding per subtask). Returns ready-to-spawn material for the harness. MVP scope: C7 mixed always delegates (parallel dispatch), C3 delegates/refuses based on capabilities, all other cases HANDLE (safe fallback). `internal/delegation/{types,router,audit}.go` + `internal/orchestration/delegate_intent.go` + `internal/tools/delegation.go`. 22 new tests.
+- **VLP state: `delegating` + event `delegate`** — the vibe-loop state machine now supports delegation as a first-class transition (`spec_active → delegating` on `EventDelegate`, `delegating → drift_judging` on synthesis completion). 3 new transitions (10 → 13). `internal/vlp/state.go`.
+- **Architecture docs:** `vibe-flow/main/DELEGATION_ARCHITECTURE.md` (recall-based delegation thesis: agent_memory as handoff substrate, not prompt injection) + `vibe-flow/main/DELEGATION_SOTA.md` (11-source state-of-the-art survey).
+
+### Changed
+
+- **`DARK_SESSION_HEARTBEAT_TIMEOUT` default: 300s → 60m** — the sweeper no longer closes ACTIVE sessions after 5 minutes of zero tool activity. Interactive harnesses that do not emit periodic heartbeats were getting `closed_aborted` during long reasoning pauses → `ErrFrameStaleTooFar` on the next tool call → wasted restarts. 60 minutes of silence now means the harness genuinely died (INV-8 resurrectable), not that it paused to think. Overridable via env as before.
+- **`DARK_SESSION_IDLE_TIMEOUT` default: 60s → 15m** — the `open` → `idle` demotion (informational degradation, not destructive) also gets a prudent ceiling so the countdown display does not scare operators during normal work.
+- `session_status`/`session_context` countdown + `closing_soon` now surface the new defaults consistently (same env vars, same mirrors).
+
+### Fixed
+
+- Closes the row 168 gap at the source: "Sessions auto-close after ~5 minutes of zero tool activity; ErrFrameStaleTooFar hits subsequent writes during long reasoning pauses. 3 wasted restarts in one synthesis session." (2026-08-04 — reproduced again during Wave 5C spec 728 work: 4 session closes in one session.)
+
+### Files
+
+**Delegation router:**
+- `internal/delegation/types.go` — `DelegationDecision`, `Plan`, `SubTask`, DSL (topological `Batch`, `Validate`)
+- `internal/delegation/router.go` — deterministic C7/C3 rules + HANDLE fallback
+- `internal/delegation/audit.go` — `RecallSubagentFindings` by `subagent-{id}` tag
+- `internal/orchestration/delegate_intent.go` — orchestrator (DECIDE→PLAN→MIND→CURATE)
+- `internal/tools/delegation.go` — MCP tool surface
+- `internal/tools/delegation/*_test.go` (22 tests) + `delegate_intent_test.go`
+- `internal/vlp/{state,usecase,package}.go` — `StateDelegating` + `EventDelegate`
+- `internal/tools/{register,registry,canonical_staleness_test}.go` — 45-tool canonical order
+- `internal/recall/assemble.go` — `DefaultToolGrants`
+- `vibe-flow/main/DELEGATION_{ARCHITECTURE,SOTA}.md`
+
+**Sweeper fix:**
+- `internal/orchestration/session_sweeper.go` — defaults 60s/300s → 15m/60m
+- `internal/tools/session.go` — `heartbeatTimeoutDefault` mirror 300s → 60m
+- `internal/tools/session_status_test.go` — contract pin updated + row 168 context
+- `vibe-flow/main/ACTIVE_MEMORY_RFC.md` — documented defaults updated
+
+---
+
+## [2.9.2-alpha] — 2026-08-03
+
+**End-of-day consolidation pass** — closes the row 166/167/168 backlog (open since v2.9.0-alpha), fixes row 189 (schema/orchestrator mismatch), and lands defensive coverage for both regressions. No new architecture; no migration; two wire-protocol changes (schema-required tightening + new session_status fields) + two stale-verification items.
+
+**v2.9.2-alpha also includes PR-17 (canonical-staleness-fix)** — `canonicalToolOrder` and `RegisterAll` cardinality guard bumped to 43 (was 39; canonical was actually 41 since v2.9.0-alpha). Without PR-17, the v2.9.2-alpha binary fails at boot with `RegisterAll: expected 39 tools, got 41`. PR-17 brings all four canonical mirrors (canonicalToolOrder, canonicalWireOrderBares, DefaultToolGrants, conformance canonicalWireOrder + RegisterAll cardinality) to 43 tools. Plus `bridgeTimeout` bumped 30s → 60s to accommodate libonnxruntime cold-open during boot.
+
+### ⚠️ Wire-protocol changes (NOT pure UX)
+
+This PR tightens two wire contracts. Harnesses integrating against dark-memory MUST be updated:
+
+1. **`agent_memory_update` + `agent_memory_archive` schemas now require `operator`** — previously declared only `id` as required; orchestrators always required `operator` (orchestration/agent_memory.go:504, 550). A harness that was sending id-only payloads and getting `errMissingField("operator")` from the orchestrator with no Field envelope will now get a schema-level rejection at harness validation time. **Required update**: include `operator` in all `dark_memory_agent_memory_update` and `dark_memory_agent_memory_archive` calls.
+
+2. **`session_status` gains `closing_soon` + `seconds_until_close`** — new envelope fields. `omitempty` so they don't appear on closed sessions; existing callers that ignore unknown fields are unaffected.
+
+### Fixed
+
+- **`session_status` closing_soon warning** (row 168) — `SessionStatusResult` gains `closing_soon: bool` and `seconds_until_close: int`. Computed against `last_heartbeat_at + heartbeat_timeout - now` (env `DARK_SESSION_HEARTBEAT_TIMEOUT`, default 300s). `closing_soon=true` when `seconds_until_close <= 30s` (env `DARK_SESSION_CLOSING_SOON_THRESHOLD`, default 30s). Closed sessions skip the countdown (omitempty zeros). **Clamping behavior**: when the deadline is already in the past (sweeper hasn't run yet), `seconds_until_close` clamps to 0 and `closing_soon=true` so harnesses know the session is overdue for closure. Harnesses can now warn operators BEFORE the sweeper closes an idle session — closing the row 168 "3 wasted restarts in one synthesis" UX debt. Implementation: `internal/tools/session.go` (new helper + BindStore closure rewires), `internal/tools/context.go` (session_context projection picks up the same fields AND now honors the same env vars — operator-set `DARK_SESSION_HEARTBEAT_TIMEOUT` is observed consistently across both `session_status` and `session_context`; previously `session_context` was hardcoded to defaults).
+- **`agent_memory_update` + `agent_memory_archive` schema/orchestrator mismatch** (row 189) — both tools' JSON schemas declared only `id` as required, but the orchestrators also require `operator` (orchestration/agent_memory.go:504, 550) for INV-1 audit. A harness that followed the published schema and sent id-only would hit `errMissingField("operator")` from the orchestrator with no Field envelope in the wire response — same SHAPE as row 167's symptom but different cause. Fix: add `"operator"` to the `required` array in both schemas. `internal/tools/agent_memory.go:142, 162`.
+
+### Migration note (row 189, why v2.9.2-alpha not v3.0.0-alpha)
+
+The **orchestrator contract did not change** in this fix — `internal/orchestration/agent_memory.go:504, 550` have always required `operator` for INV-1 audit attribution since the INV-1 invariant landed (v1.x). What changed is the **schema surface**: the JSON schema for `agent_memory_update` + `agent_memory_archive` previously declared only `id` as required, even though the orchestrator would reject id-only payloads. The schema was the inconsistent surface, not the orchestrator.
+
+**No working harness is broken by this change.** Harnesses that already send `operator` (the correct path) are unaffected — schema-level validation passes, orchestrator-level validation passes. Harnesses that were sending id-only and getting `errMissingField("operator")` from the orchestrator with no Field envelope will now see a clearer schema-level rejection at harness validation time (structured ToolError instead of unfielded rejection). This is a *better* error surface, not a worse one.
+
+If you operate a harness that was sending id-only payloads and somehow seeing success (against the orchestrator's intent), that harness was already broken under INV-1 and the schema change forces it back to a correct shape. No migration script is needed — `operator` was always mandatory; we just made the schema honest about it.
+
+**Why not v3.0.0-alpha?** Major version bumps are reserved for orchestrator contract changes (new required fields, removed tools, redesigned APIs). This is a schema-alignment-with-existing-orchestrator-contract fix, which is a PATCH-level concern under semver. The orchestrator's INV-1 invariant pre-dates this fix; we're aligning the schema to match what the orchestrator has always enforced.
+
+### Verified stale (no fix needed)
+
+- **Row 166 (`vibe_spec.tasks` Form B parser)** — F36 (v1.2.1) fixed the dispatch order. `parseTasksField` at `internal/orchestration/vibe_spec.go:115` correctly handles Form A (`[`) first; all 6 unit tests in `TestParseTasksField_*` PASS. Symptom does not reproduce.
+- **Row 167 (`agent_memory_update` ErrInvalidArgument)** — wire reproduction at `tests/orchestration/agent_memory_wire_update_test.go` (5 tests, all PASS): same-operator title-only + 4.4 KB content-only + pinned-only all succeed; legitimate missing-field paths still return Field-tagged ErrInvalidArgument. Symptom does not reproduce. Separate finding: `latestAuditIDForRow` stub returns 0 (F47 documented debt) — NOT row 167.
+
+### Added
+
+- **`tests/orchestration/agent_memory_wire_update_test.go`** — 5 wire reproduction tests for row 167 (verifies the stale path + pins the missing-field paths).
+- **`internal/tools/session_status_test.go`** — 11 unit tests for row 168 (covers fresh/near-deadline/overdue/open/idle/closed_clean/closed_aborted/empty-hb/malformed-hb/config-defaults/env-overrides/go-syntax).
+
+### Known issues (not in this release)
+
+- `latestAuditIDForRow` stub returns 0 for `AgentMemorySave.AuditID` + `AgentMemoryUpdate.AuditID` — F47 documented debt. The audit row IS written atomically (INV-1) but the orchestrator can't surface its id without a new Store method. Tracked separately from row 167.
+
+---
+
+## [2.9.1-alpha] — 2026-08-03
+
+**Hybrid Retrieval: ONNX bundle + harness-aware ladder** — closes PR-2.1 of the v2.9.0 plan (agent_memory row 160 deferred items + row 164 §2 amendment). Closes the "vibe-coder must read docs to install dark-memory" failure mode: bundled ONNX means offline-first works zero-config; harness detection picks the right preferred rung without operator intervention.
+
+### Added
+
+- **Bundled ONNX adapter** (PR-2.1, replaces the PR-2 stub) — `internal/embedder/onnx` is now a real local embedding adapter backed by `model_quantized.onnx` (Xenova/all-MiniLM-L6-v2 int8, **22.97 MB**, SHA-pinned `afdb6f1a…`) via `yalue/onnxruntime_go v1.21.0` + ONNX Runtime **1.22.0**. Libonnxruntime per-platform bundled via `//go:embed` with build tags: `windows-amd64` (12.4 MB), `linux-amd64` (21.0 MB), `darwin-arm64` (33.5 MB). Per-binary footprint: **+47 MB** (model + runtime for the build target). Total across all platform distributions: **+89 MB**. SHA verification on extract; idempotent cache at `$DARK_HOME/{models,libonnxruntime}/`.
+- **Harness detector** (`internal/embedder/detect`) — env-var-first probe ladder: `CLAUDE_CODE` → claude-code harness (prefers Voyage AI); `OPENCODE_VERSION` / `OPENCODE_CONFIG` → opencode (prefers OpenAI); `CODEX_HOME` → codex (prefers OpenAI); `OLLAMA_HOST` env var + 500ms TCP probe of `127.0.0.1:11434` → ollama. `Result{Kind, ConfigPath, Source}` is LLM-readable (used in `embedder_setup_prompt` for the consent recommendation).
+- **Voyage AI adapter** (`internal/embedder/voyage`) — Voyage AI voyage-3 (1024d), `VOYAGE_API_KEY` env var, 5s/10s + 1 retry on 5xx/429. Preferred rung when harness detection identifies Claude Code.
+- **Ollama adapter** (`internal/embedder/ollama`) — localhost:11434 `/api/embeddings` (nomic-embed-text 768d), 4-way bounded parallelism, no API key. Preferred rung when OLLAMA_HOST is set or a local daemon is reachable.
+- **Harness-aware FactoryAuto() ladder** — per row 164 §2: (1) manual `DARK_MEMORY_EMBEDDER` override; (2) harness-detected preferred rung; (3) bundled ONNX offline default; (4) `OPENAI_API_KEY` last rung; (5) `None()` stub. New `tryKind()` walks the ladder rung-by-rung and falls through on `ErrKeyMissing`/`ErrDisabled`.
+- **Consent prompt surface** — `dark_memory_embedder_setup_prompt` now returns `Harness` + `HarnessSource` + a `Recommended: true` flag on the harness-native rung. The LLM can highlight the recommended rung without violating the row 164 §3 "surface verbatim" rule.
+- **`docs/embedders/{install.md,onnx.md,voyage.md,ollama.md}`** — LLM-readable install docs per row 164 §4.
+
+### Changed
+
+- **`internal/embedder/embedder.go`** — adds `KindVoyage` + `KindOllama` constants; `FactoryAuto()` rewritten with the harness-aware ladder (was: env-presence auto-detect only).
+- **`internal/tools/embedder_setup.go`** — `ConsentStatus` gains `Harness` + `HarnessSource` + per-choice `Recommended` flag. `consentPromptVerbatim` now interpolates the detected harness name.
+- **`internal/embedder/detect/detect.go`** — new package, 5 probes (claude-code / opencode / codex / ollama / unknown). No new deps. `Result.String()` includes the detection source for debug.
+- **`internal/embedder/onnx/{onnx,embed,wordpiece}.go`** — real impl. CGO via `yalue/onnxruntime_go`. ~430 LoC of WordPiece tokenization + session management + SHA verification.
+- **`go.mod`** — adds `github.com/yalue/onnxruntime_go v1.21.0`.
+
+### Bundle footprint
+
+| Asset | Size | Build-tag-gated |
+|---|---|---|
+| `model_quantized.onnx` (Xenova/all-MiniLM-L6-v2 int8) | 22.97 MB | yes (always embedded) |
+| `onnxruntime.dll` (Windows amd64) | 12.42 MB | `windows && amd64` |
+| `libonnxruntime.so.1.22.0` (Linux amd64) | 21.04 MB | `linux && amd64` |
+| `libonnxruntime.1.22.0.dylib` (Darwin arm64) | 33.48 MB | `darwin && arm64` |
+
+**Per-binary increase: +47 MB** (model + one platform's libonnxruntime). Cross-distribution footprint: +89 MB.
+
+### Deferred to v2.9.2+ (PR-3.1)
+
+- `drift_judge` MCP integration for entity extraction (PR-3 ships the deterministic local extractor; PR-3.1 swaps the body without changing the `Source` tag taxonomy).
+- Postgres vector/RRF dispatch mirror (PR-2 ships schema + read parity; PR-3.1 picks up runtime save + filter parity for entities).
+- `sqlite-vec` / `pgvector` for production-scale vector search.
+- Postgres porter stemming (v22 in sqlite is `unicode61`+`porter`; Postgres needs `tsvector` + `snowball`).
+- Mem0 compatibility mode extension to new axes.
+
+### Build requirements
+
+PR-2.1 requires **CGO_ENABLED=1** at build time. CI (Ubuntu 22.04) ships `gcc` by default. Local Windows builds need a C compiler; install MinGW (`winget install BrechtSanders.WinLibs.POSIX.UCRT` ships WinLibs MinGW).
+
+### Known issues (not in this release)
+
+- `vibe_spec.tasks` Form B parser rejects JSON arrays (governance gate cannot run via helper) — row 166, **closed in v2.9.2-alpha**.
+- `agent_memory_update` returns `ErrInvalidArgument` for same-operator longer content — row 167, **closed in v2.9.2-alpha** (was already fixed in transit; wire regression tests added).
+- Session auto-close race (~5 min inactivity → `ErrFrameStaleTooFar`) — row 168, **closed in v2.9.2-alpha** (`closing_soon` warning surface).
+- `go test ./internal/embedder/onnx` TestEmbedAfterClose skipped on Windows (yalue runtime holds a DLL handle that prevents `t.TempDir` cleanup). The integration path works; only the cleanup pattern is affected.
+
+---
+
+## [2.9.0-alpha] — 2026-08-03
+
+**Hybrid Retrieval** — closes the v2.9.0 plan (agent_memory row 160). Three PRs land behind per-axis opt-in (BM25 stays the default). Schema: v22 (porter_stemming) → v23 (agent_memory_embedding) → v24 (agent_memory_entities). Canonical tool count: 41 → **42**. Wire contract appenditive, zero breaking changes. Embedder layer refreshes via init-time `RegisterAdapter` registry to break the embedder ↔ adapter import cycle.
+
+### Added
+
+- **A1 Porter Stemming** (PR-1, v22 migration) — FTS5 tokenizer `unicode61` → `porter unicode61` for fresh-DB default; idempotent rebuild for existing schemas. Adds `TestSearchAgentMemory_PorterStemming` (stem equivalence `running ↔ runs ↔ ran`) + control test that baseline FTS5 still finds exact forms. Backward compat: result SET unchanged; only ranking differs. Operators see different BM25 ordering, not different rows.
+- **A2 Vector Search + RRF** (PR-2, v23 migration) — `SearchFilters.Mode = "bm25" | "vector" | "rrf"` (default `"bm25"`). Brute-force cosine in-process for v2.9.0; `sqlite-vec` / `pgvector` deferred to v2.9.1+. Embedder factory refreshes: `FactoryAuto()` does env-presence auto-detect (`OPENAI_API_KEY` → OpenAI text-embedding-3-small). New adapters: `internal/embedder/openai` (real, 5s/10s + 1 retry on 5xx/429), `internal/embedder/mock` (deterministic SHA-256-truncated unit vectors for tests), `internal/embedder/onnx` (PR-2.1 stub returning `ErrDisabled` with a "ships in PR-2.1" hint). `RRFRank` helper (Cormack et al., 2009) with `k=60`, weights default 1.0 each axis.
+- **A3 Entity Matching** (PR-3, v24 migration) — new `agent_memory_entities` side table (mem_id FK ON DELETE CASCADE, entity, source, confidence, model, created_at, PK `(mem_id, entity)`). New `SearchFilters.Entities []string` (AND-semantics filter); new MCP tool `dark_memory_agent_memory_entities(mem_id)` reads the entity list for one row. `internal/entity` package ships a deterministic local extractor (lowercase + stopword + minLen + dedup + frequency-ranked). `Source` tag = `"deterministic"` for PR-3; PR-3.1 swaps for a `drift_judge` bridge without contract change. Backward compat: extraction opt-in (`m.Entities = nil` → zero entity rows written).
+- **A4 Embedder Consent Gate** (PR-2) — new MCP tool `dark_memory_embedder_setup_prompt` returns `{Status, Kind, Dim, Prompt, Choices}`. Per row 164 §3, when dark-memory boots without a detected provider AND `OPENAI_API_KEY` unset, the harness's LLM surfaces the verbatim consent question to the operator. Choices persist to `agent_memory` so dark-memory never asks again unless config drifts.
+- **`store.Store.Embedder()` interface method** — any driver must implement. Both SQLite + Postgres provide a non-blocking stub default (`embedder.None()`) until `WithEmbedder()` is called at boot.
+- **TestMigrate_V23EmbeddingColumn + TestMigrate_V24EntitiesTable** — schema-level coverage for the two new migrations (BLOB round-trip + ON CONFLICT DO NOTHING idempotency).
+
+### Changed
+
+- **`internal/embedder/embedder.go`** — `RegisterAdapter(kind, factory)` registry breaks the would-be import cycle (embedder ↔ openai / onnx / mock). Each adapter registers itself in `init()`. `FactoryAuto()` picks OpenAI when `OPENAI_API_KEY` is present, else falls back to `None()`. `Options` struct is the typed parameter surface for adapter-specific overrides.
+- **`internal/agentmemory/types.go`** — `SearchFilters` gains `{Mode, RRFK, RRFWeightBM25, RRFWeightVector, Entities}`. `SearchHit` gains `{BM25Rank, VectorRank, RRFScore}` (pre-PR-2 callers see zero change). `AgentMemory` gains transient `Embedding` + `Entities` fields (json:"-") populated by the embedder/extractor paths.
+- **`internal/store/sqlite/store.go` + `internal/store/postgres/store.go`** — `SaveAgentMemory` writes embedding + entity rows in the SAME tx as the main INSERT (atomic per row 160 PR-2/PR-3 specs). `SearchAgentMemory` post-prunes by `Entities` filter across all 3 modes (preserves rank order). `GetAgentMemoryEntities(mem_id)` is the read path on both drivers.
+- **`internal/tools/registry.go`** — canonical order gains the new `embedder_setup_prompt` (EMBEDDER group) + `agent_memory_entities` (AGENT_MEMORY group). Canonical tool count: 41 → 42.
+
+### Deferred to v2.9.1+ (PR-2.1 + PR-3.1)
+
+- Bundled ONNX model (`model_quantized.onnx`, ~22.97 MB) + `libonnxruntime` per-platform → ~+95 MB binary footprint (row 162).
+- Harness-aware factory dispatch ladder per row 164 §2 (OpenCode → Claude → Codex → Ollama → bundled ONNX → `OPENAI_API_KEY` last rung).
+- Postgres vector/RRF dispatch mirror (PR-2 ships schema + read; PR-2.1 picks up runtime; PR-3.1 picks up Postgres save + filter for entities).
+- drift_judge MCP integration for entity extraction (PR-3's local heuristic + PR-3.1's drift_judge bridge — same `Source` tag taxonomy).
+- `sqlite-vec` / `pgvector` for production-scale vector search (v2.9.1+ drop-in acceleration).
+- Postgres porter stemming (v22 in sqlite): tsvector + snowball stemmer equivalent.
+- Mem0 compatibility mode extension to new axes (existing compat mode covers the BM25 axis).
+
+### Fixed
+
+- **H-4 lint compliance** — `scripts/lint-no-private-projects.ps1` exits 0 on the v2.8.0-alpha-dev branch post-PR-13 (renamed the BLOCKLIST placeholder identifier to `[FUTURE-MCP-N]` across 16 tracked files + 1 file rename; pre-existing 17-leak debt closed).
+
+### Known issues (not in this release)
+
+- `vibe_spec.tasks` Form B parser rejects JSON arrays (governance gate cannot run via helper) — row 166, end-of-day.
+- `agent_memory_update` returns `ErrInvalidArgument` for same-operator longer content — row 167, end-of-day.
+- Session auto-close race (~5 min inactivity → `ErrFrameStaleTooFar`) — row 168, end-of-day.
+
+---
+
+## [2.8.0-alpha] — 2026-07-29
+
+**Memory Timing & Coordination** — closes the "agent and subagents don't write/read agent_memory at the right moments" failure mode documented in agent_memory id=106 (28 edge cases across 6 categories, OSINT-grounded against Mem0/LangMem/Zep/Letta/arxiv:2605.08460). Five P1 features land behind a single feature flag (`DARK_MEMORY_V280=1`, default off in v2.7.x compat). Schema: v20 → **v21** (one new table). Canonical tool count: 39 → **41**. Wire contract appenditive, zero breaking changes.
+
+### Added
+
+- **A1 Decision Auto-Save** — `vibe_publish` with `auto_save_decision=true` (default when `DARK_MEMORY_V280=1`) AND `verdict=aligned` auto-creates a `kind=decision` agent_memory row, `pinned=true`, tagged with `spec:<id>,verdict:aligned,artifact:<url>`. Returns `auto_saved_decision_id` in the response. Off by default in v2.7.x compat.
+- **A4 Todo Auto-Save** — `vibe_spec` with `auto_save_todos=true` (default when `DARK_MEMORY_V280=1`) auto-creates one `kind=todo` row per task, tagged `spec:<id>,task:<id>,status:open`. `vibe_publish` `verdict=aligned` auto-archives the corresponding todos. Returns `auto_saved_todo_ids` (on spec) + `auto_archived_todo_ids` (on aligned publish).
+- **B1 Cold Start + Token Budget** — `session_start` adds two new fields: `cold_start` (skip `context_recap` entirely) + `context_recap_tokens` (default 2000, clamp `[0, 8000]`). `ContextRecap` adds three new fields: `truncated`, `truncated_rows`, `formatted_chars`. Truncation drops open todos first, then pinned from the tail (least recent).
+- **C2 Subagent Scope Handoff** — `mindset_apply` adds `spawn_subagent` + `subagent_id`. New tools: `dark_memory_subagent_register` + `dark_memory_subagent_unregister`. New migration **v21**: `active_subagents` table (`(project_id, operator, subagent_id)` PK + `id` AUTOINCREMENT surrogate + TTL index). TTL sweeper at `session_start` (precursor to F51). When `DARK_MEMORY_V280=1`, the `agent_memory_save` agent_id resolution priority chain extends to **(1) caller input > (2) active subagent_id > (3) `projects.default_agent_id` > (4) empty string**. **Defense-in-depth against arxiv:2605.08460 inheritance attacks** — subagent writes are tagged with an opaque uuid the principal generates, never the principal's `agent_id`, so they never leak into the principal's ContextRecap.
+- **D5 Cross-Project Error Code** — `GetAgentMemory` cross-project now returns `*CrossProjectAccessError` (wrapping `store.ErrCrossProjectAccess` sentinel). Distinct from `ErrNotFound` — operators can now diagnose "wrong project" vs "doesn't exist". Pre-v2.8.0 callers (when `DARK_MEMORY_V280=off`) see `(nil, nil)` for cross-project (v2.7.x backward compat preserved).
+- **`internal/orchestration/feature_flags.go`** — `v280Enabled()` helper (env `DARK_MEMORY_V280=1/true/yes/on`).
+- **`internal/orchestration/subagent.go`** — `SubagentRegister` + `SubagentUnregister` orchestrator methods + input/output types.
+- **`internal/orchestration/agent_id.go`** — `activeOperator()` + `resolveActiveAgentIDWithSubagent()` (C2 subagent priority chain).
+- **`internal/orchestration/session_start.go`** — `applyContextRecapBudget()` (B1 truncation) + `formatPinnedForRecap` / `formatTodosForRecap` formatters.
+- **`internal/orchestration/publish_vibe.go`** — `autoSaveDecisionOnAligned` (A1) + `autoArchiveSpecTodosOnAligned` (A4).
+- **`internal/orchestration/vibe_spec.go`** — `autoSaveTodosForSpec` (A4).
+- **`internal/orchestration/agent_memory.go`** — C2 agent_id resolution extension + D5 cross-project error wrapping.
+- **`internal/migrate/sqlite/ddl.go`** + **`internal/migrate/postgres/ddl.go`** — migration v21 (`active_subagents`).
+- **`internal/store/store.go`** — `ActiveSubagent` type + 4 Store interface methods (`SetActiveSubagent` / `GetActiveSubagent` / `ClearActiveSubagent` / `SweepExpiredSubagents`) + `ErrCrossProjectAccess` sentinel + `CrossProjectAccessError` struct.
+- **`internal/store/sqlite/store.go`** — full SQLite impl for all 4 methods + cross-project GetAgentMemory logic.
+- **`internal/store/postgres/store.go`** — `notImpl` stubs (F50 backlog; Postgres backplane deferred).
+
+### Changed
+
+- **`agent_memory_save` agent_id resolution priority chain** (when `DARK_MEMORY_V280=1`): caller input > **active subagent_id** > `projects.default_agent_id` > empty string. Pre-v2.8.0 chain is preserved when the flag is off.
+- **`session_start` `ContextRecap`** now includes `truncated` + `truncated_rows` + `formatted_chars` (when `DARK_MEMORY_V280=1`); defaults to token-budget 2000 (vs v2.7.x's unbounded).
+- **`vibe_publish`** returns `auto_saved_decision_id` + `auto_archived_todo_ids` (when `DARK_MEMORY_V280=1`).
+- **`vibe_spec`** returns `auto_saved_todo_ids` (when `DARK_MEMORY_V280=1`).
+- **`mindset_apply`** returns `subagent_id` + `parent_agent_id` when `spawn_subagent=true` (when `DARK_MEMORY_V280=1`).
+- **`SYSTEM_PROMPT.md`** — line 101 drift fix: `scope=current` → `scope=project` (v2.3.0 default was already `project`). Added B1 ContextRecap auto-surface note (§4.1), A1/A4 auto-save notes (§4.2), C2 subagent memory isolation note (§5).
+
+### Tests
+
+- **`tests/dual_driver/agent_memory_v2_8_0_test.go`** (10 tests, all passing): D5 cross-project error matrix (happy + same-project + non-existent + error-message-format) + C2 active_subagents store-layer round-trip (Set / Get / not-registered / refresh-TTL / Clear / Clear-not-found / sweep / kind=decision regression).
+- **`tests/conformance/bridge7_mcp_inspector_test.go`** — canonical tool count 39 → 41 (added `dark_memory_subagent_register` + `dark_memory_subagent_unregister` at position 39 + 40, after `vlp_handle_event`).
+- **`tests/migrate/migrate_f37_test.go`** — `schema_version` 20 → 21.
+
+### Backward Compatibility
+
+All 5 features gated by `DARK_MEMORY_V280=1`. **Default off.** v2.7.x callers see no behavior change. To opt in:
+
+```bash
+export DARK_MEMORY_V280=1
+# start dark-mem-mcp as usual
+```
+
+### Migration
+
+Apply migration v21 automatically on next `dark-mem-mcp` startup (idempotent `CREATE TABLE IF NOT EXISTS`). No operator action required.
+
+### Rollout Plan
+
+- **Phase 1 (this release)**: tag `v2.8.0-alpha`, `DARK_MEMORY_V280=1` opt-in, 1-week soak.
+- **Phase 2 (v2.8.0)**: default ON, 4-channel distribution.
+- **Phase 3 (v2.10.0)**: remove `DARK_MEMORY_V280` flag (new behavior permanent).
+
+### References
+
+- Spec: 681 (vibe_case=C2, 6 tasks)
+- Artifact: 804 (design doc, drift_judge aligned @0.92)
+- Edge case catalog: agent_memory id=106
+- Roadmap: agent_memory id=108
+- OSINT sources: Zylos multi-agent architectures, AgentMarketCap 2026 vendor landscape, arxiv:2605.08460 "When Child Inherits"
+
+---
+
+## Post-ship fixes (2026-07-29) — applied to `v2.8.0-alpha` tag (no version bump)
+
+Soak tester feedback (operator local install) revealed **6 gaps** in the initial ship, all fixed in-branch and force-moved into the `v2.8.0-alpha` tag. No version bump — single release line per operator preference (soak testers see one update, not a `.2` micro-version).
+
+### Fixed
+
+1. **`DefaultToolGrants` missing the 2 new tools** — `internal/recall/assemble.go`. Operators got `ErrCapabilityNotGranted` calling `subagent_register`/`subagent_unregister`. The new tools were registered in the registry but not granted by default. (commit `b2dfe53`)
+
+2. **`ToToolError` switch missing `ErrCrossProjectAccess` case** — `internal/tools/errors.go`. Cross-project `agent_memory_get(id=N)` returned generic `ErrInternal` instead of the typed error code. The sentinel existed in the store layer but the tools layer had no case for it. (commit `85ec910`)
+
+3. **Orchestrator wrap dropped the typed struct** — `internal/orchestration/agent_memory.go::AgentMemoryGet`. The orchestrator wrapped with `fmt.Errorf("%w", sentinel, ...)` which discarded the typed `*CrossProjectAccessError` from the chain. `errors.As(err, &cpe)` failed in the tools layer, degrading to the generic message even though `errors.Is` worked. Fix: return the typed struct directly; its `Is(target)` method already satisfies the sentinel. (commit `eea5962`)
+
+4. **`escapeFTS5` dead code** — `internal/tools/agent_memory.go`. The FTS5 escape helper existed but was never called from the `agent_memory_recall` bind function. Raw queries reached FTS5's MATCH parser and exploded with "fts5: syntax error" for any input containing chars outside the FTS5 bareword allowlist (`.`, `-`, version numbers). (commit `9897318`)
+
+5. **`escapeFTS5` allowlist was wrong** — `internal/tools/agent_memory.go`. Even with #4 calling the function, the allowlist-based escape (`alphanumeric + . - _ / + *`) was contradictory: FTS5 barewords are restricted to `[a-zA-Z0-9_]` per `sqlite.org/fts5.html §3.1`; any other character MUST be quoted. Replaced with the production pattern from `gwicho38/legal-workspace-mcp` (deepwiki.com): whitespace-tokenize, wrap each token in FTS5 phrase quotes, length-prefix support (`jira*` → `"jira"*`), embedded quotes escaped by doubling. (commit `af15ee5`)
+
+6. **Harness intelligence gap (`SYSTEM_PROMPT.md` v1 → v2)** — `internal/agentbootstrap/data/SYSTEM_PROMPT.md`. The originally shipped bootstrap doc said "35 tools" (now 41), referenced schema v20 (now v21), omitted the 2 new tool names (`subagent_register`, `subagent_unregister`) from the AGENT_MEMORY namespace table, didn't document D5 cross-project isolation, didn't teach the LLM the **R-CRUD pattern** (recall is the primary discovery tool; `list()` is for browse-all only), and had a duplicated `## 6. Drift detection` header. (commit `a557f8e` for the v1→v2 deltas to date)
+
+### Changed
+
+- **`SearchAgentMemory` BM25 score sign flipped** — `internal/store/sqlite/store.go`. FTS5 `bm25()` returns negative scores (lower = better); SQL now `-bm25(...) AS rank` so hits are ranked `ORDER BY rank DESC` (higher = better, intuitive UX). Internal sort flipped to match. (commit `af15ee5`)
+
+- **`Store.Close()` runs `PRAGMA optimize`** — `internal/store/sqlite/store.go`. Best-effort: log-only on error, never fails Close. Per `sqlite.org/fts5.html §6.9` this analyzes recent query patterns and updates internal FTS5 statistics for better query planning on next startup. (commit `af15ee5`)
+
+### Added
+
+- **`internal/tools/agent_memory_escape_test.go::TestEscapeFTS5_QuoteWrap`** — 10 cases covering the new quote-wrap behavior: `.` `-` `*` `AND OR` embedded quotes whitespace-only empty single-token. (commit `af15ee5`)
+
+- **§4.5 "Memory discovery (the recall vs list distinction)"** in `SYSTEM_PROMPT.md` — teaches the R-CRUD pattern explicitly with a comparison table, rules of thumb (1-6), and an anti-pattern callout. Replaces the v1 one-line step 8 that said only `save`. (commit `a557f8e`)
+
+### Lessons captured for future releases
+
+1. **Smoke test the harness, not just the binary.** Original v2.8.0-alpha ship verified the binary boots + all 5 P1 features wire up — but the SYSTEM_PROMPT.md (which IS the "intelligence" delivered to the LLM) wasn't updated in sync. The smoke test caught this.
+2. **OSINT > guessing.** The wrong `escapeFTS5` allowlist was contradicted by `sqlite.org/fts5.html §3.1` ("barewords are restricted to [a-zA-Z0-9_]"). One fetch of the spec would have caught it before the soak started. For any new tech we adopt (FTS5, hybrid retrieval, etc.), the spec is the source of truth — not StackOverflow, not gpt, not our last impl.
+3. **Tool registry + DefaultToolGrants + tool description + SYSTEM_PROMPT must all stay in sync.** These are 4 different places to update when adding a new tool; missing any one makes the feature invisible or unusable. (See `agent_memory id=118` for the post-mortem.)
+4. **Don't wrap a typed struct with `fmt.Errorf("%w", sentinel)`** — the wrap drops the struct from the error chain. If a downstream consumer needs `errors.As` to extract the struct (for diagnostic fields like `RowID`, `RowProject`, `RequestedProject`), return the struct directly or use `fmt.Errorf("%w", struct)` (struct implements `Unwrap()` via `Is()`).
+
+### Git history at this tag
+
+Tag `v2.8.0-alpha` now points at commit `af15ee5` (force-moved from `d224d44`). The 5 fix commits since the original ship are: `b2dfe53` (gate), `85ec910` (errors), `eea5962` (orch), `9897318` (escape call), `af15ee5` (escape rewrite + BM25 + optimize). All in branch `v2.8.0-alpha-dev`.
+
+---
+
 ## [2.7.1] — 2026-07-29
 
 Deferred cleanup after the 2.7.0-alpha ship (which required 5 commits to land due to version-drift + race-condition failure modes). No wire-contract changes — same 39 canonical tools, same schemas, same schema_version. All changes are CI hardening + tests.

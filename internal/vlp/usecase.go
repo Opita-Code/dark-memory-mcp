@@ -225,6 +225,13 @@ func nextEventNameFor(s State) string {
 	case StateDraftingSpec:
 		return EventVibePublish.String()
 	case StateSpecActive:
+		// spec_active keeps the standard single-agent hint
+		// (artifact_log). When the DelegationRouter decides DELEGATE
+		// for this spec, the harness fires `delegate` instead —
+		// that decision is per-spec (router output), not per-state,
+		// so the generic hint stays on the default path.
+		return EventArtifactLog.String()
+	case StateDelegating:
 		return EventArtifactLog.String()
 	case StateDriftJudging:
 		return EventDriftLog.String()

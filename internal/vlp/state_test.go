@@ -33,6 +33,19 @@ func TestTransition_AllValidPaths(t *testing.T) {
 		{
 			name: "spec_active+artifact_log → drift_judging", from: StateSpecActive, event: EventArtifactLog, verdict: VerdictUnknown, want: StateDriftJudging,
 		},
+
+		// Wave 5C delegation path: spec_active → delegating (router
+		// decided DELEGATE) → artifact_log (synthesis done) → drift.
+		{
+			name: "spec_active+delegate → delegating", from: StateSpecActive, event: EventDelegate, verdict: VerdictUnknown, want: StateDelegating,
+		},
+		{
+			name: "delegating+artifact_log → drift_judging", from: StateDelegating, event: EventArtifactLog, verdict: VerdictUnknown, want: StateDriftJudging,
+		},
+		{
+			name: "delegating+abort → needs_human", from: StateDelegating, event: EventAbort, verdict: VerdictUnknown, want: StateNeedsHuman,
+		},
+
 		{
 			name: "drift_judging+drift_log(aligned) → complete", from: StateDriftJudging, event: EventDriftLog, verdict: VerdictAligned, want: StateComplete,
 		},
@@ -130,6 +143,14 @@ func TestTransition_InvalidPaths(t *testing.T) {
 		{"spec_active+session_start", StateSpecActive, EventSessionStart, VerdictUnknown},
 		{"drafting_spec+artifact_log", StateDraftingSpec, EventArtifactLog, VerdictUnknown},
 		{"drift_judging+vibe_publish", StateDriftJudging, EventVibePublish, VerdictUnknown},
+
+		// Wave 5C: delegate is only valid from spec_active
+		{"idle+delegate", StateIdle, EventDelegate, VerdictUnknown},
+		{"drafting_spec+delegate", StateDraftingSpec, EventDelegate, VerdictUnknown},
+		{"drift_judging+delegate", StateDriftJudging, EventDelegate, VerdictUnknown},
+		{"delegating+delegate", StateDelegating, EventDelegate, VerdictUnknown},
+		{"delegating+drift_log", StateDelegating, EventDriftLog, VerdictAligned},
+		{"delegating+session_start", StateDelegating, EventSessionStart, VerdictUnknown},
 
 		// EventDriftLog requires verdict
 		{"drift_judging+drift_log(no verdict)", StateDriftJudging, EventDriftLog, VerdictUnknown},

@@ -29,6 +29,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -51,6 +52,10 @@ type PublishSpecInput struct {
 // PublishArtifactInput is the artifact half of a PublishVibe call. Text
 // is the body of the artifact (used for drift_judge + brand_match +
 // compliance_check). URL is the canonical location.
+//
+// v2.8.0-alpha A1: AutoSaveDecision (default true when
+// DARK_MEMORY_V280=1) triggers a kind=decision agent_memory row when
+// drift_judge verdict=aligned. Set false to suppress per-call.
 type PublishArtifactInput struct {
 	ArtifactType string `json:"artifact_type"`            // code|text|image|video|audio|multi
 	ArtifactURL  string `json:"artifact_url"`             // where it lives
@@ -58,6 +63,12 @@ type PublishArtifactInput struct {
 	BrandID      string `json:"brand_id,omitempty"`       // triggers brand_match if set
 	Jurisdiction string `json:"jurisdiction,omitempty"`   // triggers compliance_check if set
 	HasDisclosure bool  `json:"has_disclosure,omitempty"` // EU AI Act flag for synthetic media
+	// AutoSaveDecision (v2.8.0-alpha A1) — when true (default when
+	// DARK_MEMORY_V280=1) AND verdict=aligned, auto-create a
+	// kind=decision agent_memory row tagged with the spec id. Set
+	// to false to suppress per-call (the auto-save might add noise
+	// for trivial decisions).
+	AutoSaveDecision bool `json:"auto_save_decision,omitempty"`
 }
 
 // PublishVibeInput is the full request to publish one artifact under
@@ -97,6 +108,16 @@ type PublishResult struct {
 	// ActiveAgentID (v2.4.1) echoes the resolved agent_id used for
 	// drift_judge enrichment. Empty when no agent_id is configured.
 	ActiveAgentID string `json:"active_agent_id,omitempty"`
+	// AutoSavedDecisionID (v2.8.0-alpha A1) is the row id of the
+	// kind=decision agent_memory row auto-saved when verdict=aligned.
+	// 0 when no row was saved (verdict != aligned, AutoSaveDecision=false,
+	// V280 flag off, or save failed).
+	AutoSavedDecisionID int64 `json:"auto_saved_decision_id,omitempty"`
+	// AutoArchivedTodoIDs (v2.8.0-alpha A4) is the list of kind=todo
+	// row ids auto-archived when verdict=aligned (todos tied to the
+	// spec id are closed). Empty when no todos existed or verdict !=
+	// aligned.
+	AutoArchivedTodoIDs []int64 `json:"auto_archived_todo_ids,omitempty"`
 }
 
 // PublishVibe is the canonical publish entry point. See package doc.
@@ -306,7 +327,119 @@ func (o *Orchestrator) PublishVibe(ctx context.Context, in PublishVibeInput) (*P
 		}
 	}
 
+	// 9. v2.8.0-alpha A1 + A4: auto-save decision + auto-archive
+	// todos when verdict=aligned AND DARK_MEMORY_V280=1.
+	if v280Enabled() && result.Verdict == "aligned" {
+		if in.Artifact.AutoSaveDecision {
+			o.autoSaveDecisionOnAligned(ctx, wc, specID, artifactID, in, result, activeAgentID)
+		}
+		o.autoArchiveSpecTodosOnAligned(ctx, wc, specID, result)
+	}
+
 	return result, nil
+}
+
+// autoSaveDecisionOnAligned is the A1 hook. When drift_judge says the
+// artifact matches the spec, this persists a kind=decision
+// agent_memory row capturing the spec intent + the artifact URL +
+// the drift_judge reasoning. Pinned=true (decisions are reference
+// material for future sessions). Tags include spec:<id>,verdict:aligned,
+// artifact:<url> so future searches can find it.
+//
+// Best-effort: failures are logged + appended to result.Reasoning
+// (the publish itself succeeded; the decision auto-save is gravy).
+func (o *Orchestrator) autoSaveDecisionOnAligned(
+	ctx context.Context,
+	wc store.WriteContext,
+	specID, artifactID int64,
+	in PublishVibeInput,
+	result *PublishResult,
+	activeAgentID string,
+) {
+	// Build decision content from spec intent (truncated) +
+	// artifact URL + drift_judge reasoning (truncated).
+	specIntent := in.Spec.Spec
+	if len(specIntent) > 500 {
+		specIntent = specIntent[:500] + "..."
+	}
+	reasoning := result.Reasoning
+	if len(reasoning) > 500 {
+		reasoning = reasoning[:500] + "..."
+	}
+	content := fmt.Sprintf(
+		"Spec %d verdict=aligned (confidence=%.2f)\n\nIntent:\n%s\n\nArtifact:\n%s\n\nConstraint:\n%s\n\nPinned by auto-save on vibe_publish %s",
+		specID, result.Confidence, specIntent, in.Artifact.ArtifactURL,
+		reasoning, o.now().Format(time.RFC3339Nano),
+	)
+	tags := fmt.Sprintf("spec:%d,verdict:aligned,artifact:%s",
+		specID, in.Artifact.ArtifactURL)
+
+	operator := wc.Actor
+	if operator == "" {
+		operator = o.activeOperator(ctx)
+	}
+	if operator == "" {
+		operator = "orchestrator_publish_vibe"
+	}
+
+	saveInput := AgentMemorySaveInput{
+		Operator:  operator,
+		AgentID:   activeAgentID,
+		Kind:      agentmemory.KindDecision,
+		Title:     fmt.Sprintf("Decision from spec %d", specID),
+		Content:   content,
+		Tags:      tags,
+		Pinned:    true,
+	}
+	out, err := o.AgentMemorySave(ctx, saveInput)
+	if err != nil {
+		log.Printf("dark-mem-mcp: publish_vibe auto-save decision err=%v (spec_id=%d)", err, specID)
+		result.Reasoning = result.Reasoning + "; auto-save decision failed: " + err.Error()
+		return
+	}
+	result.AutoSavedDecisionID = out.Row.ID
+}
+
+// autoArchiveSpecTodosOnAligned is the A4 hook. When drift_judge says
+// aligned, the spec's tasks are now complete — the matching kind=todo
+// rows should be archived (closed). This implements the todo lifecycle
+// (open from vibe_spec → closed on aligned publish).
+//
+// Best-effort: failures are logged + appended to result.Reasoning.
+func (o *Orchestrator) autoArchiveSpecTodosOnAligned(
+	ctx context.Context,
+	wc store.WriteContext,
+	specID int64,
+	result *PublishResult,
+) {
+	// List open todos tagged with this spec_id. The Tag filter
+	// matches rows whose comma-separated tags contain this token
+	// (case-insensitive). Spec id is included in the row's tags
+	// by vibe_spec's auto-save hook (A4).
+	tagFilter := fmt.Sprintf("spec:%d", specID)
+	todos, err := o.Store.ListAgentMemory(ctx, agentmemory.AgentMemoryListFilters{
+		Kind:            agentmemory.KindTodo,
+		Tag:             tagFilter,
+		IncludeArchived: false,
+		Limit:           100,
+	})
+	if err != nil {
+		log.Printf("dark-mem-mcp: publish_vibe list-spec-todos err=%v (spec_id=%d)", err, specID)
+		result.Reasoning = result.Reasoning + "; list spec todos failed: " + err.Error()
+		return
+	}
+
+	var archived []int64
+	for _, todo := range todos {
+		if err := o.Store.ArchiveAgentMemory(ctx, wc, todo.ID); err != nil {
+			log.Printf("dark-mem-mcp: publish_vibe archive-todo err=%v (todo_id=%d)", err, todo.ID)
+			continue
+		}
+		archived = append(archived, todo.ID)
+	}
+	if len(archived) > 0 {
+		result.AutoArchivedTodoIDs = archived
+	}
 }
 
 // parseDriftVerdict maps an LLM Judge verdict JSON to one of the

@@ -5,12 +5,12 @@ package orchestration
 // The sweeper is a background goroutine that periodically promotes
 // stale sessions per the dual-timeout policy declared in INV-9:
 //
-//   - IDLE_TIMEOUT  (env DARK_SESSION_IDLE_TIMEOUT, default 60s):
+//   - IDLE_TIMEOUT  (env DARK_SESSION_IDLE_TIMEOUT, default 15m):
 //     `open` sessions whose last_heartbeat_at is older than this are
 //     demoted to `idle`. The session is still resumable but its
 //     hot context is considered stale.
 //
-//   - HEARTBEAT_TIMEOUT (env DARK_SESSION_HEARTBEAT_TIMEOUT, default 300s):
+//   - HEARTBEAT_TIMEOUT (env DARK_SESSION_HEARTBEAT_TIMEOUT, default 60m):
 //     `idle` sessions whose last_heartbeat_at is older than this are
 //     closed with reason='aborted' (resurrectable per INV-8). The
 //     harness clearly died and the operator can call SessionRecover
@@ -37,9 +37,17 @@ import (
 )
 
 // Default timeouts. Operators can override via env.
+//
+// v2.10.0 (2026-08-04): defaults raised from 60s/300s to 15m/60m —
+// the old 5-minute heartbeat timeout killed ACTIVE sessions on
+// interactive harnesses (opencode, Claude Code) that do not emit
+// periodic heartbeats: any thinking pause > 5 min → closed_aborted
+// → ErrFrameStaleTooFar on the next tool call. 60 minutes without a
+// heartbeat means the harness genuinely died (INV-8 resurrectable);
+// 15 minutes of silence is the "likely idle" signal, not "dead".
 const (
-	defaultIdleTimeout      = 60 * time.Second
-	defaultHeartbeatTimeout = 300 * time.Second
+	defaultIdleTimeout      = 15 * time.Minute
+	defaultHeartbeatTimeout = 60 * time.Minute
 	defaultTickInterval     = 30 * time.Second
 	defaultBatchLimit       = 200
 )
@@ -48,12 +56,12 @@ const (
 // defaults above.
 type SweeperInput struct {
 	// IdleTimeout: `open` → `idle` if last_heartbeat_at < now - IdleTimeout.
-	// 0 → use DARK_SESSION_IDLE_TIMEOUT env or default (60s).
+	// 0 → use DARK_SESSION_IDLE_TIMEOUT env or default (15m).
 	IdleTimeout time.Duration
 
 	// HeartbeatTimeout: `idle` → `closed_aborted` if last_heartbeat_at
 	// < now - HeartbeatTimeout. 0 → use DARK_SESSION_HEARTBEAT_TIMEOUT
-	// env or default (300s).
+	// env or default (60m).
 	HeartbeatTimeout time.Duration
 
 	// TickInterval: how often the sweeper runs. 0 → default (30s).

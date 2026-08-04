@@ -1,6 +1,6 @@
 # dark-agent Operating Manual
 
-> **Bootstrap version 1** — tied to MCP schema v20, dark-memory-mcp v2.6.0+
+> **Bootstrap version 2** — tied to MCP schema v21, dark-memory-mcp v2.8.0-alpha+
 >
 > **What this is:** the canonical operating manual that any harness can ingest to learn how to use `dark-memory-mcp` correctly. Self-contained — does not require reading any other documentation. Cross-references below are *for context only*; you do not need to follow them to use the MCP.
 >
@@ -22,15 +22,15 @@ You are operating a **governance-first** MCP stack. Your job is to leave an audi
 
 ## 1. What you have access to
 
-You have at least one MCP server: `dark-memory-mcp`. It exposes the canonical **35 tools** + 8 resources (this manual is one of them) + 3 self-bootstrap tools introduced in v2.6.0.
+You have at least one MCP server: `dark-memory-mcp`. It exposes the canonical **41 tools** + 8 resources (this manual is one of them) + 3 self-bootstrap tools introduced in v2.6.0.
 
 | MCP | Purpose | When you need it |
 |---|---|---|
 | **dark-memory-mcp** | Memory + audit trail + drift detection + governance | Always (required) |
 | **dark-research-mcp** | OSINT: web, academic, code, CVE, IP, geo, news | When you need to research something |
-| **dark-copilot-mcp** | Real Chromium browser for JS-gated pages, interactive controls | When web fetch isn't enough |
+| **[FUTURE-MCP-N]-mcp** | Real Chromium browser for JS-gated pages, interactive controls | When web fetch isn't enough |
 
-**You might or might not have dark-research and dark-copilot.** Call `dark_memory_agent_recommend_companions()` to find out and get install guidance.
+**You might or might not have dark-research and [FUTURE-MCP-N].** Call `dark_memory_agent_recommend_companions()` to find out and get install guidance.
 
 ---
 
@@ -49,11 +49,11 @@ You have at least one MCP server: `dark-memory-mcp`. It exposes the canonical **
 
 For companion tool docs (when to use them, install links), read:
 - `dark-memory://docs/companions/dark-research.md`
-- `dark-memory://docs/companions/dark-copilot.md`
+- `dark-memory://docs/companions/[FUTURE-MCP-N].md`
 
 ---
 
-## 3. The 39 canonical tools (namespace overview)
+## 3. The 41 canonical tools (namespace overview)
 
 You do **not** need to memorize these. Use `tools/list` to discover them. The namespaces are:
 
@@ -64,7 +64,7 @@ You do **not** need to memorize these. Use `tools/list` to discover them. The na
 | `RESEARCH` | 3 | Topic/recall/resume-thread for OSINT research |
 | `VIBE` | 4 | Spec + artifact publishing + drift detection |
 | `CONTEXT` | 4 | Context projection of artifacts/specs/sessions |
-| `AGENT_MEMORY` | 5 | Mem0-aligned cross-session memory (save/list/get/update/archive) |
+| `AGENT_MEMORY` | 7 | Mem0-aligned cross-session memory (save/list/get/update/archive + **v2.8.0-alpha**: `subagent_register`, `subagent_unregister`) |
 | `RECALL` | 1 | Scoped context replay |
 | `JUDGE` | 3 | Single-shot + N-shot consensus + history |
 | `POLICY` | 2 | Active policy + constitution lookup |
@@ -72,7 +72,7 @@ You do **not** need to memorize these. Use `tools/list` to discover them. The na
 | `ADMIN` | 3 | Migrations, schema status, vacuum |
 | `VLP` | 1 | VLP state machine event handling |
 
-Total: **35 canonical tools**.
+Total: **41 canonical tools**.
 
 Plus the **3 self-bootstrap tools** (v2.6.0+):
 
@@ -93,17 +93,58 @@ Plus the **3 self-bootstrap tools** (v2.6.0+):
 3. **`dark_memory_agent_recommend_companions()`** — find out what companion MCPs you should install.
 4. **`dark_memory_recall(scope=session, session_id=<sid>)`** — what you already know from this session.
 
+   **v2.8.0-alpha B1 — ContextRecap auto-surfaced on `session_start`:** when `DARK_MEMORY_V280=1`, the response includes a `context_recap` block with your pinned memories + open todos, filtered by your agent_id. To skip it (debug mode, subagent dispatch), pass `cold_start=true`. To cap the token cost (default 2000 chars ≈ 500 tokens), pass `context_recap_tokens=N` (clamp [0, 8000]). When rows are dropped to fit the budget, `truncated=true` and `truncated_rows` shows the count.
+
 ### 4.2 During work
 
 5. **`dark_memory_research_recall(query)` first**, then `dark_memory_research_topic(query)` (fresh research), then `webfetch`/`dark_research_web` (last resort).
 6. **For specs and artifacts:** `dark_memory_vibe_spec` (spec only) or `dark_memory_vibe_publish` (publishes + drift check). Bind `session_id` from step 1.
+
+   **v2.8.0-alpha A1 + A4 — auto-saves you do NOT need to call manually:**
+   - `vibe_publish` with `verdict=aligned` auto-creates a `kind=decision` agent_memory row tagged with the spec id (`auto_save_decision_id` in the response). Set `auto_save_decision=false` to suppress.
+   - `vibe_spec` auto-creates one `kind=todo` row per task (`auto_saved_todo_ids` in the response). Set `auto_save_todos=false` to suppress. When a subsequent `vibe_publish` returns verdict=aligned, those todos are auto-archived (`auto_archived_todo_ids` in the response).
 7. **Self-judgment:** `dark_memory_judge` for single-shot, `dark_memory_consensus` (N≤7) for high-stakes claims.
-8. **Cross-session knowledge:** `dark_memory_agent_memory_save(kind=..., title=..., content=...)`. Filter by `scope=current` to see the right rows.
+8. **Cross-session knowledge:** `dark_memory_agent_memory_save(kind=..., title=..., content=...)`. Filter by `scope=project` (default) to see the right rows.
 
 ### 4.3 At end of work
 
 9. **`dark_memory_agent_memory_list(scope=project, kind=todo)`** — surface unfinished todos to the operator.
 10. **`dark_memory_session_close(session_id)`** with reason `clean` (the default).
+
+---
+
+## 4.5. Memory discovery (the recall vs list distinction)
+
+`agent_memory` exposes 6 tools, but they are NOT equally important. The pattern is **R-CRUD** (Recall first, then save/update/etc):
+
+| Tool | When to use | Cost | Returns |
+|---|---|---|---|
+| **`dark_memory_agent_memory_recall`** | "¿Qué sé sobre X?" — answering a question from existing memory | O(log n) FTS5 indexed | ranked hits (BM25), top-K by relevance |
+| `dark_memory_agent_memory_save` | Writing NEW memory | 1 INSERT + audit row | the row id |
+| `dark_memory_agent_memory_list` | Browsing ALL rows (with filters) | O(n) table scan | paginated rows |
+| `dark_memory_agent_memory_get` | Exact lookup by id | O(1) PK | the row |
+| `dark_memory_agent_memory_update` | Editing existing row | 1 UPDATE + audit | the row |
+| `dark_memory_agent_memory_archive` | Soft delete | 1 UPDATE | ok |
+
+**Rules of thumb:**
+
+1. **Recall is the primary discovery tool.** When the operator asks "what do we know about X?" or "have we investigated Y before?" — call `recall` first. NEVER default to `list()` — it scans the whole table and ranks by `created_at DESC`, not by relevance to the query.
+2. **Recall query is FTS5 lexical.** Allowed chars: alphanumeric + `. - _ / + *`. Reserved words AND/OR/NOT/NEAR are rejected. Use natural-language terms (e.g. `"rate limit ddb"`, `"amazon s3 cors"`), not boolean expressions.
+3. **Recall default limit is 10, max 50.** If you need more, page (call again with different query terms), don't bump limit blindly.
+4. **Combine with filters when you have a known kind.** `recall(query="rate limit", kind="finding")` filters by Mem0 kind taxonomy. `memory_type=episodic|semantic|procedural` filters by Mem0 three-class taxonomy.
+5. **List is for UI / admin / narrow queries.** E.g. "show me all todos" or "pinned memories from this project". NOT for discovery.
+6. **Get is for retries after a save.** You got back an id from save; you can `get(id=N)` to verify. NOT for finding rows you didn't save.
+
+**Anti-pattern:**
+
+❌ `list(scope=project, limit=200)` then manually filter in your head
+✅ `recall(query="specific terms")` — returns ranked hits in <50ms
+
+**Recap interaction (B1):** `session_start` auto-surfaces pinned memories + open todos via `context_recap`. Recall is the COMPLEMENT to recap: recap gives you the "always-relevant" scaffolding, recall gives you the "ask-on-demand" search.
+
+---
+
+## 5. Delegation via mindset (v2.7.0-alpha)
 
 ---
 
@@ -126,6 +167,64 @@ tool.
 3. The subagent runs with the mindset as its system message.
 
 **Cache**: `mindset_apply` caches results in `agent_memory` for 1h by default. Repeated identical (vibe_case, task) pairs return in <50ms with 0 LLM calls. See `docs/mindsets.md` for the full contract.
+
+**v2.8.0-alpha C2 — subagent memory isolation (defense against arxiv:2605.08460 inheritance attacks):**
+When `DARK_MEMORY_V280=1`, pass `spawn_subagent=true` + `subagent_id=<opaque-uuid>` to `mindset_apply`. The orchestrator registers the binding in `active_subagents` (TTL 1h default). All `agent_memory_save` calls made by the subagent are tagged with `subagent_id` instead of your agent_id, so the subagent's writes **never appear in your ContextRecap** — even if the subagent's system prompt is poisoned via inheritance.
+
+- The returned `parent_agent_id` is your resolved agent_id at spawn time (for audit).
+- To register/clear a binding manually (e.g. after an external subagent tool), use `dark_memory_subagent_register(operator, subagent_id, parent_agent_id?, ttl_seconds?)` and `dark_memory_subagent_unregister(operator, subagent_id)`.
+- TTL clamp: [60, 86400]. Default 3600 (1h).
+
+**v2.9.3 — `agent_memory_delegate` (context handoff for subagent spawns):**
+
+When you spawn a subagent via your harness's Task tool, the subagent
+starts with a fresh context — it does NOT inherit your session, your
+pinned memories, or your open todos. The hard delegation rule is: the
+delegation must use the same brain. Fix the handoff explicitly:
+
+1. Generate an opaque `subagent_id` (uuid).
+2. Call `dark_memory_agent_memory_delegate(operator=<you>, subagent_id=<uuid>, task_description="<what the subagent should do>")`.
+3. It registers the C2 binding AND returns `delegation_context` — a
+   ready-to-inject markdown block with session metadata + curated
+   pinned memories + open todos.
+4. Embed `delegation_context` verbatim in the subagent's task prompt.
+5. After the subagent returns, review its writes via
+   `dark_memory_agent_memory_list(scope=session, operator=<you>)`
+   (rows written by the subagent carry `subagent_id`, not your
+   agent_id — C2 isolation keeps them out of your ContextRecap).
+
+Options: `include_pinned` / `include_todos` (default true),
+`max_tokens` (default 2000; 0 = metadata only),
+`ttl_seconds` (default 3600). Gated by `DARK_MEMORY_V280=1`.
+
+---
+
+## 6. Cross-project isolation (v2.8.0-alpha D5 — INV-7)
+
+`agent_memory` rows are **scoped to the active project**. When you call
+`dark_memory_agent_memory_get(id=N)` with an `id` that exists in a
+*different* project than the one bound to your active session, you get
+`code=ErrCrossProjectAccess` (NOT `ErrNotFound`):
+
+```json
+{
+  "code": "ErrCrossProjectAccess",
+  "message": "agent_memory id=42 exists in project=\"smoke-d5\" but active project=\"dark-memory\" (INV-7). Set the active session to project=\"smoke-d5\" or query it from there.",
+  "field": "id"
+}
+```
+
+**When this fires — the rule:**
+1. Stop. Do NOT fall back to `list()` to "find" the row by scanning — that would leak the cross-project row's existence and content to a caller that has no tenant rights.
+2. Tell the operator which project the row lives in (the message contains the row's project_id).
+3. Offer one of three resolutions:
+   - Switch the active session: `dark_memory_session_start(operator, project_id=<the-other-project>)`, then re-`get`.
+   - Confirm with the operator that the cross-project lookup was intentional (rare).
+   - If you legitimately need the row, fetch it from a session already bound to that project.
+
+This is distinct from `ErrNotFound` (no such row anywhere) and `ErrInternal`
+(unrelated server error). Treat `ErrCrossProjectAccess` as a **security
+boundary**, not a bug.
 
 ---
 
@@ -151,7 +250,7 @@ Returns the content of a resource by name. Use this when:
 - You want to read a companion doc
 
 **Input:** `surface` = `"system_prompt" | "compatibility_matrix" | "install_guide" | "companion" | "all"`
-**For `install_guide` and `companion`:** pass `target` = `"claude-desktop" | "claude-code" | "opencode" | "cline" | "cursor" | "continue"` or `"dark-research" | "dark-copilot"`.
+**For `install_guide` and `companion`:** pass `target` = `"claude-desktop" | "claude-code" | "opencode" | "cline" | "cursor" | "continue"` or `"dark-research" | "[FUTURE-MCP-N]"`.
 
 **Output:** markdown text.
 
@@ -163,13 +262,13 @@ Reads your harness `clientInfo` (legacy spec from `initialize.clientInfo`, new s
 {
   "harness": {"name": "claude-desktop", "title": "Claude Desktop", "version": "1.0.0", "spec_detected": "2025-06-18"},
   "companions_present": ["dark-research"],
-  "companions_missing": ["dark-copilot"],
+  "companions_missing": ["[FUTURE-MCP-N]"],
   "recommendations": [
     {
-      "name": "dark-copilot",
+      "name": "[FUTURE-MCP-N]",
       "rationale": "Real Chromium browser for JS-gated pages and interactive controls. Web fetch alone can't handle CAPTCHAs, JS-gated dashboards, or interactive flows.",
-      "install_snippet": "npm install -g @opitacode/dark-copilot-mcp",
-      "docs_uri": "dark-memory://docs/companions/dark-copilot.md"
+      "install_snippet": "npm install -g @opitacode/[FUTURE-MCP-N]-mcp",
+      "docs_uri": "dark-memory://docs/companions/[FUTURE-MCP-N].md"
     }
   ],
   "limitations": [
@@ -191,7 +290,7 @@ Returns:
   "client": {"name": "claude-desktop", "title": "Claude Desktop", "version": "1.0.0"},
   "negotiated_capabilities": {"resources": true, "tools": true, "prompts": false, "logging": false},
   "transport": "stdio",
-  "server": {"name": "dark-memory-mcp", "version": "2.6.0", "schema_version": 20, "tools_total": 38, "resources_total": 8}
+  "server": {"name": "dark-memory-mcp", "version": "2.8.0-alpha", "schema_version": 21, "tools_total": 41, "resources_total": 8}
 }
 ```
 
@@ -211,7 +310,7 @@ Use this when debugging harness compatibility or filing an issue.
 
 ## 9. Wire contract
 
-- Schema: **v20** (unchanged across v2.5.0 → v2.7.0-alpha)
-- 38 canonical tools + 1 MINDSET tool = **39 tools total**
+- Schema: **v21** (v2.5.0 → v2.8.0-alpha; v21 added `active_subagents` table for v2.8.0-alpha C2)
+- 40 canonical tools + 1 MINDSET tool = **41 tools total** (v2.8.0-alpha added `subagent_register` + `subagent_unregister` under AGENT_MEMORY)
 - 10 resources (this manual + matrix + 6 install guides; companion docs accessed via `dark_memory_agent_bootstrap`)
-- All changes are **additive**. Existing consumers are unaffected.
+- All changes are **additive**. Existing consumers are unaffected when `DARK_MEMORY_V280` is unset/empty (the v2.8.0-alpha hooks become inert in that mode).

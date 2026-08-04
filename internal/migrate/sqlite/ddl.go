@@ -411,7 +411,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_vlp_state_project_session
     ON vlp_state(project_id, session_id);
 `,
 	},
-{
+	{
 		// v10 — audit project composite index (debt-elimination, F33).
 		// Note: the write_audit.project_id column was already added by
 		// migration v7 ("project_namespace") when the rest of the
@@ -756,7 +756,7 @@ CREATE INDEX IF NOT EXISTS idx_agent_memory_kind ON agent_memory (project_id, ki
 CREATE VIRTUAL TABLE IF NOT EXISTS agent_memory_fts USING fts5(
     content, title, tags,
     content='agent_memory', content_rowid='id',
-    tokenize='unicode61'
+    tokenize='porter unicode61'
 );
 CREATE TRIGGER IF NOT EXISTS agent_memory_ai AFTER INSERT ON agent_memory BEGIN INSERT INTO agent_memory_fts(rowid, content, title, tags) VALUES (new.id, new.content, COALESCE(new.title,''), COALESCE(new.tags,'')); END;
 CREATE TRIGGER IF NOT EXISTS agent_memory_ad AFTER DELETE ON agent_memory BEGIN INSERT INTO agent_memory_fts(agent_memory_fts, rowid, content, title, tags) VALUES('delete', old.id, old.content, COALESCE(old.title,''), COALESCE(old.tags,'')); END;
@@ -846,6 +846,199 @@ CREATE INDEX IF NOT EXISTS idx_agent_memory_mtype ON agent_memory (project_id, m
 		Name:    "projects_default_agent_id",
 		Up: `
 ALTER TABLE projects ADD COLUMN default_agent_id TEXT;
+`,
+	},
+	{
+		// v21 — active_subagents (v2.8.0-alpha, DARK_MEMORY_V280)
+		//
+		// Closes the C2 subagent-scope-handoff gap: when a subagent
+		// is spawned via mindset_apply(spawn_subagent=true), we need
+		// to remember (project_id, operator) -> subagent_id binding
+		// so the next agent_memory_save call resolves agent_id to
+		// the subagent's uuid instead of the principal's default.
+		//
+		// Why a separate table (not a column on agent_memory or
+		// sessions): the binding is short-lived (TTL default 1h),
+		// per-operator (not per-session), and per-subagent (a
+		// principal could spawn multiple subagents in parallel). A
+		// dedicated table + (project_id, operator, subagent_id)
+		// PRIMARY KEY gives us O(1) upsert + targeted clear +
+		// sweep-by-TTL semantics. No FTS5 / no triggers.
+		//
+		// Defense-in-depth against arxiv:2605.08460 inheritance
+		// attacks: subagent writes are tagged with subagent_id (an
+		// opaque uuid the principal generates, NOT derivable from
+		// principal's agent_id). ContextRecap filters by
+		// projects.default_agent_id which the subagent does NOT
+		// inherit, so poisoned subagent memory can never appear in
+		// the principal's pinned recap.
+		//
+		// Schema:
+		//   project_id       TEXT NOT NULL
+		//   operator         TEXT NOT NULL
+		//   subagent_id      TEXT NOT NULL
+		//   parent_agent_id  TEXT NOT NULL
+		//   spawned_at       TEXT NOT NULL      (RFC3339Nano)
+		//   ttl_seconds      INTEGER NOT NULL DEFAULT 3600
+		//
+		// id is an AUTOINCREMENT surrogate key so write_audit (INV-1)
+		// can reference a single-row id. The composite natural key
+		// (project_id, operator, subagent_id) is also UNIQUE so
+		// INSERT OR REPLACE refreshes the same row.
+		// INDEX (project_id, operator) for GetActiveSubagent lookup.
+		//
+		// Postgres parity: see internal/migrate/postgres/ddl.go
+		// where the same DDL is mirrored with the IF NOT EXISTS
+		// pattern (Postgres requires it for idempotency).
+		Version: 21,
+		Name:    "active_subagents",
+		Up: `
+CREATE TABLE IF NOT EXISTS active_subagents (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id      TEXT NOT NULL,
+    operator        TEXT NOT NULL,
+    subagent_id     TEXT NOT NULL,
+    parent_agent_id TEXT NOT NULL,
+    spawned_at      TEXT NOT NULL,
+    ttl_seconds     INTEGER NOT NULL DEFAULT 3600,
+    UNIQUE (project_id, operator, subagent_id)
+);
+CREATE INDEX IF NOT EXISTS idx_active_subagents_lookup ON active_subagents (project_id, operator);
+`,
+	},
+	{
+		// v22 - porter_stemming: rebuild agent_memory_fts with porter
+		// unicode61 tokenizer so morphology-equivalent words
+		// ("running", "runs", "ran") collapse to the same stem and
+		// rank for the same FTS5 query.
+		//
+		// PR-1 of the v2.9.0 plan (row 160); LOW risk. Backward
+		// compat: result SET unchanged; only BM25 ranking differs.
+		// Operators on v2.8.0-alpha see different ordering for stem
+		// collisions, identical results for unambiguous queries.
+		//
+		// FTS5 does not support ALTER TABLE on the tokenizer of an
+		// existing virtual table; we must DROP + CREATE VIRTUAL
+		// TABLE. The source data is preserved (it's in
+		// agent_memory which we never touch). After the recreate,
+		// INSERT 'rebuild' tells FTS5 to repopulate from the
+		// content='agent_memory' external content table.
+		//
+		// Idempotency: IF EXISTS / IF NOT EXISTS on every DDL.
+		// If somehow re-applied (e.g. operator manually unmarks v22
+		// from schema_migrations), the migration is a no-op plus
+		// a re-index, both safe.
+		//
+		// Postgres parity: see internal/migrate/postgres/ddl.go
+		// for the tsvector + snowball stemmer equivalent (deferred
+		// to a follow-up commit; this PR is SQLite-only).
+		Version: 22,
+		Name:    "porter_stemming",
+		Up: `
+DROP TABLE IF EXISTS agent_memory_fts;
+CREATE VIRTUAL TABLE IF NOT EXISTS agent_memory_fts USING fts5(
+    content, title, tags,
+    content='agent_memory', content_rowid='id',
+    tokenize='porter unicode61'
+);
+CREATE TRIGGER IF NOT EXISTS agent_memory_ai AFTER INSERT ON agent_memory BEGIN INSERT INTO agent_memory_fts(rowid, content, title, tags) VALUES (new.id, new.content, COALESCE(new.title,''), COALESCE(new.tags,'')); END;
+CREATE TRIGGER IF NOT EXISTS agent_memory_ad AFTER DELETE ON agent_memory BEGIN INSERT INTO agent_memory_fts(agent_memory_fts, rowid, content, title, tags) VALUES('delete', old.id, old.content, COALESCE(old.title,''), COALESCE(old.tags,'')); END;
+CREATE TRIGGER IF NOT EXISTS agent_memory_au1 BEFORE UPDATE ON agent_memory BEGIN INSERT INTO agent_memory_fts(agent_memory_fts, rowid, content, title, tags) VALUES('delete', old.id, old.content, COALESCE(old.title,''), COALESCE(old.tags,'')); END;
+CREATE TRIGGER IF NOT EXISTS agent_memory_au2 AFTER UPDATE ON agent_memory BEGIN INSERT INTO agent_memory_fts(rowid, content, title, tags) VALUES (new.id, new.content, COALESCE(new.title,''), COALESCE(new.tags,'')); END;
+INSERT INTO agent_memory_fts(agent_memory_fts) VALUES('rebuild');
+`,
+	},
+	{
+		// v23 - agent_memory_embedding: hybrid retrieval (PR-2 of v2.9.0 plan,
+		// agent_memory row 160). Adds an opaque BLOB column to agent_memory
+		// that holds the dense vector (little-endian float32, length =
+		// embedder.Dim()) for vector / rrf modes.
+		//
+		// Storage is in-process: text NEVER leaves the operator's machine
+		// for the embedding call (only the embedder call's destination
+		// receives it; per row 163 "data and cache are local-first" the
+		// embedding column itself stays on disk). Per-agent flow:
+		//   - Save path: when embedder != None, callers can populate
+		//     AgentMemory.Embedding from the embedder.Prerendered
+		//     hint (see internal/store/sqlite/store.go:SaveAgentMemory).
+		//     Embedding is optional — rows saved with no embedding
+		//     are invisible to Mode=vector/rrf but still visible to
+		//     Mode=bm25.
+		//   - Search path: when Mode=vector/rrf, the Store loads all rows
+		//     in scope with embedding IS NOT NULL, computes cosine in
+		//     process, and ranks. sqlite-vec / pgvector deferred to
+		//     v2.9.1+ per row 160.
+		//
+		// BLOB (vs TEXT or REAL[]) chosen for portability: SQLite has
+		// no native f32 array type, but the engine has been byte
+		// stable on BLOB ordering since forever. Decoders use
+		// binary.LittleEndian.Uint32 -> math.Float32frombits.
+		//
+		// Idempotency: ALTER TABLE ADD COLUMN with no DEFAULT is
+		// naturally idempotent only across binary-equal columns;
+		// applyOne (F37) tolerates the SQLite "duplicate column
+		// name" error class, so re-running this migration on a DB
+		// that already has the column is safe (treated as warning).
+		Version: 23,
+		Name:    "agent_memory_embedding",
+		Up: `
+ALTER TABLE agent_memory ADD COLUMN embedding BLOB;
+`,
+	},
+	{
+		// v24 - agent_memory_entities: PR-3 of the v2.9.0 plan
+		// (agent_memory row 160). Adds a side table that holds
+		// extracted entities per agent_memory row. The headlining
+		// entity.value is lowercase + deduped per the entity
+		// package contract (internal/entity).
+		//
+		// Schema rationale:
+		//   - mem_id INTEGER NOT NULL REFERENCES agent_memory(id)
+		//     ON DELETE CASCADE: row-level cleanup. When a row is
+		//     hard-deleted, the entities go too. Soft-delete
+		//     (archive via set archived_at) keeps entities intact,
+		//     matching the agent_memory search visibility rules.
+		//   - entity TEXT NOT NULL: lowercase canonical form. Store-
+		//     side enforces lowercasing before INSERT.
+		//   - source TEXT NOT NULL: producer tag ("deterministic"
+		//     for PR-3, "drift_judge:<prompt>" for PR-3.1).
+		//   - confidence REAL NOT NULL: 0..1 (PR-3 always emits 1.0).
+		//   - model TEXT: producer model id; empty for PR-3.
+		//   - created_at TEXT NOT NULL: RFC3339Nano UTC.
+		//   - PRIMARY KEY (mem_id, entity): no duplicate entity per
+		//     row, regardless of source. Operators wanting per-
+		//     source rows would alter this PK in PR-3.x.
+		//
+		// Idempotency: CREATE TABLE IF NOT EXISTS on the table +
+		// CREATE INDEX IF NOT EXISTS on the indexes. Re-running
+		// this migration is a no-op on a v24+ schema.
+		//
+		// Search axis impact: SearchAgentMemory joins
+		// agent_memory_entities when SearchFilters.Entities is
+		// non-empty, filtering by EXISTS + mem_id IN (the result
+		// of the FTS5 BM25 arm). Operators who don't set
+		// Entities see no change.
+		//
+		// Backward compat (per row 160 PR-3): extraction is
+		// OPT-IN. SaveAgentMemory only writes entities when the
+		// caller sets ExtractEntities=true (or its new equivalent
+		// in the orchestrator). Pre-PR-3 callers (without the
+		// flag) write zero entity rows → invisible to the entity
+		// axis but unchanged otherwise.
+		Version: 24,
+		Name:    "agent_memory_entities",
+		Up: `
+CREATE TABLE IF NOT EXISTS agent_memory_entities (
+    mem_id     INTEGER NOT NULL REFERENCES agent_memory(id) ON DELETE CASCADE,
+    entity     TEXT    NOT NULL,
+    source     TEXT    NOT NULL,
+    confidence REAL    NOT NULL DEFAULT 1.0,
+    model      TEXT,
+    created_at TEXT    NOT NULL,
+    PRIMARY KEY (mem_id, entity)
+);
+CREATE INDEX IF NOT EXISTS idx_agent_memory_entities_entity    ON agent_memory_entities (entity);
+CREATE INDEX IF NOT EXISTS idx_agent_memory_entities_mem_id   ON agent_memory_entities (mem_id);
 `,
 	},
 }

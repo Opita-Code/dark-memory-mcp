@@ -41,6 +41,12 @@ const (
 	StateIdle
 	StateDraftingSpec
 	StateSpecActive
+	// StateDelegating (Wave 5C) — the spec is active and the
+	// DelegationRouter decided DELEGATE. The orchestrator spawns
+	// sub-agents, waits for batches, synthesizes, then logs the
+	// artifact (EventArtifactLog → StateDriftJudging) or fails
+	// irrecoverably (→ StateNeedsHuman).
+	StateDelegating
 	StateDriftJudging
 	StateComplete
 	StateNeedsHuman
@@ -55,6 +61,7 @@ var stateNames = map[State]string{
 	StateIdle:         "idle",
 	StateDraftingSpec: "drafting_spec",
 	StateSpecActive:   "spec_active",
+	StateDelegating:   "delegating",
 	StateDriftJudging: "drift_judging",
 	StateComplete:     "complete",
 	StateNeedsHuman:   "needs_human",
@@ -97,14 +104,20 @@ const (
 	EventSessionStart       // harness: dark_memory_session_start
 	EventVibePublish        // harness: dark_memory_vibe_publish (spec is now valid)
 	EventArtifactLog        // harness: dark_memory_artifact_log (artifact done)
-	EventDriftLog           // harness: dark_memory_drift_log (verdict attached as payload)
-	EventAbort              // operator: stop the loop immediately
+	// EventDelegate (Wave 5C) — the DelegationRouter decided DELEGATE.
+	// The harness fires this event to move the loop from spec_active
+	// into the delegating state. No verdict payload (the delegation
+	// outcome is reported via the subsequent artifact_log / abort).
+	EventDelegate
+	EventDriftLog // harness: dark_memory_drift_log (verdict attached as payload)
+	EventAbort    // operator: stop the loop immediately
 )
 
 var eventNames = map[Event]string{
 	EventSessionStart: "session_start",
 	EventVibePublish:  "vibe_publish",
 	EventArtifactLog:  "artifact_log",
+	EventDelegate:     "delegate",
 	EventDriftLog:     "drift_log",
 	EventAbort:        "abort",
 }
@@ -186,7 +199,13 @@ type transition struct {
 // expectedTransitionCount is the normative cardinality of the transitions
 // table. TestTransition_TableCardinality asserts this; updating the table
 // requires updating both the constant and the test (intentional friction).
-const expectedTransitionCount = 10
+//
+// Wave 5C (delegation): 10 → 13. Added:
+//   - spec_active → delegating   (on EventDelegate)
+//   - delegating → drift_judging (on EventArtifactLog — synthesis done)
+//   - delegating → needs_human   (on EventAbort — unrecoverable delegation
+//     failure; the harness fires abort instead of logging an artifact)
+const expectedTransitionCount = 13
 
 // transitions is the canonical transition table. ORDER MATTERS for
 // documentation: keep grouped by From state.
@@ -201,7 +220,18 @@ var transitions = []transition{
 
 	// From: spec_active
 	{StateSpecActive, EventArtifactLog, VerdictUnknown, StateDriftJudging},
+	{StateSpecActive, EventDelegate, VerdictUnknown, StateDelegating},
 	{StateSpecActive, EventAbort, VerdictUnknown, StateAborted},
+
+	// From: delegating (Wave 5C)
+	//   artifact_log → the orchestrator finished synthesizing the
+	//   delegated artifacts; normal flow proceeds to drift judging.
+	//   abort → unrecoverable delegation failure; the operator (or
+	//   the harness after N retries) stops the loop. The loop lands
+	//   in needs_human (not aborted) so the operator can inspect the
+	//   delegation audit trail before starting a fresh session.
+	{StateDelegating, EventArtifactLog, VerdictUnknown, StateDriftJudging},
+	{StateDelegating, EventAbort, VerdictUnknown, StateNeedsHuman},
 
 	// From: drift_judging (verdict-dependent — payload disambiguates)
 	{StateDriftJudging, EventDriftLog, VerdictAligned, StateComplete},
@@ -273,8 +303,8 @@ func Transition(from State, event Event, verdict Verdict) (State, error) {
 // Used by tests, validation, and UI rendering.
 func AllStates() []State {
 	return []State{
-		StateIdle, StateDraftingSpec, StateSpecActive, StateDriftJudging,
-		StateComplete, StateNeedsHuman, StateAborted,
+		StateIdle, StateDraftingSpec, StateSpecActive, StateDelegating,
+		StateDriftJudging, StateComplete, StateNeedsHuman, StateAborted,
 	}
 }
 
@@ -282,7 +312,7 @@ func AllStates() []State {
 func AllEvents() []Event {
 	return []Event{
 		EventSessionStart, EventVibePublish, EventArtifactLog,
-		EventDriftLog, EventAbort,
+		EventDelegate, EventDriftLog, EventAbort,
 	}
 }
 

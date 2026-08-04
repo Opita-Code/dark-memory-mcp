@@ -218,6 +218,8 @@ func nextActionFor(s State) string {
 		return "vibe_publish"
 	case StateSpecActive:
 		return "artifact_log"
+	case StateDelegating:
+		return "artifact_log"
 	case StateDriftJudging:
 		return "drift_log"
 	case StateComplete, StateNeedsHuman, StateAborted:

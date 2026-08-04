@@ -48,6 +48,9 @@ var _ = audit.WriteEvent{}
 // session (the gate's RequiresActiveSession allowlist covers them
 // by default — see internal/policy/gate.go RequiresActiveSession).
 func RegisterAgentMemory(reg *Registry, orch *orchestration.Orchestrator, st store.Store) {
+	// v2.8.0-alpha C2: register the 2 subagent binding tools.
+	registerSubagentTools(reg, orch)
+
 	reg.Add(BindOrchestrator("agent_memory_save",
 		"Save an agent memory. Mem0-aligned. Scoped to the active project. By default (bind_session=false) the row survives session close; set bind_session=true to tag the row with the active session. v2.3.0.",
 		MustJSONSchema(map[string]any{
@@ -105,6 +108,18 @@ func RegisterAgentMemory(reg *Registry, orch *orchestration.Orchestrator, st sto
 			},
 		}),
 		func(ctx context.Context, in orchestration.AgentMemoryRecallInput) (*orchestration.AgentMemoryRecallOutput, error) {
+			// Tool layer is the canonical escape site (see comment on
+			// SearchAgentMemory in internal/store/sqlite/store.go). The
+			// escapeFTS5 helper allows alphanumeric + . - _ / + * and
+			// rejects AND/OR/NOT/NEAR. Without this call, raw queries
+			// reach FTS5's MATCH parser and explode with "fts5: syntax
+			// error" — operator smoke 2026-07-29 confirmed this with
+			// "v2.8.0 alpha harness gaps" returning ErrInternal.
+			escaped, err := escapeFTS5(in.Query)
+			if err != nil {
+				return nil, fmt.Errorf("%w: field=query: %v", store.ErrInvalidArgument, err)
+			}
+			in.Query = escaped
 			return orch.AgentMemoryRecall(ctx, in)
 		}))
 
@@ -125,9 +140,18 @@ func RegisterAgentMemory(reg *Registry, orch *orchestration.Orchestrator, st sto
 		"Update an agent memory's mutable fields (content/title/tags/pinned/expires_at/memory_type). Operator + project + agent_id are immutable.",
 		MustJSONSchema(map[string]any{
 			"type":     "object",
-			"required": []string{"id"},
+			// Row 189 (2026-08-03): orchestrator requires operator
+			// (orchestration/agent_memory.go:504) for INV-1 audit
+			// attribution. The schema previously declared only `id`
+			// as required, so a harness that follows the schema and
+			// sends id-only would hit errMissingField("operator")
+			// downstream with no Field envelope. Declare operator
+			// here so the harness's input validation surfaces the
+			// requirement BEFORE the orchestrator sees the call.
+			"required": []string{"id", "operator"},
 			"properties": map[string]any{
 				"id":          map[string]any{"type": "integer"},
+				"operator":    map[string]any{"type": "string", "description": "Operator id (INV-1 audit). Required."},
 				"title":       map[string]any{"type": "string"},
 				"content":     map[string]any{"type": "string"},
 				"tags":        map[string]any{"type": "string"},
@@ -144,13 +168,61 @@ func RegisterAgentMemory(reg *Registry, orch *orchestration.Orchestrator, st sto
 		"Soft-delete an agent memory (sets archived_at). Recoverable with list(include_archived=true).",
 		MustJSONSchema(map[string]any{
 			"type":     "object",
-			"required": []string{"id"},
+			// Row 189 (2026-08-03): same fix as update — orchestrator
+			// requires operator (orchestration/agent_memory.go:550)
+			// for INV-1 audit. Declare operator in the schema so
+			// harness validation catches the omission up-front.
+			"required": []string{"id", "operator"},
 			"properties": map[string]any{
-				"id": map[string]any{"type": "integer"},
+				"id":       map[string]any{"type": "integer"},
+				"operator": map[string]any{"type": "string", "description": "Operator id (INV-1 audit). Required."},
 			},
 		}),
 		func(ctx context.Context, in orchestration.AgentMemoryArchiveInput) (*orchestration.AgentMemoryArchiveOutput, error) {
 			return orch.AgentMemoryArchive(ctx, in)
+		}))
+
+	// v2.9.3: agent_memory_delegate — prepare a delegation context for
+	// a sub-agent spawn. Registers the subagent binding (C2) AND
+	// returns a ready-to-inject markdown block (session metadata +
+	// curated pinned memories + open todos). The parent embeds the
+	// returned delegation_context in the sub-agent's task prompt so
+	// the sub-agent inherits dark-memory context instead of starting
+	// blind. Gated by DARK_MEMORY_V280=1 (same as subagent_register).
+	reg.Add(BindOrchestrator("agent_memory_delegate",
+		"Prepare a delegation context for a sub-agent spawn (v2.9.3). Registers the subagent binding (C2) and returns a ready-to-inject markdown block — session metadata + curated pinned memories + open todos — that the parent embeds in the sub-agent's task prompt so the sub-agent inherits dark-memory context instead of starting blind. Gated by DARK_MEMORY_V280=1.",
+		MustJSONSchema(map[string]any{
+			"type":     "object",
+			"required": []string{"operator", "subagent_id", "task_description"},
+			"properties": map[string]any{
+				"operator":         map[string]any{"type": "string", "description": "Operator id (INV-1 audit). Required."},
+				"subagent_id":      map[string]any{"type": "string", "description": "Opaque uuid the parent generates for this sub-agent. Required."},
+				"task_description": map[string]any{"type": "string", "description": "What the sub-agent should do. Used for context selection. Required."},
+				"include_pinned":   map[string]any{"type": "boolean", "default": true, "description": "Include pinned memories in the delegation context."},
+				"include_todos":    map[string]any{"type": "boolean", "default": true, "description": "Include open todos in the delegation context."},
+				"max_tokens":       map[string]any{"type": "integer", "default": 2000, "minimum": 0, "maximum": 8000, "description": "Context recap token budget. 0 = no context, just session metadata."},
+				"ttl_seconds":      map[string]any{"type": "integer", "default": 3600, "minimum": 60, "maximum": 86400, "description": "Subagent binding TTL (clamp 60..86400; default 3600 = 1h)."},
+			},
+		}),
+		func(ctx context.Context, in orchestration.AgentMemoryDelegateInput) (*orchestration.AgentMemoryDelegateOutput, error) {
+			return orch.AgentMemoryDelegate(ctx, in)
+		}))
+
+	// v2.9.0-alpha PR-3 (agent_memory row 160). Read the extracted
+	// entity list for one row. Returns nil entities when the row
+	// has no entities (extract_entities was not set on Save).
+	// Cross-project reads return nil (INV-7).
+	reg.Add(BindOrchestrator("agent_memory_entities",
+		"Get the extracted entity list for one agent_memory row. v2.9.0-alpha PR-3. Returns {id, entities: [{entity, source, confidence, model}]} or nil entities when the row has none. Read-only.",
+		MustJSONSchema(map[string]any{
+			"type":     "object",
+			"required": []string{"id"},
+			"properties": map[string]any{
+				"id": map[string]any{"type": "integer", "description": "Row id (agent_memory.id). Returns nil entities when the row has no entities."},
+			},
+		}),
+		func(ctx context.Context, in orchestration.AgentMemoryEntitiesInput) (*orchestration.AgentMemoryEntitiesOutput, error) {
+			return orch.AgentMemoryEntities(ctx, in)
 		}))
 }
 
@@ -174,41 +246,70 @@ func RegisterAgentMemory(reg *Registry, orch *orchestration.Orchestrator, st sto
 // v2.1.0 list. The orchestrator's List path takes a flat
 // AgentMemoryListInput below.
 //
-// FTS5 escape helper: FTS5 has reserved operators (AND, OR, NOT, NEAR,
-// parentheses, quotes, colons). For v2.1.0 we do a simple escape:
-//   - strip double quotes (FTS5 phrase boundaries) by doubling them
-//     inside the term
-//   - reject input containing unescaped parentheses or colons
-// This is conservative; a full tokenizer-aware escape is F49.
+// FTS5 escape helper: wraps each whitespace-separated token in FTS5
+// phrase quotes (double quotes). Per SQLite FTS5 docs §3.1 (sqlite.org/fts5.html),
+// barewords are restricted to [a-zA-Z0-9_] — any other character
+// (including `.`, `-`, `:`, parens, etc.) MUST be quoted. Wrapping each
+// token in quotes makes the query syntax-safe regardless of input.
+//
+// Pattern adopted from gwicho38/legal-workspace-mcp's _prepare_fts_query
+// (deepwiki.com/gwicho38/legal-workspace-mcp/3.2.1-sqlite-fts5-and-bm25).
+//
+// Trade-offs:
+//   - Quote-wrap is more robust than a char allowlist (no string to
+//     maintain when new chars appear in user input).
+//   - Quoted phrases match as literal token sequences, so "v2.8.0"
+//     matches docs containing the literal "v2.8.0" (not 3 separate
+//     tokens v2, 8, 0).
+//   - Embedded double quotes inside a token are escaped SQL-style by
+//     doubling: `"` → `""`.
+//   - AND/OR/NOT/NEAR reserved words are safe inside quotes (FTS5
+//     treats them as literal tokens within phrases).
+//
+// Length-prefix matching (`jira*`) is preserved by appending `*`
+// **outside** the closing quote when the token ends in `*`. So
+// input "jira*" becomes `"jira"*` (FTS5 prefix phrase query).
+//
+// Empty/whitespace-only queries are rejected. Length limit per token
+// is 256 chars to avoid pathological inputs.
 func escapeFTS5(q string) (string, error) {
 	q = strings.TrimSpace(q)
 	if q == "" {
 		return "", fmt.Errorf("empty query")
 	}
-	// Reject inputs that look like injection attempts. We allow
-	// alphanumeric, whitespace, dot, dash, underscore, slash, plus.
-	for _, r := range q {
-		switch {
-		case r >= 'a' && r <= 'z':
-		case r >= 'A' && r <= 'Z':
-		case r >= '0' && r <= '9':
-		case r == ' ' || r == '\t' || r == '.' || r == '-' || r == '_' || r == '/' || r == '+' || r == '*':
-		default:
-			return "", fmt.Errorf("fts5: invalid character %q in query", r)
-		}
-	}
-	// Conservative: don't allow standalone AND/OR/NOT/NEAR at the
-	// start of a token (FTS5 reserved words).
 	tokens := strings.Fields(q)
-	for _, t := range tokens {
-		upper := strings.ToUpper(t)
-		switch upper {
-		case "AND", "OR", "NOT", "NEAR":
-			return "", fmt.Errorf("fts5: reserved word %q not allowed in query", t)
-		}
+	if len(tokens) == 0 {
+		return "", fmt.Errorf("empty query")
 	}
-	return q, nil
+	parts := make([]string, 0, len(tokens))
+	for _, t := range tokens {
+		// Length-prefix support: if user wrote "jira*" they want
+		// the FTS5 prefix phrase syntax `"jira"*`. Strip the `*`
+		// before quoting and reapply after.
+		prefix := strings.HasSuffix(t, "*")
+		core := t
+		if prefix {
+			core = strings.TrimSuffix(t, "*")
+		}
+		if len(core) == 0 {
+			continue
+		}
+		if len(core) > 256 {
+			return "", fmt.Errorf("fts5: token %q exceeds 256 chars", t)
+		}
+		// Escape embedded double quotes by doubling them (FTS5 spec).
+		escaped := strings.ReplaceAll(core, `"`, `""`)
+		parts = append(parts, `"`+escaped+`"`+map[bool]string{true: "*", false: ""}[prefix])
+	}
+	if len(parts) == 0 {
+		return "", fmt.Errorf("empty query")
+	}
+	return strings.Join(parts, " "), nil
 }
+
+// retained reserved-word check is intentionally NOT here: with quote-wrap,
+// AND/OR/NOT/NEAR inside a phrase are literal tokens, not operators.
+// See the docs comment above for the rationale.
 
 // nowFunc is a package-level seam for tests. Default is time.Now.
 var nowFunc = func() time.Time { return time.Now().UTC() }
@@ -230,6 +331,46 @@ func auditContext(st store.Store, operator, sessionID, writePath string) store.W
 	// but every write path here has an explicit operator from input.
 	_ = st // st reserved for future constitution lookup
 	return wc
+}
+
+// v2.8.0-alpha C2 — register/unregister subagent bindings. These
+// tools explicitly manipulate the active_subagents table so the
+// harness can register a subagent binding WITHOUT going through
+// mindset_apply(spawn_subagent=true), or clear a stale binding
+// manually. Both gated by DARK_MEMORY_V280=1; when the flag is off,
+// the orchestrator returns ErrInvalidState.
+//
+// Canonical tool count: 39 → 41.
+func registerSubagentTools(reg *Registry, orch *orchestration.Orchestrator) {
+	reg.Add(BindOrchestrator("subagent_register",
+		"Register or refresh an active subagent binding. v2.8.0-alpha C2. After this call, the subagent's agent_memory_save writes are tagged with subagent_id (NOT the principal's agent_id) so they never leak into the principal's ContextRecap. Defense-in-depth against arxiv:2605.08460 inheritance attacks. Gated by DARK_MEMORY_V280=1.",
+		MustJSONSchema(map[string]any{
+			"type":     "object",
+			"required": []string{"operator", "subagent_id"},
+			"properties": map[string]any{
+				"operator":        map[string]any{"type": "string", "description": "Operator id (INV-1 audit). Required."},
+				"subagent_id":     map[string]any{"type": "string", "description": "Opaque uuid the principal generated when spawning the subagent. Required."},
+				"parent_agent_id": map[string]any{"type": "string", "description": "Principal's resolved agent_id for audit provenance. Optional; defaults to projects.default_agent_id."},
+				"ttl_seconds":     map[string]any{"type": "integer", "default": 3600, "minimum": 60, "maximum": 86400, "description": "TTL in seconds (clamp 60..86400; default 3600 = 1h)."},
+			},
+		}),
+		func(ctx context.Context, in orchestration.SubagentRegisterInput) (*orchestration.SubagentRegisterOutput, error) {
+			return orch.SubagentRegister(ctx, in)
+		}))
+
+	reg.Add(BindOrchestrator("subagent_unregister",
+		"Clear an active subagent binding. v2.8.0-alpha C2. After this call, subsequent agent_memory_save calls fall through to projects.default_agent_id (or empty). Idempotent: returns ErrNotFound if no binding matches. Gated by DARK_MEMORY_V280=1.",
+		MustJSONSchema(map[string]any{
+			"type":     "object",
+			"required": []string{"operator", "subagent_id"},
+			"properties": map[string]any{
+				"operator":    map[string]any{"type": "string", "description": "Operator id (must match the one used in subagent_register). Required."},
+				"subagent_id": map[string]any{"type": "string", "description": "The subagent_id to clear. Required."},
+			},
+		}),
+		func(ctx context.Context, in orchestration.SubagentUnregisterInput) (*orchestration.SubagentUnregisterOutput, error) {
+			return orch.SubagentUnregister(ctx, in)
+		}))
 }
 
 // auditSentinel keeps the import live in case future versions need
