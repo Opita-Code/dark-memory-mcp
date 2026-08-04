@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/agentmemory"
+	"github.com/dark-agents/dark-memory-mcp/internal/errorobs"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 	"github.com/dark-agents/dark-memory-mcp/internal/vibecase"
 	"github.com/dark-agents/dark-memory-mcp/internal/vibeflow"
@@ -289,6 +290,8 @@ func (o *Orchestrator) VibeSpec(ctx context.Context, in VibeSpecInput) (*VibeSpe
 		todoIDs, todoErr := o.autoSaveTodosForSpec(ctx, specID, tasks)
 		if todoErr != nil {
 			log.Printf("dark-mem-mcp: vibe_spec auto_save_todos err=%v (spec_id=%d)", todoErr, specID)
+			// v2.11.0 (spec 757): was log-only; now durable.
+			o.RecordError(ctx, "vibe_spec", "", fmt.Errorf("auto_save_todos spec_id=%d: %w", specID, todoErr), errorobs.SeverityWarn)
 		}
 		result.AutoSavedTodoIDs = todoIDs
 	}
@@ -328,6 +331,8 @@ func (o *Orchestrator) autoSaveTodosForSpec(
 		})
 		if err != nil {
 			log.Printf("dark-mem-mcp: vibe_spec auto_save_todo task=%s err=%v", task.ID, err)
+			// v2.11.0 (spec 757): was log-only; now durable.
+			o.RecordError(ctx, "vibe_spec", "", fmt.Errorf("auto_save_todo task=%s spec_id=%d: %w", task.ID, specID, err), errorobs.SeverityWarn)
 			if firstErr == nil {
 				firstErr = err
 			}

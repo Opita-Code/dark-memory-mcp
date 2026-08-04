@@ -140,6 +140,9 @@ func canonicalWireOrderBares() []string {
 		"active_policy", "load_constitution",
 		// OBSERVABILITY (4) — v1.3.0 grew from 3 to 4 with health_ping
 		"memory_state", "writes", "anomalies", "health_ping",
+		// ERROR_OBS (4) — v2.11.0 (spec 757, Wave 5D). Error
+		// Observatory backlog + triage.
+		"error_list", "error_get", "error_summary", "error_resolve",
 		// ADMIN (3)
 		"admin_migrate", "admin_schema_status", "admin_vacuum",
 		// L6-VLP (1) — DMAP v1.1

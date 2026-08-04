@@ -1041,4 +1041,80 @@ CREATE INDEX IF NOT EXISTS idx_agent_memory_entities_entity    ON agent_memory_e
 CREATE INDEX IF NOT EXISTS idx_agent_memory_entities_mem_id   ON agent_memory_entities (mem_id);
 `,
 	},
+	{
+		// v25 - error_events: the Error Observatory (spec 757, Wave 5D).
+		//
+		// Durable, classified, backlog-able error capture. The table
+		// replaces the previous "errors live on the MCP wire / in
+		// stderr and then vanish" model: every silent-discard site
+		// (15+ `_ = err` locations), every gate refusal, and every
+		// LLM infra failure now lands HERE as a deduplicated cluster.
+		//
+		// Schema rationale:
+		//   - project_id TEXT NOT NULL: INV-7 tenant scope. Error
+		//     events are project-scoped rows (the store impl resolves
+		//     from active project).
+		//   - domain TEXT NOT NULL: classification axis (store|llm|
+		//     gate|validation|network|sweep|unknown) — internal/errorobs.
+		//   - code TEXT NOT NULL: sentinel name (ErrInvalidState, ...).
+		//   - message TEXT NOT NULL: SANITIZED message (512-byte cap,
+		//     whitespace collapsed — see errorobs.Sanitize). No PII,
+		//     no payloads, no secrets.
+		//   - message_hash TEXT NOT NULL: sha256 of the sanitized
+		//     message — the dedup fingerprint (24h window).
+		//   - context_json TEXT: optional JSON blob (spec_id, artifact
+		//     id, subagent id, tool args hash). Diagnostic enrichment.
+		//   - severity TEXT NOT NULL DEFAULT 'error': fatal|error|warn.
+		//   - count INTEGER NOT NULL DEFAULT 1: dedup counter. Same
+		//     (domain, code, message_hash, tool_name, session_id) within
+		//     the dedup window increments count + last_seen_at instead
+		//     of inserting a new row.
+		//   - first_seen_at / last_seen_at TEXT NOT NULL: cluster window.
+		//   - resolved INTEGER NOT NULL DEFAULT 0: backlog triage.
+		//     Resolving a cluster does NOT re-open it on a later
+		//     identical error (the dedup only matches unresolved rows —
+		//     a resolved cluster stays resolved; a NEW occurrence after
+		//     resolution creates a fresh cluster).
+		//   - resolved_at / resolution_note TEXT: operator triage trail.
+		//
+		// INV-1 contract (v2.11.0 review hardening — drift 777):
+		// error_events INSERTs (new clusters) emit a write_audit row
+		// ATOMICALLY in the same tx (TableName="error_events"). The
+		// dedup UPDATE path (count++ on an existing cluster) does NOT
+		// emit a second audit row — incrementing a counter is not a
+		// new data write. If the tx fails, cluster + audit row roll
+		// back together and the caller sees nil (best-effort) —
+		// never an orphan audit row.
+		//
+		// Idempotency: CREATE TABLE IF NOT EXISTS + CREATE INDEX IF
+		// NOT EXISTS — re-running is a no-op on a v25+ schema.
+		Version: 25,
+		Name:    "error_events",
+		Up: `
+CREATE TABLE IF NOT EXISTS error_events (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id       TEXT NOT NULL,
+    session_id       TEXT,
+    tool_name        TEXT,
+    domain           TEXT NOT NULL,
+    code             TEXT NOT NULL,
+    message          TEXT NOT NULL,
+    message_hash     TEXT NOT NULL,
+    context_json     TEXT,
+    severity         TEXT NOT NULL DEFAULT 'error',
+    count            INTEGER NOT NULL DEFAULT 1,
+    first_seen_at    TEXT NOT NULL,
+    last_seen_at     TEXT NOT NULL,
+    resolved         INTEGER NOT NULL DEFAULT 0,
+    resolved_at      TEXT,
+    resolution_note  TEXT,
+    created_at       TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_error_events_last_seen  ON error_events (last_seen_at DESC);
+CREATE INDEX IF NOT EXISTS idx_error_events_domain     ON error_events (domain);
+CREATE INDEX IF NOT EXISTS idx_error_events_severity   ON error_events (severity);
+CREATE INDEX IF NOT EXISTS idx_error_events_resolved   ON error_events (resolved);
+CREATE INDEX IF NOT EXISTS idx_error_events_dedup      ON error_events (domain, code, message_hash, tool_name, session_id, resolved);
+`,
+	},
 }

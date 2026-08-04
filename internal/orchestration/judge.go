@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/agentmemory"
+	"github.com/dark-agents/dark-memory-mcp/internal/errorobs"
 	"github.com/dark-agents/dark-memory-mcp/internal/safety"
 	"github.com/dark-agents/dark-memory-mcp/internal/ssd"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
@@ -269,6 +270,9 @@ func (o *Orchestrator) enrichForVibePinned(ctx context.Context, base string, kin
 			// Best-effort: log via the silence and continue. If
 			// agent_memory is broken, return base unchanged (the
 			// caller will see raw content).
+			// v2.11.0 (spec 757): was silent; now durable (Warn —
+			// enrichment degraded, judge still runs).
+			o.RecordError(ctx, "judge", "", fmt.Errorf("enrichForVibePinned kind=%s: %w", k, err), errorobs.SeverityWarn)
 			return base
 		}
 		rows = append(rows, pinned...)

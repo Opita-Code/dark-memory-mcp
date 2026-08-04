@@ -28,6 +28,7 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/agentmemory"
 	"github.com/dark-agents/dark-memory-mcp/internal/audit"
 	"github.com/dark-agents/dark-memory-mcp/internal/entity"
+	"github.com/dark-agents/dark-memory-mcp/internal/errorobs"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 )
 
@@ -166,7 +167,12 @@ func (o *Orchestrator) AgentMemorySave(ctx context.Context, in AgentMemorySaveIn
 	// atomically (INV-1) but its id isn't surfaced by the Store
 	// interface. Use a fresh write query for the most recent
 	// SaveAgentMemory audit row on this row_id.
-	auditID, _ := o.latestAuditIDForRow(ctx, "agent_memory", id)
+	// v2.11.0 (spec 757): was `auditID, _ := ...` (silent); now the
+	// failure lands in the Error Observatory.
+	auditID, auditErr := o.latestAuditIDForRow(ctx, "agent_memory", id)
+	if auditErr != nil {
+		o.RecordError(ctx, "agent_memory_save", m.SessionID, fmt.Errorf("latestAuditIDForRow: %w", auditErr), errorobs.SeverityWarn)
+	}
 
 	return &AgentMemorySaveOutput{Row: *got, AuditID: auditID}, nil
 }

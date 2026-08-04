@@ -52,6 +52,11 @@ type MemoryCounts struct {
 	ModsTotal        int `json:"mods_total"`
 	ConstitutionsTotal int `json:"constitutions_total"`
 	ProjectsTotal    int `json:"projects_total"`
+	// ErrorEvents (v2.11.0, spec 757) — total error_events clusters
+	// in the Error Observatory + the unresolved backlog count. Both
+	// best-effort (0 when the summary read fails).
+	ErrorEvents        int `json:"error_events,omitempty"`
+	ErrorEventsOpen    int `json:"error_events_open,omitempty"`
 }
 
 // MemoryState returns the runtime snapshot. Read-only.
@@ -80,6 +85,15 @@ func (o *Orchestrator) MemoryState(ctx context.Context) (*MemoryStateResult, err
 	mods, _ := o.Store.ListMods(ctx, 1000)
 	constitutions, _ := o.Store.ListConstitutions(ctx, 1000)
 	projects, _ := o.Store.ListProjects(ctx, 1000)
+
+	// v2.11.0 (spec 757): Error Observatory counts. Best-effort — a
+	// broken summary must not fail the snapshot.
+	errorEvents := 0
+	errorEventsOpen := 0
+	if sum, err := o.Store.ErrorSummary(ctx, 1); err == nil {
+		errorEvents = sum.TotalErrors
+		errorEventsOpen = sum.Unresolved
+	}
 
 	id, ver, _ := o.Store.ActiveConstitution(ctx)
 
@@ -112,6 +126,8 @@ func (o *Orchestrator) MemoryState(ctx context.Context) (*MemoryStateResult, err
 			ModsTotal:          len(mods),
 			ConstitutionsTotal: len(constitutions),
 			ProjectsTotal:      len(projects),
+			ErrorEvents:        errorEvents,
+			ErrorEventsOpen:    errorEventsOpen,
 		},
 	}, nil
 }

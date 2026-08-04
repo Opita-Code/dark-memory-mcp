@@ -44,6 +44,7 @@ import (
 
 	"github.com/dark-agents/dark-memory-mcp/internal/atomic"
 	"github.com/dark-agents/dark-memory-mcp/internal/audit"
+	"github.com/dark-agents/dark-memory-mcp/internal/errorobs"
 	"github.com/dark-agents/dark-memory-mcp/internal/policy"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 )
@@ -97,8 +98,7 @@ type CachedSource struct {
 
 // NewCachedSource constructs a CachedSource. now and logger default
 // to time.Now and log.Default() respectively when nil.
-func NewCachedSource(inner policy.FrameSource, st store.Store, safety *store.SafetyHolder, now func() time.Time, logger *log.Logger) *CachedSource {
-	if now == nil {
+func NewCachedSource(inner policy.FrameSource, st store.Store, safety *store.SafetyHolder, now func() time.Time, logger *log.Logger) *CachedSource {	if now == nil {
 		now = time.Now
 	}
 	if logger == nil {
@@ -154,6 +154,9 @@ func (c *CachedSource) IdentityFrame(ctx context.Context, sessionID string) (*at
 	if err := c.persistIdentity(ctx, sessionID, inner); err != nil {
 		c.Logger.Printf("recall: cache write failed for session_id=%s kind=identity: %v",
 			sessionID, err)
+		// v2.11.0 (spec 757): was log-only; now durable in the Error
+		// Observatory (Warn — cache degraded, frame still served).
+		c.recordCacheErr(ctx, sessionID, "recall_cache", err)
 	}
 	return inner, nil
 }
@@ -175,6 +178,8 @@ func (c *CachedSource) CapabilitiesFrame(ctx context.Context, sessionID string) 
 	if err := c.persistCapabilities(ctx, sessionID, caps); err != nil {
 		c.Logger.Printf("recall: cache write failed for session_id=%s kind=capabilities: %v",
 			sessionID, err)
+		// v2.11.0 (spec 757): durable capture (was log-only).
+		c.recordCacheErr(ctx, sessionID, "recall_cache", err)
 	}
 	return caps, nil
 }
@@ -330,6 +335,19 @@ func (c *CachedSource) applyCanary(dst *bool) {
 		return
 	}
 	*dst = c.Safety.Active() != ""
+}
+
+// recordCacheErr captures a cache-layer failure in the Error
+// Observatory (v2.11.0, spec 757). Best-effort: the cache write
+// already degraded; a telemetry failure must not amplify it.
+func (c *CachedSource) recordCacheErr(ctx context.Context, sessionID, toolName string, err error) {
+	if err == nil {
+		return
+	}
+	e := errorobs.New(c.Store.ActiveProject(), sessionID, toolName, err).WithSeverity(errorobs.SeverityWarn)
+	if serr := c.Store.SaveErrorEvent(ctx, e); serr != nil {
+		c.Logger.Printf("recall: recordCacheErr telemetry write failed: %v", serr)
+	}
 }
 
 // Compile-time check: CachedSource implements policy.FrameSource.

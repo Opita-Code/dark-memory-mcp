@@ -98,6 +98,15 @@ type GateMiddleware struct {
 	ActiveProject       func() string
 	ActiveConstitution  func() (id, ver string)
 	Now                 func() time.Time
+	// RecordRefusal (v2.11.0, spec 757) is the optional error-telemetry
+	// hook. When set, the middleware calls it for every PreCheck /
+	// PostCheck refusal BEFORE returning the refusal ToolError — the
+	// gate's leading-indicator refusals (ErrFrameStaleTooFar,
+	// ErrDriftAtWrite, scope/capability expiry) land in the Error
+	// Observatory durably. Boot wires this to
+	// orchestration.Orchestrator.RecordError. Best-effort by contract:
+	// a telemetry failure must never change the refusal path.
+	RecordRefusal func(ctx context.Context, toolName, sessionID, code, message string)
 }
 
 // Wrap runs PreCheck → inner → optional PostCheck around the given
@@ -144,9 +153,16 @@ func (m *GateMiddleware) Wrap(
 		// Surface as ErrInternal — the gate contract says it
 		// returns Allowed=false with a Reason on policy refusal,
 		// not a Go error.
+		// v2.11.0 (spec 757): capture durably (was wire-only).
+		m.recordRefusal(ctx, toolName, gateIn.SessionID, "ErrInternal", fmt.Sprintf("pre_check error: %v", err))
 		return refusalResponse(policy.ReasonOK, fmt.Sprintf("pre_check error: %v", err), ""), nil
 	}
 	if !pre.Allowed {
+		// v2.11.0 (spec 757): gate refusals are a leading indicator
+		// of drift (stale sessions, expired capabilities, scope
+		// violations) — previously they existed only on the wire.
+		// Now they land in the Error Observatory (domain=gate).
+		m.recordRefusal(ctx, toolName, gateIn.SessionID, pre.Reason.ErrorKind(), pre.Message)
 		return refusalResponse(pre.Reason, pre.Message, pre.Hint), nil
 	}
 
@@ -175,6 +191,9 @@ func (m *GateMiddleware) Wrap(
 			DriftArtifact: artifact,
 		})
 		if !post.Allowed {
+			// v2.11.0 (spec 757): drift-at-write refusals captured
+			// durably (was wire-only).
+			m.recordRefusal(ctx, toolName, gateIn.SessionID, "ErrDriftAtWrite", post.Message)
 			return &tools.ToolResponse{
 				Error: &tools.ToolError{
 					Code:    "ErrDriftAtWrite",
@@ -258,6 +277,17 @@ func (m *GateMiddleware) now() time.Time {
 		return m.Now()
 	}
 	return time.Now().UTC()
+}
+
+// recordRefusal forwards a gate refusal to the Error Observatory
+// hook when wired (v2.11.0, spec 757). Nil-safe: no hook → no-op.
+// Best-effort by contract — the refusal path must never change
+// because telemetry failed.
+func (m *GateMiddleware) recordRefusal(ctx context.Context, toolName, sessionID, code, message string) {
+	if m.RecordRefusal == nil {
+		return
+	}
+	m.RecordRefusal(ctx, toolName, sessionID, code, message)
 }
 
 // decodeArgsMap extracts the top-level string→any map from the

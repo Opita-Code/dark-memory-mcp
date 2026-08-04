@@ -17,6 +17,7 @@ import (
 	"context"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/audit"
+	"github.com/dark-agents/dark-memory-mcp/internal/errorobs"
 	"github.com/dark-agents/dark-memory-mcp/internal/orchestration"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 )
@@ -81,34 +82,83 @@ func RegisterObservability(reg *Registry, orch *orchestration.Orchestrator, st s
 			return &WritesResult{Writes: out, Count: len(out)}, nil
 		}))
 
-	// anomalies — read-only. Reads anomaly events recorded by the
-	// Store on INV-3 canary hits and INV-5 cache mismatches.
-	// HONEST NOTE: today the Store does not expose a dedicated
-	// anomaly_events query (Wave 4+ work). The description makes
-	// this explicit so the LLM does not retry thinking the query
-	// will eventually return data. The response shape is stable
-	// (empty list + note) so future implementations can fill it
-	// in without breaking callers.
+	// anomalies — read-only. v2.11.0 (spec 757): RESURRECTED. The
+	// previous implementation was a dead stub that always returned an
+	// empty list ("anomaly_events query not yet exposed by Store").
+	// The Error Observatory (error_events table, migration v25) now
+	// provides the anomaly surface: this tool queries error_events
+	// for the anomaly-shaped clusters — severity=fatal (systemic
+	// damage) + domain=gate (INV-3 canary hits, INV-5 cache
+	// mismatches, gate refusals). The response shape is preserved
+	// (anomalies + count) with the note field explaining the mapping.
 	reg.Add(BindStore("anomalies",
-		"List recent anomaly events (INV-3 canary hits, INV-5 cache mismatches). NOT YET IMPLEMENTED: returns an empty list with a note. Read-only.",
+		"List recent anomaly events from the Error Observatory: severity=fatal clusters + domain=gate refusals (INV-3 canary hits, INV-5 cache mismatches, capability/scope refusals). Read-only. Kind filter: fatal | gate. Empty = both.",
 		MustJSONSchema(map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"limit": map[string]any{"type": "integer", "description": "Max rows. Default 50."},
-				"kind":  map[string]any{"type": "string", "description": "Filter by kind (canary_hit | cache_mismatch). Empty = all."},
+				"kind":  map[string]any{"type": "string", "description": "Filter by kind (fatal | gate). Empty = all."},
 			},
 		}),
 		st,
 		func(ctx context.Context, s store.Store, in AnomaliesInput) (*AnomaliesResult, error) {
-			// Honest placeholder: schema is stable (empty list +
-			// note) but the underlying Store.ListAnomalies is not
-			// implemented yet. When it is, swap this for a real
-			// Store call. The description string above is the
-			// contract the LLM sees.
+			limit := in.Limit
+			if limit <= 0 {
+				limit = 50
+			}
+			unresolved := false
+			var rows []errorobs.ErrorEvent
+			var err error
+			switch in.Kind {
+			case "fatal":
+				rows, err = s.ListErrorEvents(ctx, errorobs.ErrorListFilters{
+					Severity: errorobs.SeverityFatal,
+					Resolved: &unresolved,
+					Limit:    limit,
+				})
+			case "gate":
+				rows, err = s.ListErrorEvents(ctx, errorobs.ErrorListFilters{
+					Domain:   errorobs.DomainGate,
+					Resolved: &unresolved,
+					Limit:    limit,
+				})
+			default:
+				// Both: two queries, merged, newest-first by id desc.
+				fatal, ferr := s.ListErrorEvents(ctx, errorobs.ErrorListFilters{
+					Severity: errorobs.SeverityFatal,
+					Resolved: &unresolved,
+					Limit:    limit,
+				})
+				gate, gerr := s.ListErrorEvents(ctx, errorobs.ErrorListFilters{
+					Domain:   errorobs.DomainGate,
+					Resolved: &unresolved,
+					Limit:    limit,
+				})
+				if ferr != nil {
+					err = ferr
+				} else if gerr != nil {
+					err = gerr
+				} else {
+					rows = mergeByIDDesc(fatal, gate, limit)
+				}
+			}
+			if err != nil {
+				return nil, err
+			}
+			out := make([]AnomalyEntry, 0, len(rows))
+			for _, e := range rows {
+				out = append(out, AnomalyEntry{
+					ID:        e.ID,
+					Kind:      string(e.Domain) + ":" + e.Code,
+					Severity:  string(e.Severity),
+					Detail:    e.Message,
+					CreatedAt: e.LastSeenAt,
+				})
+			}
 			return &AnomaliesResult{
-				Anomalies: []AnomalyEntry{},
-				Count:     0,
-				Note:      "anomaly_events query not yet exposed by Store; coming in Wave 4+",
+				Anomalies: out,
+				Count:     len(out),
+				Note:      "backed by error_events (Error Observatory, spec 757): severity=fatal + domain=gate clusters, unresolved only",
 			}, nil
 		}))
 }
@@ -156,4 +206,36 @@ type AnomalyEntry struct {
 	Severity  string `json:"severity,omitempty"`
 	Detail    string `json:"detail,omitempty"`
 	CreatedAt string `json:"created_at"`
+}
+
+// mergeByIDDesc merges two newest-first lists by id descending,
+// dedupes, caps at limit. Helper for the anomalies both-kinds path.
+func mergeByIDDesc(a, b []errorobs.ErrorEvent, limit int) []errorobs.ErrorEvent {
+	seen := map[int64]bool{}
+	out := make([]errorobs.ErrorEvent, 0, len(a)+len(b))
+	// Interleave by id desc (both inputs are already desc).
+	i, j := 0, 0
+	for (i < len(a) || j < len(b)) && len(out) < limit {
+		var pick *errorobs.ErrorEvent
+		switch {
+		case i >= len(a):
+			pick = &b[j]
+			j++
+		case j >= len(b):
+			pick = &a[i]
+			i++
+		case a[i].ID >= b[j].ID:
+			pick = &a[i]
+			i++
+		default:
+			pick = &b[j]
+			j++
+		}
+		if seen[pick.ID] {
+			continue
+		}
+		seen[pick.ID] = true
+		out = append(out, *pick)
+	}
+	return out
 }

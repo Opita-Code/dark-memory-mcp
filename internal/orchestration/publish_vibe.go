@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/agentmemory"
+	"github.com/dark-agents/dark-memory-mcp/internal/errorobs"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 	"github.com/dark-agents/dark-memory-mcp/internal/vibecase"
 	"github.com/dark-agents/dark-memory-mcp/internal/vibeflow"
@@ -211,6 +212,10 @@ func (o *Orchestrator) PublishVibe(ctx context.Context, in PublishVibeInput) (*P
 		})
 		if err != nil {
 			result.Reasoning = fmt.Sprintf("brand_match failed: %v", err)
+			// v2.11.0 (spec 757): was appended to Reasoning only (a
+			// silent-ish discard); now also captured durably. LLM
+			// domain — the judge call itself failed.
+			o.RecordError(ctx, "publish_vibe", in.SessionID, fmt.Errorf("brand_match: %w", err), errorobs.SeverityWarn)
 		} else {
 			brandEvalID = out.EvaluationID
 			if out.Confidence < 0.5 {
@@ -231,6 +236,8 @@ func (o *Orchestrator) PublishVibe(ctx context.Context, in PublishVibeInput) (*P
 		})
 		if err != nil {
 			result.Reasoning = result.Reasoning + "; compliance_check failed: " + err.Error()
+			// v2.11.0 (spec 757): durable capture (was string-only).
+			o.RecordError(ctx, "publish_vibe", in.SessionID, fmt.Errorf("compliance_check: %w", err), errorobs.SeverityWarn)
 		} else {
 			compEvalID = out.EvaluationID
 		}
@@ -275,14 +282,22 @@ func (o *Orchestrator) PublishVibe(ctx context.Context, in PublishVibeInput) (*P
 			Content:    enriched,
 		})
 		if jerr != nil {
-			// No LLM available (or canary rejected). Record
-			// drift_detected + reasoning; NextAction=human_gate so
-			// the operator knows to retry with a key or run manual
-			// drift check.
-			result.Verdict = "drift_detected"
+			// v2.11.0 (spec 757) T6 — drift/error conflation fix:
+			// previously an LLM failure produced verdict="drift_detected"
+			// (the SAME verdict as genuine semantic drift), so the
+			// operator believed the artifact drifted when the judge
+			// simply never ran. Now:
+			//   - verdict = "needs_human" (NO verdict was produced —
+			//     the infra failed, not the artifact)
+			//   - error captured durably in the Error Observatory
+			//     (domain=llm)
+			//   - NextAction stays "human_gate" (operator retries with
+			//     a key or runs manual drift check)
+			o.RecordError(ctx, "publish_vibe", in.SessionID, fmt.Errorf("drift_judge: %w", jerr), errorobs.SeverityError)
+			result.Verdict = "needs_human"
 			result.Confidence = 0
 			result.NextAction = "human_gate"
-			result.Reasoning = fmt.Sprintf("drift_judge skipped: %v", jerr)
+			result.Reasoning = fmt.Sprintf("drift_judge unavailable (LLM infra failure, not drift): %v", jerr)
 		} else {
 			result.Verdict = parseDriftVerdict(judgeOut.VerdictJSON, judgeOut.Confidence)
 			result.Confidence = judgeOut.Confidence
@@ -308,6 +323,9 @@ func (o *Orchestrator) PublishVibe(ctx context.Context, in PublishVibeInput) (*P
 	if derr != nil {
 		// Don't fail the whole publish — drift_log is best-effort.
 		// The caller sees the IDs; the drift row can be retried.
+		// v2.11.0 (spec 757): was appended to Reasoning only; now
+		// also captured durably (store domain — the persist failed).
+		o.RecordError(ctx, "publish_vibe", in.SessionID, fmt.Errorf("drift_log save: %w", derr), errorobs.SeverityWarn)
 		result.Reasoning = result.Reasoning + "; drift_log save failed: " + derr.Error()
 	} else {
 		result.DriftID = driftID

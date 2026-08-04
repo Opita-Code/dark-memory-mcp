@@ -13,6 +13,7 @@ import (
 	"syscall"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/federation"
+	"github.com/dark-agents/dark-memory-mcp/internal/errorobs"
 	"github.com/dark-agents/dark-memory-mcp/internal/orchestration"
 	"github.com/dark-agents/dark-memory-mcp/internal/server"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
@@ -119,6 +120,14 @@ func main() {
 		// projectID == "". See vibe-flow/main/gate_emptypid_fallback_v2_1_1.md.
 		ActiveProject:      bootState.Store.ActiveProject,
 		ActiveConstitution: func() (string, string) { return bootState.Config.ConstitutionID, bootState.Config.ConstitutionVer },
+		// v2.11.0 (spec 757): gate refusals (ErrFrameStaleTooFar,
+		// ErrDriftAtWrite, scope/capability expiry) land in the Error
+		// Observatory durably. Best-effort — the refusal path never
+		// changes because telemetry failed.
+		RecordRefusal: func(ctx context.Context, toolName, sessionID, code, message string) {
+			bootState.Orchestrator.RecordError(ctx, toolName, sessionID,
+				fmt.Errorf("gate refusal %s: %s", code, message), errorobs.SeverityWarn)
+		},
 	}
 
 	// F7 federation peer: opt-in cross-namespace lookup against the

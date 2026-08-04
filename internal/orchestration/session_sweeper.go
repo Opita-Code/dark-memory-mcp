@@ -32,6 +32,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/dark-agents/dark-memory-mcp/internal/errorobs"
 	"github.com/dark-agents/dark-memory-mcp/internal/session"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 )
@@ -106,6 +107,22 @@ func NewSweeper(st store.Store, in SweeperInput) *Sweeper {
 // for exposing metrics via a future dark_memory_session_status tool.
 func (sw *Sweeper) Last() SweeperOutput { return sw.last }
 
+// recordErr captures one sweeper error in the Error Observatory
+// (v2.11.0, spec 757). Best-effort: a broken telemetry write must
+// not break the sweeper loop. The in-memory out.Errors counter stays
+// the primary signal (it is what tests assert); this is the durable
+// side.
+func (sw *Sweeper) recordErr(ctx context.Context, sessionID string, err error) {
+	if err == nil {
+		return
+	}
+	e := errorobs.New(sw.st.ActiveProject(), sessionID, "session_sweeper", err).WithSeverity(errorobs.SeverityWarn)
+	if err := sw.st.SaveErrorEvent(ctx, e); err != nil {
+		// Recording degraded; the in-memory counter still caught it.
+		log.Printf("dark-mem-mcp: sweeper recordErr: %v", err)
+	}
+}
+
 // Run starts the sweeper loop. Blocks until ctx is cancelled. Each
 // tick calls runTick once; the goroutine sleeps for TickInterval
 // between ticks. Failures on individual sessions are logged and do
@@ -150,6 +167,7 @@ func (sw *Sweeper) runTick(ctx context.Context) SweeperOutput {
 		[]string{string(session.StatusOpen)}, idleCutoff, sw.in.BatchLimit)
 	if err != nil {
 		log.Printf("dark-mem-mcp: sweeper list stale open: %v", err)
+		sw.recordErr(ctx, "", err)
 		out.Errors++
 	} else {
 		for i := range staleOpen {
@@ -169,6 +187,7 @@ func (sw *Sweeper) runTick(ctx context.Context) SweeperOutput {
 					continue
 				}
 				log.Printf("dark-mem-mcp: sweeper promote open->idle %s: %v", s.SessionID, err)
+				sw.recordErr(ctx, s.SessionID, err)
 				out.Errors++
 				continue
 			}
@@ -184,6 +203,7 @@ func (sw *Sweeper) runTick(ctx context.Context) SweeperOutput {
 		[]string{string(session.StatusIdle)}, abortedCutoff, sw.in.BatchLimit)
 	if err != nil {
 		log.Printf("dark-mem-mcp: sweeper list stale idle: %v", err)
+		sw.recordErr(ctx, "", err)
 		out.Errors++
 	} else {
 		for i := range staleIdle {
@@ -201,6 +221,7 @@ func (sw *Sweeper) runTick(ctx context.Context) SweeperOutput {
 					continue
 				}
 				log.Printf("dark-mem-mcp: sweeper close idle->aborted %s: %v", s.SessionID, err)
+				sw.recordErr(ctx, s.SessionID, err)
 				out.Errors++
 				continue
 			}
@@ -219,7 +240,10 @@ func (sw *Sweeper) runTick(ctx context.Context) SweeperOutput {
 			// will need to be parametrised.
 			if projID := sw.st.ActiveProject(); projID != "" {
 				if err := sw.st.ClearActiveSession(ctx, projID, s.SessionID); err != nil {
-					_ = err
+					// v2.11.0 (spec 757): was a silent discard; now
+					// captured durably (Warn — the close succeeded,
+					// the pointer clear missed).
+					sw.recordErr(ctx, s.SessionID, err)
 				}
 			}
 			out.IdleToAborted++
