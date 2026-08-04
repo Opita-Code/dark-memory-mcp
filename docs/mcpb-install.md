@@ -40,9 +40,9 @@ Download from the [GitHub Release](https://github.com/Opita-Code/dark-memory-mcp
 1. **Download** the right `.mcpb` file for your OS from the GitHub Release.
 2. **Double-click** the file. Claude Desktop opens an install confirmation dialog showing:
    - Server name: `dark-memory-mcp`
-   - Tools: 35 canonical MCP tools
+   - Tools: 49 canonical MCP tools
    - Optional config: `DARK_DB` file path (leave blank for default location in user data dir)
-3. Click **Install**. Restart Claude Desktop. The `dark-memory-mcp` server is now wired into your chat with all 35 tools available.
+3. Click **Install**. Restart Claude Desktop. The `dark-memory-mcp` server is now wired into your chat with all 49 tools available.
 
 ## Uninstall
 
@@ -62,7 +62,7 @@ For non-Claude-Desktop hosts (opencode, Cursor, VS Code, Claude Code), use the n
 
 ## What's in the manifest
 
-The manifest declares `server.type: binary` (perfect for our single-file Go binary), lists all 35 canonical tools, declares compatibility with macOS/Linux/Windows, and references a `DARK_DB` user-config option (file path for the SQLite database).
+The manifest declares `server.type: binary` (perfect for our single-file Go binary), lists all 49 canonical tools, declares compatibility with macOS/Linux/Windows, and references a `DARK_DB` user-config option (file path for the SQLite database).
 
 For the full spec, see https://github.com/modelcontextprotocol/mcpb/blob/main/MANIFEST.md
 

@@ -1,6 +1,6 @@
 # Install on Claude Code
 
-> Bootstrap version 1. For dark-memory-mcp v2.6.0+.
+> Bootstrap version 3. For dark-memory-mcp v2.11.0+.
 
 ## 1. Locate your config
 

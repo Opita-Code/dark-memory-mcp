@@ -1,5 +1,5 @@
 // Package tools — register.go: the single entry point that wires all
-// 28 tools into the Registry. Called from internal/server/server.go's
+// 49 tools into the Registry. Called from internal/server/server.go's
 // RegisterAll path, and from tests that want a pre-populated registry.
 package tools
 
@@ -14,18 +14,18 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/vlp"
 )
 
-// RegisterAll wires all 38 dark_memory_* tools into the registry, in
+// RegisterAll wires all 49 dark_memory_* tools into the registry, in
 // the canonical order (spec 164, bridge.4 + spec 193 Layer 6). Safe
 // to call once per Registry; subsequent calls are no-ops if the tools
 // are already registered.
 //
 // The split into per-namespace Register* functions lets tests pull
 // in a subset (e.g. only the JUDGE tools for an eval-pipeline test).
-// The canonical 38-tool surface (v2.6.0; was 35 in v2.5.x, 29 in
-// v2.0.0, 28 in v1.3.x, 27 in v1.2.x, 26 in v1.1.x) is the union of
-// all namespaces + the armed-mode extras (L7-REDTEAM, +3 tools when
-// DARK_REDTEAM=armed — registered as "extras" below and emitted after
-// the canonical 38 in tools/list).
+// The canonical 49-tool surface (v2.11.0; was 45 in v2.10.0, 44 in
+// v2.9.3, 39 in v2.7.0-alpha, 29 in v2.0.0, 28 in v1.3.x, 26 in
+// v1.1.x) is the union of all namespaces + the armed-mode extras
+// (L7-REDTEAM, +3 tools when DARK_REDTEAM=armed — registered as
+// "extras" below and emitted after the canonical 49 in tools/list).
 //
 // 5A.ii.b.2.c: bumped from 28 → 29 (added dark_memory_recall).
 // v2.6.0: bumped from 35 → 38 (added dark_memory_agent_bootstrap,

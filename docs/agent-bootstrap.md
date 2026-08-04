@@ -66,7 +66,7 @@ budgets without dropping them entirely.
 ## The 3 self-bootstrap tools
 
 All in the **`AGENT_BOOTSTRAP`** namespace (added in v2.6.0).
-Canonical tool count: 35 → 38.
+Canonical tool count: 35 → 49 (v2.11.0: ERROR_OBS +4; v2.10.0: DELEGATION +1; v2.9.x: entities/embedder/delegate +3; v2.8.0-alpha: subagent_register/unregister +2).
 
 ### `dark_memory_agent_bootstrap`
 

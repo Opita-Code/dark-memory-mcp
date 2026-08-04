@@ -21,8 +21,8 @@
 
 [![MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Go 1.25+](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go&logoColor=white)](go.mod)
-[![MCP tools](https://img.shields.io/badge/MCP-38%20canonical%20tools-blueviolet)](#las-38-herramientas)
-[![Schema](https://img.shields.io/badge/schema-v20-success)](#la-base-de-datos)
+[![MCP tools](https://img.shields.io/badge/MCP-49%20canonical%20tools-blueviolet)](#las-49-herramientas)
+[![Schema](https://img.shields.io/badge/schema-v25-success)](#la-base-de-datos)
 [![Tests](https://img.shields.io/badge/tests-27%20suites%20verdes-brightgreen)](#tests)
 [![Install](https://img.shields.io/badge/install-npx%20%40opita--code%2Fdark--memory--mcp-cc3534)](docs/npm-install.md)
 [![MCPB](https://img.shields.io/badge/MCPB%20bundle%20for%20Claude%20Desktop-cc3534)](docs/mcpb-install.md)
@@ -234,10 +234,10 @@ de correrlo.
 
 ---
 
-## Las 39 herramientas
+## Las 49 herramientas
 
-dark-memory expone 39 acciones que tu agente puede invocar. Todas empiezan
-con el prefijo `dark_memory_`. Están agrupadas en 13 oficios:
+dark-memory expone 49 acciones que tu agente puede invocar. Todas empiezan
+con el prefijo `dark_memory_`. Están agrupadas en 16 oficios:
 
 ### 🧭 Empezar y cerrar sesión (PROJECT + SESSION — 5 tools)
 
@@ -314,7 +314,7 @@ ver [`docs/agent-bootstrap.md`](docs/agent-bootstrap.md).
 | `dark_memory_session_context` | "Muéstrame todo lo que pasó en esta sesión" |
 | `dark_memory_recall` | "Dame un resumen de los últimos cambios" |
 
-### 🧠 El cuaderno del agente (AGENT_MEMORY — 6 tools, v2.1.0 + v2.3.0)
+### 🧠 El cuaderno del agente (AGENT_MEMORY — 10 tools, v2.1.0 → v2.9.3)
 
 Esta es la pieza nueva. Es el **cuaderno personal** del agente, donde anota
 notas, observaciones, decisiones, links, hallazgos — cosas que quiere
@@ -336,6 +336,10 @@ internamente — antes no había consumidor.
 | `dark_memory_agent_memory_get` | "Muéstrame la nota #42" |
 | `dark_memory_agent_memory_update` | "Edita esa nota, ya no aplica". Ahora acepta `memory_type` también. |
 | `dark_memory_agent_memory_archive` | "Borra esa nota (soft delete)" |
+| `dark_memory_agent_memory_delegate` | **Nuevo en v2.9.3**. Prepara el contexto de delegación para un sub-agente (C2 binding + markdown listo para inyectar). |
+| `dark_memory_agent_memory_entities` | **Nuevo en v2.9.0 PR-3**. Entidades extraídas de una nota (eje de matching por entidad). |
+| `dark_memory_subagent_register` | **Nuevo en v2.8.0-alpha**. Registra un sub-agente activo (aislamiento C2). |
+| `dark_memory_subagent_unregister` | **Nuevo en v2.8.0-alpha**. Limpia el binding de un sub-agente. |
 
 El agente puede guardar cosas de **tres tipos de alcance**:
 
@@ -354,6 +358,18 @@ Y puede buscar por **tipo de nota** (`note`, `observation`, `decision`,
 | `dark_memory_consensus` | "Pregúntale a 5 jueces y dame la mayoría" |
 | `dark_memory_judgment_history` | "¿Qué ha dicho el juez antes?" |
 
+### 🧠 Componer mindsets (MINDSET — 1 tool, v2.7.0-alpha)
+
+| Herramienta | Cuándo se usa |
+|---|---|
+| `dark_memory_mindset_apply` | "Componé el system prompt para el sub-agente que va a refactorizar X" — compone + valida el mindset por vibe_case + tarea, cacheado 1h. |
+
+### 🚀 Decidir delegación (DELEGATION — 1 tool, v2.10.0 Wave 5C)
+
+| Herramienta | Cuándo se usa |
+|---|---|
+| `dark_memory_delegate_intent` | "¿Este trabajo lo hago yo, lo delego, o me rehúso?" — el DelegationRouter (DECIDE→PLAN→MIND→CURATE) devuelve material listo para spawnear sub-agentes. |
+
 ### 📜 Políticas (POLICY — 2 tools)
 
 | Herramienta | Cuándo se usa |
@@ -365,10 +381,24 @@ Y puede buscar por **tipo de nota** (`note`, `observation`, `decision`,
 
 | Herramienta | Cuándo se usa |
 |---|---|
-| `dark_memory_health_ping` | "¿Está vivo el servidor?" (latencia <50ms) |
-| `dark_memory_memory_state` | "¿Cómo va la base de datos?" |
+| `dark_memory_health_ping` | "¿Está vivo el servidor?" (latencia <50ms; desde v2.11.0 incluye `error_summary`) |
+| `dark_memory_memory_state` | "¿Cómo va la base de datos?" (desde v2.11.0 incluye conteos `error_events`) |
 | `dark_memory_writes` | "Muéstrame los últimos cambios" |
-| `dark_memory_anomalies` | "¿Pasó algo raro?" |
+| `dark_memory_anomalies` | "¿Pasó algo raro?" — desde v2.11.0 consulta el Error Observatory (fatal + gate) |
+
+### 🩺 Error Observatory (ERROR_OBS — 4 tools, v2.11.0 spec 757)
+
+> **Nuevo en v2.11.0.** Antes, un error que no llegaba al wire MCP simplemente
+> no existía: `_ = err` silenciosos, 48 logs a stderr, gate refusals invisibles.
+> Ahora cada fallo cae en `error_events` como cluster deduplicado y queda
+> en backlog, consultable y triageable.
+
+| Herramienta | Cuándo se usa |
+|---|---|
+| `dark_memory_error_summary` | "¿Está roto algo AHORA?" — totales, unresolved, últimos N horas, por domain/severity, top-5 recurrentes. |
+| `dark_memory_error_list` | El backlog: filtros por `domain` (store/llm/gate/validation/network/sweep/unknown), `severity` (fatal/error/warn), `resolved`, `session_id`, `tool_name`, `since`. Unresolved por defecto. |
+| `dark_memory_error_get` | "Muéstrame el cluster #42 en detalle" |
+| `dark_memory_error_resolve` | Triage del operador: marcar un cluster como resuelto con nota de causa raíz. |
 
 ### 🛠️ Admin (ADMIN — 3 tools)
 
@@ -383,6 +413,12 @@ Y puede buscar por **tipo de nota** (`note`, `observation`, `decision`,
 | Herramienta | Cuándo se usa |
 |---|---|
 | `dark_memory_vlp_handle_event` | "Avanza el ciclo del vibe-loop protocol" |
+
+### 🔌 Embedder (EMBEDDER — 1 tool, v2.9.0-alpha PR-2)
+
+| Herramienta | Cuándo se usa |
+|---|---|
+| `dark_memory_embedder_setup_prompt` | Consent gate del embedder para retrieval híbrido (una llamada por proyecto al boot). |
 
 ### 🛡️ Red team (L7-REDTEAM — 3 tools, modo armado)
 
@@ -535,9 +571,9 @@ de estado):
 
 ### Estado actual (al cierre de esta versión)
 
-- **Versión**: v2.5.2 (Sprint 3 roadmap: MCPB bundles + carry-forward tests)
-- **Schema DB**: v20 (zero migrations across v2.4.x and v2.5.x)
-- **Tools canónicos**: 38 (+ 3 en modo armed)
+- **Versión**: v2.11.0-alpha (Error Observatory + DelegationRouter + sweeper fix)
+- **Schema DB**: v25 (error_events para el Error Observatory, spec 757)
+- **Tools canónicos**: 49 (+ 3 en modo armed)
 - **Backends**: SQLite (default) + Postgres (research only en este host)
 - **Paquetes internos**: 27
 - **Suites de test**: 29 distribution tests + 27 total packages

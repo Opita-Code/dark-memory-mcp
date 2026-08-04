@@ -3,7 +3,7 @@
 // binary uses (see ../../cmd/dark-mem-mcp/main.go).
 //
 // Per RFC §6 step 5, after Boot returns the caller is expected to
-// (a) register all 26 tools (this is where per-namespace tool files
+// (a) register all 49 tools (this is where per-namespace tool files
 // come in — see internal/tools/*.go), then (b) call ServeStdio to
 // block on the stdio MCP transport.
 //
@@ -174,7 +174,7 @@ func BuildInstructions(coexistenceGroup, version string) string {
 	return base + " " + crossFeature
 }
 
-// RegisterAll iterates the canonical 26-tool list and registers each
+// RegisterAll iterates the canonical 49-tool list and registers each
 // tool present in the Registry with the mcp-go server. Tools not yet
 // added are silently skipped (the canonical order is the contract;
 // the actual set is the intersection of canonical ∩ registered).

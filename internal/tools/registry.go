@@ -1,13 +1,12 @@
 // Package tools — registry.go: the Tool type and the canonical Registry.
 //
-// Per BRIDGE_AND_COEXISTENCE.md §3 (spec 164, bridge.4), the 28 tools
+// Per BRIDGE_AND_COEXISTENCE.md §3 (spec 164, bridge.4), the 49 tools
 // are emitted in tools/list in a fixed canonical order. The order is
 // NOT alphabetical — it follows the RFC D-9 namespace grouping plus
-// the L6-VLP namespace (DMAP v1.1 spec 193): SESSION (4) →
-// RESEARCH (3) → VIBE (4) → CONTEXT (3) → JUDGE (3) → POLICY (2) →
-// OBSERVABILITY (4) → ADMIN (3) → L6-VLP (1). The order is part of
-// the public contract: changing it is a breaking change for any
-// harness that indexes by position.
+// the L6-VLP namespace (DMAP v1.1 spec 193) and the newer namespaces
+// (AGENT_BOOTSTRAP, AGENT_MEMORY, MINDSET, DELEGATION, ERROR_OBS,
+// EMBEDDER). The order is part of the public contract: changing it is
+// a breaking change for any harness that indexes by position.
 //
 // OBSERVABILITY grew from 3 → 4 in v1.3.0 with the addition of
 // `dark_memory_health_ping`. Health_ping is a sibling of
@@ -61,7 +60,7 @@ type Registry struct {
 	order  []string // canonical order, fixed at construction
 }
 
-// NewRegistry constructs an empty Registry with the canonical 28-tool
+// NewRegistry constructs an empty Registry with the canonical 49-tool
 // order pre-registered (tools may not exist yet; ListCanonical will
 // return placeholders that the server filters out at startup).
 func NewRegistry() *Registry {
@@ -137,8 +136,7 @@ func CanonicalOrder() []string {
 // ListExtras returns registered tools that are NOT in the canonical
 // order. Used by the server bootstrap to register armed-mode
 // extras (e.g. the L7-REDTEAM namespace) without polluting the
-// canonical 28-tool surface (v1.3.0; was 27 in v1.2.x and 26 in
-// v1.1.x).
+// canonical 49-tool surface (v2.11.0; was 28 in v1.3.0, 26 in v1.1.x).
 //
 // The returned order is alphabetical by name (stable across runs;
 // no canonical-order contract for extras).
@@ -312,7 +310,7 @@ func WireName(bare string) string {
 }
 
 // CanonicalPosition returns the index of wireName in the canonical
-// 28-tool order, or -1 if not found. Used by tools/list filters that
+// 49-tool order, or -1 if not found. Used by tools/list filters that
 // need to re-sort the alphabetically-sorted output of mcp-go's
 // handleListTools back to the RFC D-9 namespace-grouped order.
 func CanonicalPosition(wireName string) int {

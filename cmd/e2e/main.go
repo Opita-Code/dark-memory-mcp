@@ -255,14 +255,15 @@ func main() {
 		return names, nil
 	}
 
-	// Phase 1: tools/list — assert 28 canonical + 3 redteam = 31.
+	// Phase 1: tools/list — assert 49 canonical + 3 redteam = 52.
+	// (v2.11.0: ERROR_OBS +4; was 28+3=31 in the v1.3.0-era original.)
 	listResp := rpc(2, "tools/list", map[string]any{})
 	toolNames, err := toolsListUnwrap(listResp)
 	if err != nil {
 		fail("tools/list: %v\n  raw=%s", err, listResp)
 	}
-	if len(toolNames) != 31 {
-		fail("tools/list count=%d; want 31 (28 canonical + 3 redteam)", len(toolNames))
+	if len(toolNames) != 52 {
+		fail("tools/list count=%d; want 52 (49 canonical + 3 redteam)", len(toolNames))
 	}
 	hasHealth := false
 	hasRedteam := false
@@ -275,12 +276,12 @@ func main() {
 		}
 	}
 	if !hasHealth {
-		fail("tools/list: dark_memory_health_ping MISSING (v1.3.0 canonical 28)")
+		fail("tools/list: dark_memory_health_ping MISSING (canonical 49)")
 	}
 	if !hasRedteam {
 		fail("tools/list: dark_memory_redteam_list_mods MISSING (DARK_REDTEAM=armed)")
 	}
-	ok("tools/list: 31 tools (28 canonical + 3 redteam); health_ping + redteam present")
+	ok("tools/list: 52 tools (49 canonical + 3 redteam); health_ping + redteam present")
 
 	// Phase 2: dark_memory_health_ping (the v1.3.0 headline tool).
 	hpResp := rpc(3, "tools/call", map[string]any{
@@ -346,8 +347,8 @@ func main() {
 	if hpData.Data.Runtime.PID != os.Getpid() && hpData.Data.Runtime.PID <= 0 {
 		fail("runtime.pid=%d; want >0", hpData.Data.Runtime.PID)
 	}
-	if hpData.Data.Registry.CanonicalTools != 28 {
-		fail("registry.canonical_tools=%d; want 28 (v1.3.0 contract)", hpData.Data.Registry.CanonicalTools)
+	if hpData.Data.Registry.CanonicalTools != 49 {
+		fail("registry.canonical_tools=%d; want 49 (v2.11.0 contract)", hpData.Data.Registry.CanonicalTools)
 	}
 	if hpData.Data.Registry.ExtraTools != 3 {
 		fail("registry.extra_tools=%d; want 3 (redteam armed)", hpData.Data.Registry.ExtraTools)

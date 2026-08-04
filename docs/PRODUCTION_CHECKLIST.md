@@ -16,7 +16,7 @@ dark-mem-mcp: boot step1 ok driver=sqlite dsn=<path>
 dark-mem-mcp: boot step2 ok driver=sqlite
 dark-mem-mcp: boot step3 ok migrations + constitution watchdog (driver=sqlite)
 dark-mem-mcp: boot step4 ok canary installed (present=true)
-dark-mem-mcp: registered 28 tools (canonical order)
+dark-mem-mcp: registered 49 tools (canonical order)
 dark-mem-mcp: serving stdio (server=dark-memory-mcp vX.Y.Z coexistence_group=dark-agents/memory)
 ```
 
@@ -26,7 +26,7 @@ dark-mem-mcp: serving stdio (server=dark-memory-mcp vX.Y.Z coexistence_group=dar
 | step2 | SQLite Store opened | Either file missing+locked, or v1.2.0+ DB schema corruption |
 | step3 | Migrations applied + constitution watchdog OK | See "Migration recovery" below |
 | step4 | Canary installed | Drifted constitution file (INV-4) — see INV-4 in docs/INVARIANTS.md |
-| `registered 28 tools` | Tool registry sanity | If < 28, a new tool wasn't added to `CanonicalOrder()` in `internal/tools/registry.go`. v1.3.0 grew OBSERVABILITY 3→4 with health_ping; v1.4.0 added internal/version (resolver, no tool); v1.4.1 added internal/vibecase (no tool). 28 stays stable through v1.4.x. |
+| `registered 49 tools` | Tool registry sanity | If < 49, a new tool wasn't added to `CanonicalOrder()` in `internal/tools/registry.go`. v2.11.0 grew ERROR_OBS 4 tools (error_list/get/summary/resolve); v2.10.0 added DELEGATION (delegate_intent); v2.9.x added entities/embedder/delegate; v2.8.0-alpha added subagent_register/unregister. 49 stays stable through v2.11.x. |
 | `serving stdio (...)` | Ready for JSON-RPC | If absent, boot completed but stdio MCP transport didn't bind |
 
 ## Health probe (operator script)

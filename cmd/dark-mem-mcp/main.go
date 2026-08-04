@@ -1,5 +1,5 @@
 // Package main is the dark-mem-mcp binary — the MCP server that exposes
-// 26 dark_memory_* tools backed by the dark-memory-mcp library's
+// 49 dark_memory_* tools backed by the dark-memory-mcp library's
 // orchestrators. See ../internal/server/server.go for boot + lifecycle
 // logic; ../internal/tools/*.go for the per-namespace tool handlers.
 package main
@@ -65,12 +65,11 @@ func main() {
 		DSNPath:          bootState.Config.DBDSN,
 	})
 
-	// Register all 29 tools in canonical order (BRIDGE_AND_COEXISTENCE.md
+	// Register all 49 tools in canonical order (BRIDGE_AND_COEXISTENCE.md
 	// §3 / spec 164 bridge.4 + DMAP v1.1 spec 193 Layer 6). RegisterAll
-	// returns an error if any of the 29 expected tools is missing from
-	// the registry — fail fast. v1.3.0: health_ping added to OBSERVABILITY
-	// (3 → 4 tools); canonical count is now 28. 5A.ii.b.2.c: dark_memory_recall
-	// added to CONTEXT (4 → 5 tools); canonical count is now 29.
+	// returns an error if any of the 49 expected tools is missing from
+	// the registry — fail fast. v2.11.0: ERROR_OBS (4 tools) added;
+	// canonical count is now 49.
 	//
 	// Safety is converted from *safety.Holder to *store.SafetyHolder
 	// (function-pointer adapter) so dark_memory_recall can thread
