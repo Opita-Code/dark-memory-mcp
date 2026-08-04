@@ -24,14 +24,20 @@ import (
 
 // closingSoonThresholdDefault is the default warn-within-N-seconds
 // threshold for session_status.closing_soon. Matches the sweeper's
-// idle_timeout default (60s) / 2 — enough warning for an operator
-// to refresh a long session before the sweeper closes it.
+// idle_timeout default (15m) — enough warning for an operator
+// to refresh a long session before the sweeper closes it. Kept
+// modest (30s) so the warning is actionable, not noisy.
 const closingSoonThresholdDefault = 30 * time.Second
 
 // heartbeatTimeoutDefault mirrors the sweeper's default
 // (orchestration/session_sweeper.go:42). Kept in sync via tests
 // in tests/orchestration/session_status_test.go.
-const heartbeatTimeoutDefault = 300 * time.Second
+//
+// v2.10.0 (2026-08-04): 300s → 60m — the old default closed ACTIVE
+// sessions on interactive harnesses that do not emit periodic
+// heartbeats (any thinking pause > 5 min → closed_aborted →
+// ErrFrameStaleTooFar on the next tool call).
+const heartbeatTimeoutDefault = 60 * time.Minute
 
 // envDuration reads a Go-style duration env var (e.g. "30s", "5m",
 // "300") with a default. Mirrors the helper in

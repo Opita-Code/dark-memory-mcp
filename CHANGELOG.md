@@ -6,6 +6,48 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [2.10.0] — 2026-08-04
+
+**Wave 5C DelegationRouter + sweeper session fix.** Two separate but co-developed features: the DelegationRouter closes the delegation gap in the vibe-loop (PLAN.md §2.3, RFC §M7), and the sweeper default fix stops active sessions from being closed mid-work (row 168 root cause).
+
+### Added
+
+- **`dark_memory_delegate_intent` tool** (new DELEGATION namespace, 45th canonical tool) — the DelegationRouter A1 pipeline: DECIDE (HANDLE | DELEGATE | REFUSE per vibe_case) → PLAN (topological batching of ≤5 subtasks) → MIND (`mindset_apply` per subtask) → CURATE (`agent_memory_delegate` + C2 binding per subtask). Returns ready-to-spawn material for the harness. MVP scope: C7 mixed always delegates (parallel dispatch), C3 delegates/refuses based on capabilities, all other cases HANDLE (safe fallback). `internal/delegation/{types,router,audit}.go` + `internal/orchestration/delegate_intent.go` + `internal/tools/delegation.go`. 22 new tests.
+- **VLP state: `delegating` + event `delegate`** — the vibe-loop state machine now supports delegation as a first-class transition (`spec_active → delegating` on `EventDelegate`, `delegating → drift_judging` on synthesis completion). 3 new transitions (10 → 13). `internal/vlp/state.go`.
+- **Architecture docs:** `vibe-flow/main/DELEGATION_ARCHITECTURE.md` (recall-based delegation thesis: agent_memory as handoff substrate, not prompt injection) + `vibe-flow/main/DELEGATION_SOTA.md` (11-source state-of-the-art survey).
+
+### Changed
+
+- **`DARK_SESSION_HEARTBEAT_TIMEOUT` default: 300s → 60m** — the sweeper no longer closes ACTIVE sessions after 5 minutes of zero tool activity. Interactive harnesses that do not emit periodic heartbeats were getting `closed_aborted` during long reasoning pauses → `ErrFrameStaleTooFar` on the next tool call → wasted restarts. 60 minutes of silence now means the harness genuinely died (INV-8 resurrectable), not that it paused to think. Overridable via env as before.
+- **`DARK_SESSION_IDLE_TIMEOUT` default: 60s → 15m** — the `open` → `idle` demotion (informational degradation, not destructive) also gets a prudent ceiling so the countdown display does not scare operators during normal work.
+- `session_status`/`session_context` countdown + `closing_soon` now surface the new defaults consistently (same env vars, same mirrors).
+
+### Fixed
+
+- Closes the row 168 gap at the source: "Sessions auto-close after ~5 minutes of zero tool activity; ErrFrameStaleTooFar hits subsequent writes during long reasoning pauses. 3 wasted restarts in one synthesis session." (2026-08-04 — reproduced again during Wave 5C spec 728 work: 4 session closes in one session.)
+
+### Files
+
+**Delegation router:**
+- `internal/delegation/types.go` — `DelegationDecision`, `Plan`, `SubTask`, DSL (topological `Batch`, `Validate`)
+- `internal/delegation/router.go` — deterministic C7/C3 rules + HANDLE fallback
+- `internal/delegation/audit.go` — `RecallSubagentFindings` by `subagent-{id}` tag
+- `internal/orchestration/delegate_intent.go` — orchestrator (DECIDE→PLAN→MIND→CURATE)
+- `internal/tools/delegation.go` — MCP tool surface
+- `internal/tools/delegation/*_test.go` (22 tests) + `delegate_intent_test.go`
+- `internal/vlp/{state,usecase,package}.go` — `StateDelegating` + `EventDelegate`
+- `internal/tools/{register,registry,canonical_staleness_test}.go` — 45-tool canonical order
+- `internal/recall/assemble.go` — `DefaultToolGrants`
+- `vibe-flow/main/DELEGATION_{ARCHITECTURE,SOTA}.md`
+
+**Sweeper fix:**
+- `internal/orchestration/session_sweeper.go` — defaults 60s/300s → 15m/60m
+- `internal/tools/session.go` — `heartbeatTimeoutDefault` mirror 300s → 60m
+- `internal/tools/session_status_test.go` — contract pin updated + row 168 context
+- `vibe-flow/main/ACTIVE_MEMORY_RFC.md` — documented defaults updated
+
+---
+
 ## [2.9.2-alpha] — 2026-08-03
 
 **End-of-day consolidation pass** — closes the row 166/167/168 backlog (open since v2.9.0-alpha), fixes row 189 (schema/orchestrator mismatch), and lands defensive coverage for both regressions. No new architecture; no migration; two wire-protocol changes (schema-required tightening + new session_status fields) + two stale-verification items.

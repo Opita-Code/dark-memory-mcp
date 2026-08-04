@@ -11,15 +11,24 @@
 //	ErrFrameStaleTooFar hits subsequent writes during long
 //	reasoning pauses. 3 wasted restarts in one synthesis session.
 //
-// Suggested fix (adopted here): surface the warning in
-// session_status so harnesses can refresh a session BEFORE the
-// sweeper closes it. Implementation at internal/tools/session.go:
+// Two-part fix:
 //
-//	ClosingSoon bool   `json:"closing_soon,omitempty"`
-//	SecondsUntilClose int `json:"seconds_until_close,omitempty"`
+//  1. (2026-08-02, row 168) surface the warning in session_status
+//     so harnesses can refresh a session BEFORE the sweeper closes
+//     it. Implementation at internal/tools/session.go:
+//
+//     ClosingSoon bool   `json:"closing_soon,omitempty"`
+//     SecondsUntilClose int `json:"seconds_until_close,omitempty"`
+//
+//  2. (2026-08-04, v2.10.0) raise the DEFAULT heartbeat timeout
+//     300s → 60m so interactive harnesses that do not emit periodic
+//     heartbeats stop getting closed mid-work. Warning-first was
+//     insufficient: harnesses (opencode, Claude Code) cannot act on
+//     closing_soon without a background heartbeat loop, so the
+//     destructive default had to move.
 //
 // Deadline = last_heartbeat_at + heartbeat_timeout (env
-// DARK_SESSION_HEARTBEAT_TIMEOUT, default 300s). closing_soon=true
+// DARK_SESSION_HEARTBEAT_TIMEOUT, default 60m). closing_soon=true
 // when seconds_until_close <= threshold (env
 // DARK_SESSION_CLOSING_SOON_THRESHOLD, default 30s).
 package tools
@@ -251,6 +260,10 @@ func TestSessionStatus_MalformedLastHB_NoCrash(t *testing.T) {
 // resolveClosingSoonConfig returns the expected defaults when
 // no env vars are set. Pinning the contract so a future default
 // change is caught here.
+//
+// v2.10.0 (2026-08-04): heartbeat default raised 300s → 60m. The
+// old 5-minute default closed ACTIVE sessions on interactive
+// harnesses that do not emit periodic heartbeats.
 func TestSessionStatus_ConfigDefaults(t *testing.T) {
 	t.Setenv("DARK_SESSION_CLOSING_SOON_THRESHOLD", "")
 	t.Setenv("DARK_SESSION_HEARTBEAT_TIMEOUT", "")
@@ -259,8 +272,8 @@ func TestSessionStatus_ConfigDefaults(t *testing.T) {
 	if threshold != 30*time.Second {
 		t.Errorf("default threshold want 30s, got %s", threshold)
 	}
-	if hb != 300*time.Second {
-		t.Errorf("default heartbeat_timeout want 300s, got %s", hb)
+	if hb != 60*time.Minute {
+		t.Errorf("default heartbeat_timeout want 60m, got %s", hb)
 	}
 }
 
