@@ -18,6 +18,7 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/audit"
 	"github.com/dark-agents/dark-memory-mcp/internal/constitution"
 	"github.com/dark-agents/dark-memory-mcp/internal/embedder"
+	"github.com/dark-agents/dark-memory-mcp/internal/errorobs"
 	"github.com/dark-agents/dark-memory-mcp/internal/mods"
 	"github.com/dark-agents/dark-memory-mcp/internal/project"
 	"github.com/dark-agents/dark-memory-mcp/internal/research"
@@ -646,6 +647,55 @@ type Store interface {
 	// query returns ErrInvalidArgument. Postgres stubs return
 	// ErrNotConfigured until the FTS-equivalent migration lands.
 	SearchAgentMemory(ctx context.Context, f agentmemory.SearchFilters) ([]agentmemory.SearchHit, error)
+
+	// --- ERROR OBSERVATORY (v2.11.0; spec 757, Wave 5D) ---------------
+	//
+	// Durable, classified, backlog-able error capture. Every silent-
+	// discard site, gate refusal, and LLM infra failure lands here as
+	// a deduplicated cluster. Table: error_events (migration v25).
+	//
+	// INV-1 contract: SaveErrorEvent emits a write_audit row
+	// ATOMICALLY with the INSERT of a NEW cluster (TableName=
+	// "error_events", RowID=cluster id, Actor="error_observatory").
+	// The dedup UPDATE path (count++ on an existing cluster) does NOT
+	// emit a second audit row — incrementing a counter is not a new
+	// data write. If the tx fails, cluster + audit row roll back
+	// together and the caller sees nil (best-effort) — never an
+	// orphan audit row.
+
+	// SaveErrorEvent records (or dedup-increments) one error cluster.
+	// Dedup: an UNRESOLVED row with the same (domain, code,
+	// message_hash, tool_name, session_id) within a 24h window gets
+	// count+1 and last_seen_at updated instead of inserting a new
+	// row. A resolved cluster stays resolved; a NEW occurrence after
+	// resolution creates a fresh cluster. Best-effort: implementations
+	// must NOT return errors from the normal failure path (they log
+	// and continue) — callers treat failure as "recording degraded",
+	// never as a reason to fail the original request.
+	SaveErrorEvent(ctx context.Context, e *errorobs.ErrorEvent) error
+
+	// ListErrorEvents returns error_events rows matching the filters,
+	// newest-first (last_seen_at DESC). INV-7: scoped to the active
+	// project. Resolved defaults to FALSE when the filter is nil
+	// (unresolved backlog is the operator's daily view); pass
+	// Resolved=&true or Resolved=nil for other views.
+	ListErrorEvents(ctx context.Context, f errorobs.ErrorListFilters) ([]errorobs.ErrorEvent, error)
+
+	// GetErrorEvent returns one row by id. Cross-project reads return
+	// (nil, nil) — same as not found (INV-7 existence-leak parity).
+	GetErrorEvent(ctx context.Context, id int64) (*errorobs.ErrorEvent, error)
+
+	// ResolveErrorEvent marks a cluster resolved with an operator
+	// note. Idempotent: resolving an already-resolved row returns
+	// nil (note is updated). Returns ErrNotFound when the id does
+	// not exist or belongs to another project.
+	ResolveErrorEvent(ctx context.Context, wc WriteContext, id int64, note string) error
+
+	// ErrorSummary returns aggregate error metrics. GLOBAL scope (like
+	// Stats) so operators see cross-project health. hours controls the
+	// recent-window for ErrorsLastHour (0 = 1h default). TopRecurring
+	// is the top-5 unresolved clusters by count.
+	ErrorSummary(ctx context.Context, hours int) (*errorobs.ErrorSummary, error)
 
 	// --- ACTIVE SUBAGENTS (v2.8.0-alpha) ------------------------------
 	//

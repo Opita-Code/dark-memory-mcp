@@ -35,6 +35,11 @@ import (
 //   v2.6.0: added AGENT_BOOTSTRAP namespace (agent_bootstrap,
 //           agent_recommend_companions, agent_detect_environment;
 //           canonical count 35 -> 38).
+//   v2.10.0: added DELEGATION namespace (delegate_intent;
+//            canonical count 44 -> 45).
+//   v2.11.0: added ERROR_OBS namespace (error_list, error_get,
+//            error_summary, error_resolve — Error Observatory,
+//            spec 757; canonical count 45 -> 49).
 //
 // (Function name kept as TestE2E_29ToolsRegistered for the Go test
 // runner's sake — go test can't easily rename tests across versions.
@@ -43,7 +48,7 @@ func TestE2E_29ToolsRegistered(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.close()
 
-	const wantCount = 39 // v2.7.0-alpha: MINDSET (1) mindset_apply; was 38 in v2.6.0+3, 35 in v2.3.0+5.
+	const wantCount = 49 // v2.11.0 (spec 757): ERROR_OBS (4); was 45 in v2.10.0.
 	canonical := tools.CanonicalOrder()
 	if got := len(canonical); got != wantCount {
 		t.Fatalf("canonical order length: want %d, got %d", wantCount, got)

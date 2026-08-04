@@ -6,6 +6,50 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [2.11.0] — 2026-08-04
+
+**Error Observatory (spec 757, Wave 5D) — "no nos enteramos de nada" is over.** Durable, classified, backlog-able error capture. Before this release, errors existed only on the MCP wire or in stderr and then vanished: zero error tables across 24 migrations, 15+ silent-discard sites (`_ = err`), 48 unstructured log lines, gate refusals invisible, `anomalies` a dead stub. Now every failure lands in the `error_events` table (migration v25) and is queryable + triageable via 4 new tools.
+
+### Added
+
+- **`error_events` table (migration v25)** — durable, tenant-scoped error clusters: `domain` (store|llm|gate|validation|network|sweep|unknown), `code` (sentinel name), sanitized `message` (512-byte cap, no PII), `severity` (fatal|error|warn), dedup `count` (same domain+code+message_hash+tool+session within 24h → count++ instead of a new row), triage (`resolved`, `resolved_at`, `resolution_note`). **INV-1 compliant**: new-cluster INSERTs emit a write_audit row atomically in the same tx (`TableName="error_events"`, `RowID=cluster id`, `Actor="error_observatory"`); the dedup UPDATE path (count++ on an existing cluster) emits no second audit row — incrementing a counter is not a new data write. If the tx fails, cluster + audit row roll back together (never an orphan audit row). Postgres: table lands, methods return `ErrNotConfigured` until the backplane is built out.
+- **ERROR_OBS namespace (4 tools; canonical 45 → 49)** — `dark_memory_error_list` (backlog view: filters domain/severity/resolved/session/tool/since, newest-first), `dark_memory_error_get` (one cluster by id), `dark_memory_error_summary` (aggregates: total, unresolved, last-N-hours, by domain, by severity, top-5 recurring), `dark_memory_error_resolve` (operator triage: mark resolved + note). Store-bound, no orchestrator layer.
+- **`internal/errorobs` package** — the classification taxonomy: `Classify(err)` unwraps the error chain and maps the 17 store sentinels + `ErrNoLLMAvailable` + context deadline + message heuristics to (domain, code, severity). `Sanitize` + `MessageHash` power the dedup fingerprint. Sentinels are registered from the store package at init (cycle-free).
+- **`Orchestrator.RecordError`** — the single instrumentation entry point: builds the event (classification + sanitization) and persists best-effort. Callers must never fail the original request because telemetry failed.
+
+### Changed
+
+- **Instrumented 15+ silent-discard sites** (spec 757 T4) — every `_ = err` and log-only failure now lands durably: `session_start` (SetActiveSession), `session_close` (ClearActiveSession), `session_sweeper` (all 4 error paths + CAS clear), `publish_vibe` (brand_match, compliance_check, drift_log save), `mindset_apply` (judge error, spawn_subagent register, cache lookup/save), `judge` (enrichment), `agent_memory_save` (audit id read), `vibe_spec` (auto_save_todos), `recall/cache` (frame persist).
+- **Gate refusal tracking** (spec 757 T5) — PreCheck + PostCheck refusals (`ErrFrameStaleTooFar`, capability/scope expiry, `ErrDriftAtWrite`) now land in the Error Observatory (domain=gate) before the refusal ToolError is returned. Wired at boot via `GateMiddleware.RecordRefusal` → `Orchestrator.RecordError`.
+- **`publish_vibe` drift/error conflation FIX** (spec 757 T6) — an LLM failure (no key, rate limit, red) previously produced `verdict="drift_detected"` — the SAME verdict as genuine semantic drift. Now it produces `verdict="needs_human"` (no verdict was produced — the infra failed, not the artifact) + an llm-domain error_event. The operator is no longer told the artifact drifted when the judge never ran.
+- **`anomalies` resurrected** — the dead stub ("not yet implemented") now queries the Error Observatory for anomaly-shaped clusters: severity=fatal + domain=gate, unresolved only.
+- **Observability integration** — `health_ping` gains `error_summary` (total, last-hour, by domain); `session_close` gains `errors_total` + `error_occurrences`; `memory_state` counts gain `error_events` + `error_events_open`. All best-effort (a broken summary read never degrades the primary response).
+
+### Fixed
+
+- Closes the row 277 gap at the source: "0 tablas de error en 24 migraciones, 0 contadores, 15+ sitios silent-discard, 48 logs unstructured, gate refusals invisibles, anomalies stub muerto" (2026-08-04 gap analysis, spec 757).
+
+### Files
+
+- `internal/errorobs/{types,types_test}.go` — taxonomy + classification + sanitization
+- `internal/migrate/{sqlite,postgres}/ddl.go` — v25 `error_events`
+- `internal/store/store.go` — 5 new interface methods (SaveErrorEvent, ListErrorEvents, GetErrorEvent, ResolveErrorEvent, ErrorSummary)
+- `internal/store/sqlite/error_events.go` — SQLite CRUD + dedup + summary (+ sentinel registration init)
+- `internal/store/postgres/store.go` — ErrNotConfigured stubs
+- `internal/orchestration/error_observatory.go` — RecordError helper
+- `internal/orchestration/{session_start,session_close,session_sweeper,publish_vibe,mindset_apply,judge,agent_memory,vibe_spec,memory_state}.go` — instrumentation
+- `internal/server/middleware.go` + `cmd/dark-mem-mcp/main.go` — gate refusal hook
+- `internal/recall/cache.go` — frame-persist failures
+- `internal/tools/error_observatory.go` — ERROR_OBS tool surface (4 tools)
+- `internal/tools/{register,registry,observability,health,canonical_staleness_test}.go` — 49-tool canonical order + anomalies resurrection
+- `internal/recall/assemble.go` — DefaultToolGrants
+- `internal/orchestration/error_observatory_test.go` — T6 conflation regression + RecordError + session_close tests
+- `tests/dual_driver/error_events_test.go` — CRUD + dedup + resolve + summary + INV-7
+- `tests/migrate/migrate_v25_test.go` — v25 migration
+- `tests/{e2e,conformance,orchestration,migrate}/*_test.go` — pins bumped (49 tools, schema 25, needs_human semantics)
+
+---
+
 ## [2.10.0] — 2026-08-04
 
 **Wave 5C DelegationRouter + sweeper session fix.** Two separate but co-developed features: the DelegationRouter closes the delegation gap in the vibe-loop (PLAN.md §2.3, RFC §M7), and the sweeper default fix stops active sessions from being closed mid-work (row 168 root cause).

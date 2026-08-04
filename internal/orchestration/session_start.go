@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/agentmemory"
+	"github.com/dark-agents/dark-memory-mcp/internal/errorobs"
 	"github.com/dark-agents/dark-memory-mcp/internal/session"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 )
@@ -184,7 +185,9 @@ func (o *Orchestrator) SessionStart(ctx context.Context, in SessionStartInput) (
 		// We intentionally don't wrap as a hard error because the
 		// SaveSession succeeded and that's what downstream tools
 		// also need.
-		_ = err
+		// v2.11.0 (spec 757): capture in the Error Observatory —
+		// this was a silent-discard site.
+		o.RecordError(ctx, "session_start", sess.SessionID, err, errorobs.SeverityWarn)
 	}
 
 	// v2.1.3 cache-invalidation: flush the resolver cache so the next

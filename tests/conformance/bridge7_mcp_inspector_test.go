@@ -40,6 +40,21 @@ var mcpServerPath string
 // tests run. This isolates the test process from any pre-built
 // binary on disk and ensures we always test the current source.
 func TestMain(m *testing.M) {
+	// Determinism: the mcp-go stdio transport spawns the server with
+	// append(os.Environ(), extraEnv...) — the TEST process's env is
+	// always inherited, so env vars that add EXTRA tools beyond the
+	// canonical surface must be cleared HERE (not in spawnServer, which
+	// only appends). DARK_REDTEAM=armed registers the 3 redteam extras;
+	// DARK_FEDERATION_PEER_DSN registers the federation lookup. Without
+	// this, TestBridge7_ListToolsCanonical fails on dev machines that
+	// run with those vars set (52 = 49 + 3 redteam instead of 49).
+	if err := os.Setenv("DARK_REDTEAM", ""); err != nil {
+		panic(err)
+	}
+	if err := os.Setenv("DARK_FEDERATION_PEER_DSN", ""); err != nil {
+		panic(err)
+	}
+
 	tmp, err := os.MkdirTemp("", "dark-mem-conformance-")
 	if err != nil {
 		panic(err)
@@ -68,7 +83,22 @@ func spawnServer(t *testing.T) (*mcpclient.Client, string) {
 	dbPath := filepath.Join(dir, "dark.db")
 
 	// DARK_DB only — driver defaults to sqlite (server-side default).
-	env := append(os.Environ(), "DARK_DB="+dbPath)
+	// Determinism: strip env vars that add EXTRA tools beyond the
+	// canonical surface (redteam +3 when DARK_REDTEAM=armed, federation
+	// when DARK_FEDERATION_PEER_DSN is set). The canonical-count tests
+	// assert the 49-tool baseline; leaving the operator's armed-mode
+	// env in place would make them fail on dev machines that run with
+	// DARK_REDTEAM=armed. See bridge7 TestBridge7_ListToolsCanonical.
+	env := []string{}
+	for _, kv := range os.Environ() {
+		switch {
+		case strings.HasPrefix(kv, "DARK_REDTEAM="),
+			strings.HasPrefix(kv, "DARK_FEDERATION_PEER_DSN="):
+			continue // strip — would register extras
+		}
+		env = append(env, kv)
+	}
+	env = append(env, "DARK_DB="+dbPath)
 	cl, err := mcpclient.NewStdioMCPClient(mcpServerPath, env)
 	if err != nil {
 		t.Fatalf("spawn mcp server: %v", err)
@@ -149,6 +179,11 @@ func TestBridge7_Initialize(t *testing.T) {
 // count is now 43.
 // v2.9.3: AGENT_MEMORY grew 9 → 10 with agent_memory_delegate
 // (sub-agent delegation context handoff); canonical count is now 44.
+// v2.10.0: DELEGATION namespace (1 tool: delegate_intent, Wave 5C)
+// inserted between MINDSET and JUDGE; canonical count is now 45.
+// v2.11.0: ERROR_OBS namespace (4 tools: error_list, error_get,
+// error_summary, error_resolve — Error Observatory, spec 757)
+// inserted between OBSERVABILITY and ADMIN; canonical count is now 49.
 //
 // This is the wire-format regression for the bug we caught during
 // the W4A polish: mcp-go's handleListTools sorts alphabetically;
@@ -173,8 +208,13 @@ func TestBridge7_ListToolsCanonical(t *testing.T) {
 		t.Fatalf("list tools: %v", err)
 	}
 
-	if len(result.Tools) != 44 {
-		t.Fatalf("tool count: want 44 (v2.9.3 added agent_memory_delegate to AGENT_MEMORY, taking canonical to 44; pre-v2.9.3 was 43 in v2.9.0-alpha PR-3 with entities; 42 in v2.9.0-alpha PR-2 with EMBEDDER; v2.8.0-alpha was 41 with subagent_register + subagent_unregister; v2.7.0-alpha was 39 with MINDSET; pre-v2.7.0 was 38 in v2.6.0, 35 in v2.3.0, 34 in v2.1.0), got %d", len(result.Tools))
+	if len(result.Tools) != 49 {
+		// Debug: print the extras so we can see what's registered.
+		names := make([]string, len(result.Tools))
+		for i, t := range result.Tools {
+			names[i] = t.Name
+		}
+		t.Fatalf("tool count: want 49 (v2.11.0 added ERROR_OBS: error_list, error_get, error_summary, error_resolve — Error Observatory spec 757; was 45 in v2.10.0 with DELEGATION delegate_intent; 44 in v2.9.3; pre-v2.9.3 was 43 in v2.9.0-alpha PR-3 with entities; 42 in v2.9.0-alpha PR-2 with EMBEDDER; v2.8.0-alpha was 41 with subagent_register + subagent_unregister; v2.7.0-alpha was 39 with MINDSET; pre-v2.7.0 was 38 in v2.6.0, 35 in v2.3.0, 34 in v2.1.0), got %d\nALL: %v", len(result.Tools), names)
 	}
 
 	want := canonicalWireOrder()
@@ -340,12 +380,17 @@ func canonicalWireOrder() []string {
 		"agent_memory_save", "agent_memory_list", "agent_memory_recall", "agent_memory_get", "agent_memory_update", "agent_memory_archive", "agent_memory_delegate", "agent_memory_entities", "subagent_register", "subagent_unregister",
 		// MINDSET (1) — v2.7.0-alpha
 		"mindset_apply",
+		// DELEGATION (1) — v2.10.0 (Wave 5C)
+		"delegate_intent",
 		// JUDGE (3)
 		"judge", "consensus", "judgment_history",
 		// POLICY (2)
 		"active_policy", "load_constitution",
 		// OBSERVABILITY (4) — v1.3.0 grew from 3 to 4 with health_ping
 		"memory_state", "writes", "anomalies", "health_ping",
+		// ERROR_OBS (4) — v2.11.0 (spec 757, Wave 5D): Error
+		// Observatory backlog + triage.
+		"error_list", "error_get", "error_summary", "error_resolve",
 		// ADMIN (3)
 		"admin_migrate", "admin_schema_status", "admin_vacuum",
 		// L6-VLP (1) — DMAP v1.1

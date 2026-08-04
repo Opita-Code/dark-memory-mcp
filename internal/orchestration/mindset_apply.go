@@ -43,6 +43,7 @@ import (
 	"time"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/agentmemory"
+	"github.com/dark-agents/dark-memory-mcp/internal/errorobs"
 	"github.com/dark-agents/dark-memory-mcp/internal/ssd"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 	"github.com/dark-agents/dark-memory-mcp/internal/vibecase"
@@ -254,7 +255,9 @@ func (o *Orchestrator) MindsetApply(ctx context.Context, in MindsetApplyInput) (
 		verdict, verr := o.mindsetValidate(ctx, case_, in, composed)
 		if verr != nil {
 			// Judge error: return last attempt with errored flag.
+			// v2.11.0 (spec 757): was log-only; now also durable.
 			log.Printf("dark-mem-mcp: mindset_apply judge_error iter=%d err=%v", iter, verr)
+			o.RecordError(ctx, "mindset_apply", "", fmt.Errorf("mindset_validate iter %d: %w", iter, verr), errorobs.SeverityWarn)
 			lastVerdict = MindsetJudgeVerdict{Verdict: "errored", Reasoning: verr.Error()}
 			break
 		}
@@ -339,6 +342,8 @@ func (o *Orchestrator) applySubagentHandoff(ctx context.Context, out *MindsetApp
 	}
 	if _, err := o.Store.SetActiveSubagent(ctx, wc, row); err != nil {
 		log.Printf("dark-mem-mcp: mindset_apply spawn_subagent register err=%v (subagent_id=%s)", err, in.SubagentID)
+		// v2.11.0 (spec 757): durable capture (was log-only).
+		o.RecordError(ctx, "mindset_apply", "", fmt.Errorf("spawn_subagent register %s: %w", in.SubagentID, err), errorobs.SeverityWarn)
 		return out
 	}
 	out.SubagentID = in.SubagentID
@@ -473,6 +478,8 @@ func (o *Orchestrator) mindsetCacheLookup(ctx context.Context, key string) (*age
 	})
 	if err != nil {
 		log.Printf("dark-mem-mcp: mindset_apply cache_lookup err=%v (proceeding to composition)", err)
+		// v2.11.0 (spec 757): durable capture (was log-only).
+		o.RecordError(ctx, "mindset_apply", "", fmt.Errorf("cache_lookup: %w", err), errorobs.SeverityWarn)
 		return nil, false
 	}
 	now := time.Now().UTC()
@@ -545,6 +552,8 @@ func (o *Orchestrator) cacheAndReturn(
 	if err != nil {
 		// Cache write failure is non-fatal — return the result anyway.
 		log.Printf("dark-mem-mcp: mindset_apply cache_save err=%v (returning uncached)", err)
+		// v2.11.0 (spec 757): durable capture (was log-only).
+		o.RecordError(ctx, "mindset_apply", "", fmt.Errorf("cache_save: %w", err), errorobs.SeverityWarn)
 		id = 0
 	}
 

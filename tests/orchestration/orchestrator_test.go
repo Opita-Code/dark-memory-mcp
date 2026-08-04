@@ -1171,7 +1171,9 @@ func TestPublishVibe_DriftDetected(t *testing.T) {
 }
 
 // O7: PublishVibe â€” no LLM available still persists spec + artifact +
-// drift_log with verdict="drift_detected" + reasoning explaining skip.
+// drift_log with verdict="needs_human" (v2.11.0 T6: was drift_detected,
+// but an LLM infra failure is NOT semantic drift — the operator must
+// not be told the artifact drifted when the judge never ran).
 func TestPublishVibe_NoLLM(t *testing.T) {
 	t.Setenv("SDD_LLM_BASE_URL", "")
 
@@ -1195,22 +1197,26 @@ func TestPublishVibe_NoLLM(t *testing.T) {
 	if out.SpecID == 0 || out.ArtifactID == 0 || out.DriftID == 0 {
 		t.Fatalf("all three rows should be persisted; got spec=%d art=%d drift=%d", out.SpecID, out.ArtifactID, out.DriftID)
 	}
-	if out.Verdict != "drift_detected" {
-		t.Fatalf("Verdict should be drift_detected (no LLM = can't judge = drift_detected), got %q", out.Verdict)
+	// T6 conflation fix: infra failure must NOT masquerade as drift.
+	if out.Verdict == "drift_detected" {
+		t.Fatalf("Verdict drift_detected: LLM failure conflated with semantic drift (T6 fix violated)")
+	}
+	if out.Verdict != "needs_human" {
+		t.Fatalf("Verdict should be needs_human (no LLM = no verdict produced), got %q", out.Verdict)
 	}
 	if out.NextAction != "human_gate" {
 		t.Fatalf("NextAction should be human_gate, got %q", out.NextAction)
 	}
-	if !strings.Contains(out.Reasoning, "drift_judge skipped") {
-		t.Fatalf("Reasoning should explain skip, got: %q", out.Reasoning)
+	if !strings.Contains(out.Reasoning, "drift_judge unavailable") {
+		t.Fatalf("Reasoning should explain the LLM infra failure, got: %q", out.Reasoning)
 	}
 
 	drift, _ := s.LatestDriftForArtifact(ctx, out.ArtifactID)
 	if drift == nil {
 		t.Fatalf("drift row missing")
 	}
-	if !strings.Contains(drift.JudgeReasoning, "drift_judge skipped") {
-		t.Fatalf("drift.JudgeReasoning should mention skip, got: %q", drift.JudgeReasoning)
+	if !strings.Contains(drift.JudgeReasoning, "drift_judge unavailable") {
+		t.Fatalf("drift.JudgeReasoning should mention the LLM failure, got: %q", drift.JudgeReasoning)
 	}
 }
 
@@ -1312,8 +1318,8 @@ func TestPublishVibe_CanaryRejection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PublishVibe should not fail on canary (audit trail must complete): %v", err)
 	}
-	if out.Verdict != "drift_detected" {
-		t.Fatalf("Verdict should be drift_detected (canary triggers judge skip), got %q", out.Verdict)
+	if out.Verdict != "needs_human" {
+		t.Fatalf("Verdict should be needs_human (canary triggers judge skip = no verdict, NOT drift), got %q", out.Verdict)
 	}
 	if !strings.Contains(out.Reasoning, "canary") {
 		t.Fatalf("Reasoning should mention canary, got: %q", out.Reasoning)

@@ -198,10 +198,11 @@ func (r *Registry) CountExtras() int {
 //	JUDGE            (3)  - judge, consensus, judgment_history
 //	POLICY           (2)  - active_policy, load_constitution
 //	OBSERVABILITY    (4)  - memory_state, writes, anomalies, health_ping (v1.3.0)
+//	ERROR_OBS        (4)  - error_list, error_get, error_summary, error_resolve (v2.11.0, spec 757)
 //	ADMIN            (3)  - admin_migrate, admin_schema_status, admin_vacuum
 //	L6-VLP           (1)  - vlp_handle_event          (DMAP v1.1 spec 193)
 //
-// Total: 1+4+3+3+4+4+10+1+1+3+2+4+3+1 = 45.
+// Total: 1+4+3+3+4+4+10+1+1+3+2+4+4+3+1 = 49.
 //
 //   - PROJECT was added in v1.2.0 to close the bootstrap loop
 //     (operators can now provision a tenant from inside the MCP
@@ -281,6 +282,14 @@ var canonicalToolOrder = []string{
 	"active_policy", "load_constitution",
 	// OBSERVABILITY (4) - v1.3.0: health_ping added
 	"memory_state", "writes", "anomalies", "health_ping",
+	// ERROR_OBS (4) - v2.11.0 (spec 757, Wave 5D). Error Observatory:
+	// durable, classified, backlog-able error capture. error_list =
+	// backlog view (filters); error_get = one cluster; error_summary =
+	// aggregate metrics (global scope); error_resolve = operator
+	// triage. Positioned right after OBSERVABILITY (it IS
+	// observability — the durable error plane the other tools
+	// surface). Store-bound, no orchestrator layer.
+	"error_list", "error_get", "error_summary", "error_resolve",
 	// ADMIN (3)
 	"admin_migrate", "admin_schema_status", "admin_vacuum",
 	// L6-VLP (1) - DMAP v1.1

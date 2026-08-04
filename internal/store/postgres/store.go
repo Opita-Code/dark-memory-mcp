@@ -64,6 +64,7 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/ssd"
 	"github.com/dark-agents/dark-memory-mcp/internal/vibeflow"
 	"github.com/dark-agents/dark-memory-mcp/internal/agentmemory"
+	"github.com/dark-agents/dark-memory-mcp/internal/errorobs"
 )
 
 // openPostgres opens a Postgres 
@@ -2505,4 +2506,34 @@ func (s *Store) ClearActiveSubagent(ctx context.Context, wc store.WriteContext, 
 
 func (s *Store) SweepExpiredSubagents(ctx context.Context) (int64, error) {
 	return 0, notImpl("SweepExpiredSubagents")
+}
+
+// --- Error Observatory (spec 757, Wave 5D, migration v25) -------------
+//
+// Postgres driver is research-only on this host (the factory in
+// factory.go does not wire DARK_DB_DRIVER=postgres). The migration
+// v25 lands the table; the five methods below return
+// store.ErrNotConfigured via notImpl so the interface is satisfied
+// without silently dropping calls. Port the SQLite implementations
+// (same SQL, BOOLEAN instead of INTEGER for resolved) when the
+// Postgres backplane is built out.
+
+func (s *Store) SaveErrorEvent(ctx context.Context, e *errorobs.ErrorEvent) error {
+	return notImpl("SaveErrorEvent")
+}
+
+func (s *Store) ListErrorEvents(ctx context.Context, f errorobs.ErrorListFilters) ([]errorobs.ErrorEvent, error) {
+	return nil, notImpl("ListErrorEvents")
+}
+
+func (s *Store) GetErrorEvent(ctx context.Context, id int64) (*errorobs.ErrorEvent, error) {
+	return nil, notImpl("GetErrorEvent")
+}
+
+func (s *Store) ResolveErrorEvent(ctx context.Context, wc store.WriteContext, id int64, note string) error {
+	return notImpl("ResolveErrorEvent")
+}
+
+func (s *Store) ErrorSummary(ctx context.Context, hours int) (*errorobs.ErrorSummary, error) {
+	return nil, notImpl("ErrorSummary")
 }

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/audit"
+	"github.com/dark-agents/dark-memory-mcp/internal/errorobs"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 )
 
@@ -40,6 +41,12 @@ type SessionCloseOutput struct {
 	// previous ListRuns + N×ListItems N+1 pattern.
 	RunsTotal  int `json:"runs_total"`
 	ItemsTotal int `json:"items_total"`
+	// ErrorsTotal / ErrorOccurrences (v2.11.0, spec 757) — the
+	// session's error_events clusters + raw occurrences captured by
+	// the Error Observatory during the session. Both are
+	// best-effort (0 when the summary read fails).
+	ErrorsTotal      int `json:"errors_total,omitempty"`
+	ErrorOccurrences int `json:"error_occurrences,omitempty"`
 }
 
 // SessionClose closes a session and returns a summary of activity.
@@ -72,7 +79,10 @@ func (o *Orchestrator) SessionClose(ctx context.Context, in SessionCloseInput) (
 	// frame, so the stale session_id won't accidentally authorize
 	// writes against the new state.
 	if err := o.Store.ClearActiveSession(ctx, o.Store.ActiveProject(), in.SessionID); err != nil {
-		_ = err
+		// v2.11.0 (spec 757): capture in the Error Observatory —
+		// this was a silent-discard site. The close succeeded; a
+		// missed clear is a Warn-grade consistency miss.
+		o.RecordError(ctx, "session_close", in.SessionID, err, errorobs.SeverityWarn)
 	}
 
 	// v2.1.3 cache-invalidation: flush the resolver cache so the next
@@ -115,6 +125,23 @@ func (o *Orchestrator) SessionClose(ctx context.Context, in SessionCloseInput) (
 		return nil, fmt.Errorf("session_close: count items: %w", err)
 	}
 
+	// v2.11.0 (spec 757): error_events clusters captured during this
+	// session. Best-effort — a broken error-summary read must not
+	// fail the close. The count is of DEDUPLICATED clusters (count
+	// column is per-cluster occurrences; total occurrences =
+	// sum(count) — the session's raw error tally).
+	errorsTotal := 0
+	errorOccurrences := 0
+	sessErrors, err := o.Store.ListErrorEvents(ctx, errorobs.ErrorListFilters{
+		SessionID: in.SessionID,
+	})
+	if err == nil {
+		errorsTotal = len(sessErrors)
+		for _, e := range sessErrors {
+			errorOccurrences += e.Count
+		}
+	}
+
 	closedAt, _ := time.Parse(time.RFC3339Nano, closedSess.ClosedAt)
 	if closedAt.IsZero() {
 		// Defensive: close succeeded but the timestamp wasn't set
@@ -122,10 +149,12 @@ func (o *Orchestrator) SessionClose(ctx context.Context, in SessionCloseInput) (
 		closedAt = o.now()
 	}
 	return &SessionCloseOutput{
-		SessionID:   in.SessionID,
-		ClosedAt:    closedAt,
-		WritesTotal: len(writes),
-		RunsTotal:   runsTotal,
-		ItemsTotal:  itemsTotal,
+		SessionID:        in.SessionID,
+		ClosedAt:         closedAt,
+		WritesTotal:      len(writes),
+		RunsTotal:        runsTotal,
+		ItemsTotal:       itemsTotal,
+		ErrorsTotal:      errorsTotal,
+		ErrorOccurrences: errorOccurrences,
 	}, nil
 }
