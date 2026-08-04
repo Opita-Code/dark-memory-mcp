@@ -100,6 +100,7 @@ const DefaultToolGrants = "project_create," + // PROJECT (1)
 	"judge,consensus,judgment_history," + // JUDGE (3)
 	"active_policy,load_constitution," + // POLICY (2)
 	"memory_state,writes,anomalies,health_ping," + // OBSERVABILITY (4)
+	"error_list,error_get,error_summary,error_resolve," + // ERROR_OBS (4) — v2.11.0 (spec 757: Error Observatory backlog + triage)
 	"admin_migrate,admin_schema_status,admin_vacuum," + // ADMIN (3)
 	"vlp_handle_event," + // L6-VLP (1) — DMAP v1.1
 	"embedder_setup_prompt" // EMBEDDER (1) — v2.9.0-alpha PR-2 (consent gate, row 164 §3)

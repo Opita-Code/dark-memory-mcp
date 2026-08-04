@@ -32,6 +32,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/dark-agents/dark-memory-mcp/internal/errorobs"
 	"github.com/dark-agents/dark-memory-mcp/internal/version"
 )
 
@@ -209,6 +210,10 @@ type healthPingResult struct {
 	Drift     bool    `json:"drift,omitempty"`
 	LatencyMS float64 `json:"latency_ms"`
 	CheckedAt string  `json:"checked_at"`
+	// ErrorSummary (v2.11.0, spec 757) — aggregate Error Observatory
+	// metrics. Omitted when the store doesn't expose the summary (test
+	// fakes) or the query fails (degraded health read, not fatal).
+	ErrorSummary *errorobs.ErrorSummary `json:"error_summary,omitempty"`
 }
 
 // RegisterHealth wires the dark_memory_health_ping tool into the
@@ -301,6 +306,15 @@ func RegisterHealth(reg *Registry, st storeBridge) {
 				readCancel()
 				out.DB.CanaryPresent = st.CanaryPresent()
 				out.DB.ActiveProject = st.ActiveProject()
+
+				// v2.11.0 (spec 757): Error Observatory summary.
+				// Best-effort + optional (type assertion): a broken
+				// summary read must not degrade the liveness probe.
+				if es, ok := st.(storeErrorSummarizer); ok {
+					if sum, err := es.ErrorSummary(ctx, 1); err == nil {
+						out.ErrorSummary = sum
+					}
+				}
 			}
 
 			// --- runtime ---
@@ -343,6 +357,15 @@ type storeBridge interface {
 	SchemaVersion(ctx context.Context) (int, error)
 	CanaryPresent() bool
 	ActiveProject() string
+}
+
+// storeErrorSummarizer is the OPTIONAL extension of storeBridge
+// (v2.11.0, spec 757). health_ping checks for it via type assertion
+// so test fakes that don't implement ErrorSummary keep working —
+// the field is simply omitted when absent. The real SQLite store
+// implements it.
+type storeErrorSummarizer interface {
+	ErrorSummary(ctx context.Context, hours int) (*errorobs.ErrorSummary, error)
 }
 
 // goVersion returns a string describing the Go runtime version.

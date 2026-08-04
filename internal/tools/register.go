@@ -115,6 +115,13 @@ func RegisterAll(reg *Registry, orch *orchestration.Orchestrator, st store.Store
 	RegisterPolicy(reg, orch, st)
 	// OBSERVABILITY (4) — v1.3.0 grew from 3 to 4 with health_ping.
 	RegisterObservability(reg, orch, st)
+	// ERROR_OBS (4) — v2.11.0 (spec 757, Wave 5D). Error Observatory
+	// backlog + triage: error_list, error_get, error_summary,
+	// error_resolve. Store-bound (no orchestrator — the Store exposes
+	// the CRUD contract directly). Positioned right after
+	// OBSERVABILITY because it IS observability — the durable error
+	// plane that the other observability tools surface.
+	RegisterErrorObservatory(reg, st)
 	// ADMIN (3) — read-only or schema-only, no orchestrator needed.
 	RegisterAdmin(reg, nil, st)
 
@@ -193,14 +200,17 @@ func RegisterAll(reg *Registry, orch *orchestration.Orchestrator, st store.Store
 	// sub-agent delegation context handoff).
 	// Wave 5C: bumped from 44 → 45 (added delegate_intent in the new
 	// DELEGATION namespace).
+	// Wave 5D (spec 757): bumped from 45 → 49 (added ERROR_OBS
+	// namespace: error_list, error_get, error_summary, error_resolve —
+	// the Error Observatory backlog + triage surface).
 	canonical := CanonicalOrder()
 	for _, name := range canonical {
 		if reg.Get(name) == nil {
 			return nil, fmt.Errorf("tools: RegisterAll: missing tool %q (canonical order violation)", name)
 		}
 	}
-	if got := len(reg.ListCanonical()); got != 45 {
-		return nil, fmt.Errorf("tools: RegisterAll: expected 45 tools, got %d", got)
+	if got := len(reg.ListCanonical()); got != 49 {
+		return nil, fmt.Errorf("tools: RegisterAll: expected 49 tools, got %d", got)
 	}
 	return src, nil
 }

@@ -668,4 +668,38 @@ CREATE INDEX IF NOT EXISTS idx_agent_memory_entities_entity  ON agent_memory_ent
 CREATE INDEX IF NOT EXISTS idx_agent_memory_entities_mem_id ON agent_memory_entities (mem_id);
 `,
 	},
+	{
+		// v25 - error_events: Error Observatory (spec 757, Wave 5D).
+		// Mirrors the sqlite v25 migration (BIGSERIAL PK, same columns,
+		// same indexes). See internal/migrate/sqlite/ddl.go v25 for the
+		// full design rationale.
+		Version: 25,
+		Name:    "error_events",
+		Up: `
+CREATE TABLE IF NOT EXISTS error_events (
+    id               BIGSERIAL PRIMARY KEY,
+    project_id       TEXT NOT NULL,
+    session_id       TEXT,
+    tool_name        TEXT,
+    domain           TEXT NOT NULL,
+    code             TEXT NOT NULL,
+    message          TEXT NOT NULL,
+    message_hash     TEXT NOT NULL,
+    context_json     TEXT,
+    severity         TEXT NOT NULL DEFAULT 'error',
+    count            INTEGER NOT NULL DEFAULT 1,
+    first_seen_at    TEXT NOT NULL,
+    last_seen_at     TEXT NOT NULL,
+    resolved         BOOLEAN NOT NULL DEFAULT FALSE,
+    resolved_at      TEXT,
+    resolution_note  TEXT,
+    created_at       TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_error_events_last_seen  ON error_events (last_seen_at DESC);
+CREATE INDEX IF NOT EXISTS idx_error_events_domain     ON error_events (domain);
+CREATE INDEX IF NOT EXISTS idx_error_events_severity   ON error_events (severity);
+CREATE INDEX IF NOT EXISTS idx_error_events_resolved   ON error_events (resolved);
+CREATE INDEX IF NOT EXISTS idx_error_events_dedup      ON error_events (domain, code, message_hash, tool_name, session_id, resolved);
+`,
+	},
 }
