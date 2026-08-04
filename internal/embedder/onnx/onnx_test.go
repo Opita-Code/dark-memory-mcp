@@ -244,6 +244,49 @@ func abs(x float64) float64 {
 // Compile-time guard for the ErrSessionClosed sentinel usage.
 var _ error = ErrSessionClosed
 
+// TestEmbed_MultipleNewCalls is the regression test for the
+// process-singleton ONNX Runtime environment: New() must be callable
+// multiple times in the same process (each call creates its own
+// session; the environment inits exactly once). Before the envOnce
+// fix, the second New() failed with "onnxruntime has already been
+// initialized" — this is what CI caught (the suite runs all tests in
+// one process, so TestEmbedAfterClose + TestEmbed_RealModel + this
+// test all call New() back to back).
+func TestEmbed_MultipleNewCalls(t *testing.T) {
+	if unsupportedPlatform {
+		t.Skipf("skipping: platform %s/%s unsupported", runtime.GOOS, runtime.GOARCH)
+	}
+	if runtime.GOOS == "windows" {
+		t.Skipf("skipping on Windows: yalue runtime holds a DLL handle that prevents t.TempDir cleanup")
+	}
+
+	// Two independent adapters in the same process, each with its own
+	// cache dir. Both must construct; the second must NOT trip the
+	// "already been initialized" singleton guard.
+	a1, err := New(Options{DarkHome: t.TempDir()})
+	if err != nil {
+		t.Fatalf("first New: %v", err)
+	}
+	defer a1.Close()
+
+	a2, err := New(Options{DarkHome: t.TempDir()})
+	if err != nil {
+		t.Fatalf("second New (same process): %v", err)
+	}
+	defer a2.Close()
+
+	// Both sessions must actually run inference.
+	for i, a := range []embedder.Embedder{a1, a2} {
+		vecs, err := a.Embed(context.Background(), []string{"hello"})
+		if err != nil {
+			t.Fatalf("adapter %d Embed: %v", i, err)
+		}
+		if len(vecs) != 1 || len(vecs[0]) != DefaultDim {
+			t.Fatalf("adapter %d: got %d vecs dim %d, want 1 vec dim %d", i, len(vecs), len(vecs[0]), DefaultDim)
+		}
+	}
+}
+
 // TestEmbedAfterClose exercises the close-state error path.
 // On unsupported platforms this is skipped (we never get an instance).
 // On Windows the yalue runtime holds a DLL handle that prevents the
