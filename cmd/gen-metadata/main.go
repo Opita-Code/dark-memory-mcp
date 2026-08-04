@@ -48,6 +48,13 @@ var targets = []string{
 // versionField matches a JSON "version": "..." string field.
 var versionField = regexp.MustCompile(`"version"\s*:\s*"[^"]*"`)
 
+// platformDepField matches npm wrapper optionalDependencies entries
+// ("@opitacode/dark-memory-mcp-<platform>": "<version>"). The wrapper
+// pins each platform package at the SAME version as the wrapper
+// itself; these fields are keyed by package name, not "version", so
+// versionField does not catch them.
+var platformDepField = regexp.MustCompile(`"@opitacode/dark-memory-mcp-(darwin|linux|win32)-(x64|arm64)"\s*:\s*"[^"]*"`)
+
 func main() {
 	versionFlag := flag.String("version", "", "explicit version override (default: git describe)")
 	flag.Parse()
@@ -74,6 +81,7 @@ func main() {
 	root := filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", ".."))
 
 	replacement := fmt.Sprintf(`"version": "%s"`, version)
+	depReplacement := fmt.Sprintf(`"@opitacode/dark-memory-mcp-$1-$2": "%s"`, version)
 	var changed int
 	for _, rel := range targets {
 		path := filepath.Join(root, filepath.FromSlash(rel))
@@ -86,6 +94,10 @@ func main() {
 			fatal("%s: no \"version\" field found — file shape changed?", rel)
 		}
 		updated := versionField.ReplaceAllString(string(raw), replacement)
+		// Wrapper-only: sync the optionalDependencies platform pins.
+		if rel == "npm/wrapper/package.json" {
+			updated = platformDepField.ReplaceAllString(updated, depReplacement)
+		}
 		if updated == string(raw) {
 			fmt.Printf("gen-metadata: %s: already at %q\n", rel, version)
 			continue
