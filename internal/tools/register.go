@@ -1,6 +1,7 @@
 // Package tools — register.go: the single entry point that wires all
-// 49 tools into the Registry. Called from internal/server/server.go's
-// RegisterAll path, and from tests that want a pre-populated registry.
+// canonical tools into the Registry. Called from
+// internal/server/server.go's RegisterAll path, and from tests that
+// want a pre-populated registry.
 package tools
 
 import (
@@ -14,18 +15,18 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/vlp"
 )
 
-// RegisterAll wires all 49 dark_memory_* tools into the registry, in
-// the canonical order (spec 164, bridge.4 + spec 193 Layer 6). Safe
-// to call once per Registry; subsequent calls are no-ops if the tools
-// are already registered.
+// RegisterAll wires all canonical dark_memory_* tools into the
+// registry, in the canonical order (spec 164, bridge.4 + spec 193
+// Layer 6). Safe to call once per Registry; subsequent calls are
+// no-ops if the tools are already registered.
 //
 // The split into per-namespace Register* functions lets tests pull
 // in a subset (e.g. only the JUDGE tools for an eval-pipeline test).
-// The canonical 49-tool surface (v2.11.0; was 45 in v2.10.0, 44 in
-// v2.9.3, 39 in v2.7.0-alpha, 29 in v2.0.0, 28 in v1.3.x, 26 in
-// v1.1.x) is the union of all namespaces + the armed-mode extras
-// (L7-REDTEAM, +3 tools when DARK_REDTEAM=armed — registered as
-// "extras" below and emitted after the canonical 49 in tools/list).
+// The canonical surface is the union of canonicalNamespaces (see
+// registry.go) + the armed-mode extras (L7-REDTEAM, +3 tools when
+// DARK_REDTEAM=armed — registered as "extras" below and emitted
+// after the canonical set in tools/list). The count is derived from
+// canonicalNamespaces, never hardcoded.
 //
 // 5A.ii.b.2.c: bumped from 28 → 29 (added dark_memory_recall).
 // v2.6.0: bumped from 35 → 38 (added dark_memory_agent_bootstrap,
@@ -146,18 +147,18 @@ func RegisterAll(reg *Registry, orch *orchestration.Orchestrator, st store.Store
 
 	// L7-REDTEAM (3) — armed-mode optional. RegisterRedTeam panics
 	// / errors if DARK_REDTEAM != "armed", so the un-armed server
-	// gets exactly the canonical 28 tools (v1.3.0; no surface change
-	// relative to the count expectation below) and the armed server
-	// gets 28 + 3 = 31. The redteam tools are NOT in the canonical
-	// order — they are namespace extras that tools/list emits after
-	// the canonical 28.
+	// gets exactly the canonical surface (count derived from
+	// canonicalToolOrder below; no hardcoded number) and the armed
+	// server gets canonical + 3 redteam extras. The redteam tools are
+	// NOT in the canonical order — they are namespace extras that
+	// tools/list emits after the canonical set.
 	redteamArmed := false
 	if err := RegisterRedTeam(reg, st); err != nil {
 		// ErrArmedRequired is the EXPECTED return when the operator
 		// has not flipped DARK_REDTEAM=armed. Log it as info, not
 		// as an error, so the un-armed boot is silent.
 		if errors.Is(err, store.ErrArmedRequired) {
-			// not armed — that's fine, surface stays at 28.
+			// not armed — that's fine, surface stays canonical-only.
 		} else {
 			return nil, fmt.Errorf("tools: RegisterAll: RegisterRedTeam: %w", err)
 		}
@@ -177,40 +178,21 @@ func RegisterAll(reg *Registry, orch *orchestration.Orchestrator, st store.Store
 		redteamArmed,
 	)
 
-	// Sanity check: registry must contain all 35 canonical tools
-	// after Register*. If a tool was forgotten, fail loudly at boot
-	// rather than at request time.
-	//
-	// 5A.ii.b.2.c: bumped from 28 → 29 (added dark_memory_recall).
-	// v2.1.0: bumped from 29 → 34 (added AGENT_MEMORY namespace:
-	// save, list, get, update, archive).
-	// v2.3.0: bumped from 34 → 35 (added agent_memory_recall).
-	// v2.6.0: bumped from 35 → 38 (added AGENT_BOOTSTRAP namespace:
-	// agent_bootstrap, agent_recommend_companions, agent_detect_environment).
-	// v2.7.0-alpha: bumped from 38 → 39 (added MINDSET namespace:
-	// mindset_apply — procedural + judge-validated subagent prompts).
-	// v2.9.0-alpha PR-3: bumped from 39 → 40 (added agent_memory_entities
-	// for the agent_memory_entities side-table read path).
-	// v2.9.0-alpha PR-2: bumped from 40 → 41 (added embedder_setup_prompt
-	// for the row 164 §3 consent gate).
-	// PR-17: canonical drift fix — the 41-tool reality vs the 39-tool
-	// guard. Bumped to 43 (was 41 + subagent_register/unregister were
-	// already in CanonicalOrder but the guard lagged).
-	// v2.9.3: bumped from 43 → 44 (added agent_memory_delegate for
-	// sub-agent delegation context handoff).
-	// Wave 5C: bumped from 44 → 45 (added delegate_intent in the new
-	// DELEGATION namespace).
-	// Wave 5D (spec 757): bumped from 45 → 49 (added ERROR_OBS
-	// namespace: error_list, error_get, error_summary, error_resolve —
-	// the Error Observatory backlog + triage surface).
+	// Sanity check: registry must contain every canonical tool after
+	// Register*. If a tool was forgotten, fail loudly at boot rather
+	// than at request time. The expected count is len(canonicalToolOrder)
+	// — derived, never hardcoded (historical bumps are documented in
+	// registry.go's canonicalNamespaces comments).
 	canonical := CanonicalOrder()
 	for _, name := range canonical {
 		if reg.Get(name) == nil {
 			return nil, fmt.Errorf("tools: RegisterAll: missing tool %q (canonical order violation)", name)
 		}
 	}
-	if got := len(reg.ListCanonical()); got != 49 {
-		return nil, fmt.Errorf("tools: RegisterAll: expected 49 tools, got %d", got)
+	// Count is derived from the canonical order — never hardcoded — so
+	// the guard can't drift when the surface grows.
+	if got := len(reg.ListCanonical()); got != len(canonicalToolOrder) {
+		return nil, fmt.Errorf("tools: RegisterAll: expected %d tools, got %d", len(canonicalToolOrder), got)
 	}
 	return src, nil
 }

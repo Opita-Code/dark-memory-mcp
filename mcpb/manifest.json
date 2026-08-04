@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "dark-memory-mcp",
   "display_name": "dark-memory-mcp",
-  "version": "2.5.2",
+  "version": "2.11.0-alpha",
   "description": "Persistent memory + vibe-loop engine for AI agents. Single Go binary, SQLite-backed, stdio MCP.",
   "long_description": "dark-memory-mcp is a governed MCP server that gives your AI agent persistent memory across sessions. It tracks decisions, findings, and audit history so your AI never loses the thread of what it is doing. The vibe-loop engine wraps each turn in a session lifecycle: drift-judge validates artifacts against your project's constitution, agent_memory preserves findings across sessions, and consensus-based decision tracking prevents context loss. Cross-platform (macOS/Linux/Windows, x64/arm64), single Go binary, SQLite-backed, zero runtime dependencies. Install once via Claude Desktop's one-click MCPB installer, or via `npx -y @opitacode/dark-memory-mcp` from your terminal.",
   "author": {

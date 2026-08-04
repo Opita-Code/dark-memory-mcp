@@ -1,6 +1,6 @@
 # dark-agent Operating Manual
 
-> **Bootstrap version 3** — tied to MCP schema v25, dark-memory-mcp v2.11.0-alpha+
+> **Bootstrap version {{.BootstrapVersion}}** — tied to MCP schema v{{.SchemaVersion}}, dark-memory-mcp v{{.Version}}+
 >
 > **What this is:** the canonical operating manual that any harness can ingest to learn how to use `dark-memory-mcp` correctly. Self-contained — does not require reading any other documentation. Cross-references below are *for context only*; you do not need to follow them to use the MCP.
 >
@@ -22,7 +22,7 @@ You are operating a **governance-first** MCP stack. Your job is to leave an audi
 
 ## 1. What you have access to
 
-You have at least one MCP server: `dark-memory-mcp`. It exposes the canonical **49 tools** + 8 resources (this manual is one of them) + 3 self-bootstrap tools.
+You have at least one MCP server: `dark-memory-mcp`. It exposes the canonical **{{.CanonicalTools}} tools** + {{.TotalResources}} resources (this manual is one of them) + {{index .NamespaceCounts "AGENT_BOOTSTRAP"}} self-bootstrap tools.
 
 | MCP | Purpose | When you need it |
 |---|---|---|
@@ -34,7 +34,7 @@ You have at least one MCP server: `dark-memory-mcp`. It exposes the canonical **
 
 ---
 
-## 2. The 8 resources you can read
+## 2. The {{.TotalResources}} resources you can read
 
 | URI | Content | When to read it |
 |---|---|---|
@@ -53,30 +53,30 @@ For companion tool docs (when to use them, install links), read:
 
 ---
 
-## 3. The 49 canonical tools (namespace overview)
+## 3. The {{.CanonicalTools}} canonical tools (namespace overview)
 
 You do **not** need to memorize these. Use `tools/list` to discover them. The namespaces are:
 
 | Namespace | Tools | Purpose |
 |---|---|---|
-| `PROJECT` | 1 | Create/lookup projects (one per tenant) |
-| `SESSION` | 4 | Start/resume/status/close operational sessions |
-| `RESEARCH` | 3 | Topic/recall/resume-thread for OSINT research |
-| `AGENT_BOOTSTRAP` | 3 | Self-bootstrap: manual, companion recommendations, env detection (v2.6.0) |
-| `VIBE` | 4 | Spec + artifact publishing + drift detection |
-| `CONTEXT` | 4 | Context projection of artifacts/specs/sessions + scoped recall |
-| `AGENT_MEMORY` | 10 | Mem0-aligned cross-session memory: save/list/recall/get/update/archive/delegate/entities + subagent_register/unregister (v2.1.0 → v2.9.3) |
-| `MINDSET` | 1 | Procedural subagent system-prompt composition + judge validation (v2.7.0-alpha) |
-| `DELEGATION` | 1 | DelegationRouter: decide handle/delegate/refuse an intent (v2.10.0, Wave 5C) |
-| `JUDGE` | 3 | Single-shot + N-shot consensus + history |
-| `POLICY` | 2 | Active policy + constitution lookup |
-| `OBSERVABILITY` | 4 | Memory state, writes, anomalies, health ping |
-| `ERROR_OBS` | 4 | Error Observatory: list/get/summary/resolve durable error backlog (v2.11.0, spec 757) |
-| `ADMIN` | 3 | Migrations, schema status, vacuum |
-| `L6-VLP` | 1 | VLP state machine event handling |
-| `EMBEDDER` | 1 | Hybrid-retrieval embedder consent gate (v2.9.0-alpha PR-2) |
+| `PROJECT` | {{index .NamespaceCounts "PROJECT"}} | Create/lookup projects (one per tenant) |
+| `SESSION` | {{index .NamespaceCounts "SESSION"}} | Start/resume/status/close operational sessions |
+| `RESEARCH` | {{index .NamespaceCounts "RESEARCH"}} | Topic/recall/resume-thread for OSINT research |
+| `AGENT_BOOTSTRAP` | {{index .NamespaceCounts "AGENT_BOOTSTRAP"}} | Self-bootstrap: manual, companion recommendations, env detection (v2.6.0) |
+| `VIBE` | {{index .NamespaceCounts "VIBE"}} | Spec + artifact publishing + drift detection |
+| `CONTEXT` | {{index .NamespaceCounts "CONTEXT"}} | Context projection of artifacts/specs/sessions + scoped recall |
+| `AGENT_MEMORY` | {{index .NamespaceCounts "AGENT_MEMORY"}} | Mem0-aligned cross-session memory: save/list/recall/get/update/archive/delegate/entities + subagent_register/unregister (v2.1.0 → v2.9.3) |
+| `MINDSET` | {{index .NamespaceCounts "MINDSET"}} | Procedural subagent system-prompt composition + judge validation (v2.7.0-alpha) |
+| `DELEGATION` | {{index .NamespaceCounts "DELEGATION"}} | DelegationRouter: decide handle/delegate/refuse an intent (v2.10.0, Wave 5C) |
+| `JUDGE` | {{index .NamespaceCounts "JUDGE"}} | Single-shot + N-shot consensus + history |
+| `POLICY` | {{index .NamespaceCounts "POLICY"}} | Active policy + constitution lookup |
+| `OBSERVABILITY` | {{index .NamespaceCounts "OBSERVABILITY"}} | Memory state, writes, anomalies, health ping |
+| `ERROR_OBS` | {{index .NamespaceCounts "ERROR_OBS"}} | Error Observatory: list/get/summary/resolve durable error backlog (v2.11.0, spec 757) |
+| `ADMIN` | {{index .NamespaceCounts "ADMIN"}} | Migrations, schema status, vacuum |
+| `L6-VLP` | {{index .NamespaceCounts "L6-VLP"}} | VLP state machine event handling |
+| `EMBEDDER` | {{index .NamespaceCounts "EMBEDDER"}} | Hybrid-retrieval embedder consent gate (v2.9.0-alpha PR-2) |
 
-Total: **49 canonical tools**.
+Total: **{{.CanonicalTools}} canonical tools**.
 
 Plus the **3 self-bootstrap tools**:
 
@@ -327,7 +327,7 @@ Returns:
   "client": {"name": "claude-desktop", "title": "Claude Desktop", "version": "1.0.0"},
   "negotiated_capabilities": {"resources": true, "tools": true, "prompts": false, "logging": false},
   "transport": "stdio",
-  "server": {"name": "dark-memory-mcp", "version": "2.11.0-alpha", "schema_version": 25, "tools_total": 49, "resources_total": 8}
+  "server": {"name": "dark-memory-mcp", "version": "{{.Version}}", "schema_version": {{.SchemaVersion}}, "tools_total": {{.CanonicalTools}}, "resources_total": {{.TotalResources}}}
 }
 ```
 
@@ -347,7 +347,7 @@ Use this when debugging harness compatibility or filing an issue.
 
 ## 11. Wire contract
 
-- Schema: **v25** (v25 added `error_events` for the Error Observatory, spec 757; v24 added `agent_memory_entities`; v23 added the embedding column; v21 added `active_subagents` for C2)
-- **49 canonical tools** across 16 namespaces (v2.11.0 added ERROR_OBS: error_list, error_get, error_summary, error_resolve; v2.10.0 added DELEGATION: delegate_intent)
-- 8 resources (this manual + matrix + 6 install guides; companion docs accessed via `dark_memory_agent_bootstrap`)
+- Schema: **v{{.SchemaVersion}}** (v{{.SchemaVersion}} added `error_events` for the Error Observatory, spec 757)
+- **{{.CanonicalTools}} canonical tools** across {{.NamespaceCount}} namespaces (v2.11.0 added ERROR_OBS: error_list, error_get, error_summary, error_resolve; v2.10.0 added DELEGATION: delegate_intent)
+- {{.TotalResources}} resources (this manual + matrix + 6 install guides; companion docs accessed via `dark_memory_agent_bootstrap`)
 - All changes are **additive**. Existing consumers are unaffected when `DARK_MEMORY_V280` is unset/empty (the v2.8.0-alpha hooks become inert in that mode).

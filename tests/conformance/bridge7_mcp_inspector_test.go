@@ -86,7 +86,7 @@ func spawnServer(t *testing.T) (*mcpclient.Client, string) {
 	// Determinism: strip env vars that add EXTRA tools beyond the
 	// canonical surface (redteam +3 when DARK_REDTEAM=armed, federation
 	// when DARK_FEDERATION_PEER_DSN is set). The canonical-count tests
-	// assert the 49-tool baseline; leaving the operator's armed-mode
+	// assert the canonical baseline; leaving the operator's armed-mode
 	// env in place would make them fail on dev machines that run with
 	// DARK_REDTEAM=armed. See bridge7 TestBridge7_ListToolsCanonical.
 	env := []string{}
@@ -154,7 +154,9 @@ func TestBridge7_Initialize(t *testing.T) {
 }
 
 // TestBridge7_ListToolsCanonical asserts tools/list returns exactly
-// 49 tools in the canonical RFC D-9 namespace order (bridge.4).
+// the frozen canonicalWireOrder() list in the canonical RFC D-9
+// namespace order (bridge.4). The count is DERIVED from the list —
+// there is no separate count constant to keep in sync.
 //
 // v1.2.0: PROJECT namespace (1 tool: project_create) inserted at
 // index 0, before SESSION.
@@ -208,13 +210,18 @@ func TestBridge7_ListToolsCanonical(t *testing.T) {
 		t.Fatalf("list tools: %v", err)
 	}
 
-	if len(result.Tools) != 49 {
+	// Expected count is derived from the frozen wire-order list below
+	// (canonicalWireOrder is the single frozen contract list; the
+	// count must never be a separate hardcoded constant or the two
+	// can drift). If this fires, update canonicalWireOrder — and ONLY
+	// that list — in the same commit that changed the surface.
+	if len(result.Tools) != len(canonicalWireOrder()) {
 		// Debug: print the extras so we can see what's registered.
 		names := make([]string, len(result.Tools))
 		for i, t := range result.Tools {
 			names[i] = t.Name
 		}
-		t.Fatalf("tool count: want 49 (v2.11.0 added ERROR_OBS: error_list, error_get, error_summary, error_resolve — Error Observatory spec 757; was 45 in v2.10.0 with DELEGATION delegate_intent; 44 in v2.9.3; pre-v2.9.3 was 43 in v2.9.0-alpha PR-3 with entities; 42 in v2.9.0-alpha PR-2 with EMBEDDER; v2.8.0-alpha was 41 with subagent_register + subagent_unregister; v2.7.0-alpha was 39 with MINDSET; pre-v2.7.0 was 38 in v2.6.0, 35 in v2.3.0, 34 in v2.1.0), got %d\nALL: %v", len(result.Tools), names)
+		t.Fatalf("tool count: want %d (frozen canonicalWireOrder), got %d\nALL: %v", len(canonicalWireOrder()), len(result.Tools), names)
 	}
 
 	want := canonicalWireOrder()
@@ -331,14 +338,17 @@ func TestBridge7_CallToolErrorPath(t *testing.T) {
 }
 
 // canonicalWireOrder is the wire-format (dark_memory_*) version of
-// the 49-tool canonical order (v2.11.0; was 45 in v2.10.0, 44 in
-// v2.9.3, 43 in v2.9.0-alpha PR-3, 42 in v2.9.0-alpha PR-2, 41 in
-// v2.8.0-alpha, 39 in v2.7.0-alpha, 38 in v2.6.0, 35 in v2.3.0, 34 in
-// v2.1.x, 29 in v2.0.x, 28 in v1.3.x, 27 in v1.2.x, 26 in v1.1.x),
-// mirrored from internal/tools/registry.go so this test doesn't
-// depend on the library's internal package (it tests the wire
-// format, not the
-// library shape).
+// the canonical tool order. This is the SINGLE frozen contract list
+// in the test suite: when the surface changes, update this list (and
+// nothing else — the count assertions derive from len() of it). The
+// source of truth for the ORDER is internal/tools/registry.go's
+// canonicalNamespaces; this list exists to freeze the wire format the
+// binary actually emits, independent of the library's internal shape.
+//
+// History (kept for archaeology): 26 in v1.1.x, 27 in v1.2.x, 28 in
+// v1.3.x, 29 in v2.0.x, 34 in v2.1.x, 35 in v2.3.0, 38 in v2.6.0,
+// 39 in v2.7.0-alpha, 41 in v2.8.0-alpha, 42 in v2.9.0-alpha PR-2,
+// 43 in v2.9.0-alpha PR-3, 44 in v2.9.3, 45 in v2.10.0, 49 in v2.11.0.
 //
 // v2.1.0: AGENT_MEMORY namespace (5 tools: save/list/get/update/archive)
 // inserted between CONTEXT and JUDGE per spec D-12 /

@@ -326,55 +326,59 @@ func handlerAgentBootstrap(ctx context.Context, raw json.RawMessage) (*ToolRespo
 		}
 	}
 
-	// Read the requested resources.
+	// Read the requested resources. Content is rendered through the
+	// agentbootstrap template context (BuildBootstrapData) so tool
+	// counts, schema version and MCP version in the documents always
+	// match the live binary — never hardcoded.
+	data := BuildBootstrapData()
 	content := map[string]string{}
 	switch in.Surface {
 	case "system_prompt":
-		body, err := fs.ReadFile(fsys, "SYSTEM_PROMPT.md")
+		body, err := agentbootstrap.Render(fsys, "SYSTEM_PROMPT.md", data)
 		if err != nil {
 			return nil, fmt.Errorf("agent_bootstrap: read SYSTEM_PROMPT.md: %w", err)
 		}
-		content["system_prompt"] = string(body)
+		content["system_prompt"] = body
 
 	case "compatibility_matrix":
-		body, err := fs.ReadFile(fsys, "COMPATIBILITY_MATRIX.md")
+		body, err := agentbootstrap.Render(fsys, "COMPATIBILITY_MATRIX.md", data)
 		if err != nil {
 			return nil, fmt.Errorf("agent_bootstrap: read COMPATIBILITY_MATRIX.md: %w", err)
 		}
-		content["compatibility_matrix"] = string(body)
+		content["compatibility_matrix"] = body
 
 	case "install_guide":
-		body, err := fs.ReadFile(fsys, "install/"+in.Target+".md")
+		body, err := agentbootstrap.Render(fsys, "install/"+in.Target+".md", data)
 		if err != nil {
 			return nil, fmt.Errorf("agent_bootstrap: read install/%s.md: %w", in.Target, err)
 		}
-		content["install_guide"] = string(body)
+		content["install_guide"] = body
 
 	case "companion":
-		body, err := fs.ReadFile(fsys, "companions/"+in.Target+".md")
+		body, err := agentbootstrap.Render(fsys, "companions/"+in.Target+".md", data)
 		if err != nil {
 			return nil, fmt.Errorf("agent_bootstrap: read companions/%s.md: %w", in.Target, err)
 		}
-		content["companion"] = string(body)
+		content["companion"] = body
 
 	case "all":
 		// Return everything. Order is stable: system_prompt, matrix,
 		// then each install guide in the canonical InstallClients
 		// order, then each companion doc.
-		if body, err := fs.ReadFile(fsys, "SYSTEM_PROMPT.md"); err == nil {
-			content["system_prompt"] = string(body)
+		if body, err := agentbootstrap.Render(fsys, "SYSTEM_PROMPT.md", data); err == nil {
+			content["system_prompt"] = body
 		}
-		if body, err := fs.ReadFile(fsys, "COMPATIBILITY_MATRIX.md"); err == nil {
-			content["compatibility_matrix"] = string(body)
+		if body, err := agentbootstrap.Render(fsys, "COMPATIBILITY_MATRIX.md", data); err == nil {
+			content["compatibility_matrix"] = body
 		}
 		for _, client := range agentbootstrap.InstallClients {
-			if body, err := fs.ReadFile(fsys, "install/"+client+".md"); err == nil {
-				content["install_guide_"+client] = string(body)
+			if body, err := agentbootstrap.Render(fsys, "install/"+client+".md", data); err == nil {
+				content["install_guide_"+client] = body
 			}
 		}
 		for _, tool := range agentbootstrap.CompanionTools {
-			if body, err := fs.ReadFile(fsys, "companions/"+tool+".md"); err == nil {
-				content["companion_"+tool] = string(body)
+			if body, err := agentbootstrap.Render(fsys, "companions/"+tool+".md", data); err == nil {
+				content["companion_"+tool] = body
 			}
 		}
 	}

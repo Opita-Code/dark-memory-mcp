@@ -1,6 +1,6 @@
 # dark-memory-mcp — Harness Compatibility Matrix
 
-> Bootstrap version 3. Tied to MCP schema v25, dark-memory-mcp v2.11.0+.
+> Bootstrap version {{.BootstrapVersion}}. Tied to MCP schema v{{.SchemaVersion}}, dark-memory-mcp v{{.Version}}+.
 >
 > **What this is:** per-harness capability matrix. Which harnesses read `instructions`? Which expose `webfetch`? Which have a real terminal? Use this to know what you can rely on when running dark-memory-mcp.
 

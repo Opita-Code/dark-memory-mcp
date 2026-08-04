@@ -1,6 +1,6 @@
 # Install on Claude Desktop
 
-> Bootstrap version 3. For dark-memory-mcp v2.11.0+.
+> Bootstrap version {{.BootstrapVersion}}. For dark-memory-mcp v{{.Version}}+.
 
 ## 1. Locate your config
 
@@ -69,4 +69,4 @@ In any chat, ask:
 
 > "Use dark_memory_health_ping to check the MCP is healthy."
 
-You should see `{ok: true, server_version: "2.6.0", schema_version: 20}`.
+You should see `{ok: true, server_version: "{{.Version}}", schema_version: {{.SchemaVersion}}}`.

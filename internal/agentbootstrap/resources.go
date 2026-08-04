@@ -138,7 +138,12 @@ var fixedResources = []fixedResource{
 // the override env var is honored for the lifetime of the server
 // process. Operators who change DARK_AGENT_BOOTSTRAP_DIR after the
 // server is running must restart for the change to take effect.
-func RegisterAll(srv *server.MCPServer) error {
+//
+// data is the template context every resource is rendered with (built
+// by tools.BuildBootstrapData from the live sources of truth; the
+// caller passes it in because agentbootstrap must not import the
+// tools package — that would create an import cycle).
+func RegisterAll(srv *server.MCPServer, data BootstrapData) error {
 	if srv == nil {
 		return fmt.Errorf("agentbootstrap: RegisterAll: nil server")
 	}
@@ -157,7 +162,7 @@ func RegisterAll(srv *server.MCPServer) error {
 		// ResourceHandlerFunc and ResourceTemplateHandlerFunc have the
 		// same underlying signature in mcp-go v0.56.0, so this cast
 		// is type-safe.
-		srv.AddResource(res, server.ResourceHandlerFunc(makeHandler(fsys, r.path, r.uri)))
+		srv.AddResource(res, server.ResourceHandlerFunc(makeHandler(fsys, r.path, r.uri, data)))
 	}
 
 	// 2. Install-guide URI templates (one per harness).
@@ -173,7 +178,7 @@ func RegisterAll(srv *server.MCPServer) error {
 			mcp.WithTemplateDescription(desc),
 			mcp.WithTemplateAnnotations(AudienceAssistant, PriorityHigh, ""),
 		)
-		srv.AddResourceTemplate(tmpl, makeHandler(fsys, fsPath, uri))
+		srv.AddResourceTemplate(tmpl, makeHandler(fsys, fsPath, uri, data))
 	}
 
 	// 3. Companion-doc URI templates (one per companion tool).
@@ -189,14 +194,15 @@ func RegisterAll(srv *server.MCPServer) error {
 			mcp.WithTemplateDescription(desc),
 			mcp.WithTemplateAnnotations(AudienceAssistant, PriorityHigh, ""),
 		)
-		srv.AddResourceTemplate(tmpl, makeHandler(fsys, fsPath, uri))
+		srv.AddResourceTemplate(tmpl, makeHandler(fsys, fsPath, uri, data))
 	}
 
 	return nil
 }
 
 // makeHandler returns a ResourceTemplateHandlerFunc that reads fsPath
-// from fsys and returns the content as a TextResourceContents entry.
+// from fsys (rendering it with data when it contains template
+// markers) and returns the content as a TextResourceContents entry.
 // The returned uri in the contents echoes the URI the harness
 // requested (per MCP spec: contents[].uri must equal the request uri).
 //
@@ -209,7 +215,7 @@ func RegisterAll(srv *server.MCPServer) error {
 // at fsPath is treated as a configuration error and returns the
 // error wrapped with the resource name so the harness surfaces it to
 // the operator cleanly instead of silently returning empty content.
-func makeHandler(fsys fs.FS, fsPath, requestURI string) server.ResourceTemplateHandlerFunc {
+func makeHandler(fsys fs.FS, fsPath, requestURI string, data BootstrapData) server.ResourceTemplateHandlerFunc {
 	return func(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
 		// Defensive: verify the request URI matches what we registered for.
 		// This guards against a misconfigured SDK or a programming error
@@ -218,7 +224,7 @@ func makeHandler(fsys fs.FS, fsPath, requestURI string) server.ResourceTemplateH
 			return nil, fmt.Errorf("agentbootstrap: unexpected URI scheme: %q", req.Params.URI)
 		}
 
-		data, err := fs.ReadFile(fsys, fsPath)
+		text, err := Render(fsys, fsPath, data)
 		if err != nil {
 			return nil, fmt.Errorf("agentbootstrap: read %s: %w (resource: %s)",
 				path.Base(fsPath), err, requestURI)
@@ -229,7 +235,7 @@ func makeHandler(fsys fs.FS, fsPath, requestURI string) server.ResourceTemplateH
 			mcp.TextResourceContents{
 				URI:      requestURI,
 				MIMEType: "text/markdown",
-				Text:     string(data),
+				Text:     text,
 			},
 		}, nil
 	}

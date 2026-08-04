@@ -17,10 +17,11 @@
 //   - Production attack infrastructure.
 //   - Targeting specific people or exfiltrating private data.
 //
-// The tools are NOT in the canonical 26-tool order. They are
-// registered as namespace extras that the armed-mode server emits in
-// addition to the canonical 26. The public surface stays at 26 tools;
-// the armed-mode surface is 26 + 3 = 29.
+// The tools are NOT in the canonical order (see registry.go's
+// canonicalNamespaces). They are registered as namespace extras that
+// the armed-mode server emits in addition to the canonical surface
+// (canonical + 3 redteam extras = the armed-mode tools/list count;
+// the count is derived at boot, never hardcoded).
 package tools
 
 import (

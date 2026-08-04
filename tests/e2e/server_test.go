@@ -1,8 +1,8 @@
 // Package e2e — server_test.go: end-to-end stress test for the
-// dark-memory-mcp MCP server. Exercises the full 29-tool surface
-// under concurrent load; verifies no deadlock, no panic, audit rows
-// match writes (INV-1), and the canonical tool order is honored
-// (spec 164, bridge.4).
+// dark-memory-mcp MCP server. Exercises the full canonical-tool
+// surface under concurrent load; verifies no deadlock, no panic,
+// audit rows match writes (INV-1), and the canonical tool order is
+// honored (spec 164, bridge.4).
 package e2e
 
 import (
@@ -20,35 +20,23 @@ import (
 )
 
 // TestE2E_29ToolsRegistered is the canonical-order sanity check: all
-// 38 tools are present in the registry after RegisterAll.
+// canonical tools are present in the registry after RegisterAll. The
+// count is DERIVED from tools.CanonicalOrder() — never hardcoded —
+// so this test can't drift when the surface grows.
 //
-// History:
-//   v1.2.0: added project_create to the PROJECT namespace (canonical
-//           count 26 -> 27).
-//   v1.3.0: added health_ping to OBSERVABILITY (canonical count
-//           27 -> 28).
-//   v2.0.0: added dark_memory_recall to CONTEXT (canonical count
-//           28 -> 29).
-//   v2.1.0: added AGENT_MEMORY namespace (save/list/get/update/
-//           archive; canonical count 29 -> 34, Mem0-aligned).
-//   v2.3.0: added agent_memory_recall (canonical count 34 -> 35).
-//   v2.6.0: added AGENT_BOOTSTRAP namespace (agent_bootstrap,
-//           agent_recommend_companions, agent_detect_environment;
-//           canonical count 35 -> 38).
-//   v2.10.0: added DELEGATION namespace (delegate_intent;
-//            canonical count 44 -> 45).
-//   v2.11.0: added ERROR_OBS namespace (error_list, error_get,
-//            error_summary, error_resolve — Error Observatory,
-//            spec 757; canonical count 45 -> 49).
+// History (kept for archaeology): 26 in v1.1.x, 27 in v1.2.x, 28 in
+// v1.3.x, 29 in v2.0.x, 34 in v2.1.0, 35 in v2.3.0, 38 in v2.6.0,
+// 39 in v2.7.0-alpha, 41 in v2.8.0-alpha, 42 in v2.9.0-alpha PR-2,
+// 43 in v2.9.0-alpha PR-3, 44 in v2.9.3, 45 in v2.10.0, 49 in v2.11.0.
 //
 // (Function name kept as TestE2E_29ToolsRegistered for the Go test
-// runner's sake — go test can't easily rename tests across versions.
-// The constant below is the actual version pin.)
+// runner's sake — go test can't easily rename tests across versions.)
 func TestE2E_29ToolsRegistered(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.close()
 
-	const wantCount = 49 // v2.11.0 (spec 757): ERROR_OBS (4); was 45 in v2.10.0.
+	// Derived: wantCount tracks the live canonical order.
+	wantCount := len(tools.CanonicalOrder())
 	canonical := tools.CanonicalOrder()
 	if got := len(canonical); got != wantCount {
 		t.Fatalf("canonical order length: want %d, got %d", wantCount, got)

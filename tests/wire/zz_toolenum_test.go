@@ -5,24 +5,35 @@ import (
 	"fmt"
 	"os"
 	"testing"
+
+	"github.com/dark-agents/dark-memory-mcp/internal/tools"
 )
 
-// TestWire_RuntimeToolEnumeration freezes the public tool surface.
+// TestWire_RuntimeToolEnumeration checks the public tool surface.
 //
-// The contract is:
-//   - un-armed server: exactly 49 tools (v2.0.0 29 + v2.1.0 5 +
-//     v2.3.0 1 + v2.6.0 3 AGENT_BOOTSTRAP + v2.7.0-alpha 1 MINDSET +
-//     v2.8.0-alpha 2 subagent + v2.9.0 2 entities+embedder + v2.9.3 1
-//     delegate + v2.10.0 1 DELEGATION + v2.11.0 4 ERROR_OBS)
-//   - armed server:    49 + 3 redteam extras = 52
+// The contract:
+//   - un-armed server: exactly len(tools.CanonicalOrder()) tools
+//     (derived — never a hardcoded constant, so the test can't drift
+//     from the source of truth in registry.go)
+//   - armed server: canonical + redteam extras = canonical + 3
 //
-// If this test fires, the contract changed and README.md +
-// DECISION_MATRIX.md + CONTRIBUTING.md must be updated in the SAME
-// commit.
+// The frozen CONTRACT LIST (explicit names, one per tool) lives in
+// tests/conformance/bridge7_mcp_inspector_test.go's canonicalWireOrder().
+// This test checks the COUNT against the live binary; that list checks
+// the NAMES + ORDER. Both are needed; neither hardcodes a count.
+//
+// If this test fires, the binary is stale OR the surface changed:
+// rebuild the binary first, then update canonicalWireOrder in the
+// SAME commit that changed the surface.
 func TestWire_RuntimeToolEnumeration(t *testing.T) {
 	if os.Getenv("DARK_MEM_MCP_BIN") == "" {
 		t.Skip("DARK_MEM_MCP_BIN not set; wire tests need the live binary")
 	}
+
+	// Derived from the live source of truth — the wire contract must
+	// match the registry in THIS tree, not a frozen magic number.
+	wantUnarmed := len(tools.CanonicalOrder())
+	wantArmed := wantUnarmed + 3 // redteam extras (armed-mode only)
 
 	s := startWireSession(t)
 	// do NOT defer close - startWireSession registers t.Cleanup.
@@ -52,10 +63,8 @@ func TestWire_RuntimeToolEnumeration(t *testing.T) {
 		t.Fatalf("tools/list body not JSON: %v\n  body=%s", err, respBytes)
 	}
 	got := len(resp.Result.Tools)
-	const wantUnarmed = 49
-	const wantArmed = 52
 	if got != wantUnarmed && got != wantArmed {
-		t.Fatalf("contract: tools/list returns %d tools, frozen at %d (un-armed) or %d (armed)", got, wantUnarmed, wantArmed)
+		t.Fatalf("contract: tools/list returns %d tools, want %d (un-armed) or %d (armed)", got, wantUnarmed, wantArmed)
 	}
 
 	has_redteam := got == wantArmed

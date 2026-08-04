@@ -65,11 +65,11 @@ func main() {
 		DSNPath:          bootState.Config.DBDSN,
 	})
 
-	// Register all 49 tools in canonical order (BRIDGE_AND_COEXISTENCE.md
+	// Register all canonical tools in order (BRIDGE_AND_COEXISTENCE.md
 	// §3 / spec 164 bridge.4 + DMAP v1.1 spec 193 Layer 6). RegisterAll
-	// returns an error if any of the 49 expected tools is missing from
-	// the registry — fail fast. v2.11.0: ERROR_OBS (4 tools) added;
-	// canonical count is now 49.
+	// returns an error if any canonical tool is missing from the
+	// registry — fail fast. The count is derived from
+	// canonicalNamespaces; no hardcoded number here.
 	//
 	// Safety is converted from *safety.Holder to *store.SafetyHolder
 	// (function-pointer adapter) so dark_memory_recall can thread
@@ -147,9 +147,9 @@ func main() {
 	}()
 	// Register the federation_lookup tool ONLY when the peer is enabled.
 	// Same opt-in pattern as DARK_REDTEAM=armed (redteam extras). When
-	// DARK_FEDERATION_PEER_DSN is unset, the surface stays at 28 canonical
-	// tools and the conformance test `TestBridge7_ListToolsCanonical`
-	// continues to pass.
+	// DARK_FEDERATION_PEER_DSN is unset, the surface stays at the
+	// canonical count and the conformance test
+	// `TestBridge7_ListToolsCanonical` continues to pass.
 	if peer != nil {
 		tools.RegisterFederation(srv.Registry())
 	}
