@@ -154,7 +154,7 @@ func TestBridge7_Initialize(t *testing.T) {
 }
 
 // TestBridge7_ListToolsCanonical asserts tools/list returns exactly
-// 44 tools in the canonical RFC D-9 namespace order (bridge.4).
+// 49 tools in the canonical RFC D-9 namespace order (bridge.4).
 //
 // v1.2.0: PROJECT namespace (1 tool: project_create) inserted at
 // index 0, before SESSION.
@@ -331,12 +331,13 @@ func TestBridge7_CallToolErrorPath(t *testing.T) {
 }
 
 // canonicalWireOrder is the wire-format (dark_memory_*) version of
-// the 44-tool canonical order (v2.9.3; was 43 in v2.9.0-alpha PR-3,
-// 42 in v2.9.0-alpha PR-2, 41 in v2.8.0-alpha, 39 in v2.7.0-alpha, 38 in
-// v2.6.0, 35 in v2.3.0, 34 in v2.1.x, 29 in v2.0.x, 28 in v1.3.x,
-// 27 in v1.2.x, 26 in v1.1.x), mirrored from
-// internal/tools/registry.go so this test doesn't depend on the
-// library's internal package (it tests the wire format, not the
+// the 49-tool canonical order (v2.11.0; was 45 in v2.10.0, 44 in
+// v2.9.3, 43 in v2.9.0-alpha PR-3, 42 in v2.9.0-alpha PR-2, 41 in
+// v2.8.0-alpha, 39 in v2.7.0-alpha, 38 in v2.6.0, 35 in v2.3.0, 34 in
+// v2.1.x, 29 in v2.0.x, 28 in v1.3.x, 27 in v1.2.x, 26 in v1.1.x),
+// mirrored from internal/tools/registry.go so this test doesn't
+// depend on the library's internal package (it tests the wire
+// format, not the
 // library shape).
 //
 // v2.1.0: AGENT_MEMORY namespace (5 tools: save/list/get/update/archive)

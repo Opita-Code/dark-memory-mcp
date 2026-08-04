@@ -1,6 +1,6 @@
 # Install on opencode
 
-> Bootstrap version 1. For dark-memory-mcp v2.6.0+.
+> Bootstrap version 3. For dark-memory-mcp v2.11.0+.
 >
 > **IMPORTANT:** opencode does NOT read the MCP `instructions` field (verified by opencode issue #32856). You MUST bootstrap explicitly via `dark_memory_agent_bootstrap`.
 
