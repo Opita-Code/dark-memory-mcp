@@ -272,11 +272,11 @@ LLM acceso programático a ese contenido.
 
 | Herramienta | Cuándo se usa |
 |---|---|
-| `dark_memory_agent_bootstrap` | "Carga el manual canónico" — `surface`: `system_prompt` \| `compatibility_matrix` \| `install_guide` \| `companion` \| `all`. Para `install_guide` y `companion` pasá `target` (ej. `target=opencode`). |
+| `dark_memory_agent_bootstrap` | "Carga el manual canónico" — `surface`: `system_prompt` \| `compatibility_matrix` \| `install_guide` \| `companion` \| `all`. Para `install_guide` y `companion` pasa `target` (ej. `target=opencode`). |
 | `dark_memory_agent_recommend_companions` | "¿Qué MCPs companions me faltan?" — siempre recomienda `dark-research` y `[FUTURE-MCP-N]` con snippet de install. |
 | `dark_memory_agent_detect_environment` | "¿Qué spec estás negociando? ¿Quién eres tú como harness?" — devuelve `SpecVersionDetected` (2025-06-18 / 2026-07-28), harness info y capacidades negociadas. |
 
-Si querés customizar el contenido sin esperar un release, exportá
+Si quieres customizar el contenido sin esperar un release, exporta
 `DARK_AGENT_BOOTSTRAP_DIR=/ruta/a/tu/dir` con los 10 archivos esperados
 (`SYSTEM_PROMPT.md`, `COMPATIBILITY_MATRIX.md`, 6 guides en `install/`,
 2 docs en `companions/`). El servidor valida al arrancar y hace fallback
@@ -325,8 +325,8 @@ Mem0 de 3 clases (`episodic`/`semantic`/`procedural`). Además
 internamente — antes no había consumidor.
 
 > ⚠️ **v2.3.0 cambia dos defaults**:
-> - `agent_memory_save` ya no ata la sesión automáticamente. Pasá `bind_session: true` si querés el comportamiento pre-v2.3.0.
-> - `agent_memory_list(scope="current")` ahora devuelve el proyecto entero (no solo la sesión). Pasá `scope="session"` explícito para mantener la query acotada.
+> - `agent_memory_save` ya no ata la sesión automáticamente. Pasa `bind_session: true` si quieres el comportamiento pre-v2.3.0.
+> - `agent_memory_list(scope="current")` ahora devuelve el proyecto entero (no solo la sesión). Pasa `scope="session"` explícito para mantener la query acotada.
 
 | Herramienta | Cuándo se usa |
 |---|---|
@@ -362,7 +362,7 @@ Y puede buscar por **tipo de nota** (`note`, `observation`, `decision`,
 
 | Herramienta | Cuándo se usa |
 |---|---|
-| `dark_memory_mindset_apply` | "Componé el system prompt para el sub-agente que va a refactorizar X" — compone + valida el mindset por vibe_case + tarea, cacheado 1h. |
+| `dark_memory_mindset_apply` | "Compone el system prompt para el sub-agente que va a refactorizar X" — compone + valida el mindset por vibe_case + tarea, cacheado 1h. |
 
 ### 🚀 Decidir delegación (DELEGATION — 1 tool, v2.10.0 Wave 5C)
 
