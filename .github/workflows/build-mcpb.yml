@@ -266,6 +266,7 @@ jobs:
             release-binaries/dark-mem-mcp-arm64-linux
             release-binaries/dark-mem-mcp-amd64.exe-win32
             release-binaries/dark-mem-mcp-arm64.exe-win32
+            skills/dark-memory/SKILL.md
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
