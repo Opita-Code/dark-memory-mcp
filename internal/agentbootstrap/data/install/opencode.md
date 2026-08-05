@@ -47,11 +47,27 @@ opencode discards the `instructions` field. On every session, you must:
 
 You can also read it via the `read` tool if you have filesystem access (the bootstrap content is embedded in the MCP binary, not on disk).
 
-## 5. Make it sticky (recommended)
+## 5. Install the harness skill (RECOMMENDED)
+
+dark-memory-mcp ships with a harness skill that teaches opencode **how and when** to use each of the 52 tools. Without it, the harness operates without guidance — drift is likely.
+
+```bash
+# Create the skill directory
+mkdir -p ~/.config/opencode/skills/dark-memory
+
+# Copy the skill from the release (or from the repo)
+cp skills/dark-memory/SKILL.md ~/.config/opencode/skills/dark-memory/SKILL.md
+```
+
+The skill is also available as a standalone download in every [GitHub Release](https://github.com/Opita-Code/dark-memory-mcp/releases).
+
+> **After copying, restart opencode.** Skills are loaded at startup only (no hot-reload).
+
+## 6. Make it sticky (recommended)
 
 To avoid having to bootstrap on every session, set up a custom agent in opencode that automatically calls `dark_memory_agent_bootstrap` as its first action. See opencode docs on custom agents.
 
-## 6. Verify
+## 7. Verify
 
 ```bash
 opencode mcp list
