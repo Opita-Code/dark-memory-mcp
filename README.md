@@ -571,7 +571,7 @@ de estado):
 
 ### Estado actual (al cierre de esta versión)
 
-- **Versión**: v2.11.0-alpha (Error Observatory + DelegationRouter + sweeper fix)
+- **Versión**: v2.11.1-alpha (harness skill + README tuteo fix)
 - **Schema DB**: v25 (error_events para el Error Observatory, spec 757)
 - **Tools canónicos**: 49 (+ 3 en modo armed)
 - **Backends**: SQLite (default) + Postgres (research only en este host)
