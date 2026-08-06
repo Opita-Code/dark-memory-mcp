@@ -1,4 +1,4 @@
-﻿// O8: JudgeConsensus — runs the Judge N times and returns the modal
+// O8: JudgeConsensus — runs the Judge N times and returns the modal
 // verdict with a confidence interval. Use this for HIGH-STAKES
 // verdicts (compliance, brand match on launch, grounding of political
 // claims) where a single sample's confidence might be misleading.

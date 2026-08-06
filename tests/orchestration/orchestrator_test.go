@@ -1,4 +1,4 @@
-﻿// Package orchestration_test covers the workflow API. Each
+// Package orchestration_test covers the workflow API. Each
 // orchestrator method has at least one happy-path test + one error
 // path test. Tests use the in-memory SQLite Store via runtime.Open,
 // same pattern as tests/context and tests/project.

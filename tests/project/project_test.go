@@ -1,4 +1,4 @@
-﻿// Package project_test covers the project namespace (INV-7):
+// Package project_test covers the project namespace (INV-7):
 // isolation between parallel projects sharing the same dark.db, plus
 // the migration v7 backward-compatibility (existing 164 specs in
 // 'default' project), and the Store.SetActiveProject enforcement.

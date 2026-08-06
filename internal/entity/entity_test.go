@@ -147,3 +147,152 @@ func TestEntity_Extract_PunctuationSplit(t *testing.T) {
 		t.Errorf("punctuation split missing: %v (got %v)", want, got)
 	}
 }
+
+// TestEntity_Extract_OnlyTitle asserts that Extract with only a
+// title produces entities from the title alone (kills mutations
+// that flip the title != "" condition at line 33).
+func TestEntity_Extract_OnlyTitle(t *testing.T) {
+	got := Extract("", "Dark Memory MCP", "")
+	if len(got) == 0 {
+		t.Fatalf("title-only: got 0 entities, want > 0")
+	}
+	values := make(map[string]bool)
+	for _, e := range got {
+		values[e.Value] = true
+	}
+	for _, want := range []string{"dark", "memory", "mcp"} {
+		if !values[want] {
+			t.Errorf("title-only: missing %q (got %v)", want, got)
+		}
+	}
+}
+
+// TestEntity_Extract_OnlyTags asserts that Extract with only tags
+// produces entities from the tags alone (kills mutations that flip
+// the tags != "" condition at line 36).
+func TestEntity_Extract_OnlyTags(t *testing.T) {
+	got := Extract("", "", "dark, memory, mcp")
+	if len(got) == 0 {
+		t.Fatalf("tags-only: got 0 entities, want > 0")
+	}
+	values := make(map[string]bool)
+	for _, e := range got {
+		values[e.Value] = true
+	}
+	for _, want := range []string{"dark", "memory", "mcp"} {
+		if !values[want] {
+			t.Errorf("tags-only: missing %q (got %v)", want, got)
+		}
+	}
+}
+
+// TestEntity_Extract_NoTitleNoTags asserts that Extract with only
+// content works correctly (title="" and tags="" independently
+// from non-empty content). Kills mutations that make the
+// title/tags branches unconditional.
+func TestEntity_Extract_NoTitleNoTags(t *testing.T) {
+	got := Extract("alpha beta gamma", "", "")
+	if len(got) != 3 {
+		t.Fatalf("content-only: got %d entities, want 3", len(got))
+	}
+}
+
+// TestEntity_ExtractWithLimit_MaxEntitiesEdgeCases asserts the
+// maxEntities boundary: <=0 defaults to 20, exactly 1 returns 1,
+// and a value larger than the token count returns all tokens.
+func TestEntity_ExtractWithLimit_MaxEntitiesEdgeCases(t *testing.T) {
+	// maxEntities <= 0 → default 20 (kills mutation at line 27-30
+	// that flips <= to > or removes the default assignment).
+	got := ExtractWithLimit("alpha beta gamma delta epsilon", "", "", -1)
+	if len(got) != 5 {
+		t.Errorf("maxEntities=-1: got %d, want 5 (default 20, not truncated)", len(got))
+	}
+	got0 := ExtractWithLimit("alpha beta gamma", "", "", 0)
+	if len(got0) != 3 {
+		t.Errorf("maxEntities=0: got %d, want 3", len(got0))
+	}
+	// maxEntities=1 caps at 1.
+	got1 := ExtractWithLimit("alpha beta gamma", "", "", 1)
+	if len(got1) != 1 {
+		t.Errorf("maxEntities=1: got %d, want 1", len(got1))
+	}
+	// maxEntities=100 with only 3 tokens returns all 3.
+	got100 := ExtractWithLimit("alpha beta gamma", "", "", 100)
+	if len(got100) != 3 {
+		t.Errorf("maxEntities=100: got %d, want 3", len(got100))
+	}
+}
+
+// TestEntity_Extract_ConfidenceAlwaysOne asserts the PR-3 contract:
+// every entity carries Confidence=1.0 and Source="deterministic".
+// Kills mutations that reorder struct field assignments or change
+// the Confidence constant.
+func TestEntity_Extract_ConfidenceAlwaysOne(t *testing.T) {
+	got := Extract("any text here to generate entities test", "", "")
+	for i, e := range got {
+		if e.Confidence != 1.0 {
+			t.Errorf("entity[%d].Confidence = %f, want 1.0", i, e.Confidence)
+		}
+		if e.Source != SourceDeterministic {
+			t.Errorf("entity[%d].Source = %q, want %q", i, e.Source, SourceDeterministic)
+		}
+	}
+}
+
+// TestEntity_Extract_TiesSortedAlphabetically asserts the sort
+// contract: when two tokens have the same frequency, they sort
+// alphabetically (ASC). Kills mutations that flip < to > in the
+// sort comparator.
+func TestEntity_Extract_TiesSortedAlphabetically(t *testing.T) {
+	// "delta" and "alpha" both appear once → alpha < delta
+	got := Extract("delta alpha", "", "")
+	if len(got) != 2 {
+		t.Fatalf("want 2 entities, got %d", len(got))
+	}
+	if got[0].Value != "alpha" {
+		t.Errorf("tie sort: [0] = %q, want alpha (alphabetical asc)", got[0].Value)
+	}
+	if got[1].Value != "delta" {
+		t.Errorf("tie sort: [1] = %q, want delta", got[1].Value)
+	}
+}
+
+// TestEntity_Extract_SortDeterministic10Elements asserts the sort
+// comparator is actually in effect, not just lucky map iteration.
+// With 10 tokens all at frequency=1, the probability of random
+// order being alphabetical is 1/10! ≈ 0.0000003. If the sort is
+// removed (mutant 18), this test will fail with near-certainty.
+func TestEntity_Extract_SortDeterministic10Elements(t *testing.T) {
+	// 10 distinct tokens, each appearing once → all freq=1.
+	// Sort must produce alphabetical order: alpha, beta, delta,
+	// epsilon, gamma, iota, kappa, lambda, theta, zeta.
+	input := "zeta kappa iota theta epsilon gamma lambda alpha delta beta"
+	got := Extract(input, "", "")
+	if len(got) != 10 {
+		t.Fatalf("want 10 entities, got %d", len(got))
+	}
+	want := []string{
+		"alpha", "beta", "delta", "epsilon", "gamma",
+		"iota", "kappa", "lambda", "theta", "zeta",
+	}
+	for i, w := range want {
+		if got[i].Value != w {
+			t.Errorf("position %d: got %q, want %q (sort broken or map iteration lucky)", i, got[i].Value, w)
+		}
+	}
+}
+
+// TestEntity_Extract_SpacesInTitleHandled asserts that a title
+// with leading/trailing whitespace is trimmed and joined correctly
+// with content (kills mutation at line 34 that removes the join
+// or changes the space separator).
+func TestEntity_Extract_SpacesInTitleHandled(t *testing.T) {
+	got := Extract("hello world", "  extra title  ", "")
+	values := make(map[string]bool)
+	for _, e := range got {
+		values[e.Value] = true
+	}
+	if !values["extra"] || !values["title"] {
+		t.Errorf("title tokens missing: got %v", got)
+	}
+}
