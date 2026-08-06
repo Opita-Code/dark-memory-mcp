@@ -103,17 +103,27 @@ func resolve() Resolved {
 	// `go build` from a git checkout the value is "(devel)" and we
 	// fall through to Path 3.
 	if bi, ok := debug.ReadBuildInfo(); ok {
-		mv := strings.TrimSpace(bi.Main.Version)
-		if mv != "" && mv != "(devel)" {
-			r.Version = strings.TrimPrefix(mv, "v")
-			r.Source = "buildinfo"
-			r.IsDev = false
-		}
+		applyBuildMainVersion(&r, bi.Main.Version)
 		enrichFromBuildInfo(&r)
 	}
 
 	// Path 3: r is already initialized to {Version: devVersion, Source: dev, IsDev: true}.
 	return r
+}
+
+// applyBuildMainVersion resolves the buildinfo Main.Version into r
+// when it is a real version (not empty, not "(devel)"). Extracted as
+// a pure function so tests can drive the buildinfo path — the real
+// debug.ReadBuildInfo() in a test binary always reports "(devel)",
+// which is why the branch was previously untestable.
+func applyBuildMainVersion(r *Resolved, mv string) {
+	trimmed := strings.TrimSpace(mv)
+	if trimmed == "" || trimmed == "(devel)" {
+		return
+	}
+	r.Version = strings.TrimPrefix(trimmed, "v")
+	r.Source = "buildinfo"
+	r.IsDev = false
 }
 
 // enrichFromBuildInfo copies the VCS settings into r. Idempotent and
@@ -123,7 +133,14 @@ func enrichFromBuildInfo(r *Resolved) {
 	if !ok {
 		return
 	}
-	for _, s := range bi.Settings {
+	applyBuildSettings(r, bi.Settings)
+}
+
+// applyBuildSettings maps debug.BuildSetting entries onto r. Extracted
+// as a pure function so tests can drive the vcs.* mutations directly
+// (debug.ReadBuildInfo is runtime build metadata — not injectable).
+func applyBuildSettings(r *Resolved, settings []debug.BuildSetting) {
+	for _, s := range settings {
 		switch s.Key {
 		case "vcs.revision":
 			if len(s.Value) >= 7 {
