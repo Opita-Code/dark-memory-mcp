@@ -154,7 +154,7 @@ func TestJudgeTimeoutForEval(t *testing.T) {
 	}{
 		{"drift_judge", 179 * time.Second, 181 * time.Second}, // 120 × 1.5
 		{"compliance_check", 119 * time.Second, 121 * time.Second},
-		{"pii_detect", 59 * time.Second, 61 * time.Second}, // 120 × 0.5
+		{"pii_detect", 59 * time.Second, 61 * time.Second},     // 120 × 0.5
 		{"unknown_type", 119 * time.Second, 121 * time.Second}, // default ×1
 	}
 	for _, tc := range cases {
@@ -241,7 +241,7 @@ func TestBackoffForAttempt(t *testing.T) {
 		min     time.Duration
 		max     time.Duration
 	}{
-		{1, 750 * time.Millisecond, 1250 * time.Millisecond}, // 1s ±25%
+		{1, 750 * time.Millisecond, 1250 * time.Millisecond},  // 1s ±25%
 		{2, 1500 * time.Millisecond, 2500 * time.Millisecond}, // 2s ±25%
 		{3, 3 * time.Second, 5 * time.Second},                 // 4s ±25%
 		{10, 6 * time.Second, 10 * time.Second},               // capped at 8s ±25%

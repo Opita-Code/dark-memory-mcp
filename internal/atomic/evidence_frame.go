@@ -30,22 +30,22 @@ const MaxEvidenceFrameAge = 10 * time.Second
 // The audit row lives in write_audit; this struct is the minimal
 // runtime projection.
 type WriteRef struct {
-	WriteID        int64     `json:"write_id"`
-	SessionID      string    `json:"session_id"`
-	WritePath      string    `json:"write_path"`
-	ContentSHA256  [32]byte  `json:"content_sha256"`
-	CreatedAt      time.Time `json:"created_at"`
+	WriteID       int64     `json:"write_id"`
+	SessionID     string    `json:"session_id"`
+	WritePath     string    `json:"write_path"`
+	ContentSHA256 [32]byte  `json:"content_sha256"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
 // ResearchRef is a projection of a research_items row linked to the
 // session. Used for cross-MCP context (e.g. listing prior CVEs
 // surfaced during a vibe_publish).
 type ResearchRef struct {
-	ItemID       int64   `json:"item_id"`
-	URL          string  `json:"url,omitempty"`
-	Title        string  `json:"title,omitempty"`
-	Confidence   float32 `json:"confidence"`
-	LastSeenToken int64  `json:"last_seen_token"`
+	ItemID        int64   `json:"item_id"`
+	URL           string  `json:"url,omitempty"`
+	Title         string  `json:"title,omitempty"`
+	Confidence    float32 `json:"confidence"`
+	LastSeenToken int64   `json:"last_seen_token"`
 }
 
 // EvidenceFrame is the runtime implementation of Frame for the
@@ -75,11 +75,11 @@ type EvidenceFrame struct {
 
 // Errors returned by EvidenceFrame methods.
 var (
-	ErrEvidenceEmptyProjectID      = errors.New("atomic: evidence frame project_id is empty")
-	ErrEvidenceEmptySessionID      = errors.New("atomic: evidence frame session_id is empty")
-	ErrEvidenceNegativeToken       = errors.New("atomic: evidence frame last_seen_token is negative")
-	ErrEvidenceZeroComposed        = errors.New("atomic: evidence frame composed_at is zero")
-	ErrEvidenceStale               = errors.New("atomic: evidence frame is stale (older than MaxEvidenceFrameAge)")
+	ErrEvidenceEmptyProjectID = errors.New("atomic: evidence frame project_id is empty")
+	ErrEvidenceEmptySessionID = errors.New("atomic: evidence frame session_id is empty")
+	ErrEvidenceNegativeToken  = errors.New("atomic: evidence frame last_seen_token is negative")
+	ErrEvidenceZeroComposed   = errors.New("atomic: evidence frame composed_at is zero")
+	ErrEvidenceStale          = errors.New("atomic: evidence frame is stale (older than MaxEvidenceFrameAge)")
 )
 
 // NewEvidenceFrame builds an EvidenceFrame. lastSeenToken defaults to 0

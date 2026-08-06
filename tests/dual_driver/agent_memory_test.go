@@ -738,10 +738,10 @@ func TestAgentMemory_Search_FilterByEntities(t *testing.T) {
 		return out
 	}
 	fixtures := []fixture{
-		{content: "memory one dark",       ents: withSrc([]string{"dark", "memory"})},
-		{content: "memory two light",      ents: withSrc([]string{"light", "memory"})},
-		{content: "memory three zany",     ents: withSrc([]string{"memory", "zany"})},
-		{content: "memory four empty",     ents: nil}, // no entities → invisible to filter
+		{content: "memory one dark", ents: withSrc([]string{"dark", "memory"})},
+		{content: "memory two light", ents: withSrc([]string{"light", "memory"})},
+		{content: "memory three zany", ents: withSrc([]string{"memory", "zany"})},
+		{content: "memory four empty", ents: nil}, // no entities → invisible to filter
 	}
 	for _, f := range fixtures {
 		row := makeRow("alice", "note", f.content)
@@ -978,10 +978,12 @@ func TestAgentMemory_Search_VectorMode_Structural(t *testing.T) {
 // TestAgentMemory_Search_RRF_FusesBothArms exercises the RRF path
 // with hand-crafted embeddings so the cross-axis behavior is
 // deterministic. We seed 4 rows:
-//   A: BM25 #1 (text matches), vector = orthogonal (cosine 0).
-//   B: BM25 #2, vector = strongly aligned with query.
-//   C: NO BM25 hit, vector = strongly aligned with query.
-//   D: NO BM25 hit, vector = orthogonal.
+//
+//	A: BM25 #1 (text matches), vector = orthogonal (cosine 0).
+//	B: BM25 #2, vector = strongly aligned with query.
+//	C: NO BM25 hit, vector = strongly aligned with query.
+//	D: NO BM25 hit, vector = orthogonal.
+//
 // RRF must surface A (BM25-only), B (both), C (vector-only), D (no axis → 0).
 func TestAgentMemory_Search_RRF_BothArmsContribute(t *testing.T) {
 	st, cleanup := openAgentMemoryDB(t)

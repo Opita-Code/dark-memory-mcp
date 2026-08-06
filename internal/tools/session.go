@@ -1,6 +1,7 @@
 // Package tools — session.go: the SESSION namespace (4 tools).
 //
 // Per RFC §5 / D-9:
+//
 //	dark_memory_session_start
 //	dark_memory_session_resume
 //	dark_memory_session_status

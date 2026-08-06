@@ -164,7 +164,7 @@ type MindsetApplyOutput struct {
 // MindsetJudgeVerdict is the validator's response (parsed from
 // eval_type=mindset_quality VerdictJSON).
 type MindsetJudgeVerdict struct {
-	Verdict        string   `json:"verdict"`        // aligned | drift_detected | needs_human | errored
+	Verdict        string   `json:"verdict"` // aligned | drift_detected | needs_human | errored
 	Confidence     float32  `json:"confidence"`
 	Reasoning      string   `json:"reasoning"`
 	CriteriaFailed []string `json:"criteria_failed,omitempty"`
@@ -780,8 +780,8 @@ func firstTagValue(tags string, fallback string) string {
 // verdict for the loop-exhaustion branch.
 func wrapTimeoutVerdict(prev MindsetJudgeVerdict, iter int, err error) MindsetJudgeVerdict {
 	return MindsetJudgeVerdict{
-		Verdict:   "needs_human",
+		Verdict:    "needs_human",
 		Confidence: prev.Confidence,
-		Reasoning: fmt.Sprintf("timeout after %d iterations: %v", iter, err),
+		Reasoning:  fmt.Sprintf("timeout after %d iterations: %v", iter, err),
 	}
 }

@@ -1,4 +1,4 @@
-﻿package migrate_test
+package migrate_test
 
 import (
 	"context"
@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	_ "modernc.org/sqlite"
 	"github.com/dark-agents/dark-memory-mcp/internal/migrate"
 	"github.com/dark-agents/dark-memory-mcp/internal/migrate/sqlite"
+	_ "modernc.org/sqlite"
 )
 
 // F37 (v1.2.2): a migration that adds a column should be tolerated

@@ -147,18 +147,18 @@ func run(args []string, stdout, stderr *os.File) int {
 	activeID, activeVer, activeSHA := st.ActiveConstitution(ctx)
 
 	report := inspectReport{
-		GeneratedAt:         time.Now().UTC().Format(time.RFC3339),
-		Driver:              st.DriverName(),
-		DSN:                 dsn,
-		CanaryPresent:       canaryPresent,
-		SchemaVersion:       version,
-		Tables:              nil,
-		Migrations:          nil,
-		ActiveConstitution:  activeID,
-		ActiveConstitutionV: activeVer,
+		GeneratedAt:           time.Now().UTC().Format(time.RFC3339),
+		Driver:                st.DriverName(),
+		DSN:                   dsn,
+		CanaryPresent:         canaryPresent,
+		SchemaVersion:         version,
+		Tables:                nil,
+		Migrations:            nil,
+		ActiveConstitution:    activeID,
+		ActiveConstitutionV:   activeVer,
 		ActiveConstitutionSHA: activeSHA,
-		RecentWrites:        nil,
-		Errors:              nil,
+		RecentWrites:          nil,
+		Errors:                nil,
 	}
 	if stats != nil {
 		report.Tables = stats.Tables
@@ -280,18 +280,18 @@ Safe to run against production.
 // inspectReport is the structured shape returned by --json. Mirrors
 // what humans see, but in a parseable form for alerting / dashboards.
 type inspectReport struct {
-	GeneratedAt           string                `json:"generated_at"`
-	Driver                string                `json:"driver"`
-	DSN                   string                `json:"dsn"`
-	CanaryPresent         bool                  `json:"canary_present"`
-	SchemaVersion         int                   `json:"schema_version"`
-	Tables                []string              `json:"tables"`
+	GeneratedAt           string                  `json:"generated_at"`
+	Driver                string                  `json:"driver"`
+	DSN                   string                  `json:"dsn"`
+	CanaryPresent         bool                    `json:"canary_present"`
+	SchemaVersion         int                     `json:"schema_version"`
+	Tables                []string                `json:"tables"`
 	Migrations            []store.MigrationStatus `json:"migrations"`
-	ActiveConstitution    string                `json:"active_constitution_id"`
-	ActiveConstitutionV   string                `json:"active_constitution_version"`
-	ActiveConstitutionSHA string                `json:"active_constitution_sha256"`
-	RecentWrites          []inspectWrite        `json:"recent_writes"`
-	Errors                []string              `json:"errors,omitempty"`
+	ActiveConstitution    string                  `json:"active_constitution_id"`
+	ActiveConstitutionV   string                  `json:"active_constitution_version"`
+	ActiveConstitutionSHA string                  `json:"active_constitution_sha256"`
+	RecentWrites          []inspectWrite          `json:"recent_writes"`
+	Errors                []string                `json:"errors,omitempty"`
 }
 
 // inspectWrite is one row from the recent_writes listing (subset of

@@ -254,7 +254,7 @@ type AgentMemoryRecallInput struct {
 // AgentMemoryRecallOutput is the hits + a count.
 type AgentMemoryRecallOutput struct {
 	Hits  []agentmemory.SearchHit `json:"hits"`
-	Count int                    `json:"count"`
+	Count int                     `json:"count"`
 }
 
 // AgentMemoryRecall runs FTS5 BM25-ranked search over
@@ -637,8 +637,8 @@ type AgentMemoryDelegateInput struct {
 	// MaxTokens is *int for the same reason: nil = schema default
 	// 2000; &0 = omit context sections (session metadata only);
 	// &N = explicit budget (clamp [0, 8000]).
-	MaxTokens  *int   `json:"max_tokens,omitempty"`
-	TTLSeconds int    `json:"ttl_seconds,omitempty"`
+	MaxTokens  *int `json:"max_tokens,omitempty"`
+	TTLSeconds int  `json:"ttl_seconds,omitempty"`
 }
 
 // AgentMemoryDelegateOutput is the delegation package: the

@@ -3,19 +3,19 @@
 //
 // Verifies (NO mocking inside the package, NO test-only stubs):
 //
-//   1. judgeViaDriftJudgeDaemon builds a valid Anthropic-format request and
-//      sends it to DARK_DRIFT_JUDGE_DAEMON_URL/v1/messages.
-//   2. Bearer ds-managed + x-api-key ds-managed headers are set.
-//   3. Anthropic-format response (content[0].text) is mapped to
-//      JudgeResponse.VerdictJSON.
-//   4. mock-llm minimal format ({text: "..."}) is also accepted.
-//   5. Confidence is extracted from the verdict JSON when present.
-//   6. Non-200 response (daemon "pool empty" 503) is surfaced as
-//      a real error, NOT swallowed as ErrNoLLMAvailable (preserves
-//      the visibility invariant from the original source comment).
-//   7. URL with no host, no scheme, or empty value is rejected.
-//   8. SelfHarnessClient.Judge dispatches drift_judge_daemon correctly
-//      and still returns ErrNoLLMAvailable for anthropic/openai/google.
+//  1. judgeViaDriftJudgeDaemon builds a valid Anthropic-format request and
+//     sends it to DARK_DRIFT_JUDGE_DAEMON_URL/v1/messages.
+//  2. Bearer ds-managed + x-api-key ds-managed headers are set.
+//  3. Anthropic-format response (content[0].text) is mapped to
+//     JudgeResponse.VerdictJSON.
+//  4. mock-llm minimal format ({text: "..."}) is also accepted.
+//  5. Confidence is extracted from the verdict JSON when present.
+//  6. Non-200 response (daemon "pool empty" 503) is surfaced as
+//     a real error, NOT swallowed as ErrNoLLMAvailable (preserves
+//     the visibility invariant from the original source comment).
+//  7. URL with no host, no scheme, or empty value is rejected.
+//  8. SelfHarnessClient.Judge dispatches drift_judge_daemon correctly
+//     and still returns ErrNoLLMAvailable for anthropic/openai/google.
 //
 // These tests run against an httptest.Server; they do NOT require
 // the [drift-judge-daemon] to be running.

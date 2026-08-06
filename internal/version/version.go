@@ -4,11 +4,11 @@
 //
 // Per CONSTITUTION.md Rule 1, the resolution order is:
 //
-//	1. -ldflags "-X github.com/dark-agents/dark-memory-mcp/internal/version.buildVersion=<v>"
-//	   injected at build time by `make release` (canonical path).
-//	2. runtime/debug.ReadBuildInfo().Main.Version (set by `go install`
-//	   from the module proxy; used by `make dev`).
-//	3. Hardcoded devVersion = "dev" (emergency-only; marks IsDev=true).
+//  1. -ldflags "-X github.com/dark-agents/dark-memory-mcp/internal/version.buildVersion=<v>"
+//     injected at build time by `make release` (canonical path).
+//  2. runtime/debug.ReadBuildInfo().Main.Version (set by `go install`
+//     from the module proxy; used by `make dev`).
+//  3. Hardcoded devVersion = "dev" (emergency-only; marks IsDev=true).
 //
 // Path 3 emits the IsDev flag so the caller (dark_memory_health_ping)
 // can surface a drift_warning without blocking boot.

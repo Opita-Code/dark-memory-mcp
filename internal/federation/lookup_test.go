@@ -19,16 +19,16 @@ import (
 // and pre-populates a few rows. Returns the path so the test can
 // point the federation Peer at it via DARK_FEDERATION_PEER_DSN.
 func makePeerDB(t *testing.T, rows []struct {
-	ID              int64
-	SessionID       string
-	VibeCase        string
-	SpecID          int64
-	ArtifactURL     string
-	ArtifactType    string
-	Jurisdiction    string
-	HasDisclosure   bool
+	ID               int64
+	SessionID        string
+	VibeCase         string
+	SpecID           int64
+	ArtifactURL      string
+	ArtifactType     string
+	Jurisdiction     string
+	HasDisclosure    bool
 	ValidationStatus string
-	CreatedAt       string
+	CreatedAt        string
 }, drifts []struct {
 	ID           int64
 	ArtifactID   int64
@@ -157,16 +157,16 @@ func TestNewPeerFromEnv_Valid(t *testing.T) {
 	unsetPeerEnv(t)
 	path := makePeerDB(t,
 		[]struct {
-			ID              int64
-			SessionID       string
-			VibeCase        string
-			SpecID          int64
-			ArtifactURL     string
-			ArtifactType    string
-			Jurisdiction    string
-			HasDisclosure   bool
+			ID               int64
+			SessionID        string
+			VibeCase         string
+			SpecID           int64
+			ArtifactURL      string
+			ArtifactType     string
+			Jurisdiction     string
+			HasDisclosure    bool
 			ValidationStatus string
-			CreatedAt       string
+			CreatedAt        string
 		}{
 			{ID: 1, SessionID: "sess-a", VibeCase: "C2", ArtifactURL: "https://example/a", ArtifactType: "text", ValidationStatus: "passed", CreatedAt: "2026-07-17T00:00:00Z"},
 		},
@@ -201,16 +201,16 @@ func TestPeer_LookupArtifact_Hit(t *testing.T) {
 	unsetPeerEnv(t)
 	path := makePeerDB(t,
 		[]struct {
-			ID              int64
-			SessionID       string
-			VibeCase        string
-			SpecID          int64
-			ArtifactURL     string
-			ArtifactType    string
-			Jurisdiction    string
-			HasDisclosure   bool
+			ID               int64
+			SessionID        string
+			VibeCase         string
+			SpecID           int64
+			ArtifactURL      string
+			ArtifactType     string
+			Jurisdiction     string
+			HasDisclosure    bool
 			ValidationStatus string
-			CreatedAt       string
+			CreatedAt        string
 		}{
 			{ID: 42, SessionID: "sess-x", VibeCase: "C4", SpecID: 7, ArtifactURL: "https://example/x.png", ArtifactType: "image", Jurisdiction: "EU", HasDisclosure: true, ValidationStatus: "passed", CreatedAt: "2026-07-17T01:02:03Z"},
 		},
@@ -262,16 +262,16 @@ func TestPeer_LookupDrift_NewestFirst(t *testing.T) {
 	unsetPeerEnv(t)
 	path := makePeerDB(t,
 		[]struct {
-			ID              int64
-			SessionID       string
-			VibeCase        string
-			SpecID          int64
-			ArtifactURL     string
-			ArtifactType    string
-			Jurisdiction    string
-			HasDisclosure   bool
+			ID               int64
+			SessionID        string
+			VibeCase         string
+			SpecID           int64
+			ArtifactURL      string
+			ArtifactType     string
+			Jurisdiction     string
+			HasDisclosure    bool
 			ValidationStatus string
-			CreatedAt       string
+			CreatedAt        string
 		}{
 			{ID: 5, VibeCase: "C2", ArtifactType: "text", ValidationStatus: "pending", CreatedAt: "2026-07-17T00:00:00Z"},
 		},
@@ -305,16 +305,16 @@ func TestPeer_LookupSessionArtifacts(t *testing.T) {
 	unsetPeerEnv(t)
 	path := makePeerDB(t,
 		[]struct {
-			ID              int64
-			SessionID       string
-			VibeCase        string
-			SpecID          int64
-			ArtifactURL     string
-			ArtifactType    string
-			Jurisdiction    string
-			HasDisclosure   bool
+			ID               int64
+			SessionID        string
+			VibeCase         string
+			SpecID           int64
+			ArtifactURL      string
+			ArtifactType     string
+			Jurisdiction     string
+			HasDisclosure    bool
 			ValidationStatus string
-			CreatedAt       string
+			CreatedAt        string
 		}{
 			{ID: 1, SessionID: "sess-a", VibeCase: "C2", ArtifactType: "text", CreatedAt: "2026-07-17T00:00:00Z"},
 			{ID: 2, SessionID: "sess-a", VibeCase: "C2", ArtifactType: "text", CreatedAt: "2026-07-17T00:00:01Z"},

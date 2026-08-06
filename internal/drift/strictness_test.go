@@ -56,10 +56,10 @@ func TestParseStrictness_InvalidFallsBackToOff(t *testing.T) {
 		warnings = append(warnings, fmt.Sprintf(format, args...))
 	}
 	cases := []string{
-		"draconian",     // unknown string
-		"3",             // unknown numeric
-		"on",            // ambiguous boolean (NOT in canonical set)
-		"strict-ish",    // malformed strict
+		"draconian",  // unknown string
+		"3",          // unknown numeric
+		"on",         // ambiguous boolean (NOT in canonical set)
+		"strict-ish", // malformed strict
 	}
 	for _, c := range cases {
 		t.Run("env="+c, func(t *testing.T) {
@@ -124,11 +124,11 @@ func TestStrictness_String(t *testing.T) {
 // Valid override → use override.
 func TestResolveStrictness_PerProjectOverride(t *testing.T) {
 	cases := []struct {
-		name           string
-		projectValue   string
-		envValue       Strictness
-		want           Strictness
-		expectWarning  bool
+		name          string
+		projectValue  string
+		envValue      Strictness
+		want          Strictness
+		expectWarning bool
 	}{
 		// Empty / "default" → use env.
 		{"empty + env=off", "", StrictnessOff, StrictnessOff, false},

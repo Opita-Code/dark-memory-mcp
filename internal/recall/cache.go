@@ -12,12 +12,12 @@
 // CachedSource is the trust boundary that enforces INV-5 (cache
 // integrity). On every cache hit, it recomputes sha256(frame_json)
 // and compares against the stored content_sha256. On mismatch:
-//   1. Emit a write_audit row tagged session_event="cache_mismatch"
-//      with the expected vs computed SHA. This is the audit
-//      breadcrumb until the anomaly_events table lands (separate
-//      future migration).
-//   2. Delete the bad row.
-//   3. Fall through to the inner source for recompose.
+//  1. Emit a write_audit row tagged session_event="cache_mismatch"
+//     with the expected vs computed SHA. This is the audit
+//     breadcrumb until the anomaly_events table lands (separate
+//     future migration).
+//  2. Delete the bad row.
+//  3. Fall through to the inner source for recompose.
 //
 // # Wave placement
 // This is 5A.ii.b.2.b. It depends on 5A.ii.a (FrameEnvelope +
@@ -98,7 +98,8 @@ type CachedSource struct {
 
 // NewCachedSource constructs a CachedSource. now and logger default
 // to time.Now and log.Default() respectively when nil.
-func NewCachedSource(inner policy.FrameSource, st store.Store, safety *store.SafetyHolder, now func() time.Time, logger *log.Logger) *CachedSource {	if now == nil {
+func NewCachedSource(inner policy.FrameSource, st store.Store, safety *store.SafetyHolder, now func() time.Time, logger *log.Logger) *CachedSource {
+	if now == nil {
 		now = time.Now
 	}
 	if logger == nil {

@@ -223,7 +223,9 @@ func TestIsZero(t *testing.T) {
 // would silently break the LLM-facing context projection.)
 //
 // Description format: "<human label> — <body>." e.g.
-//   "code — source code artifacts (functions, modules, services)."
+//
+//	"code — source code artifacts (functions, modules, services)."
+//
 // The canonical "C1" label is NOT in the description itself — it is
 // a human-facing string, not a machine-readable one. Machine code
 // uses Case.String(). Description() is for LLM-facing context only.

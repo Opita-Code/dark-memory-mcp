@@ -18,12 +18,12 @@
 //   - ONE type: IdentityFrame
 //   - ONE constructor: NewIdentityFrame
 //   - TWO invariants enforced in Validate:
-//       1. Actor + Operator non-empty (empty = unconfigured session)
-//       2. ConstitutionID + Ver match the active binding (resolved by the caller)
+//     1. Actor + Operator non-empty (empty = unconfigured session)
+//     2. ConstitutionID + Ver match the active binding (resolved by the caller)
 //   - THREE derived behaviors:
-//       1. Hash determinism: same input => same SHA-256
-//       2. Stale detection via ComposedAt() + MAX_FRAME_AGE (caller-side check)
-//       3. Cross-session binding check via VerifyAgainstWriteAudit
+//     1. Hash determinism: same input => same SHA-256
+//     2. Stale detection via ComposedAt() + MAX_FRAME_AGE (caller-side check)
+//     3. Cross-session binding check via VerifyAgainstWriteAudit
 package atomic
 
 import (
@@ -53,7 +53,7 @@ type IdentityFrame struct {
 
 	// Required constitution binding. Composition cross-checks
 	// ConstitutionID + Ver against the active WriteContext.
-	ConstitutionID string `json:"constitution_id"`
+	ConstitutionID  string `json:"constitution_id"`
 	ConstitutionVer string `json:"constitution_ver"`
 
 	// CanaryActive reports whether the canary check is currently
@@ -102,13 +102,13 @@ func NewIdentityFrame(actor, operator, sessionID, constitutionID, constitutionVe
 		return nil, ErrEmptyConstitutionVer
 	}
 	return &IdentityFrame{
-		ComposedAtValue:  time.Now(),
-		Actor:            actor,
-		Operator:         operator,
-		SessionID:        sessionID,
-		ConstitutionID:   constitutionID,
-		ConstitutionVer:  constitutionVer,
-		CanaryActive:     canaryActive,
+		ComposedAtValue: time.Now(),
+		Actor:           actor,
+		Operator:        operator,
+		SessionID:       sessionID,
+		ConstitutionID:  constitutionID,
+		ConstitutionVer: constitutionVer,
+		CanaryActive:    canaryActive,
 	}, nil
 }
 
@@ -170,9 +170,9 @@ func (f *IdentityFrame) Render() ([]byte, error) {
 // by VerifyAgainstWriteAudit. The Gate layer constructs one of these
 // from the row fetched by store.GetWriteAudit(max_id_for_session).
 type WriteAuditRef struct {
-	SessionID        string `json:"session_id"`
-	ConstitutionID   string `json:"constitution_id"`
-	ConstitutionVer  string `json:"constitution_ver"`
+	SessionID       string `json:"session_id"`
+	ConstitutionID  string `json:"constitution_id"`
+	ConstitutionVer string `json:"constitution_ver"`
 }
 
 // VerifyAgainstWriteAudit cross-checks the IdentityFrame against the
@@ -236,4 +236,3 @@ func EqualBytes(a, b Frame) (bool, error) {
 
 // Wave 5X.2: compile-time guard that *IdentityFrame satisfies atomic.Frame.
 var _ Frame = (*IdentityFrame)(nil)
-

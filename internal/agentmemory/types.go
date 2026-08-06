@@ -102,8 +102,8 @@ func ValidScope(s string) bool {
 // procedural = learned workflows (how-to instructions, typically
 // pinned).
 const (
-	MemoryTypeEpisodic  = "episodic"  // event-anchored; mirrors Mem0 episodic
-	MemoryTypeSemantic  = "semantic"  // atemporal facts; mirrors Mem0 semantic
+	MemoryTypeEpisodic   = "episodic"   // event-anchored; mirrors Mem0 episodic
+	MemoryTypeSemantic   = "semantic"   // atemporal facts; mirrors Mem0 semantic
 	MemoryTypeProcedural = "procedural" // learned workflows; mirrors Mem0 procedural
 )
 
@@ -144,21 +144,21 @@ func ValidMemoryType(t string) bool {
 // v2.3.0) and QuarantinedUntil (v2.5.0 placeholder) are documented
 // here for forward-compat but the schema column does not exist yet.
 type AgentMemory struct {
-	ID                int64  `json:"id"`
-	ProjectID         string `json:"project_id"`
-	SessionID         string `json:"session_id,omitempty"`
-	Operator          string `json:"operator"`
-	AgentID           string `json:"agent_id,omitempty"`
-	Kind              string `json:"kind"`
-	MemoryType        string `json:"memory_type,omitempty"`
-	Title             string `json:"title,omitempty"`
-	Content           string `json:"content"`
-	Tags              string `json:"tags,omitempty"`
-	Pinned            bool   `json:"pinned"`
-	CreatedAt         string `json:"created_at"`
-	UpdatedAt         string `json:"updated_at"`
-	ArchivedAt        string `json:"archived_at,omitempty"`
-	ExpiresAt         string `json:"expires_at,omitempty"`
+	ID         int64  `json:"id"`
+	ProjectID  string `json:"project_id"`
+	SessionID  string `json:"session_id,omitempty"`
+	Operator   string `json:"operator"`
+	AgentID    string `json:"agent_id,omitempty"`
+	Kind       string `json:"kind"`
+	MemoryType string `json:"memory_type,omitempty"`
+	Title      string `json:"title,omitempty"`
+	Content    string `json:"content"`
+	Tags       string `json:"tags,omitempty"`
+	Pinned     bool   `json:"pinned"`
+	CreatedAt  string `json:"created_at"`
+	UpdatedAt  string `json:"updated_at"`
+	ArchivedAt string `json:"archived_at,omitempty"`
+	ExpiresAt  string `json:"expires_at,omitempty"`
 	// QuarantinedUntil is reserved for v2.5.0 (memory-poisoning
 	// defenses, zylos.ai 2026-04-05 §6). v2.3.0 schema does NOT
 	// include this column; the field always returns "". Carried

@@ -61,16 +61,16 @@ type Peer struct {
 // text body / content; those are local-only and not part of the discovery
 // contract.
 type PeerArtifact struct {
-	ID              int64  `json:"id"`
-	SessionID       string `json:"session_id,omitempty"`
-	VibeCase        string `json:"vibe_case"`
-	SpecID          int64  `json:"spec_id,omitempty"`
-	ArtifactURL     string `json:"artifact_url,omitempty"`
-	ArtifactType    string `json:"artifact_type"`
-	Jurisdiction    string `json:"jurisdiction,omitempty"`
-	HasDisclosure   bool   `json:"has_disclosure"`
+	ID               int64  `json:"id"`
+	SessionID        string `json:"session_id,omitempty"`
+	VibeCase         string `json:"vibe_case"`
+	SpecID           int64  `json:"spec_id,omitempty"`
+	ArtifactURL      string `json:"artifact_url,omitempty"`
+	ArtifactType     string `json:"artifact_type"`
+	Jurisdiction     string `json:"jurisdiction,omitempty"`
+	HasDisclosure    bool   `json:"has_disclosure"`
 	ValidationStatus string `json:"validation_status"`
-	CreatedAt       string `json:"created_at"`
+	CreatedAt        string `json:"created_at"`
 }
 
 // PeerDrift mirrors the vibe_drift_reports row shape we expose cross-namespace.

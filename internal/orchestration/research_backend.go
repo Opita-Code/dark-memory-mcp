@@ -50,12 +50,12 @@ func (o *Orchestrator) WithBackend(b ResearchBackend) *Orchestrator {
 // returned (the orchestrator logs the error but still uses the
 // items).
 type MockResearchBackend struct {
-	Name_  string         // exposed as Name()
-	Items  []research.Item // returned by Research
-	Err    error          // returned by Research (alongside Items)
-	Calls  int            // incremented on every Research call
-	LastQ  string         // last query received
-	LastI  string         // last intent received
+	Name_ string          // exposed as Name()
+	Items []research.Item // returned by Research
+	Err   error           // returned by Research (alongside Items)
+	Calls int             // incremented on every Research call
+	LastQ string          // last query received
+	LastI string          // last intent received
 }
 
 // Name implements ResearchBackend.

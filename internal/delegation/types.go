@@ -70,7 +70,7 @@ type SubTask struct {
 	DependsOn    []string `json:"depends_on,omitempty"`
 	ModelFloor   string   `json:"model_floor,omitempty"`
 	SubagentID   string   `json:"subagent_id,omitempty"`
-	MindsetID    int64    `json:"mindset_id,omitempty"`   // 0 = procedural composition
+	MindsetID    int64    `json:"mindset_id,omitempty"` // 0 = procedural composition
 	Tools        []string `json:"tools_recommended,omitempty"`
 	SystemPrompt string   `json:"system_prompt,omitempty"` // set by MIND stage
 }
@@ -134,10 +134,10 @@ func (p *Plan) Batch(dep map[string][]string) [][]SubTask {
 // handler == HandlerDelegate. Reasoning carries the decision trail
 // for audit.
 type DelegationDecision struct {
-	Handler   Handler   `json:"handler"`
-	Reasoning string    `json:"reasoning"`
-	Plan      *Plan     `json:"plan,omitempty"`
-	Case      string    `json:"case"`
+	Handler   Handler `json:"handler"`
+	Reasoning string  `json:"reasoning"`
+	Plan      *Plan   `json:"plan,omitempty"`
+	Case      string  `json:"case"`
 }
 
 // DelegationContext is the CURATE stage output: the curated

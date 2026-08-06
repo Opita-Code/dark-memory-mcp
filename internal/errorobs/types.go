@@ -100,22 +100,22 @@ func ValidSeverity(s Severity) bool {
 // count > 1 means the same (domain, code, message_hash, tool_name,
 // session_id) occurred multiple times within the dedup window.
 type ErrorEvent struct {
-	ID         int64    `json:"id"`
-	ProjectID  string   `json:"project_id"`
-	SessionID  string   `json:"session_id,omitempty"`
-	ToolName   string   `json:"tool_name,omitempty"`
-	Domain     Domain   `json:"domain"`
-	Code       string   `json:"code"`
-	Message    string   `json:"message"`
-	ContextJSON string  `json:"context_json,omitempty"`
-	Severity   Severity `json:"severity"`
-	Count      int      `json:"count"`
-	FirstSeenAt string  `json:"first_seen_at"`
-	LastSeenAt  string  `json:"last_seen_at"`
-	Resolved   bool     `json:"resolved"`
-	ResolvedAt string   `json:"resolved_at,omitempty"`
-	ResolutionNote string `json:"resolution_note,omitempty"`
-	CreatedAt  string   `json:"created_at"`
+	ID             int64    `json:"id"`
+	ProjectID      string   `json:"project_id"`
+	SessionID      string   `json:"session_id,omitempty"`
+	ToolName       string   `json:"tool_name,omitempty"`
+	Domain         Domain   `json:"domain"`
+	Code           string   `json:"code"`
+	Message        string   `json:"message"`
+	ContextJSON    string   `json:"context_json,omitempty"`
+	Severity       Severity `json:"severity"`
+	Count          int      `json:"count"`
+	FirstSeenAt    string   `json:"first_seen_at"`
+	LastSeenAt     string   `json:"last_seen_at"`
+	Resolved       bool     `json:"resolved"`
+	ResolvedAt     string   `json:"resolved_at,omitempty"`
+	ResolutionNote string   `json:"resolution_note,omitempty"`
+	CreatedAt      string   `json:"created_at"`
 }
 
 // ErrorListFilters narrows ListErrorEvents. Zero-valued fields mean
@@ -124,7 +124,7 @@ type ErrorEvent struct {
 type ErrorListFilters struct {
 	Domain    Domain
 	Severity  Severity
-	Resolved  *bool  // nil = all; true = resolved only; false = unresolved only
+	Resolved  *bool // nil = all; true = resolved only; false = unresolved only
 	SessionID string
 	ToolName  string
 	Since     string // RFC3339: only events with last_seen_at >= Since
@@ -135,13 +135,13 @@ type ErrorListFilters struct {
 // Store.ErrorSummary. Global scope (like Store.Stats) so operators
 // can see cross-project health.
 type ErrorSummary struct {
-	TotalErrors    int            `json:"total_errors"`
-	Unresolved     int            `json:"unresolved"`
-	ErrorsLastHour int            `json:"errors_last_hour"`
-	ByDomain       map[Domain]int `json:"by_domain"`
+	TotalErrors    int              `json:"total_errors"`
+	Unresolved     int              `json:"unresolved"`
+	ErrorsLastHour int              `json:"errors_last_hour"`
+	ByDomain       map[Domain]int   `json:"by_domain"`
 	BySeverity     map[Severity]int `json:"by_severity"`
-	TopRecurring   []ErrorEvent   `json:"top_recurring"`
-	ReportedAt     string         `json:"reported_at"`
+	TopRecurring   []ErrorEvent     `json:"top_recurring"`
+	ReportedAt     string           `json:"reported_at"`
 }
 
 // --- Classification (T3) ---

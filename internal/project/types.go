@@ -14,15 +14,15 @@ package project
 // Cross-project reads are opt-in (dark_research_*) but the default
 // is strict isolation.
 type Project struct {
-	ID               int64  `json:"id"`
-	ProjectID        string `json:"project_id"`        // public id, kebab-case, unique
-	DisplayName      string `json:"display_name"`
-	Description      string `json:"description,omitempty"`
-	ConstitutionID   string `json:"constitution_id,omitempty"`
-	ConstitutionVer  string `json:"constitution_ver,omitempty"`
-	CreatedAt        string `json:"created_at"`
-	ArchivedAt       string `json:"archived_at,omitempty"`        // soft delete
-	ParentProjectID  string `json:"parent_project_id,omitempty"` // for sub-projects
+	ID              int64  `json:"id"`
+	ProjectID       string `json:"project_id"` // public id, kebab-case, unique
+	DisplayName     string `json:"display_name"`
+	Description     string `json:"description,omitempty"`
+	ConstitutionID  string `json:"constitution_id,omitempty"`
+	ConstitutionVer string `json:"constitution_ver,omitempty"`
+	CreatedAt       string `json:"created_at"`
+	ArchivedAt      string `json:"archived_at,omitempty"`       // soft delete
+	ParentProjectID string `json:"parent_project_id,omitempty"` // for sub-projects
 
 	// DriftStrictness (Wave 5X.3) overrides the drift-at-write
 	// interceptor (5A.vi M6) on a per-project basis. Allowed values:
@@ -87,12 +87,12 @@ func (p *Project) IsArchived() bool { return p.ArchivedAt != "" }
 // authorization at the orchestrator level in v1.0. Future versions
 // will use this table for RLS-style policy via a per-tenant role.
 type Membership struct {
-	ID          int64  `json:"id"`
-	ProjectID   string `json:"project_id"`
-	Operator    string `json:"operator"`
-	Role        string `json:"role"` // "owner" | "editor" | "viewer"
-	GrantedAt   string `json:"granted_at"`
-	GrantedBy   string `json:"granted_by,omitempty"`
+	ID        int64  `json:"id"`
+	ProjectID string `json:"project_id"`
+	Operator  string `json:"operator"`
+	Role      string `json:"role"` // "owner" | "editor" | "viewer"
+	GrantedAt string `json:"granted_at"`
+	GrantedBy string `json:"granted_by,omitempty"`
 }
 
 // ProjectFilter is the per-request filter applied to all Store reads.

@@ -14,13 +14,13 @@
 //
 // Layering:
 //
-//     MCP server (Wave 4)
-//         |
-//         v
-//     Orchestrator  <-- this package
-//         |
-//         v
-//     Store (sqlite or postgres partial impl)
+//	MCP server (Wave 4)
+//	    |
+//	    v
+//	Orchestrator  <-- this package
+//	    |
+//	    v
+//	Store (sqlite or postgres partial impl)
 //
 // Safety:
 //   - The canary check (INV-3) is invoked inside Store.Save*, so
@@ -40,7 +40,7 @@ import (
 type Orchestrator struct {
 	Store    store.Store
 	Safety   *safety.Holder
-	now      func() time.Time // injectable for tests
+	now      func() time.Time  // injectable for tests
 	backends []ResearchBackend // registered research backends (O3)
 	selector LLMSelector       // LLM selector for O5 Judge
 

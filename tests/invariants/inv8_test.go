@@ -1,4 +1,4 @@
-﻿package invariants_test
+package invariants_test
 
 import (
 	"strings"
@@ -31,5 +31,3 @@ func TestServer_DefaultDSN_DoesNotCollideWithDarkResearch_INV8(t *testing.T) {
 	}
 	t.Logf("INV-8 verified: defaultDSN=%q isolated from dark-research-mcp", dsn)
 }
-
-

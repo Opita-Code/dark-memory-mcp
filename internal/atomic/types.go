@@ -151,18 +151,18 @@ func ParseScopeLevel(s string) (ScopeLevel, error) {
 // interface is the runtime shape orchestrators consume; FrameEnvelope
 // wraps Frame for persistence.
 type FrameEnvelope struct {
-	ID            int64      `json:"id"`                  // row id in vibe_frames (0 for in-flight)
-	ProjectID     string     `json:"project_id"`           // INV-7 explicit project_id
-	SessionID     string     `json:"session_id"`           // session that composed this frame
-	ScopeLevel    ScopeLevel `json:"scope_level"`          // global|project|session|call
-	ScopeID       string     `json:"scope_id"`             // project_id for project-level scope, etc.
-	Kind          FrameKind  `json:"kind"`                 // identity|scope|evidence|capabilities|drift|persona
-	ComposedAt    time.Time  `json:"composed_at"`          // RFC3339Nano
-	ExpiresAt     time.Time  `json:"expires_at"`           // RFC3339Nano; cache TTL
-	FrameJSON     []byte     `json:"frame_json"`           // canonical JSON of the frame body (canonicalised, sorted keys)
-	ContentSHA256 [32]byte   `json:"content_sha256"`       // INV-5; sha256(FrameJSON)
-	LastWriteID   int64      `json:"last_write_id"`        // pointer into write_audit.max(id) at compose time
-	CreatedAt     time.Time  `json:"created_at"`           // RFC3339Nano (persistence timestamp)
+	ID            int64      `json:"id"`             // row id in vibe_frames (0 for in-flight)
+	ProjectID     string     `json:"project_id"`     // INV-7 explicit project_id
+	SessionID     string     `json:"session_id"`     // session that composed this frame
+	ScopeLevel    ScopeLevel `json:"scope_level"`    // global|project|session|call
+	ScopeID       string     `json:"scope_id"`       // project_id for project-level scope, etc.
+	Kind          FrameKind  `json:"kind"`           // identity|scope|evidence|capabilities|drift|persona
+	ComposedAt    time.Time  `json:"composed_at"`    // RFC3339Nano
+	ExpiresAt     time.Time  `json:"expires_at"`     // RFC3339Nano; cache TTL
+	FrameJSON     []byte     `json:"frame_json"`     // canonical JSON of the frame body (canonicalised, sorted keys)
+	ContentSHA256 [32]byte   `json:"content_sha256"` // INV-5; sha256(FrameJSON)
+	LastWriteID   int64      `json:"last_write_id"`  // pointer into write_audit.max(id) at compose time
+	CreatedAt     time.Time  `json:"created_at"`     // RFC3339Nano (persistence timestamp)
 }
 
 // Frame is the runtime shape orchestrators and the Gate consume. Every

@@ -57,8 +57,8 @@ func RegisterProject(reg *Registry, orch *orchestration.Orchestrator, st store.S
 	reg.Add(BindStore("project_create",
 		"Create a new project (INV-7 tenant primitive). Idempotent on project_id — re-creating an existing project returns the existing row. The 'default' project is seeded on Open and cannot be re-created (returns ErrAlreadyExists).",
 		MustJSONSchema(map[string]any{
-			"type":     "object",
-			"required": []string{"project_id", "display_name"},
+			"type":                 "object",
+			"required":             []string{"project_id", "display_name"},
 			"additionalProperties": false,
 			"properties": map[string]any{
 				"project_id": map[string]any{

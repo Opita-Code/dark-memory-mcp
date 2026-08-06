@@ -88,7 +88,7 @@ func RegisterRedTeam(reg *Registry, st store.Store) error {
 	reg.Add(BindSimple("redteam_list_mods",
 		"List the installed red-team research mods under DARK_REDTEAM_MODS_PATH (default ./mods/redteam). Returns mod_id, version, name, risk_class, target_scope, capability_count, sha256. Read-only — does not load the mod content into memory.",
 		MustJSONSchema(map[string]any{
-			"type":     "object",
+			"type":       "object",
 			"properties": map[string]any{},
 		}),
 		redteamListModsHandler()))
@@ -269,14 +269,14 @@ func redteamLogAttemptHandler(st store.Store) HandlerFunc {
 		// Store layer can route it correctly. The payload is JSON-
 		// encoded so the audit log is structured.
 		payload, err := json.Marshal(map[string]any{
-			"mod_id":                   in.ModID,
-			"prompt_id":                in.PromptID,
-			"target_model":             in.TargetModel,
-			"family":                   in.Family,
-			"observed_label":           in.ObservedLabel,
+			"mod_id":                    in.ModID,
+			"prompt_id":                 in.PromptID,
+			"target_model":              in.TargetModel,
+			"family":                    in.Family,
+			"observed_label":            in.ObservedLabel,
 			"observed_response_excerpt": excerpt,
-			"notes":                    in.Notes,
-			"constitution_id":          "redteam-research",
+			"notes":                     in.Notes,
+			"constitution_id":           "redteam-research",
 		})
 		if err != nil {
 			return &ToolResponse{Error: &ToolError{
@@ -297,7 +297,7 @@ func redteamLogAttemptHandler(st store.Store) HandlerFunc {
 		_ = wc
 		fmt.Fprintf(os.Stderr, "[redteam-research] %s\n", string(payload))
 		return &ToolResponse{Data: map[string]any{
-			"logged": true,
+			"logged":          true,
 			"constitution_id": "redteam-research",
 			"payload_sha256":  hashForAudit(string(payload)),
 		}}, nil
@@ -314,28 +314,28 @@ type RedTeamGetPromptsInput struct {
 
 // RedTeamLogAttemptInput is the input for redteam_log_attempt.
 type RedTeamLogAttemptInput struct {
-	ModID                  string `json:"mod_id"`
-	PromptID               string `json:"prompt_id"`
-	TargetModel            string `json:"target_model"`
-	Family                 string `json:"family,omitempty"`
-	ObservedLabel          string `json:"observed_label"`
+	ModID                   string `json:"mod_id"`
+	PromptID                string `json:"prompt_id"`
+	TargetModel             string `json:"target_model"`
+	Family                  string `json:"family,omitempty"`
+	ObservedLabel           string `json:"observed_label"`
 	ObservedResponseExcerpt string `json:"observed_response_excerpt,omitempty"`
-	SessionID              string `json:"session_id,omitempty"`
-	Notes                  string `json:"notes,omitempty"`
+	SessionID               string `json:"session_id,omitempty"`
+	Notes                   string `json:"notes,omitempty"`
 }
 
 // RedTeamModSummary is one row in the redteam_list_mods output.
 type RedTeamModSummary struct {
-	ModID           string `json:"mod_id"`
-	Version         string `json:"version"`
-	Name            string `json:"name"`
-	RiskClass       string `json:"risk_class"`
-	TargetScope     string `json:"target_scope"`
-	KnowledgeCount  int    `json:"knowledge_count"`
-	DirectiveCount  int    `json:"directive_count"`
-	ToolCount       int    `json:"tool_count"`
-	SHA256          string `json:"sha256"`
-	Path            string `json:"path"`
+	ModID          string `json:"mod_id"`
+	Version        string `json:"version"`
+	Name           string `json:"name"`
+	RiskClass      string `json:"risk_class"`
+	TargetScope    string `json:"target_scope"`
+	KnowledgeCount int    `json:"knowledge_count"`
+	DirectiveCount int    `json:"directive_count"`
+	ToolCount      int    `json:"tool_count"`
+	SHA256         string `json:"sha256"`
+	Path           string `json:"path"`
 }
 
 // scanRedTeamMods walks the redteam mods directory and returns a
@@ -390,10 +390,10 @@ func scanRedTeamMods(root string) ([]RedTeamModSummary, error) {
 // loadPromptsFromMod extracts payloads from a mod's prompt-injection
 // knowledge files. The parser understands two shapes:
 //
-//   1. Free-form markdown: each paragraph that starts with a quoted
-//      block is treated as one payload.
-//   2. JSONL dataset: each {"id":..., "payload":..., ...} line is
-//      one entry.
+//  1. Free-form markdown: each paragraph that starts with a quoted
+//     block is treated as one payload.
+//  2. JSONL dataset: each {"id":..., "payload":..., ...} line is
+//     one entry.
 //
 // Filtering by family / severity_min applies on the JSONL shape
 // (the markdown files do not carry those metadata fields; we report

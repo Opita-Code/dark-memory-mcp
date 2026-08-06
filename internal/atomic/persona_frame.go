@@ -96,14 +96,14 @@ func NewPersonaFrame(constitutionID, constitutionVer, brandID, voice, claimsPoli
 		return nil, ErrPersonaEmptyTone
 	}
 	return &PersonaFrame{
-		ComposedAtValue:  time.Now(),
-		ConstitutionID:   constitutionID,
-		ConstitutionVer:  constitutionVer,
-		BrandID:          brandID,
-		Voice:            voice,
-		ClaimsPolicy:     claimsPolicy,
-		RefusalPattern:   refusalPattern,
-		Tone:             tone,
+		ComposedAtValue: time.Now(),
+		ConstitutionID:  constitutionID,
+		ConstitutionVer: constitutionVer,
+		BrandID:         brandID,
+		Voice:           voice,
+		ClaimsPolicy:    claimsPolicy,
+		RefusalPattern:  refusalPattern,
+		Tone:            tone,
 	}, nil
 }
 

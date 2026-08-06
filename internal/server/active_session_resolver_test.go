@@ -88,7 +88,7 @@ func TestStoreBackedResolver_CacheExpiresAfterTTL(t *testing.T) {
 		t.Errorf("after 2 calls within TTL: want lookup called 1 time, got %d", got)
 	}
 
-	now = now.Add(600 * time.Millisecond) // total 1.1s past first call
+	now = now.Add(600 * time.Millisecond)              // total 1.1s past first call
 	r.ActiveSessionID(context.Background(), "default") // call 3: TTL expired → miss
 
 	if got := lookup.callCount(); got != 2 {

@@ -7,15 +7,15 @@
 // v2.4.1: closes the agent_id plumbing debt that v2.3.0 introduced.
 // Resolution priority:
 //
-//	1. caller-supplied AgentID on the request (per-call override).
-//	   This is the parameter the integration passes; e.g.
-//	   session_start.AgentID or publish_vibe.AgentID.
-//	2. projects.default_agent_id (the v2.4.1 project-level default,
-//	   migration v20). Set at tenant provisioning via
-//	   dark_memory_project_create(default_agent_id=...).
-//	3. Empty string — no agent filter. Backward compatible with
-//	   v2.4.0 (project-wide scope; same agent sees all memories
-//	   across all agents in the project).
+//  1. caller-supplied AgentID on the request (per-call override).
+//     This is the parameter the integration passes; e.g.
+//     session_start.AgentID or publish_vibe.AgentID.
+//  2. projects.default_agent_id (the v2.4.1 project-level default,
+//     migration v20). Set at tenant provisioning via
+//     dark_memory_project_create(default_agent_id=...).
+//  3. Empty string — no agent filter. Backward compatible with
+//     v2.4.0 (project-wide scope; same agent sees all memories
+//     across all agents in the project).
 //
 // Best-effort: errors at the Store layer are swallowed (no logger
 // yet). The active agent_id is operational metadata, not a

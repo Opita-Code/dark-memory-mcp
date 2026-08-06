@@ -197,16 +197,16 @@ func TestValidateOverrideDir_RejectsNonexistent(t *testing.T) {
 func TestEmbeddedFiles_Contract(t *testing.T) {
 	src := EmbeddedFS()
 	expected := map[string]bool{
-		"SYSTEM_PROMPT.md":                                              false,
-		"COMPATIBILITY_MATRIX.md":                                       false,
-		"install/claude-desktop.md":                                     false,
-		"install/claude-code.md":                                        false,
-		"install/opencode.md":                                           false,
-		"install/cline.md":                                              false,
-		"install/cursor.md":                                             false,
-		"install/continue.md":                                           false,
-		"companions/dark-research.md":                                   false,
-		"companions/[FUTURE-MCP-N].md":                                    false,
+		"SYSTEM_PROMPT.md":             false,
+		"COMPATIBILITY_MATRIX.md":      false,
+		"install/claude-desktop.md":    false,
+		"install/claude-code.md":       false,
+		"install/opencode.md":          false,
+		"install/cline.md":             false,
+		"install/cursor.md":            false,
+		"install/continue.md":          false,
+		"companions/dark-research.md":  false,
+		"companions/[FUTURE-MCP-N].md": false,
 	}
 
 	err := fs.WalkDir(src, ".", func(path string, d fs.DirEntry, err error) error {

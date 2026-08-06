@@ -1,6 +1,7 @@
 // Package tools — vibe.go: the VIBE namespace (4 tools).
 //
 // Per RFC §5 / D-9:
+//
 //	dark_memory_vibe_publish
 //	dark_memory_vibe_spec
 //	dark_memory_pipeline_status
@@ -33,9 +34,9 @@ import (
 // this task blocks on (plus "ext:..." refs); Owner is the optional
 // operator alias responsible for the task.
 var vibeSpecTaskSchema = map[string]any{
-	"type": "object",
+	"type":                 "object",
 	"additionalProperties": false,
-	"required": []string{"id", "description"},
+	"required":             []string{"id", "description"},
 	"properties": map[string]any{
 		"id":          map[string]any{"type": "string", "minLength": 1},
 		"description": map[string]any{"type": "string", "minLength": 1},
@@ -68,8 +69,8 @@ func RegisterVibe(reg *Registry, orch *orchestration.Orchestrator, st store.Stor
 			"required": []string{"artifact", "spec"},
 			"properties": map[string]any{
 				"spec": map[string]any{
-					"type":     "object",
-					"required": []string{"vibe_case"},
+					"type":                 "object",
+					"required":             []string{"vibe_case"},
 					"additionalProperties": false,
 					"properties": map[string]any{
 						"vibe_case": map[string]any{
@@ -82,14 +83,14 @@ func RegisterVibe(reg *Registry, orch *orchestration.Orchestrator, st store.Stor
 						"constitution": map[string]any{"type": "string", "description": "Optional JSON constitution blob."},
 						"spec":         map[string]any{"type": "string", "description": "Optional JSON intent blob."},
 						"tasks": map[string]any{
-							"type":  "string",
+							"type":        "string",
 							"description": "Optional JSON-encoded array of VibeSpecTask objects. Pass the array as a JSON string; see vibe_spec for the structured form.",
 						},
 					},
 				},
 				"artifact": map[string]any{
-					"type":     "object",
-					"required": []string{"artifact_url", "artifact_type"},
+					"type":                 "object",
+					"required":             []string{"artifact_url", "artifact_type"},
 					"additionalProperties": false,
 					"properties": map[string]any{
 						"artifact_url":   map[string]any{"type": "string"},
@@ -128,8 +129,8 @@ func RegisterVibe(reg *Registry, orch *orchestration.Orchestrator, st store.Stor
 	reg.Add(BindOrchestrator("vibe_spec",
 		"Create a new spec with structured task validation (unique ids, no cycles, depends_on consistency).",
 		MustJSONSchema(map[string]any{
-			"type":     "object",
-			"required": []string{"vibe_case", "tasks"},
+			"type":                 "object",
+			"required":             []string{"vibe_case", "tasks"},
 			"additionalProperties": false,
 			"properties": map[string]any{
 				// v1.4.1: vibe_spec now enforces the same C1..C7
@@ -183,13 +184,13 @@ func RegisterVibe(reg *Registry, orch *orchestration.Orchestrator, st store.Stor
 			}
 			if d != nil {
 				return &PipelineStatusResult{
-					ArtifactID:  in.ArtifactID,
-					HasDrift:    true,
-					DriftID:     d.ID,
-					Verdict:     d.Verdict,
-					SpecDiff:    d.SpecDiff,
+					ArtifactID:   in.ArtifactID,
+					HasDrift:     true,
+					DriftID:      d.ID,
+					Verdict:      d.Verdict,
+					SpecDiff:     d.SpecDiff,
 					ReconciledAt: d.ReconciledAt,
-					CreatedAt:   d.CreatedAt,
+					CreatedAt:    d.CreatedAt,
 				}, nil
 			}
 			// Local miss. If a federation peer is configured, attempt
@@ -234,13 +235,13 @@ type PipelineStatusInput struct {
 
 // PipelineStatusResult is the output for pipeline_status.
 type PipelineStatusResult struct {
-	ArtifactID         int64  `json:"artifact_id"`
-	HasDrift           bool   `json:"has_drift"`
-	DriftID            int64  `json:"drift_id,omitempty"`
-	Verdict            string `json:"verdict,omitempty"`
-	SpecDiff           string `json:"spec_diff,omitempty"`
-	ReconciledAt       string `json:"reconciled_at,omitempty"`
-	CreatedAt          string `json:"created_at,omitempty"`
+	ArtifactID   int64  `json:"artifact_id"`
+	HasDrift     bool   `json:"has_drift"`
+	DriftID      int64  `json:"drift_id,omitempty"`
+	Verdict      string `json:"verdict,omitempty"`
+	SpecDiff     string `json:"spec_diff,omitempty"`
+	ReconciledAt string `json:"reconciled_at,omitempty"`
+	CreatedAt    string `json:"created_at,omitempty"`
 	// CrossNamespaceHint is populated ONLY when (a) no local drift was
 	// found, AND (b) a federation peer is configured, AND (c) the peer
 	// reports the artifact exists. It is a metadata-only signal: no peer

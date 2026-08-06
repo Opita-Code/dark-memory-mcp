@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	_ "modernc.org/sqlite"
 	"github.com/dark-agents/dark-memory-mcp/internal/migrate"
 	migratesqlite "github.com/dark-agents/dark-memory-mcp/internal/migrate/sqlite"
+	_ "modernc.org/sqlite"
 )
 
 // TestMigrate_V24EntitiesTable exercises v24 (PR-3 of v2.9.0

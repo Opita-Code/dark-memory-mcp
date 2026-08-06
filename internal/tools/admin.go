@@ -1,6 +1,7 @@
 // Package tools — admin.go: the ADMIN namespace (3 tools).
 //
 // Per RFC §5 / D-9:
+//
 //	dark_memory_admin_migrate
 //	dark_memory_admin_schema_status
 //	dark_memory_admin_vacuum
@@ -117,9 +118,9 @@ type AdminMigrateResult struct {
 
 // AdminSchemaStatusResult is the output for admin_schema_status.
 type AdminSchemaStatusResult struct {
-	Driver        string                 `json:"driver"`
-	SchemaVersion int                    `json:"schema_version"`
-	Tables        []string               `json:"tables"`
+	Driver        string                  `json:"driver"`
+	SchemaVersion int                     `json:"schema_version"`
+	Tables        []string                `json:"tables"`
 	Migrations    []store.MigrationStatus `json:"migrations"`
 }
 

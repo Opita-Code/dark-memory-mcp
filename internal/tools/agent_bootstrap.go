@@ -113,11 +113,11 @@ type CompanionRecommendation struct {
 // auto-install (non-invasive contract), and the spec version is
 // inferred from where the clientInfo arrived (not authoritative).
 type RecommendCompanionsOutput struct {
-	Harness           HarnessInfo              `json:"harness"`
-	CompanionsPresent []string                 `json:"companions_present"`
-	CompanionsMissing []string                 `json:"companions_missing"`
+	Harness           HarnessInfo               `json:"harness"`
+	CompanionsPresent []string                  `json:"companions_present"`
+	CompanionsMissing []string                  `json:"companions_missing"`
 	Recommendations   []CompanionRecommendation `json:"recommendations"`
-	Limitations       []string                 `json:"limitations"`
+	Limitations       []string                  `json:"limitations"`
 }
 
 // ---------------------------------------------------------------------------

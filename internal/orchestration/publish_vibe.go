@@ -58,12 +58,12 @@ type PublishSpecInput struct {
 // DARK_MEMORY_V280=1) triggers a kind=decision agent_memory row when
 // drift_judge verdict=aligned. Set false to suppress per-call.
 type PublishArtifactInput struct {
-	ArtifactType string `json:"artifact_type"`            // code|text|image|video|audio|multi
-	ArtifactURL  string `json:"artifact_url"`             // where it lives
-	Text         string `json:"text,omitempty"`           // body, for judges
-	BrandID      string `json:"brand_id,omitempty"`       // triggers brand_match if set
-	Jurisdiction string `json:"jurisdiction,omitempty"`   // triggers compliance_check if set
-	HasDisclosure bool  `json:"has_disclosure,omitempty"` // EU AI Act flag for synthetic media
+	ArtifactType  string `json:"artifact_type"`            // code|text|image|video|audio|multi
+	ArtifactURL   string `json:"artifact_url"`             // where it lives
+	Text          string `json:"text,omitempty"`           // body, for judges
+	BrandID       string `json:"brand_id,omitempty"`       // triggers brand_match if set
+	Jurisdiction  string `json:"jurisdiction,omitempty"`   // triggers compliance_check if set
+	HasDisclosure bool   `json:"has_disclosure,omitempty"` // EU AI Act flag for synthetic media
 	// AutoSaveDecision (v2.8.0-alpha A1) — when true (default when
 	// DARK_MEMORY_V280=1) AND verdict=aligned, auto-create a
 	// kind=decision agent_memory row tagged with the spec id. Set
@@ -75,14 +75,14 @@ type PublishArtifactInput struct {
 // PublishVibeInput is the full request to publish one artifact under
 // one spec.
 type PublishVibeInput struct {
-	Spec           PublishSpecInput     `json:"spec"`
-	Artifact       PublishArtifactInput `json:"artifact"`
+	Spec     PublishSpecInput     `json:"spec"`
+	Artifact PublishArtifactInput `json:"artifact"`
 	// AutoDriftCheck: pointer so we can distinguish "unset" (default
 	// true — run drift_judge) from "explicitly false" (skip). The
 	// bool zero value would otherwise default to false and surprise
 	// callers who don't set the field.
-	AutoDriftCheck *bool                `json:"auto_drift_check,omitempty"`
-	SessionID      string               `json:"session_id,omitempty"` // recorded on the artifact for INV-2
+	AutoDriftCheck *bool  `json:"auto_drift_check,omitempty"`
+	SessionID      string `json:"session_id,omitempty"` // recorded on the artifact for INV-2
 	// AgentID (v2.4.1) is the Mem0 agent_id (LLM identity) that
 	// owns this artifact. Optional; resolved with priority
 	// (caller input > projects.default_agent_id > ""). When set,
@@ -102,10 +102,10 @@ type PublishResult struct {
 	DriftID          int64   `json:"drift_id,omitempty"`
 	BrandEvalID      int64   `json:"brand_eval_id,omitempty"`
 	ComplianceEvalID int64   `json:"compliance_eval_id,omitempty"`
-	Verdict          string  `json:"verdict"`        // aligned | drift_detected | needs_human | skipped
-	Confidence       float32 `json:"confidence"`     // 0..1; 0 if skipped or no-LLM
-	NextAction       string  `json:"next_action"`    // publish | reconcile | human_gate
-	Reasoning        string  `json:"reasoning"`      // human-readable explanation
+	Verdict          string  `json:"verdict"`     // aligned | drift_detected | needs_human | skipped
+	Confidence       float32 `json:"confidence"`  // 0..1; 0 if skipped or no-LLM
+	NextAction       string  `json:"next_action"` // publish | reconcile | human_gate
+	Reasoning        string  `json:"reasoning"`   // human-readable explanation
 	// ActiveAgentID (v2.4.1) echoes the resolved agent_id used for
 	// drift_judge enrichment. Empty when no agent_id is configured.
 	ActiveAgentID string `json:"active_agent_id,omitempty"`
@@ -401,13 +401,13 @@ func (o *Orchestrator) autoSaveDecisionOnAligned(
 	}
 
 	saveInput := AgentMemorySaveInput{
-		Operator:  operator,
-		AgentID:   activeAgentID,
-		Kind:      agentmemory.KindDecision,
-		Title:     fmt.Sprintf("Decision from spec %d", specID),
-		Content:   content,
-		Tags:      tags,
-		Pinned:    true,
+		Operator: operator,
+		AgentID:  activeAgentID,
+		Kind:     agentmemory.KindDecision,
+		Title:    fmt.Sprintf("Decision from spec %d", specID),
+		Content:  content,
+		Tags:     tags,
+		Pinned:   true,
 	}
 	out, err := o.AgentMemorySave(ctx, saveInput)
 	if err != nil {

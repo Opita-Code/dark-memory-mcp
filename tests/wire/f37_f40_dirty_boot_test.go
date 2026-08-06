@@ -131,11 +131,11 @@ func startWireSessionAt(t *testing.T, dbPath string) *wireSession {
 
 // seedDirtyDB creates a DB that emulates the post-v1.2.2 dark.db
 // state:
-//   * v1-v7 migrations recorded in schema_migrations
-//   * sessions, projects, v5+, v6+ tables PHYSICALLY ABSENT (F38
+//   - v1-v7 migrations recorded in schema_migrations
+//   - sessions, projects, v5+, v6+ tables PHYSICALLY ABSENT (F38
 //     must materialise them)
-//   * Triggers referencing vec0 (F39 orphan tolerance)
-//   * v8 partially applied: project_id column on write_audit
+//   - Triggers referencing vec0 (F39 orphan tolerance)
+//   - v8 partially applied: project_id column on write_audit
 //     exists, but the recording row was not added — F37 must
 //     tolerate the duplicate-column error if/when v8 applies.
 func seedDirtyDB(t *testing.T, dbPath string) {

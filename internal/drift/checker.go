@@ -134,10 +134,10 @@ func NewChecker(st store.Store, judge JudgeCaller, strictness Strictness) *Check
 //   - "drift_detected" — drift_judge reports drift_detected
 //   - "needs_human"    — drift_judge reports needs_human
 //   - "skipped"        — StrictnessOff OR no spec OR no LLM OR
-//                        canary rejection. Verdict carries the
-//                        skip reason in Reasoning.
+//     canary rejection. Verdict carries the
+//     skip reason in Reasoning.
 //   - "errored"        — judge call returned a non-recoverable error
-//                        (network, parse, internal).
+//     (network, parse, internal).
 //
 // The CheckArtifact caller (policy.PostCheck) decides whether to
 // refuse the save based on the Decision + Strictness pair.

@@ -40,26 +40,26 @@ type SessionRecoverInput struct {
 // "should I resurrect this?" operator UI. Heavy fields (ActiveMods,
 // Notes) are truncated / omitted.
 type FramePreview struct {
-	SessionID         string    `json:"session_id"`
-	Status            string    `json:"status"` // always "closed_aborted" if returned
-	Operator          string    `json:"operator"`
-	ConstitutionID    string    `json:"constitution_id,omitempty"`
-	ConstitutionVer   string    `json:"constitution_ver,omitempty"`
-	StartedAt         time.Time `json:"started_at"`
-	ClosedAt          time.Time `json:"closed_at"`
-	ResurrectedFrom   string    `json:"resurrected_from,omitempty"`
-	ParentSessionID   string    `json:"parent_session_id,omitempty"`
+	SessionID       string    `json:"session_id"`
+	Status          string    `json:"status"` // always "closed_aborted" if returned
+	Operator        string    `json:"operator"`
+	ConstitutionID  string    `json:"constitution_id,omitempty"`
+	ConstitutionVer string    `json:"constitution_ver,omitempty"`
+	StartedAt       time.Time `json:"started_at"`
+	ClosedAt        time.Time `json:"closed_at"`
+	ResurrectedFrom string    `json:"resurrected_from,omitempty"`
+	ParentSessionID string    `json:"parent_session_id,omitempty"`
 }
 
 // SessionRecoverOutput is the read-only detection result. Found=false
 // when no closed_aborted session exists for the operator within
 // lookback; RecoveredFrom then is nil + RequiresConsent=false.
 type SessionRecoverOutput struct {
-	Found            bool         `json:"found"`
-	Candidate        *session.Session `json:"candidate,omitempty"`
-	Preview          *FramePreview `json:"preview,omitempty"`
-	RequiresConsent  bool         `json:"requires_consent"` // always true when Found=true
-	LookbackApplied  string       `json:"lookback_applied"`
+	Found           bool             `json:"found"`
+	Candidate       *session.Session `json:"candidate,omitempty"`
+	Preview         *FramePreview    `json:"preview,omitempty"`
+	RequiresConsent bool             `json:"requires_consent"` // always true when Found=true
+	LookbackApplied string           `json:"lookback_applied"`
 }
 
 // SessionRecover detects the most-recent closed_aborted session for
@@ -94,11 +94,11 @@ func (o *Orchestrator) SessionRecover(ctx context.Context, in SessionRecoverInpu
 	}
 	if candidate == nil {
 		return &SessionRecoverOutput{
-			Found:            false,
-			Candidate:        nil,
-			Preview:          nil,
-			RequiresConsent:  false,
-			LookbackApplied:  lookback,
+			Found:           false,
+			Candidate:       nil,
+			Preview:         nil,
+			RequiresConsent: false,
+			LookbackApplied: lookback,
 		}, nil
 	}
 
@@ -119,11 +119,11 @@ func (o *Orchestrator) SessionRecover(ctx context.Context, in SessionRecoverInpu
 	}
 
 	return &SessionRecoverOutput{
-		Found:            true,
-		Candidate:        candidate,
-		Preview:          preview,
-		RequiresConsent:  true, // resurrection always requires explicit consent
-		LookbackApplied:  lookback,
+		Found:           true,
+		Candidate:       candidate,
+		Preview:         preview,
+		RequiresConsent: true, // resurrection always requires explicit consent
+		LookbackApplied: lookback,
 	}, nil
 }
 

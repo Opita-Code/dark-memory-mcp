@@ -12,10 +12,10 @@ func TestPersonaFrame_HappyPath(t *testing.T) {
 		"dark-agents/dark-memory-mcp-cerebro", // constitution_id
 		"1.0.0",                               // constitution_ver
 		"brand-pivote",                        // brand_id
-		"Technical, precise, defensive-by-default. Never performative.", // voice
+		"Technical, precise, defensive-by-default. Never performative.",                                                                           // voice
 		"Claims allowed: codebase state, audit findings, drift verdict. Claims NOT allowed: predictions, identity leakage, hallucinated CVE IDs.", // claims_policy
-		`{"refuse_if_off_scope":true}`,        // refusal_pattern
-		"technical",                          // tone
+		`{"refuse_if_off_scope":true}`, // refusal_pattern
+		"technical",                    // tone
 	)
 	if err != nil {
 		t.Fatalf("NewPersonaFrame: %v", err)

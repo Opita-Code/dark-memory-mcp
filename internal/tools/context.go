@@ -1,6 +1,7 @@
 // Package tools — context.go: the CONTEXT namespace (3 tools).
 //
 // Per RFC §5 / D-9:
+//
 //	dark_memory_artifact_context
 //	dark_memory_spec_context
 //	dark_memory_session_context
@@ -101,16 +102,16 @@ type ArtifactContextInput struct {
 
 // ArtifactContextResult is the context projection of an artifact.
 type ArtifactContextResult struct {
-	ArtifactID      int64  `json:"artifact_id"`
-	ArtifactURL     string `json:"artifact_url"`
-	ArtifactType    string `json:"artifact_type"`
-	SpecID          int64  `json:"spec_id"`
-	BrandID         string `json:"brand_id,omitempty"`
-	Jurisdiction    string `json:"jurisdiction,omitempty"`
-	HasDisclosure   bool   `json:"has_disclosure"`
+	ArtifactID       int64  `json:"artifact_id"`
+	ArtifactURL      string `json:"artifact_url"`
+	ArtifactType     string `json:"artifact_type"`
+	SpecID           int64  `json:"spec_id"`
+	BrandID          string `json:"brand_id,omitempty"`
+	Jurisdiction     string `json:"jurisdiction,omitempty"`
+	HasDisclosure    bool   `json:"has_disclosure"`
 	ValidationStatus string `json:"validation_status"`
-	SessionID       string `json:"session_id,omitempty"`
-	CreatedAt       string `json:"created_at"`
+	SessionID        string `json:"session_id,omitempty"`
+	CreatedAt        string `json:"created_at"`
 }
 
 func artifactContextFromRow(a *vibeflow.Artifact) *ArtifactContextResult {
@@ -138,12 +139,12 @@ type SpecContextInput struct {
 // callers wanting the full intent should use vibe_spec → orchestrator
 // VibeSpec → GetSpec.
 type SpecContextResult struct {
-	SpecID         int64  `json:"spec_id"`
-	VibeCase       string `json:"vibe_case"`
-	Constitution   string `json:"constitution,omitempty"`
-	IntentPreview  string `json:"intent_preview,omitempty"` // first 500 chars of spec.Spec
-	TaskCount      int    `json:"task_count"`
-	CreatedAt      string `json:"created_at"`
+	SpecID        int64  `json:"spec_id"`
+	VibeCase      string `json:"vibe_case"`
+	Constitution  string `json:"constitution,omitempty"`
+	IntentPreview string `json:"intent_preview,omitempty"` // first 500 chars of spec.Spec
+	TaskCount     int    `json:"task_count"`
+	CreatedAt     string `json:"created_at"`
 }
 
 func specContextFromRow(sp *vibeflow.Spec) *SpecContextResult {

@@ -40,8 +40,8 @@ import (
 // required; Capabilities drives REFUSE decisions in later
 // iterations (e.g. C3 image needs an image-generator grant).
 type RouterInput struct {
-	Case        vibecase.Case
-	Task        string
+	Case vibecase.Case
+	Task string
 	// GrantedTools is the set of tool names the session can call
 	// (CapabilitiesFrame). Empty in the MVP = "capabilities
 	// unknown" → the router must not REFUSE based on missing

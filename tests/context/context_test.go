@@ -23,11 +23,11 @@ import (
 func openTestStore(t *testing.T) store.Store {
 	t.Helper()
 	cfg := store.Config{
-		Driver:       store.DriverSQLite,
-		DSN:          filepath.Join(t.TempDir(), "test.db"),
-		WALMode:      true,
-		ForeignKeys:  true,
-		BusyTimeout:  5 * time.Second,
+		Driver:      store.DriverSQLite,
+		DSN:         filepath.Join(t.TempDir(), "test.db"),
+		WALMode:     true,
+		ForeignKeys: true,
+		BusyTimeout: 5 * time.Second,
 	}
 	s, err := runtime.Open(context.Background(), cfg)
 	if err != nil {
@@ -247,10 +247,10 @@ func TestComposePolicy_Defaults(t *testing.T) {
 func TestRenderSpecMarkdown_Deterministic(t *testing.T) {
 	now := "2026-07-14T20:00:00Z"
 	sp := &vibeflow.Spec{
-		ID:        42,
-		VibeCase:  "C1",
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:           42,
+		VibeCase:     "C1",
+		CreatedAt:    now,
+		UpdatedAt:    now,
 		Constitution: `{"k":"v"}`,
 		Spec:         `{"what":"x"}`,
 		Tasks:        `[{"id":"1","description":"d"}]`,

@@ -1,8 +1,8 @@
 // Package migrate is the versioned schema migrator for Dark Memory MCP.
 // Two driver implementations live in:
 //
-//   internal/migrate/sqlite    — DDL for SQLite (uses INTEGER PRIMARY KEY AUTOINCREMENT)
-//   internal/migrate/postgres  — DDL for Postgres (uses BIGSERIAL / SERIAL)
+//	internal/migrate/sqlite    — DDL for SQLite (uses INTEGER PRIMARY KEY AUTOINCREMENT)
+//	internal/migrate/postgres  — DDL for Postgres (uses BIGSERIAL / SERIAL)
 //
 // Both driver packages export the same Migration slice and a Migrate(db)
 // function. The Store implementations call into the right driver based
@@ -12,8 +12,8 @@
 //   - Version (monotonically increasing, starting at 1)
 //   - Name    (human-readable)
 //   - Up      (idempotent SQL — every statement uses IF NOT EXISTS /
-//              IF EXISTS so re-running is safe even outside the
-//              bookkeeping table)
+//     IF EXISTS so re-running is safe even outside the
+//     bookkeeping table)
 //
 // The bookkeeping table (schema_migrations) tracks which versions have
 // been applied. Migrate() applies every pending migration in its own

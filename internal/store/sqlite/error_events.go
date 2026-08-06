@@ -179,13 +179,13 @@ func (s *Store) SaveErrorEvent(ctx context.Context, e *errorobs.ErrorEvent) erro
 		}
 		// INV-1: audit the new cluster atomically with the insert.
 		if err := s.recordWriteLockedTx(ctx, tx, audit.WriteEvent{
-			TableName:  "error_events",
-			RowID:      id,
-			ProjectID:  projectID,
-			Actor:      "error_observatory",
-			SessionID:  e.SessionID,
-			WritePath:  "SaveErrorEvent",
-			CreatedAt:  now,
+			TableName: "error_events",
+			RowID:     id,
+			ProjectID: projectID,
+			Actor:     "error_observatory",
+			SessionID: e.SessionID,
+			WritePath: "SaveErrorEvent",
+			CreatedAt: now,
 		}, ""); err != nil {
 			return fmt.Errorf("error_events: audit: %w", err)
 		}

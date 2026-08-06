@@ -121,9 +121,9 @@ Use "needs_human" ONLY if the task itself is sensitive/safety-adjacent and a sub
 // LLM synthesizes a task-specific system_prompt inspired by the
 // category's "over-qualification direction".
 var MetaCategories = []struct {
-	Key     string
+	Key      string
 	VibeCase string // "" = any
-	Hint    string
+	Hint     string
 }{
 	{
 		Key:      "c1/security-review",

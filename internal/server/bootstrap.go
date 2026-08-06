@@ -121,11 +121,11 @@ type Config struct {
 // around the server without re-wrapping.
 func (c *Config) StoreConfig() store.Config {
 	return store.Config{
-		Driver:          store.Driver(c.DBDriver),
-		DSN:             c.DBDSN,
+		Driver:           store.Driver(c.DBDriver),
+		DSN:              c.DBDSN,
 		ConstitutionFile: c.ConstitutionFile,
-		ConstitutionID:  c.ConstitutionID,
-		ConstitutionVer: c.ConstitutionVer,
+		ConstitutionID:   c.ConstitutionID,
+		ConstitutionVer:  c.ConstitutionVer,
 	}
 }
 
@@ -183,7 +183,7 @@ func LoadConfig() (*Config, error) {
 		_ = applied // discovery is logged by resolveBuiltinConstitution
 	}
 
-switch cfg.DBDriver {
+	switch cfg.DBDriver {
 	case "sqlite", "postgres":
 		// ok
 	default:

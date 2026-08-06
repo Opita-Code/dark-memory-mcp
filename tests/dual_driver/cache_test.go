@@ -1,8 +1,8 @@
 // Package dual_driver_test — cache_test.go: dual-driver contract
 // tests for CachedSource (Wave 5A.ii.b.2.b). Verifies:
-//   1. Identity + Capabilities cache round-trip.
-//   2. INV-5 hash mismatch triggers recompose + cache_mismatch audit.
-//   3. Safety threading to IdentityFrame.CanaryActive.
+//  1. Identity + Capabilities cache round-trip.
+//  2. INV-5 hash mismatch triggers recompose + cache_mismatch audit.
+//  3. Safety threading to IdentityFrame.CanaryActive.
 //
 // # 5A.ii.b.2.b scope
 // Only Identity + Capabilities are cached. Scope/Drift/Persona

@@ -1,6 +1,7 @@
 // Package tools — judge.go: the JUDGE namespace (3 tools).
 //
 // Per RFC §5 / D-9:
+//
 //	dark_memory_judge
 //	dark_memory_consensus
 //	dark_memory_judgment_history

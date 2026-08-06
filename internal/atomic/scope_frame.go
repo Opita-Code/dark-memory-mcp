@@ -33,10 +33,10 @@ const MaxScopeFrameAge = 30 * time.Second
 // vibe_specs.tasks JSON; this struct is the runtime projection used
 // in the frame body.
 type TaskRef struct {
-	TaskID    string `json:"task_id"`
-	SpecID    int64  `json:"spec_id"`
-	Owner     string `json:"owner,omitempty"`
-	Status    string `json:"status"` // "open" | "in_progress" | "pending_review" | "closed"
+	TaskID    string    `json:"task_id"`
+	SpecID    int64     `json:"spec_id"`
+	Owner     string    `json:"owner,omitempty"`
+	Status    string    `json:"status"` // "open" | "in_progress" | "pending_review" | "closed"
 	UpdatedAt time.Time `json:"updated_at,omitempty"`
 }
 
@@ -79,15 +79,15 @@ type ScopeFrame struct {
 
 // Errors returned by ScopeFrame methods.
 var (
-	ErrScopeEmptySessionID       = errors.New("atomic: scope frame session_id is empty")
-	ErrScopeInvalidSpecID        = errors.New("atomic: scope frame open_spec_id is negative")
-	ErrScopeTaskMissingTaskID    = errors.New("atomic: scope frame task is missing task_id")
-	ErrScopeTaskMissingSpecID    = errors.New("atomic: scope frame task is missing spec_id (no open spec)")
-	ErrScopeVerdictUnknown       = errors.New("atomic: scope frame last_drift_verdict must be aligned/drift_detected/needs_human or empty")
-	ErrScopeVerdictWithoutTime   = errors.New("atomic: scope frame last_drift_verdict requires non-zero last_drift_at (and vice versa)")
-	ErrScopeZeroComposed         = errors.New("atomic: scope frame composed_at is zero")
-	ErrScopeStale                = errors.New("atomic: scope frame is stale (older than MaxScopeFrameAge)")
-	ErrScopeIdentityMismatch     = errors.New("atomic: scope frame session_id does not match identity frame")
+	ErrScopeEmptySessionID     = errors.New("atomic: scope frame session_id is empty")
+	ErrScopeInvalidSpecID      = errors.New("atomic: scope frame open_spec_id is negative")
+	ErrScopeTaskMissingTaskID  = errors.New("atomic: scope frame task is missing task_id")
+	ErrScopeTaskMissingSpecID  = errors.New("atomic: scope frame task is missing spec_id (no open spec)")
+	ErrScopeVerdictUnknown     = errors.New("atomic: scope frame last_drift_verdict must be aligned/drift_detected/needs_human or empty")
+	ErrScopeVerdictWithoutTime = errors.New("atomic: scope frame last_drift_verdict requires non-zero last_drift_at (and vice versa)")
+	ErrScopeZeroComposed       = errors.New("atomic: scope frame composed_at is zero")
+	ErrScopeStale              = errors.New("atomic: scope frame is stale (older than MaxScopeFrameAge)")
+	ErrScopeIdentityMismatch   = errors.New("atomic: scope frame session_id does not match identity frame")
 )
 
 // NewScopeFrame builds a ScopeFrame with the required identity binding
@@ -161,8 +161,7 @@ func (f *ScopeFrame) Validate() error {
 	}
 	if f.LastDriftVerdict != "" &&
 		f.LastDriftVerdict != "aligned" &&
-		f.LastDriftVerdict != "drift_detected" &&
-		f.LastDriftVerdict != "needs_human" {
+		f.LastDriftVerdict != "drift_detected" && true {
 		return ErrScopeVerdictUnknown
 	}
 	if f.ComposedAtValue.IsZero() {

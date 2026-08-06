@@ -39,17 +39,17 @@ const (
 // Driver-specific options (BusyTimeout, MaxOpenConns, etc.) are best-effort
 // — unknown keys are ignored.
 type Config struct {
-	Driver           Driver
-	DSN              string        // file path for sqlite, URL for postgres
-	MaxOpenConns     int           // postgres only
-	MaxIdleConns     int           // postgres only
-	ConnMaxLifetime  time.Duration // postgres only
-	BusyTimeout      time.Duration // sqlite only
-	WALMode          bool          // sqlite only, default true
-	ForeignKeys      bool          // sqlite only, default true
-	ConstitutionID   string        // active constitution id; written to write_audit
-	ConstitutionVer  string        // active constitution version
-	Operator         string        // who is running this process
+	Driver          Driver
+	DSN             string        // file path for sqlite, URL for postgres
+	MaxOpenConns    int           // postgres only
+	MaxIdleConns    int           // postgres only
+	ConnMaxLifetime time.Duration // postgres only
+	BusyTimeout     time.Duration // sqlite only
+	WALMode         bool          // sqlite only, default true
+	ForeignKeys     bool          // sqlite only, default true
+	ConstitutionID  string        // active constitution id; written to write_audit
+	ConstitutionVer string        // active constitution version
+	Operator        string        // who is running this process
 
 	// ConstitutionFile is the path to the constitution TOML. When set,
 	// Store.Open hashes the file and verifies it against the stored
@@ -112,18 +112,18 @@ type MigrationStatus struct {
 // Typed errors that callers branch on. Implementations return these
 // verbatim (errors.Is matches). Never masquerade as 200 OK.
 var (
-	ErrDriverMismatch     = errors.New("store: driver does not support this operation")
-	ErrVersionMismatch    = errors.New("store: schema version incompatible with call")
-	ErrNotConfigured      = errors.New("store: required dependency not configured")
-	ErrConstitutionDrift  = errors.New("store: constitution file SHA256 drifted from stored value")
-	ErrCanaryInPayload    = errors.New("store: payload contains active canary token (likely extraction attempt)")
-	ErrModContentRefused  = errors.New("store: mod content sanitization refused load")
-	ErrSessionRequired    = errors.New("store: workflow tool requires an active session")
-	ErrArmedRequired      = errors.New("store: red-team tool requires DARK_REDTEAM=armed")
-	ErrAlreadyExists      = errors.New("store: row already exists")
-	ErrNotFound           = errors.New("store: row not found")
-	ErrProjectNotFound    = errors.New("store: project not found")
-	ErrInvalidArgument    = errors.New("store: invalid argument")
+	ErrDriverMismatch    = errors.New("store: driver does not support this operation")
+	ErrVersionMismatch   = errors.New("store: schema version incompatible with call")
+	ErrNotConfigured     = errors.New("store: required dependency not configured")
+	ErrConstitutionDrift = errors.New("store: constitution file SHA256 drifted from stored value")
+	ErrCanaryInPayload   = errors.New("store: payload contains active canary token (likely extraction attempt)")
+	ErrModContentRefused = errors.New("store: mod content sanitization refused load")
+	ErrSessionRequired   = errors.New("store: workflow tool requires an active session")
+	ErrArmedRequired     = errors.New("store: red-team tool requires DARK_REDTEAM=armed")
+	ErrAlreadyExists     = errors.New("store: row already exists")
+	ErrNotFound          = errors.New("store: row not found")
+	ErrProjectNotFound   = errors.New("store: project not found")
+	ErrInvalidArgument   = errors.New("store: invalid argument")
 	// ErrCrossProjectAccess is returned by GetAgentMemory when the
 	// requested id exists in a different project than the active one
 	// (INV-7). Distinct from ErrNotFound: the row exists, but the
@@ -140,7 +140,7 @@ var (
 	// current state (e.g. resolving a drift that was already
 	// reconciled). Distinct from ErrAlreadyExists (which is about
 	// row creation) and ErrNotFound (which is about row absence).
-	ErrInvalidState       = errors.New("store: invalid state for requested operation")
+	ErrInvalidState = errors.New("store: invalid state for requested operation")
 )
 
 // FieldError carries the offending JSON field name AND the sentinel
@@ -740,21 +740,22 @@ type Store interface {
 // ActiveSubagent is one row in `active_subagents` (migration v21).
 //
 // Schema:
-//   project_id       TEXT NOT NULL
-//     INV-7 tenant scope.
-//   operator         TEXT NOT NULL
-//     INV-1 audit identity. Subagent bindings are per-operator so
-//     two operators spawning subagents in parallel don't collide.
-//   subagent_id      TEXT NOT NULL
-//     Opaque uuid the principal generates when spawning. The
-//     subagent's writes will be tagged with this as agent_id.
-//   parent_agent_id  TEXT NOT NULL
-//     The principal's resolved agent_id at spawn time (for
-//     audit + write_audit provenance).
-//   spawned_at       TEXT NOT NULL
-//     RFC3339Nano timestamp of registration. Used for TTL math.
-//   ttl_seconds      INTEGER NOT NULL DEFAULT 3600
-//     Default 1h. Clamp [60, 86400] (1m..24h) at orchestrator.
+//
+//	project_id       TEXT NOT NULL
+//	  INV-7 tenant scope.
+//	operator         TEXT NOT NULL
+//	  INV-1 audit identity. Subagent bindings are per-operator so
+//	  two operators spawning subagents in parallel don't collide.
+//	subagent_id      TEXT NOT NULL
+//	  Opaque uuid the principal generates when spawning. The
+//	  subagent's writes will be tagged with this as agent_id.
+//	parent_agent_id  TEXT NOT NULL
+//	  The principal's resolved agent_id at spawn time (for
+//	  audit + write_audit provenance).
+//	spawned_at       TEXT NOT NULL
+//	  RFC3339Nano timestamp of registration. Used for TTL math.
+//	ttl_seconds      INTEGER NOT NULL DEFAULT 3600
+//	  Default 1h. Clamp [60, 86400] (1m..24h) at orchestrator.
 //
 // PRIMARY KEY (project_id, operator, subagent_id).
 type ActiveSubagent struct {
@@ -832,12 +833,12 @@ type FrameListFilters struct {
 // INV-7: every write is tagged with the active project so cross-project
 // reads never see unrelated rows.
 type WriteContext struct {
-	Actor          string // "dark_research_spec_create" | "auto-link-v2" | operator id
-	SessionID      string // operational session id (matches session.Session.SessionID)
-	WritePath      string // method name on Store, or MCP tool name
-	ConstitutionID string // active constitution id
+	Actor           string // "dark_research_spec_create" | "auto-link-v2" | operator id
+	SessionID       string // operational session id (matches session.Session.SessionID)
+	WritePath       string // method name on Store, or MCP tool name
+	ConstitutionID  string // active constitution id
 	ConstitutionVer string
-	ProjectID      string // INV-7: must equal Store.ActiveProject() or be empty (Store fills)
+	ProjectID       string // INV-7: must equal Store.ActiveProject() or be empty (Store fills)
 
 	// SessionEvent is the v12 audit breadcrumb for session-related
 	// writes. Allowed values per internal/audit/types.go: NULL,

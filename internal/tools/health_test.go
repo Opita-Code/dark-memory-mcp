@@ -17,8 +17,8 @@ import (
 )
 
 // jsonMarshal is a tiny alias to keep the test imports clean.
-func jsonMarshal(v any) ([]byte, error)              { return json.Marshal(v) }
-func contains(s, substr string) bool                 { return strings.Contains(s, substr) }
+func jsonMarshal(v any) ([]byte, error) { return json.Marshal(v) }
+func contains(s, substr string) bool    { return strings.Contains(s, substr) }
 
 // TestRedactHomeInPath_Cases covers the platforms the operator
 // is most likely to run on. Each case asserts:

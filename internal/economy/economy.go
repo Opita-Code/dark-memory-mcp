@@ -5,11 +5,11 @@
 //
 // Pipeline stages (in order):
 //
-//   1. dedup         — same URL / content hash => one entry, keep highest confidence
-//   2. filter        — drop items below confidence threshold
-//   3. truncate      — cap each item's snippet / title to N chars
-//   4. compress      — prefer {title, short_summary, url} over full body
-//   5. cap           — total items bounded to N (top-by-confidence)
+//  1. dedup         — same URL / content hash => one entry, keep highest confidence
+//  2. filter        — drop items below confidence threshold
+//  3. truncate      — cap each item's snippet / title to N chars
+//  4. compress      — prefer {title, short_summary, url} over full body
+//  5. cap           — total items bounded to N (top-by-confidence)
 //
 // Defaults are tuned for a 200K-context model receiving prefill blocks:
 //   - FilterConfidence = 0.5
@@ -30,18 +30,18 @@ import (
 // Options controls the Atlan pipeline.
 type Options struct {
 	FilterConfidenceThreshold float32 // items with confidence < this are dropped (default 0.5)
-	TruncatePerItem            int     // max chars for snippet/title per item (default 500)
-	CapTotal                   int     // total items returned (default 10)
-	CompressBody               bool    // if true, replace raw body with title+summary (default true)
+	TruncatePerItem           int     // max chars for snippet/title per item (default 500)
+	CapTotal                  int     // total items returned (default 10)
+	CompressBody              bool    // if true, replace raw body with title+summary (default true)
 }
 
 // DefaultOptions returns the production-tuned defaults.
 func DefaultOptions() Options {
 	return Options{
 		FilterConfidenceThreshold: 0.5,
-		TruncatePerItem:            500,
-		CapTotal:                   10,
-		CompressBody:               true,
+		TruncatePerItem:           500,
+		CapTotal:                  10,
+		CompressBody:              true,
 	}
 }
 

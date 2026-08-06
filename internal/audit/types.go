@@ -21,20 +21,20 @@ package audit
 // 'close_clean', 'close_aborted', 'resurrect', 'recover'. NULL for
 // non-session writes (drift_log, artifact_log, spec_log, etc.).
 type WriteEvent struct {
-	ID                int64  `json:"id"`
-	TableName         string `json:"table_name"`         // research_items | vibe_specs | ...
-	RowID             int64  `json:"row_id"`             // the row just inserted/updated
-	ProjectID         string `json:"project_id"`         // INV-7 — from wc.ProjectID or ActiveProject()
-	Actor             string `json:"actor"`              // tool name, or operator, or "auto-link-v2"
-	SessionID         string `json:"session_id"`         // operational session
-	WritePath         string `json:"write_path"`         // "SaveRun" | "dark_research_spec_create" | ...
-	ContentSHA256     string `json:"content_sha256"`     // hash of the payload (or row snapshot)
-	CanaryPresent     bool   `json:"canary_present"`     // derived signal — payload contained active canary?
-	ConstitutionID    string `json:"constitution_id,omitempty"`
-	ConstitutionVer   string `json:"constitution_ver,omitempty"`
-	SessionEvent      string `json:"session_event,omitempty"` // v12; see const list in type doc above
-	Notes             string `json:"notes,omitempty"`
-	CreatedAt         string `json:"created_at"`
+	ID              int64  `json:"id"`
+	TableName       string `json:"table_name"`     // research_items | vibe_specs | ...
+	RowID           int64  `json:"row_id"`         // the row just inserted/updated
+	ProjectID       string `json:"project_id"`     // INV-7 — from wc.ProjectID or ActiveProject()
+	Actor           string `json:"actor"`          // tool name, or operator, or "auto-link-v2"
+	SessionID       string `json:"session_id"`     // operational session
+	WritePath       string `json:"write_path"`     // "SaveRun" | "dark_research_spec_create" | ...
+	ContentSHA256   string `json:"content_sha256"` // hash of the payload (or row snapshot)
+	CanaryPresent   bool   `json:"canary_present"` // derived signal — payload contained active canary?
+	ConstitutionID  string `json:"constitution_id,omitempty"`
+	ConstitutionVer string `json:"constitution_ver,omitempty"`
+	SessionEvent    string `json:"session_event,omitempty"` // v12; see const list in type doc above
+	Notes           string `json:"notes,omitempty"`
+	CreatedAt       string `json:"created_at"`
 }
 
 // ListFilters holds optional filters for ListWrites.

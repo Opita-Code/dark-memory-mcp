@@ -10,12 +10,12 @@ import (
 // passes Validate, hashes deterministically, and renders to canonical JSON.
 func TestIdentityFrame_HappyPath(t *testing.T) {
 	f, err := NewIdentityFrame(
-		"orchestrator_publish_vibe", // actor
-		"dark-agent",                 // operator
-		"sess-test-001",              // session_id
+		"orchestrator_publish_vibe",           // actor
+		"dark-agent",                          // operator
+		"sess-test-001",                       // session_id
 		"dark-agents/dark-memory-mcp-cerebro", // constitution_id
-		"1.0.0",                      // constitution_ver
-		true,                         // canary_active
+		"1.0.0",                               // constitution_ver
+		true,                                  // canary_active
 	)
 	if err != nil {
 		t.Fatalf("NewIdentityFrame: unexpected error: %v", err)

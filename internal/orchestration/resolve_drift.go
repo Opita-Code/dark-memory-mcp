@@ -44,10 +44,10 @@ const (
 
 // ResolveDriftInput is the request to resolve one drift.
 type ResolveDriftInput struct {
-	DriftID    int64                  `json:"drift_id"`
-	Decision   ResolveDriftDecision   `json:"decision"`
-	OperatorID string                 `json:"operator_id"` // who is resolving; recorded in drift
-	Note       string                 `json:"note,omitempty"`
+	DriftID    int64                `json:"drift_id"`
+	Decision   ResolveDriftDecision `json:"decision"`
+	OperatorID string               `json:"operator_id"` // who is resolving; recorded in drift
+	Note       string               `json:"note,omitempty"`
 }
 
 // ResolveDriftResult is the outcome of the resolution.

@@ -1,8 +1,8 @@
 // F36 wire-conformance test: dark_memory_vibe_spec must accept BOTH
 // shapes for `tasks`:
 //
-//   A. JSON array of task objects (preference)
-//   B. JSON-encoded string of an array (legacy dark_research_spec_create compat)
+//	A. JSON array of task objects (preference)
+//	B. JSON-encoded string of an array (legacy dark_research_spec_create compat)
 //
 // The harness (opencode + Vercel AI SDK + the LLM) decides which
 // shape goes on the wire. We can't force either, so we MUST accept
@@ -23,7 +23,7 @@ func TestWire_F36_VibeSpecAcceptsTasksAsArray(t *testing.T) {
 
 	// Establish a session (required for project-scoped writes).
 	if _, err := s.toolsCall("dark_memory_session_start", map[string]any{
-		"operator":  "wire-test",
+		"operator":   "wire-test",
 		"project_id": "default",
 	}); err != nil {
 		t.Fatalf("session_start: %v", err)
@@ -46,7 +46,7 @@ func TestWire_F36_VibeSpecAcceptsTasksAsArray(t *testing.T) {
 func TestWire_F36_VibeSpecAcceptsTasksAsStringifiedArray(t *testing.T) {
 	s := startWireSession(t)
 	if _, err := s.toolsCall("dark_memory_session_start", map[string]any{
-		"operator":  "wire-test",
+		"operator":   "wire-test",
 		"project_id": "default",
 	}); err != nil {
 		t.Fatalf("session_start: %v", err)

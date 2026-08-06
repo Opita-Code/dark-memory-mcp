@@ -52,11 +52,11 @@ func withEnv(t *testing.T, kv map[string]string, fn func()) {
 
 func TestNewSelfHarnessClient_LegacyScrapperURL_FallsThrough(t *testing.T) {
 	withEnv(t, map[string]string{
-		"DARK_SCRAPPER_URL":             "http://legacy-daemon.local:8901",
-		"DARK_DRIFT_JUDGE_DAEMON_URL":   "",
-		"ANTHROPIC_API_KEY":             "",
-		"OPENAI_API_KEY":                "",
-		"GEMINI_API_KEY":                "",
+		"DARK_SCRAPPER_URL":           "http://legacy-daemon.local:8901",
+		"DARK_DRIFT_JUDGE_DAEMON_URL": "",
+		"ANTHROPIC_API_KEY":           "",
+		"OPENAI_API_KEY":              "",
+		"GEMINI_API_KEY":              "",
 	}, func() {
 		c, err := NewSelfHarnessClient()
 		if err != nil {

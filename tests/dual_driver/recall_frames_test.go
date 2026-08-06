@@ -6,7 +6,7 @@
 // # 5A.ii.b.2.c scope
 // Tests:
 //   - PersonaFrame composition from constitution ParsedJSON
-//     + default fallback
+//   - default fallback
 //   - ScopeFrame composition from vlp_state
 //   - DriftFrame composition from sdd_evaluations
 //   - delta computation via ListWrites + SinceID
@@ -251,14 +251,14 @@ func TestDeltaComputationSinceID(t *testing.T) {
 	rowIDs := make([]int64, 0, 5)
 	for i := 0; i < 5; i++ {
 		if err := s.RecordWrite(ctx, audit.WriteEvent{
-			TableName:     "test_delta",
-			Actor:         "test",
-			SessionID:     sid,
-			WritePath:     "TestDelta",
-			ConstitutionID: "dark-agents/dark-memory-mcp-test",
+			TableName:       "test_delta",
+			Actor:           "test",
+			SessionID:       sid,
+			WritePath:       "TestDelta",
+			ConstitutionID:  "dark-agents/dark-memory-mcp-test",
 			ConstitutionVer: "1.0.0",
-			CreatedAt:     time.Now().UTC().Format(time.RFC3339Nano),
-			Notes:         fmt.Sprintf("event-%d", i),
+			CreatedAt:       time.Now().UTC().Format(time.RFC3339Nano),
+			Notes:           fmt.Sprintf("event-%d", i),
 		}); err != nil {
 			t.Fatalf("RecordWrite #%d: %v", i, err)
 		}

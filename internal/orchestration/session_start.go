@@ -160,12 +160,12 @@ func (o *Orchestrator) SessionStart(ctx context.Context, in SessionStartInput) (
 	}
 
 	wc := store.WriteContext{
-		Actor:          "orchestrator_session_start",
-		SessionID:      sess.SessionID,
-		WritePath:      "SessionStart",
-		ConstitutionID: in.ConstitutionID,
+		Actor:           "orchestrator_session_start",
+		SessionID:       sess.SessionID,
+		WritePath:       "SessionStart",
+		ConstitutionID:  in.ConstitutionID,
 		ConstitutionVer: in.ConstitutionVer,
-		ProjectID:      in.ProjectID,
+		ProjectID:       in.ProjectID,
 	}
 	if _, err := o.Store.SaveSession(ctx, wc, sess); err != nil {
 		return nil, fmt.Errorf("session_start: save: %w", err)

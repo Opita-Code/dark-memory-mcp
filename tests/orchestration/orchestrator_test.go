@@ -1,4 +1,4 @@
-﻿// Package orchestration_test covers the workflow API. Each
+// Package orchestration_test covers the workflow API. Each
 // orchestrator method has at least one happy-path test + one error
 // path test. Tests use the in-memory SQLite Store via runtime.Open,
 // same pattern as tests/context and tests/project.
@@ -626,10 +626,10 @@ func TestRecallContext_TightBudget(t *testing.T) {
 	items := make([]research.Item, 20)
 	for i := range items {
 		items[i] = research.Item{
-			Title:     fmt.Sprintf("Supply chain item %02d", i),
-			URL:       fmt.Sprintf("https://example.com/supply-chain-%02d", i),
-			Snippet:   strings.Repeat("lorem-ipsum-dolor-sit-amet ", 100),
-			Source:    "web",
+			Title:      fmt.Sprintf("Supply chain item %02d", i),
+			URL:        fmt.Sprintf("https://example.com/supply-chain-%02d", i),
+			Snippet:    strings.Repeat("lorem-ipsum-dolor-sit-amet ", 100),
+			Source:     "web",
 			Confidence: float32(0.5 + float32(i)*0.02),
 		}
 	}
@@ -860,11 +860,11 @@ func TestRecommendedModel_KnownProvider(t *testing.T) {
 	cases := []struct {
 		provider, evalType, want string
 	}{
-		{"anthropic", "drift_judge", "claude-opus-4-7"}, // opus for reasoning
+		{"anthropic", "drift_judge", "claude-opus-4-7"},  // opus for reasoning
 		{"anthropic", "brand_match", "claude-haiku-4-5"}, // haiku for fast
 		{"openai", "compliance_check", "gpt-5"},
 		{"google", "grounding_check", "gemini-2.5-pro"},
-		{"deepseek", "drift_judge", "deepseek-r1"}, // r1 for reasoning
+		{"deepseek", "drift_judge", "deepseek-r1"},     // r1 for reasoning
 		{"perplexity", "grounding_check", "sonar-pro"}, // search-augmented
 	}
 	for _, c := range cases {
@@ -1878,10 +1878,10 @@ func TestActivePolicy_ModsList(t *testing.T) {
 
 	wc := store.WriteContext{Actor: "test", WritePath: "test"}
 	if err := s.SaveMod(ctx, wc, &mods.Mod{
-		ModID:   "sample",
-		Name:    "Sample Mod",
-		Version: "0.1.0",
-		Source:  "test",
+		ModID:        "sample",
+		Name:         "Sample Mod",
+		Version:      "0.1.0",
+		Source:       "test",
 		ManifestJSON: `{"meta":{"id":"sample","version":"0.1.0","name":"Sample Mod"},"risk":{"risk_class":"research-only","target_scope":"public_internet"}}`,
 		RiskClass:    "research-only",
 		TargetScope:  "public_internet",

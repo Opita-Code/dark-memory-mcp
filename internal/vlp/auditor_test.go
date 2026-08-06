@@ -367,10 +367,10 @@ func TestVLPAuditor_NoCrossContaminationWithRowLevel(t *testing.T) {
 	}
 
 	// 2. Save a vlp_state row (emits row-level audit). The row-level audit
-//    inherits the user's wc.WritePath verbatim (we tested that in 2.3).
-//    Here we leave wc.WritePath empty so SaveVLPState's defensive fallback
-//    kicks in ("SaveVLPState") — that makes the row-level audit
-//    distinguishable from the transition-level "vlp.transition".
+	//    inherits the user's wc.WritePath verbatim (we tested that in 2.3).
+	//    Here we leave wc.WritePath empty so SaveVLPState's defensive fallback
+	//    kicks in ("SaveVLPState") — that makes the row-level audit
+	//    distinguishable from the transition-level "vlp.transition".
 	wcRow := store.WriteContext{
 		Actor:     "audit-test",
 		SessionID: "shared",

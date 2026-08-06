@@ -1,4 +1,4 @@
-﻿// Package dual_driver_test runs the same assertions against both the
+// Package dual_driver_test runs the same assertions against both the
 // SQLite and Postgres implementations of store.Store.
 //
 // In CI / dev environments without a live Postgres instance, the Postgres
@@ -36,11 +36,11 @@ func TestSQLiteStoreContract(t *testing.T) {
 	ctx := context.Background()
 	tmp := t.TempDir()
 	cfg := store.Config{
-		Driver:       store.DriverSQLite,
-		DSN:          filepath.Join(tmp, "test.db"),
-		WALMode:      true,
-		ForeignKeys:  true,
-		BusyTimeout:  5 * time.Second,
+		Driver:      store.DriverSQLite,
+		DSN:         filepath.Join(tmp, "test.db"),
+		WALMode:     true,
+		ForeignKeys: true,
+		BusyTimeout: 5 * time.Second,
 	}
 	s, err := runtime.Open(ctx, cfg)
 	if err != nil {
@@ -109,11 +109,11 @@ func runContract(t *testing.T, ctx context.Context, s store.Store, label string)
 		sid := "test-session-" + label
 		wc := store.WriteContext{Actor: "test", SessionID: sid, WritePath: "TestStoreContract"}
 		sess := &session.Session{
-			SessionID:      sid,
-			ConstitutionID: "test-constitution",
+			SessionID:       sid,
+			ConstitutionID:  "test-constitution",
 			ConstitutionVer: "1.0.0",
-			Status:         string(session.StatusOpen),
-			Operator:       "ci",
+			Status:          string(session.StatusOpen),
+			Operator:        "ci",
 		}
 		id, err := s.SaveSession(ctx, wc, sess)
 		if err != nil {
@@ -406,9 +406,9 @@ func runContract(t *testing.T, ctx context.Context, s store.Store, label string)
 
 		// Case 1: initial save with spec_id=42.
 		_, err := s.SaveVLPState(ctx, wc, &store.VLPStateRow{
-			SessionID:   sid,
-			State:       int(vlp.StateSpecActive),
-			OpenSpecID:  42,
+			SessionID:  sid,
+			State:      int(vlp.StateSpecActive),
+			OpenSpecID: 42,
 		})
 		if err != nil {
 			t.Fatalf("%s: SaveVLPState (spec=42): %v", label, err)
@@ -426,9 +426,9 @@ func runContract(t *testing.T, ctx context.Context, s store.Store, label string)
 
 		// Case 2: upsert with different spec_id (99).
 		_, err = s.SaveVLPState(ctx, wc, &store.VLPStateRow{
-			SessionID:   sid,
-			State:       int(vlp.StateSpecActive),
-			OpenSpecID:  99,
+			SessionID:  sid,
+			State:      int(vlp.StateSpecActive),
+			OpenSpecID: 99,
 		})
 		if err != nil {
 			t.Fatalf("%s: SaveVLPState upsert (spec=99): %v", label, err)
@@ -820,11 +820,11 @@ func runContract(t *testing.T, ctx context.Context, s store.Store, label string)
 		origSID := "test-resurrect-orig-" + label
 		wc := store.WriteContext{Actor: "test", SessionID: origSID, WritePath: "TestSaveResurrect"}
 		original := &session.Session{
-			SessionID:      origSID,
-			ConstitutionID: "test-constitution",
+			SessionID:       origSID,
+			ConstitutionID:  "test-constitution",
 			ConstitutionVer: "1.0.0",
-			Status:         string(session.StatusOpen),
-			Operator:       "ci",
+			Status:          string(session.StatusOpen),
+			Operator:        "ci",
 		}
 		if _, err := s.SaveSession(ctx, wc, original); err != nil {
 			t.Fatalf("%s: SaveSession original: %v", label, err)
@@ -1253,11 +1253,11 @@ func TestSQLiteConstitutionWatchdogMigration(t *testing.T) {
 	// 1. Open the store with ConstitutionFile + ConstitutionID + ConstitutionVer.
 	//    Watchdog writes the initial row (SHA of v1.0.0 file).
 	cfg := store.Config{
-		Driver:          store.DriverSQLite,
-		DSN:             dsn,
-		WALMode:         true,
-		ForeignKeys:     true,
-		BusyTimeout:     5 * time.Second,
+		Driver:           store.DriverSQLite,
+		DSN:              dsn,
+		WALMode:          true,
+		ForeignKeys:      true,
+		BusyTimeout:      5 * time.Second,
 		ConstitutionFile: consFile,
 		ConstitutionID:   "dark-agents/dark-memory-mcp-cerebro",
 		ConstitutionVer:  "1.0.0",

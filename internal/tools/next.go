@@ -11,10 +11,10 @@ package tools
 type VerdictForNext string
 
 const (
-	VerdictAligned      VerdictForNext = "aligned"
+	VerdictAligned       VerdictForNext = "aligned"
 	VerdictDriftDetected VerdictForNext = "drift_detected"
-	VerdictNeedsHuman   VerdictForNext = "needs_human"
-	VerdictSkipped      VerdictForNext = "skipped"
+	VerdictNeedsHuman    VerdictForNext = "needs_human"
+	VerdictSkipped       VerdictForNext = "skipped"
 )
 
 // NextActionForVerdict maps a verdict to the canonical NextAction.

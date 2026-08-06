@@ -15,14 +15,14 @@
 // Scope semantics (resolved at the Store layer):
 //
 //   - save    -> if a session is active, row.session_id = sessionID;
-//                else row.session_id = "". The kind/title/content/tags
-//                come from the caller.
+//     else row.session_id = "". The kind/title/content/tags
+//     come from the caller.
 //   - list    -> scope filter defaults to "current" (= session if
-//                active, else operator). Explicit values are honored.
+//     active, else operator). Explicit values are honored.
 //   - get     -> by id, must be in the active project.
 //   - update  -> by id; only the fields the caller sends are touched.
 //   - archive -> soft delete (sets archived_at); recoverable via
-//                list(include_archived=true).
+//     list(include_archived=true).
 package tools
 
 import (
@@ -139,7 +139,7 @@ func RegisterAgentMemory(reg *Registry, orch *orchestration.Orchestrator, st sto
 	reg.Add(BindOrchestrator("agent_memory_update",
 		"Update an agent memory's mutable fields (content/title/tags/pinned/expires_at/memory_type). Operator + project + agent_id are immutable.",
 		MustJSONSchema(map[string]any{
-			"type":     "object",
+			"type": "object",
 			// Row 189 (2026-08-03): orchestrator requires operator
 			// (orchestration/agent_memory.go:504) for INV-1 audit
 			// attribution. The schema previously declared only `id`
@@ -167,7 +167,7 @@ func RegisterAgentMemory(reg *Registry, orch *orchestration.Orchestrator, st sto
 	reg.Add(BindOrchestrator("agent_memory_archive",
 		"Soft-delete an agent memory (sets archived_at). Recoverable with list(include_archived=true).",
 		MustJSONSchema(map[string]any{
-			"type":     "object",
+			"type": "object",
 			// Row 189 (2026-08-03): same fix as update — orchestrator
 			// requires operator (orchestration/agent_memory.go:550)
 			// for INV-1 audit. Declare operator in the schema so

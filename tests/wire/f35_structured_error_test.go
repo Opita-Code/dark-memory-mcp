@@ -16,9 +16,9 @@ import (
 // anyOf:[array,string]; the orchestrator's parseTasksField only
 // handles JSON-object and JSON-string prefixes). We expect:
 //
-//   * Code=ErrInvalidArgument
-//   * The Field path mentions `tasks`
-//   * The Message names the failing field's identity
+//   - Code=ErrInvalidArgument
+//   - The Field path mentions `tasks`
+//   - The Message names the failing field's identity
 //
 // (At the JSON-RPC level the server returns a single TextContent
 // block carrying the JSON-encoded ToolError. The harness's error
@@ -26,7 +26,7 @@ import (
 func TestWire_F35_TypeMismatchSurfacesFieldPath(t *testing.T) {
 	s := startWireSession(t)
 	if _, err := s.toolsCall("dark_memory_session_start", map[string]any{
-		"operator":  "wire-test",
+		"operator":   "wire-test",
 		"project_id": "default",
 	}); err != nil {
 		t.Fatalf("session_start: %v", err)
@@ -51,16 +51,16 @@ func TestWire_F35_TypeMismatchSurfacesFieldPath(t *testing.T) {
 
 	// Extract the content text from the error envelope. We need BOTH
 	// envelopes:
-//
-//   - OUTER (mcp-go CallToolResult): {result:{content:[...],isError:true}}
-//     The harness sees isError; setting it to true is mcp-go's
-//     contract for "tool returned an error".
-//   - INNER (our ToolResponse): {"error":{...}}. The structured
-//     ToolError with field=code/message/hint/field lives here.
-//
-//	v1.3.0: shared envelope parser from envelope.go handles the
-//	outer; the inner is parsed inline because F35 is the canonical
-//	test that defines the structured-error contract.
+	//
+	//   - OUTER (mcp-go CallToolResult): {result:{content:[...],isError:true}}
+	//     The harness sees isError; setting it to true is mcp-go's
+	//     contract for "tool returned an error".
+	//   - INNER (our ToolResponse): {"error":{...}}. The structured
+	//     ToolError with field=code/message/hint/field lives here.
+	//
+	//	v1.3.0: shared envelope parser from envelope.go handles the
+	//	outer; the inner is parsed inline because F35 is the canonical
+	//	test that defines the structured-error contract.
 	var outer toolResponseEnvelope
 	if err := json.Unmarshal(resp, &outer); err != nil {
 		t.Fatalf("F35: malformed outer response: %v raw=%s", err, respStr(resp))

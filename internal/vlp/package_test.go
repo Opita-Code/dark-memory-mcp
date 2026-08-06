@@ -146,10 +146,10 @@ func TestPropose_ApprovesValidCalls(t *testing.T) {
 func TestPropose_RejectsInvalidCalls(t *testing.T) {
 	p := NewPackage()
 	cases := []struct {
-		name        string
-		state       State
-		calls       []ToolCall
-		wantReject  int
+		name       string
+		state      State
+		calls      []ToolCall
+		wantReject int
 	}{
 		{"vibe_publish at idle (wrong state)", StateIdle, []ToolCall{{Name: "dark_memory_vibe_publish"}}, 1},
 		{"artifact_log at idle (wrong state)", StateIdle, []ToolCall{{Name: "dark_memory_artifact_log"}}, 1},
@@ -182,10 +182,10 @@ func TestPropose_RejectsInvalidCalls(t *testing.T) {
 func TestRecord_AdvancesState(t *testing.T) {
 	p := NewPackage()
 	cases := []struct {
-		name      string
-		from      State
-		call      ToolCall
-		wantState State
+		name       string
+		from       State
+		call       ToolCall
+		wantState  State
 		wantAction string
 	}{
 		{"idle+session_start → drafting_spec", StateIdle,
@@ -221,8 +221,8 @@ func TestRecord_AdvancesState(t *testing.T) {
 func TestRecord_RejectsInvalidCalls(t *testing.T) {
 	p := NewPackage()
 	cases := []struct {
-		name  string
-		in    RecordInput
+		name string
+		in   RecordInput
 	}{
 		{"empty session_id", RecordInput{CurrentState: StateIdle, Call: ToolCall{Name: "dark_memory_session_start"}}},
 		{"unknown tool", RecordInput{SessionID: "s", CurrentState: StateIdle, Call: ToolCall{Name: "dark_memory_nonsense"}}},
@@ -300,9 +300,9 @@ func TestComplete_SummaryIncludes(t *testing.T) {
 		SessionID:    "s1",
 		CurrentState: StateComplete,
 		Metrics: map[string]int{
-			"specs_executed":     1,
+			"specs_executed":      1,
 			"artifacts_published": 1,
-			"drifts_resolved":    1,
+			"drifts_resolved":     1,
 		},
 	})
 	if err != nil {

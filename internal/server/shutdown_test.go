@@ -38,7 +38,7 @@ func bootTestServer(t *testing.T, operator string) *BootState {
 	t.Cleanup(func() { _ = boot.Shutdown(context.Background()) })
 
 	if err := boot.Store.CreateProject(ctx, &project.Project{
-		ProjectID:  "acme",
+		ProjectID:   "acme",
 		DisplayName: "ACME",
 	}); err != nil {
 		t.Fatalf("CreateProject: %v", err)
@@ -175,14 +175,14 @@ func TestShutdownCloseReason_UnitTable(t *testing.T) {
 		env  string
 		want string
 	}{
-		{"", "clean"},          // default
+		{"", "clean"}, // default
 		{"clean", "clean"},
 		{"CLEAN", "clean"},     // case-insensitive
 		{"  clean  ", "clean"}, // trim
 		{"aborted", "aborted"},
 		{"ABORTED", "aborted"},
-		{"garbage", "clean"},   // invalid → defensive fallback
-		{"archived", "clean"},  // 'archived' is not valid here (not a Shutdown option)
+		{"garbage", "clean"},  // invalid → defensive fallback
+		{"archived", "clean"}, // 'archived' is not valid here (not a Shutdown option)
 	}
 	for _, c := range cases {
 		t.Run("env="+c.env, func(t *testing.T) {

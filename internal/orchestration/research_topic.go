@@ -32,9 +32,9 @@ type ResearchTopicInput struct {
 
 // ResearchTopicOutput is the result of a research topic.
 type ResearchTopicOutput struct {
-	RunID         int64                 `json:"run_id"`
-	ItemsCount    int                   `json:"items_count"`
-	Items         []research.Item       `json:"items"`
+	RunID         int64                   `json:"run_id"`
+	ItemsCount    int                     `json:"items_count"`
+	Items         []research.Item         `json:"items"`
 	PriorFindings []agentmemory.SearchHit `json:"prior_findings,omitempty"`
 }
 
@@ -60,10 +60,10 @@ func (o *Orchestrator) ResearchTopic(ctx context.Context, in ResearchTopicInput)
 	// concurrent calls given typical backends are HTTP or DB
 	// connections).
 	var (
-		allItems   []research.Item
-		tried      []string
-		used       string // first backend that returned items
-		errs       []research.BackendError
+		allItems []research.Item
+		tried    []string
+		used     string // first backend that returned items
+		errs     []research.BackendError
 	)
 	for _, b := range o.backends {
 		tried = append(tried, b.Name())

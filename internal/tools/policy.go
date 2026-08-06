@@ -1,6 +1,7 @@
 // Package tools — policy.go: the POLICY namespace (2 tools).
 //
 // Per RFC §5 / D-9:
+//
 //	dark_memory_active_policy
 //	dark_memory_load_constitution
 //

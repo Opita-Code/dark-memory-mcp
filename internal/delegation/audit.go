@@ -9,10 +9,10 @@
 //
 // Per vibe-flow/main/DELEGATION_ARCHITECTURE.md §2.5:
 //
-//	1. per batch (topological order): spawn, wait, AUDIT
-//	2. SYNTHESIZE: compose the final output from persisted findings
-//	   (the orchestrator may compact, close, or crash — the trail
-//	   survives in agent_memory)
+//  1. per batch (topological order): spawn, wait, AUDIT
+//  2. SYNTHESIZE: compose the final output from persisted findings
+//     (the orchestrator may compact, close, or crash — the trail
+//     survives in agent_memory)
 package delegation
 
 import (
@@ -26,11 +26,11 @@ import (
 // SubagentFindings is the consolidated audit result for one
 // sub-agent: everything it persisted under tag "subagent-{id}".
 type SubagentFindings struct {
-	SubagentID  string                      `json:"subagent_id"`
-	Findings    []agentmemory.AgentMemory   `json:"findings"`
-	Decisions   []agentmemory.AgentMemory   `json:"decisions"`
-	Observations []agentmemory.AgentMemory  `json:"observations"`
-	Total       int                         `json:"total"`
+	SubagentID   string                    `json:"subagent_id"`
+	Findings     []agentmemory.AgentMemory `json:"findings"`
+	Decisions    []agentmemory.AgentMemory `json:"decisions"`
+	Observations []agentmemory.AgentMemory `json:"observations"`
+	Total        int                       `json:"total"`
 }
 
 // TagForSubagent returns the canonical agent_memory tag used by a

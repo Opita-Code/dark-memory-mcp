@@ -35,11 +35,11 @@ import (
 
 // JudgeInput is the request to run an LLM-as-judge call.
 type JudgeInput struct {
-	EvalType   string  `json:"eval_type"`   // brand_match | compliance_check | drift_judge | grounding_check | pii_detect | prompt_injection_scan | consensus
-	TargetType string  `json:"target_type"` // brand | artifact | spec | claim | code | ...
-	TargetID   string  `json:"target_id"`
-	Content    string  `json:"content"`     // the text to evaluate
-	Model      string  `json:"model,omitempty"` // optional override of the selector's pick
+	EvalType   string `json:"eval_type"`   // brand_match | compliance_check | drift_judge | grounding_check | pii_detect | prompt_injection_scan | consensus
+	TargetType string `json:"target_type"` // brand | artifact | spec | claim | code | ...
+	TargetID   string `json:"target_id"`
+	Content    string `json:"content"`         // the text to evaluate
+	Model      string `json:"model,omitempty"` // optional override of the selector's pick
 	// AgentID (v2.4.2) is the Mem0 agent_id (LLM identity) that owns
 	// this judgment. Optional; resolved with priority (caller input >
 	// projects.default_agent_id > ""). When set, brand_match and
@@ -160,14 +160,14 @@ func (o *Orchestrator) Judge(ctx context.Context, in JudgeInput) (*JudgeOutput, 
 	}
 	now := o.now().Format(time.RFC3339Nano)
 	eval := &ssd.SDDEvaluation{
-		EvalType:      in.EvalType,
-		TargetType:    in.TargetType,
-		TargetID:      in.TargetID,
-		VerdictJSON:   resp.VerdictJSON,
-		Confidence:    resp.Confidence,
-		Model:         resp.Model,
+		EvalType:       in.EvalType,
+		TargetType:     in.TargetType,
+		TargetID:       in.TargetID,
+		VerdictJSON:    resp.VerdictJSON,
+		Confidence:     resp.Confidence,
+		Model:          resp.Model,
 		ConstitutionID: wc.ConstitutionID,
-		CreatedAt:     now,
+		CreatedAt:      now,
 	}
 	evalID, err := o.Store.SaveSDDEvaluation(ctx, wc, eval)
 	if err != nil {

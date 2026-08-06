@@ -10,8 +10,8 @@ package migrate_test
 
 import (
 	migrate "github.com/dark-agents/dark-memory-mcp/internal/migrate"
-	sqlitemig "github.com/dark-agents/dark-memory-mcp/internal/migrate/sqlite"
 	pgmig "github.com/dark-agents/dark-memory-mcp/internal/migrate/postgres"
+	sqlitemig "github.com/dark-agents/dark-memory-mcp/internal/migrate/sqlite"
 )
 
 // sqliteMigrationsForTest returns the Migrations slice from the

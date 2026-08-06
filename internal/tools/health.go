@@ -51,15 +51,15 @@ import (
 // answer even before RegisterAll completes -- a partial-init
 // scenario we want to be able to debug ("is the tool wired?").
 var (
-	serverBootTime      = time.Now()
-	serverVersion       atomic.Pointer[string]
-	serverName          atomic.Pointer[string]
-	coexistenceGroup    atomic.Pointer[string]
-	serverDriverLabel   atomic.Pointer[string]
-	serverDSNPath       atomic.Pointer[string]
-	registryCanonicalN  atomic.Int32
-	registryExtrasN     atomic.Int32
-	redteamArmedFlag    atomic.Bool
+	serverBootTime     = time.Now()
+	serverVersion      atomic.Pointer[string]
+	serverName         atomic.Pointer[string]
+	coexistenceGroup   atomic.Pointer[string]
+	serverDriverLabel  atomic.Pointer[string]
+	serverDSNPath      atomic.Pointer[string]
+	registryCanonicalN atomic.Int32
+	registryExtrasN    atomic.Int32
+	redteamArmedFlag   atomic.Bool
 )
 
 // SetRuntimeContext is called by RegisterAll (or by tests) to install
@@ -136,12 +136,12 @@ func SetRegistryCounts(canonical, extras int, redteamArmed bool) {
 // values fall back to sane defaults so a partial init is still
 // observable.
 type RuntimeContext struct {
-	BootedAt          time.Time
-	ServerVersion     string
-	ServerName        string
-	CoexistenceGroup  string
-	DriverLabel       string // "sqlite" | "postgres"
-	DSNPath           string // for operators to know which file the daemon has open
+	BootedAt         time.Time
+	ServerVersion    string
+	ServerName       string
+	CoexistenceGroup string
+	DriverLabel      string // "sqlite" | "postgres"
+	DSNPath          string // for operators to know which file the daemon has open
 }
 
 // healthPingResult is the canonical shape returned by
@@ -155,31 +155,31 @@ type RuntimeContext struct {
 //   - runtime:   process-level metrics (uptime, boot time, PID)
 //   - registry:  the tool surface dark_memory_* is advertising
 //   - git:       build provenance (v1.4.0 — DARK-MEM-003).
-//                tag/commit/dirty/build_time are the resolver's view of
-//                where this binary came from. `source` reports which
-//                resolution path the resolver took (ldflags / buildinfo
-//                / dev) so the operator can tell at a glance whether
-//                this is a release build or a dev build.
+//     tag/commit/dirty/build_time are the resolver's view of
+//     where this binary came from. `source` reports which
+//     resolution path the resolver took (ldflags / buildinfo
+//     / dev) so the operator can tell at a glance whether
+//     this is a release build or a dev build.
 //   - drift:     true iff the resolver fell back to the dev path
-//                (is_dev=true) OR the working tree was dirty at build
-//                time. Per CONSTITUTION.md Rule 1, a release binary
-//                MUST have drift=false. Operators can use this as a
-//                single-bit liveness rule for monitoring.
+//     (is_dev=true) OR the working tree was dirty at build
+//     time. Per CONSTITUTION.md Rule 1, a release binary
+//     MUST have drift=false. Operators can use this as a
+//     single-bit liveness rule for monitoring.
 //   - latency_ms:    the round-trip cost of THIS health call (helpful
-//                    for spotting slow-down trends in monitoring dashboards)
+//     for spotting slow-down trends in monitoring dashboards)
 //   - checked_at:    ISO8601 of when this response was generated
 type healthPingResult struct {
 	Server struct {
-		Name              string `json:"name"`
-		Version           string `json:"version"`
-		CoexistenceGroup  string `json:"coexistence_group"`
+		Name             string `json:"name"`
+		Version          string `json:"version"`
+		CoexistenceGroup string `json:"coexistence_group"`
 		// PolicyGateway is always true on dark-memory-mcp per
 		// BRIDGE_AND_COEXISTENCE.md v2.0.0 §2.1 (cx.v3). Harness
 		// tooling can branch on this to decide whether to route
 		// dark-* calls through dark-memory (gateway) or directly
 		// to backings (legacy fallback).
-		PolicyGateway    bool `json:"policy_gateway"`
-		RedTeamArmed     bool `json:"redteam_armed"`
+		PolicyGateway bool `json:"policy_gateway"`
+		RedTeamArmed  bool `json:"redteam_armed"`
 	} `json:"server"`
 	DB struct {
 		Driver        string `json:"driver"`

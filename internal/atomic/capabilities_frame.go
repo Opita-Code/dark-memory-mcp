@@ -33,7 +33,7 @@ const MaxCapabilitiesFrameAge = 15 * time.Minute
 // or "*" for global).
 type ToolGrant struct {
 	ToolName  string    `json:"tool_name"`
-	Scope     string    `json:"scope"`             // project_id or "*"
+	Scope     string    `json:"scope"` // project_id or "*"
 	GrantedAt time.Time `json:"granted_at"`
 }
 
@@ -78,12 +78,12 @@ type CapabilitiesFrame struct {
 
 // Errors returned by CapabilitiesFrame methods.
 var (
-	ErrCapabilitiesEmptyProjectID    = errors.New("atomic: capabilities frame project_id is empty")
-	ErrCapabilitiesEmptySessionID    = errors.New("atomic: capabilities frame session_id is empty")
-	ErrCapabilitiesToolMissingName   = errors.New("atomic: capabilities frame tool_grant missing tool_name")
-	ErrCapabilitiesScopeMissingPID   = errors.New("atomic: capabilities frame scope_grant missing project_id")
-	ErrCapabilitiesZeroComposed      = errors.New("atomic: capabilities frame composed_at is zero")
-	ErrCapabilitiesStale             = errors.New("atomic: capabilities frame is stale (older than MaxCapabilitiesFrameAge)")
+	ErrCapabilitiesEmptyProjectID  = errors.New("atomic: capabilities frame project_id is empty")
+	ErrCapabilitiesEmptySessionID  = errors.New("atomic: capabilities frame session_id is empty")
+	ErrCapabilitiesToolMissingName = errors.New("atomic: capabilities frame tool_grant missing tool_name")
+	ErrCapabilitiesScopeMissingPID = errors.New("atomic: capabilities frame scope_grant missing project_id")
+	ErrCapabilitiesZeroComposed    = errors.New("atomic: capabilities frame composed_at is zero")
+	ErrCapabilitiesStale           = errors.New("atomic: capabilities frame is stale (older than MaxCapabilitiesFrameAge)")
 )
 
 // NewCapabilitiesFrame builds a CapabilitiesFrame with the required
@@ -186,4 +186,3 @@ func (f *CapabilitiesFrame) IsExpired(now time.Time) bool {
 // reach production (the previous mismatch was latent because no
 // caller typed a variable as atomic.Frame).
 var _ Frame = (*CapabilitiesFrame)(nil)
-

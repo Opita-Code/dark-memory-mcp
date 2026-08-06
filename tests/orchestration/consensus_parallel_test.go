@@ -215,9 +215,9 @@ func TestJudgeConsensus_RunsInParallel(t *testing.T) {
 // (failOnCall) or every invocation from failFromCall on.
 type flakyLLMClient struct {
 	*orchestration.MockLLMClient
-	failOnCall    int32 // fail exactly this call (0 = off)
-	failFromCall  int32 // fail every call >= this (0 = off)
-	callCount     int32
+	failOnCall   int32 // fail exactly this call (0 = off)
+	failFromCall int32 // fail every call >= this (0 = off)
+	callCount    int32
 }
 
 func (f *flakyLLMClient) Judge(ctx context.Context, req orchestration.JudgeRequest) (*orchestration.JudgeResponse, error) {
