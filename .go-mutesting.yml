@@ -1,0 +1,21 @@
+# dark-memory-mcp mutation testing config
+# Per dark-testing skill v1.0.0 M1: target >= 70% per package, >= 60% overall
+
+skip_without_test: true
+skip_with_build_tags: true
+
+exclude_dirs:
+  - vendor
+  - testdata
+  - bin
+  - cmd
+  - npm
+  - scripts
+  - docs
+  - vibe-flow
+  - .git
+  - mcpb
+
+json_output: false
+html_output: false
+silent_mode: false
