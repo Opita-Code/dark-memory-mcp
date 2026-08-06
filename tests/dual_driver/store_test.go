@@ -1,4 +1,4 @@
-﻿// Package dual_driver_test runs the same assertions against both the
+// Package dual_driver_test runs the same assertions against both the
 // SQLite and Postgres implementations of store.Store.
 //
 // In CI / dev environments without a live Postgres instance, the Postgres

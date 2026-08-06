@@ -1,4 +1,4 @@
-﻿package migrate_test
+package migrate_test
 
 import (
 	"context"

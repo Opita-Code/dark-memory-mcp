@@ -1,4 +1,4 @@
-﻿package invariants_test
+package invariants_test
 
 import (
 	"strings"
