@@ -122,6 +122,15 @@ func TestParse_RejectsEmpty(t *testing.T) {
 		if !errors.Is(err, vibecase.ErrInvalidCase) {
 			t.Errorf("Parse(%q) error = %v, want ErrInvalidCase", in, err)
 		}
+		// Mutation guard: verify the specific "empty" error message,
+		// not just the error chain. If the return statement were
+		// removed, the function would fall through to the unknown-case
+		// branch which also wraps ErrInvalidCase — errors.Is would
+		// still match, but the operator would see a confusing
+		// "'' is not one of [...]" instead of the clear "empty".
+		if !strings.Contains(err.Error(), "empty") {
+			t.Errorf("Parse(%q) error should mention \"empty\": got %v", in, err)
+		}
 	}
 }
 
