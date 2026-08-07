@@ -1,4 +1,4 @@
-﻿// O8: JudgeConsensus — runs the Judge N times and returns the modal
+// O8: JudgeConsensus — runs the Judge N times and returns the modal
 // verdict with a confidence interval. Use this for HIGH-STAKES
 // verdicts (compliance, brand match on launch, grounding of political
 // claims) where a single sample's confidence might be misleading.
@@ -41,12 +41,12 @@ import (
 
 // JudgeConsensusInput is the request to run a consensus Judge.
 type JudgeConsensusInput struct {
-	EvalType   string  `json:"eval_type"`             // brand_match | compliance_check | drift_judge | grounding_check | pii_detect | prompt_injection_scan
-	TargetType string  `json:"target_type"`           // brand | artifact | spec | claim | code | ...
-	TargetID   string  `json:"target_id"`             // brand_id | artifact_id | ...
-	Content    string  `json:"content"`               // the text to evaluate
-	N          int     `json:"n,omitempty"`           // sample count; default 3, clamped to [1, 7]
-	Model      string  `json:"model,omitempty"`       // optional override
+	EvalType   string `json:"eval_type"`       // brand_match | compliance_check | drift_judge | grounding_check | pii_detect | prompt_injection_scan
+	TargetType string `json:"target_type"`     // brand | artifact | spec | claim | code | ...
+	TargetID   string `json:"target_id"`       // brand_id | artifact_id | ...
+	Content    string `json:"content"`         // the text to evaluate
+	N          int    `json:"n,omitempty"`     // sample count; default 3, clamped to [1, 7]
+	Model      string `json:"model,omitempty"` // optional override
 	// AgentID (v2.4.2) is forwarded to every N Judge sample so all
 	// samples see the same agent-scoped agent_memory enrichment
 	// (for brand_match + compliance_check). Same priority chain as
@@ -65,25 +65,25 @@ type JudgeConsensusInput struct {
 type JudgeConsensusSample struct {
 	SampleIndex  int     `json:"sample_index"`
 	EvaluationID int64   `json:"evaluation_id"`
-	Verdict      string  `json:"verdict"`        // aligned | drift_detected | needs_human | skipped
+	Verdict      string  `json:"verdict"` // aligned | drift_detected | needs_human | skipped
 	Confidence   float32 `json:"confidence"`
 	VerdictJSON  string  `json:"verdict_json"`
 }
 
 // JudgeConsensusResult is the consensus verdict across N samples.
 type JudgeConsensusResult struct {
-	EvaluationID    int64                  `json:"evaluation_id"`    // id of the consensus row
-	ModalVerdict    string                 `json:"modal_verdict"`    // the most-frequent verdict string
-	ModalCount      int                    `json:"modal_count"`      // how many samples voted for the modal
-	ModalFraction   float32                `json:"modal_fraction"`   // modal_count / N; < 0.6 → needs_human
-	AvgConfidence   float32                `json:"avg_confidence"`   // mean confidence across samples
-	StdDevConfidence float32               `json:"stddev_confidence"`// sample std dev (0 if N=1)
-	ConfidenceLow   float32                `json:"confidence_low"`   // avg - 1σ (clamped to 0)
-	ConfidenceHigh  float32                `json:"confidence_high"`  // avg + 1σ (clamped to 1)
-	Verdict         string                 `json:"verdict"`          // modal_verdict OR "needs_human" if low agreement
-	NextAction      string                 `json:"next_action"`      // publish | reconcile | human_gate
-	Samples         []JudgeConsensusSample `json:"samples"`          // per-sample breakdown
-	Reasoning       string                 `json:"reasoning"`
+	EvaluationID     int64                  `json:"evaluation_id"`     // id of the consensus row
+	ModalVerdict     string                 `json:"modal_verdict"`     // the most-frequent verdict string
+	ModalCount       int                    `json:"modal_count"`       // how many samples voted for the modal
+	ModalFraction    float32                `json:"modal_fraction"`    // modal_count / N; < 0.6 → needs_human
+	AvgConfidence    float32                `json:"avg_confidence"`    // mean confidence across samples
+	StdDevConfidence float32                `json:"stddev_confidence"` // sample std dev (0 if N=1)
+	ConfidenceLow    float32                `json:"confidence_low"`    // avg - 1σ (clamped to 0)
+	ConfidenceHigh   float32                `json:"confidence_high"`   // avg + 1σ (clamped to 1)
+	Verdict          string                 `json:"verdict"`           // modal_verdict OR "needs_human" if low agreement
+	NextAction       string                 `json:"next_action"`       // publish | reconcile | human_gate
+	Samples          []JudgeConsensusSample `json:"samples"`           // per-sample breakdown
+	Reasoning        string                 `json:"reasoning"`
 	// Degraded (v2.11.0) is true when at least one sample failed and
 	// the consensus was computed from the survivors. The modal
 	// fraction is still computed against the REQUESTED N, so a
@@ -228,17 +228,17 @@ func (o *Orchestrator) JudgeConsensus(ctx context.Context, in JudgeConsensusInpu
 	}
 
 	result := &JudgeConsensusResult{
-		ModalVerdict:     modalVerdict,
-		ModalCount:       modalCount,
-		ModalFraction:    modalFraction,
-		AvgConfidence:    avgConfidence,
-		StdDevConfidence: stddev,
-		ConfidenceLow:    low,
-		ConfidenceHigh:   high,
-		Verdict:          finalVerdict,
-		NextAction:       nextActionForVerdict(finalVerdict),
-		Samples:          samples,
-		Degraded:         len(failed) > 0,
+		ModalVerdict:        modalVerdict,
+		ModalCount:          modalCount,
+		ModalFraction:       modalFraction,
+		AvgConfidence:       avgConfidence,
+		StdDevConfidence:    stddev,
+		ConfidenceLow:       low,
+		ConfidenceHigh:      high,
+		Verdict:             finalVerdict,
+		NextAction:          nextActionForVerdict(finalVerdict),
+		Samples:             samples,
+		Degraded:            len(failed) > 0,
 		FailedSampleIndices: failed,
 		Reasoning: fmt.Sprintf("modal=%s (%d/%d, fraction=%.2f); avg_conf=%.3f; stddev=%.3f; interval=[%.3f, %.3f]",
 			modalVerdict, modalCount, n, modalFraction, avgConfidence, stddev, low, high),
@@ -251,14 +251,14 @@ func (o *Orchestrator) JudgeConsensus(ctx context.Context, in JudgeConsensusInpu
 	// 7. Persist the consensus SDDEvaluation row (with :consensus
 	// suffix on TargetID so it's filterable).
 	consensusEval := &ssd.SDDEvaluation{
-		EvalType:      in.EvalType,
-		TargetType:    in.TargetType,
-		TargetID:      in.TargetID + ":consensus",
-		VerdictJSON:   consensusVerdictJSON(result),
-		Confidence:    avgConfidence,
-		Model:         "",
+		EvalType:       in.EvalType,
+		TargetType:     in.TargetType,
+		TargetID:       in.TargetID + ":consensus",
+		VerdictJSON:    consensusVerdictJSON(result),
+		Confidence:     avgConfidence,
+		Model:          "",
 		ConstitutionID: wc.ConstitutionID,
-		CreatedAt:     now,
+		CreatedAt:      now,
 	}
 	consensusID, err := o.Store.SaveSDDEvaluation(ctx, wc, consensusEval)
 	if err != nil {
@@ -348,14 +348,14 @@ func consensusVerdictJSON(r *JudgeConsensusResult) string {
 		Confidence  float32 `json:"confidence"`
 	}
 	type out struct {
-		Modal            string        `json:"modal"`
-		Fraction         float32       `json:"fraction"`
-		AvgConfidence    float32       `json:"avg_confidence"`
-		StdDevConfidence float32       `json:"stddev_confidence"`
-		Degraded         bool          `json:"degraded"`
-		Failed           []int         `json:"failed,omitempty"`
-		N                int           `json:"n"`
-		Samples          []sampleJSON  `json:"samples"`
+		Modal            string       `json:"modal"`
+		Fraction         float32      `json:"fraction"`
+		AvgConfidence    float32      `json:"avg_confidence"`
+		StdDevConfidence float32      `json:"stddev_confidence"`
+		Degraded         bool         `json:"degraded"`
+		Failed           []int        `json:"failed,omitempty"`
+		N                int          `json:"n"`
+		Samples          []sampleJSON `json:"samples"`
 	}
 	o := out{
 		Modal:            r.ModalVerdict,

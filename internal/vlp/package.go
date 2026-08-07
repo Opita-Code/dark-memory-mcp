@@ -3,15 +3,15 @@
 // Provides the four VLP primitives that the harness adapter calls per turn:
 //
 //   - Brief    — called BEFORE each LLM invocation. Returns the context
-//                brief (state + budget + suggested tools) that the harness
-//                injects into the system prompt.
+//     brief (state + budget + suggested tools) that the harness
+//     injects into the system prompt.
 //   - Propose  — called BEFORE executing LLM-proposed tool calls. Validates
-//                each call against the current state machine (spec 2.1)
-//                and returns approved/rejected/redirected sets.
+//     each call against the current state machine (spec 2.1)
+//     and returns approved/rejected/redirected sets.
 //   - Record   — called AFTER each tool result. Transitions state via the
-//                state machine and returns the next action the LLM should take.
+//     state machine and returns the next action the LLM should take.
 //   - Complete — called at end of loop. Requires a terminal state; returns
-//                final state, summary metrics, and human-readable handoff.
+//     final state, summary metrics, and human-readable handoff.
 //
 // Atomicity contract:
 //   - ONE function set: Brief, Propose, Record, Complete (all typed)
@@ -49,15 +49,15 @@ type BriefInput struct {
 type BriefOutput struct {
 	State          State    `json:"state"`
 	ContextBudget  int      `json:"context_budget"`            // tokens (T1+T2+T3)
-	SuggestedTools []string `json:"suggested_tools,omitempty"`  // dark_memory_* names
+	SuggestedTools []string `json:"suggested_tools,omitempty"` // dark_memory_* names
 	ModsActive     []string `json:"mods_active,omitempty"`     // mod IDs running this turn
 	PersonaSummary string   `json:"persona_summary,omitempty"` // short; full lookup is Layer 4
 }
 
 // ProposeInput is the input to Package.Propose.
 type ProposeInput struct {
-	SessionID     string    `json:"session_id"`
-	CurrentState  State     `json:"current_state"`
+	SessionID     string     `json:"session_id"`
+	CurrentState  State      `json:"current_state"`
 	ProposedCalls []ToolCall `json:"proposed_calls"`
 }
 
@@ -108,9 +108,9 @@ type CompleteInput struct {
 
 // CompleteOutput is the result of Package.Complete.
 type CompleteOutput struct {
-	FinalState State                    `json:"final_state"`
-	Summary    map[string]interface{}  `json:"summary"`
-	Handoff    string                  `json:"handoff"` // human-readable
+	FinalState State                  `json:"final_state"`
+	Summary    map[string]interface{} `json:"summary"`
+	Handoff    string                 `json:"handoff"` // human-readable
 }
 
 // Package implements the four VLP primitives. It is stateless in v1.1;
@@ -165,7 +165,7 @@ var suggestedToolsByState = map[State][]string{
 // Propose (to validate) and Record (to advance state). The Verdict payload
 // for drift_log is extracted from the call's Params (see eventForCall).
 type callMapping struct {
-	Event          Event
+	Event           Event
 	ParamForVerdict string // "" = no verdict payload
 }
 

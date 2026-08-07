@@ -31,13 +31,13 @@ func RegisterErrorObservatory(reg *Registry, st store.Store) {
 			"type": "object",
 			"properties": map[string]any{
 				"domain": map[string]any{
-					"type": "string",
-					"enum": []string{"store", "llm", "gate", "validation", "network", "sweep", "unknown"},
+					"type":        "string",
+					"enum":        []string{"store", "llm", "gate", "validation", "network", "sweep", "unknown"},
 					"description": "Classification axis. Empty = all.",
 				},
 				"severity": map[string]any{
-					"type": "string",
-					"enum": []string{"fatal", "error", "warn"},
+					"type":        "string",
+					"enum":        []string{"fatal", "error", "warn"},
 					"description": "Impact axis. Empty = all.",
 				},
 				"resolved": map[string]any{

@@ -40,7 +40,7 @@ func TestValidScope(t *testing.T) {
 		in   string
 		want bool
 	}{
-		{"", true},         // empty == ScopeCurrent default
+		{"", true}, // empty == ScopeCurrent default
 		{"current", true},
 		{"session", true},
 		{"project", true},
@@ -65,6 +65,55 @@ func TestAgentMemory_IsArchived(t *testing.T) {
 	m.ArchivedAt = "2026-07-27T00:00:00Z"
 	if !m.IsArchived() {
 		t.Error("AgentMemory with ArchivedAt set: IsArchived() = false, want true")
+	}
+}
+
+// TestValidMemoryType pins the Mem0-aligned three-class taxonomy,
+// including the empty-string (unset) case. Kills the case-removal
+// mutant (empty allowed) that no existing test catches.
+func TestValidMemoryType(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"episodic", true},
+		{"semantic", true},
+		{"procedural", true},
+		{"", true}, // empty = unset; allowed
+		{"EPISODIC", false},
+		{"episodic ", false},
+		{"nonsense", false},
+	}
+	for _, c := range cases {
+		if got := agentmemory.ValidMemoryType(c.in); got != c.want {
+			t.Errorf("ValidMemoryType(%q) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}
+
+// TestAgentMemory_CreatedAtTime_NanoAndFallback pins both parse paths
+// of CreatedAtTime: RFC3339Nano with sub-second precision, and the
+// RFC3339 fallback (older drivers drop the sub-second part). Kills
+// the return-removal mutants in parseRFC3339Nano.
+func TestAgentMemory_CreatedAtTime_NanoAndFallback(t *testing.T) {
+	// RFC3339Nano with sub-second precision.
+	m := agentmemory.AgentMemory{CreatedAt: "2026-07-27T10:30:00.123456789Z"}
+	tm, ok := m.CreatedAtTime()
+	if !ok {
+		t.Fatal("RFC3339Nano should parse")
+	}
+	if tm.Nanosecond() != 123456789 {
+		t.Errorf("nanosecond precision: got %d, want 123456789", tm.Nanosecond())
+	}
+
+	// RFC3339 fallback (no sub-second part).
+	m2 := agentmemory.AgentMemory{CreatedAt: "2026-07-27T10:30:00Z"}
+	tm2, ok2 := m2.CreatedAtTime()
+	if !ok2 {
+		t.Fatal("RFC3339 fallback should parse")
+	}
+	if tm2.Nanosecond() != 0 {
+		t.Errorf("fallback: got nanosecond %d, want 0", tm2.Nanosecond())
 	}
 }
 

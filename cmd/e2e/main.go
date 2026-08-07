@@ -2,7 +2,7 @@
 // dark-memory.db and exercises every wire tool path that matters
 // for production readiness. Run with:
 //
-//   DARK_MEM_MCP_BIN=path/to/dark-mem-mcp.exe go run ./cmd/e2e
+//	DARK_MEM_MCP_BIN=path/to/dark-mem-mcp.exe go run ./cmd/e2e
 //
 // Prints ONE line per phase; non-zero exit on any failure.
 //
@@ -388,8 +388,8 @@ func main() {
 	}
 	var msData struct {
 		Data struct {
-			Driver        string `json:"driver"`
-			SchemaVersion int    `json:"schema_version"`
+			Driver        string   `json:"driver"`
+			SchemaVersion int      `json:"schema_version"`
 			Tables        []string `json:"tables"`
 			Counts        struct {
 				RunsTotal int `json:"runs_total"`

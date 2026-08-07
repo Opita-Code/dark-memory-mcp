@@ -7,8 +7,8 @@
 //   - .github/workflows/build-mcpb.yml structure (triggers, matrix, zip)
 //   - Bundle directory structure (manifest.json + server/ + binary)
 //   - drift_judge carry-forward tests from v2.4.x:
-//     - npm binary SHA256 == GitHub Release binary SHA256 (cross-validation)
-//     - Optional-dependencies fallback when user's platform package missing
+//   - npm binary SHA256 == GitHub Release binary SHA256 (cross-validation)
+//   - Optional-dependencies fallback when user's platform package missing
 //
 // See v2.5.2 spec for full task list. C2 implementation.
 package distribution
@@ -340,9 +340,9 @@ func TestV252_NPMBinaryMatchesReleaseBinary(t *testing.T) {
 //   - npm install in a temp dir is slow and brittle.
 //
 // What we verify:
-//   1. detectPlatform() returns a clear "unsupported platform" error
-//   2. The error lists the supported platforms (so user can self-diagnose)
-//   3. process.exit(1) is called on the error path (so MCP host sees failure)
+//  1. detectPlatform() returns a clear "unsupported platform" error
+//  2. The error lists the supported platforms (so user can self-diagnose)
+//  3. process.exit(1) is called on the error path (so MCP host sees failure)
 func TestV252_OptionalDependenciesFallback(t *testing.T) {
 	wrapperPath := filepath.Join(repoRoot(t), "npm", "wrapper", "index.js")
 	content, err := os.ReadFile(wrapperPath)

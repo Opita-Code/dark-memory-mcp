@@ -15,15 +15,16 @@
 //     surface the rejection to the user / LLM before persisting.
 //
 // RESEARCH-MODE OVERRIDE (operator-controlled, additive):
-//   When DARK_REDTEAM=armed is set AND the mod is whitelisted via
-//   DARK_MOD_WHITELIST, INV-6 is bypassed regardless of risk_class. This
-//   is the explicit "we are running a security-research session and we
-//   accept responsibility for what these prompts do" mode. The bypass
-//   applies only to the safetyCheckContent step; manifest validation
-//   (parse, required fields, path-escape) still runs.
-//   Recorded in the audit row with constitution_id="redteam-research"
-//   so the operator's intent is durable. Default DARK_REDTEAM is unset
-//   (i.e. the standard public-version safety posture applies).
+//
+//	When DARK_REDTEAM=armed is set AND the mod is whitelisted via
+//	DARK_MOD_WHITELIST, INV-6 is bypassed regardless of risk_class. This
+//	is the explicit "we are running a security-research session and we
+//	accept responsibility for what these prompts do" mode. The bypass
+//	applies only to the safetyCheckContent step; manifest validation
+//	(parse, required fields, path-escape) still runs.
+//	Recorded in the audit row with constitution_id="redteam-research"
+//	so the operator's intent is durable. Default DARK_REDTEAM is unset
+//	(i.e. the standard public-version safety posture applies).
 //
 // This file does NOT take a Store dependency — it's the parser. The
 // caller (the MCP server bootstrap) is responsible for calling Store.SaveMod

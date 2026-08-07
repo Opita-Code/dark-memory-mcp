@@ -12,8 +12,8 @@ import (
 	"runtime/debug"
 	"syscall"
 
-	"github.com/dark-agents/dark-memory-mcp/internal/federation"
 	"github.com/dark-agents/dark-memory-mcp/internal/errorobs"
+	"github.com/dark-agents/dark-memory-mcp/internal/federation"
 	"github.com/dark-agents/dark-memory-mcp/internal/orchestration"
 	"github.com/dark-agents/dark-memory-mcp/internal/server"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
@@ -108,9 +108,9 @@ func main() {
 	bootState.Orchestrator.OnActiveSessionChanged = activeSessionResolver.Invalidate
 
 	bootState.Gate = &server.GateMiddleware{
-		FrameSource:        frameSrc,
-		DriftChecker:       nil,
-		ActiveSession:      activeSessionResolver,
+		FrameSource:   frameSrc,
+		DriftChecker:  nil,
+		ActiveSession: activeSessionResolver,
 		// v2.1.1: ActiveProject fallback so session-required tools
 		// without project_id in args (agent_memory_*, session_status,
 		// session_close) can resolve the active project's session_id

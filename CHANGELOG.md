@@ -6,6 +6,25 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [2.11.1] — 2026-08-07
+
+### Fixed
+
+- **Federation readonly DSN was a no-op (bug real, mutation testing wave 2).** `NewPeerFromEnv` appended `?mode=ro` to a bare path, but `modernc/sqlite` only interprets query-string flags on `file:` URIs — the peer file was silently CREATED on Ping, and the `_pragma=busy_timeout(5000)` that the doc comment had promised since federation was first written was never actually appended. The mutation survivors `.4/.6/.35` were killed when the inline construction was extracted into the pure `buildReadonlyDSN` helper that wraps the DSN in a `file:` URI: `file:<path>?_pragma=busy_timeout(5000)&mode=ro`. Probes verify the file is no longer created on a missing peer path. (`internal/federation/lookup.go`, 37 lines diff, +8 tests)
+- **`evidence_frame` silent discard restored.** `EvidenceFrame(ctx, "") -> nil, ErrEvidenceEmptySessionID` had been replaced with `_ = ErrEvidenceEmptySessionID` at some point (a classic drift-back). Restored to proper early-return; `TestEvidenceFrame_EmptySessionID` now passes again. (`internal/atomic/evidence_frame.go`)
+- **Version package mutation score 0.65 → 1.0.** Refactored `applyBuildSettings` + `applyBuildMainVersion` into pure functions (no global reads/writes) so the mutation harness can exercise their branches without depending on `-ldflags` state. 9 new tests cover the full decision matrix. (`internal/version/version.go` + `version_test.go`)
+
+### Changed
+
+- **gofmt all 168 Go files.** One holdout: `internal/store/sqlite/store.go` has a Go 1.26.5 gofmt quirk where `''` in a comment is rewritten to `"` (smart-quote) — left as-is until the quirk is resolved upstream. (`style` commit, 168 files)
+
+### Internal
+
+- **Mutation-testing wave 2.** Verified-directed kill (killcheck2.sh) confirms 8 federation mutants killed: `.30/.39` tableCount, `.18` LookupDrift fall-through, `.22` scan error, `.27/.29` nil-db guards, `.32/.34` limit boundaries, plus `buildReadonlyDSN` helper mutants. 3 survivors remain justifiably blacklist-eligible (`.7` sql.Open error — driver never fails; `.9/.37/.38` `db.Close()` in error paths — contract preserved). Federation score: 0.488 → ~0.80+. Packages at 1.0: entity, vibecase, errorobs, atomic, agentmemory, version. `TestPeer_LookupSessionArtifacts_LimitCapsAt100` optimized 33s → 2.5s via recursive CTE seed.
+- **Process note.** `go-mutesting` on Windows writes mutations back to the working tree (`limit = 99`, literal file `&mode=ro`, `lookup.go.tmp`, `report.json`) — audit after every run. Full mutation runs impractical for federation (~3 min/mutant because `modernc/sqlite` recompiles per mutant) — directed-kill verification is the pragmatic path.
+
+---
+
 ## [2.11.0] — 2026-08-04
 
 **Error Observatory (spec 757, Wave 5D) — "no nos enteramos de nada" is over.** Durable, classified, backlog-able error capture. Before this release, errors existed only on the MCP wire or in stderr and then vanished: zero error tables across 24 migrations, 15+ silent-discard sites (`_ = err`), 48 unstructured log lines, gate refusals invisible, `anomalies` a dead stub. Now every failure lands in the `error_events` table (migration v25) and is queryable + triageable via 4 new tools.

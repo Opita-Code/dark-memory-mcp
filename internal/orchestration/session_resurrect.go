@@ -18,7 +18,7 @@
 // The new session row has:
 //   - parent_session_id = original.SessionID (immediate predecessor)
 //   - resurrected_from  = original.ResurrectedFrom OR original.SessionID
-//                          (chain pointer to the deepest ancestor)
+//     (chain pointer to the deepest ancestor)
 //   - status = open
 //   - started_at, last_heartbeat_at = now()
 //   - constitution_id+ver inherited from the original
@@ -87,10 +87,10 @@ type SessionResurrectInput struct {
 // 5E.iv: enriched with the frame-aware inheritance audit fields.
 type SessionResurrectOutput struct {
 	NewSessionID      string    `json:"new_session_id"`
-	OriginalSessionID string    `json:"original_session_id"`  // the session we resurrected from
-	InheritedFrom     string    `json:"inherited_from"`       // alias of OriginalSessionID (for clarity)
+	OriginalSessionID string    `json:"original_session_id"` // the session we resurrected from
+	InheritedFrom     string    `json:"inherited_from"`      // alias of OriginalSessionID (for clarity)
 	StartedAt         time.Time `json:"started_at"`
-	ResurrectChainLen int       `json:"resurrect_chain_len"`  // 1 if first resurrection, 2 if previous was resurrected, etc.
+	ResurrectChainLen int       `json:"resurrect_chain_len"` // 1 if first resurrection, 2 if previous was resurrected, etc.
 
 	// --- 5E.iv frame-aware inheritance audit ---
 	// InheritedConstitution* are what was on the ORIGINAL session
@@ -227,49 +227,49 @@ func (o *Orchestrator) SessionResurrect(ctx context.Context, in SessionResurrect
 	// the resurrection itself already succeeded. The audit row is
 	// operator-visibility scaffolding, not a correctness primitive.
 	auditWC := store.WriteContext{
-		Actor:          "orchestrator_session_resurrect_frame_audit",
-		SessionID:      newSess.SessionID,
-		WritePath:      "SessionResurrectFrameAudit",
-		ConstitutionID: newSess.ConstitutionID,
+		Actor:           "orchestrator_session_resurrect_frame_audit",
+		SessionID:       newSess.SessionID,
+		WritePath:       "SessionResurrectFrameAudit",
+		ConstitutionID:  newSess.ConstitutionID,
 		ConstitutionVer: newSess.ConstitutionVer,
 	}
 	auditMeta := map[string]any{
-		"new_session_id":              newSess.SessionID,
-		"original_session_id":         original.SessionID,
-		"inherited_constitution_id":   inheritedID,
-		"inherited_constitution_ver":  inheritedVer,
-		"active_constitution_id":      activeID,
-		"active_constitution_ver":     activeVer,
-		"constitution_bumped":         bumped,
-		"inherited_mods_count":        len(inheritedMods),
-		"reason":                      reason,
-		"resurrect_chain_len":         chainLen,
+		"new_session_id":             newSess.SessionID,
+		"original_session_id":        original.SessionID,
+		"inherited_constitution_id":  inheritedID,
+		"inherited_constitution_ver": inheritedVer,
+		"active_constitution_id":     activeID,
+		"active_constitution_ver":    activeVer,
+		"constitution_bumped":        bumped,
+		"inherited_mods_count":       len(inheritedMods),
+		"reason":                     reason,
+		"resurrect_chain_len":        chainLen,
 	}
 	metaBytes, _ := json.Marshal(auditMeta)
 	_ = o.Store.RecordWrite(ctx, audit.WriteEvent{
-		TableName:      "sessions",
-		Actor:          auditWC.Actor,
-		SessionID:      auditWC.SessionID,
-		WritePath:      auditWC.WritePath,
-		ConstitutionID: auditWC.ConstitutionID,
+		TableName:       "sessions",
+		Actor:           auditWC.Actor,
+		SessionID:       auditWC.SessionID,
+		WritePath:       auditWC.WritePath,
+		ConstitutionID:  auditWC.ConstitutionID,
 		ConstitutionVer: auditWC.ConstitutionVer,
-		SessionEvent:   "resurrect",
-		Notes:          string(metaBytes),
-		CreatedAt:      o.now().Format(time.RFC3339Nano),
+		SessionEvent:    "resurrect",
+		Notes:           string(metaBytes),
+		CreatedAt:       o.now().Format(time.RFC3339Nano),
 	})
 
 	return &SessionResurrectOutput{
-		NewSessionID:              newSess.SessionID,
-		OriginalSessionID:         original.SessionID,
-		InheritedFrom:             original.SessionID,
-		StartedAt:                 startedAt,
-		ResurrectChainLen:         chainLen,
-		InheritedConstitutionID:   inheritedID,
-		InheritedConstitutionVer:  inheritedVer,
-		ActiveConstitutionID:      activeID,
-		ActiveConstitutionVer:     activeVer,
-		ConstitutionBumped:        bumped,
-		InheritedMods:             inheritedMods,
+		NewSessionID:             newSess.SessionID,
+		OriginalSessionID:        original.SessionID,
+		InheritedFrom:            original.SessionID,
+		StartedAt:                startedAt,
+		ResurrectChainLen:        chainLen,
+		InheritedConstitutionID:  inheritedID,
+		InheritedConstitutionVer: inheritedVer,
+		ActiveConstitutionID:     activeID,
+		ActiveConstitutionVer:    activeVer,
+		ConstitutionBumped:       bumped,
+		InheritedMods:            inheritedMods,
 	}, nil
 }
 

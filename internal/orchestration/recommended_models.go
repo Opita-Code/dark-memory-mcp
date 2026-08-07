@@ -17,8 +17,8 @@
 //
 // Eval types are the strings used in ssd.EvaluationType:
 //
-//   brand_match, compliance_check, drift_judge, grounding_check,
-//   pii_detect, prompt_injection_scan, consensus
+//	brand_match, compliance_check, drift_judge, grounding_check,
+//	pii_detect, prompt_injection_scan, consensus
 package orchestration
 
 import (
@@ -41,13 +41,13 @@ var RecommendedModels = []ModelRecommendation{
 		Provider: "anthropic",
 		Default:  "claude-sonnet-4-5",
 		PerType: map[ssd.EvaluationType]string{
-			ssd.EvalBrandMatch:           "claude-haiku-4-5", // fast NLU
-			ssd.EvalComplianceCheck:      "claude-sonnet-4-5", // careful rule-following
-			ssd.EvalDriftJudge:           "claude-opus-4-7",   // deep reasoning
-			ssd.EvalGroundingCheck:       "claude-sonnet-4-5",
-			ssd.EvalPIIDetect:            "claude-haiku-4-5", // pattern recognition
+			ssd.EvalBrandMatch:          "claude-haiku-4-5",  // fast NLU
+			ssd.EvalComplianceCheck:     "claude-sonnet-4-5", // careful rule-following
+			ssd.EvalDriftJudge:          "claude-opus-4-7",   // deep reasoning
+			ssd.EvalGroundingCheck:      "claude-sonnet-4-5",
+			ssd.EvalPIIDetect:           "claude-haiku-4-5", // pattern recognition
 			ssd.EvalPromptInjectionScan: "claude-sonnet-4-5",
-			ssd.EvalConsensus:            "claude-opus-4-7",
+			ssd.EvalConsensus:           "claude-opus-4-7",
 			// v2.7.0-alpha: procedural subagent system_prompt composition +
 			// LLM-as-judge validation. Both need careful instruction-following
 			// + JSON-output discipline; sonnet is the right cost/quality
@@ -62,13 +62,13 @@ var RecommendedModels = []ModelRecommendation{
 		Provider: "openai",
 		Default:  "gpt-5",
 		PerType: map[ssd.EvaluationType]string{
-			ssd.EvalBrandMatch:           "gpt-5-mini",
-			ssd.EvalComplianceCheck:      "gpt-5",
-			ssd.EvalDriftJudge:           "gpt-5",
-			ssd.EvalGroundingCheck:       "gpt-5",
-			ssd.EvalPIIDetect:            "gpt-5-mini",
+			ssd.EvalBrandMatch:          "gpt-5-mini",
+			ssd.EvalComplianceCheck:     "gpt-5",
+			ssd.EvalDriftJudge:          "gpt-5",
+			ssd.EvalGroundingCheck:      "gpt-5",
+			ssd.EvalPIIDetect:           "gpt-5-mini",
 			ssd.EvalPromptInjectionScan: "gpt-5",
-			ssd.EvalConsensus:            "gpt-5",
+			ssd.EvalConsensus:           "gpt-5",
 			// v2.7.0-alpha: composition is mechanical (fill JSON schema),
 			// mini is fine and cheaper. Validation needs careful rule-
 			// following + JSON discipline; gpt-5 matches the default.
@@ -80,13 +80,13 @@ var RecommendedModels = []ModelRecommendation{
 		Provider: "google",
 		Default:  "gemini-2.5-pro",
 		PerType: map[ssd.EvaluationType]string{
-			ssd.EvalBrandMatch:           "gemini-2.5-flash",
-			ssd.EvalComplianceCheck:      "gemini-2.5-pro",
-			ssd.EvalDriftJudge:           "gemini-2.5-pro",
-			ssd.EvalGroundingCheck:       "gemini-2.5-pro",
-			ssd.EvalPIIDetect:            "gemini-2.5-flash",
+			ssd.EvalBrandMatch:          "gemini-2.5-flash",
+			ssd.EvalComplianceCheck:     "gemini-2.5-pro",
+			ssd.EvalDriftJudge:          "gemini-2.5-pro",
+			ssd.EvalGroundingCheck:      "gemini-2.5-pro",
+			ssd.EvalPIIDetect:           "gemini-2.5-flash",
 			ssd.EvalPromptInjectionScan: "gemini-2.5-pro",
-			ssd.EvalConsensus:            "gemini-2.5-pro",
+			ssd.EvalConsensus:           "gemini-2.5-pro",
 			// v2.7.0-alpha: composition uses flash (mechanical JSON fill);
 			// validation needs pro (5 pass criteria evaluation).
 			ssd.EvalMindsetCompose: "gemini-2.5-flash",
@@ -97,65 +97,65 @@ var RecommendedModels = []ModelRecommendation{
 		Provider: "mistral",
 		Default:  "mistral-large-2",
 		PerType: map[ssd.EvaluationType]string{
-			ssd.EvalBrandMatch:           "mistral-small",
-			ssd.EvalComplianceCheck:      "mistral-large-2",
-			ssd.EvalDriftJudge:           "mistral-large-2",
-			ssd.EvalGroundingCheck:       "mistral-large-2",
-			ssd.EvalPIIDetect:            "mistral-small",
+			ssd.EvalBrandMatch:          "mistral-small",
+			ssd.EvalComplianceCheck:     "mistral-large-2",
+			ssd.EvalDriftJudge:          "mistral-large-2",
+			ssd.EvalGroundingCheck:      "mistral-large-2",
+			ssd.EvalPIIDetect:           "mistral-small",
 			ssd.EvalPromptInjectionScan: "mistral-large-2",
-			ssd.EvalConsensus:            "mistral-large-2",
+			ssd.EvalConsensus:           "mistral-large-2",
 		},
 	},
 	{
 		Provider: "cohere",
 		Default:  "command-r-plus",
 		PerType: map[ssd.EvaluationType]string{
-			ssd.EvalBrandMatch:           "command-r",
-			ssd.EvalComplianceCheck:      "command-r-plus",
-			ssd.EvalDriftJudge:           "command-r-plus",
-			ssd.EvalGroundingCheck:       "command-r-plus",
-			ssd.EvalPIIDetect:            "command-r",
+			ssd.EvalBrandMatch:          "command-r",
+			ssd.EvalComplianceCheck:     "command-r-plus",
+			ssd.EvalDriftJudge:          "command-r-plus",
+			ssd.EvalGroundingCheck:      "command-r-plus",
+			ssd.EvalPIIDetect:           "command-r",
 			ssd.EvalPromptInjectionScan: "command-r-plus",
-			ssd.EvalConsensus:            "command-r-plus",
+			ssd.EvalConsensus:           "command-r-plus",
 		},
 	},
 	{
 		Provider: "meta",
 		Default:  "llama-3.1-405b",
 		PerType: map[ssd.EvaluationType]string{
-			ssd.EvalBrandMatch:           "llama-3.1-70b",
-			ssd.EvalComplianceCheck:      "llama-3.1-405b",
-			ssd.EvalDriftJudge:           "llama-3.1-405b",
-			ssd.EvalGroundingCheck:       "llama-3.1-405b",
-			ssd.EvalPIIDetect:            "llama-3.1-8b",
+			ssd.EvalBrandMatch:          "llama-3.1-70b",
+			ssd.EvalComplianceCheck:     "llama-3.1-405b",
+			ssd.EvalDriftJudge:          "llama-3.1-405b",
+			ssd.EvalGroundingCheck:      "llama-3.1-405b",
+			ssd.EvalPIIDetect:           "llama-3.1-8b",
 			ssd.EvalPromptInjectionScan: "llama-3.1-405b",
-			ssd.EvalConsensus:            "llama-3.1-405b",
+			ssd.EvalConsensus:           "llama-3.1-405b",
 		},
 	},
 	{
 		Provider: "xai",
 		Default:  "grok-2",
 		PerType: map[ssd.EvaluationType]string{
-			ssd.EvalBrandMatch:           "grok-2-mini",
-			ssd.EvalComplianceCheck:      "grok-2",
-			ssd.EvalDriftJudge:           "grok-2",
-			ssd.EvalGroundingCheck:       "grok-2",
-			ssd.EvalPIIDetect:            "grok-2-mini",
+			ssd.EvalBrandMatch:          "grok-2-mini",
+			ssd.EvalComplianceCheck:     "grok-2",
+			ssd.EvalDriftJudge:          "grok-2",
+			ssd.EvalGroundingCheck:      "grok-2",
+			ssd.EvalPIIDetect:           "grok-2-mini",
 			ssd.EvalPromptInjectionScan: "grok-2",
-			ssd.EvalConsensus:            "grok-2",
+			ssd.EvalConsensus:           "grok-2",
 		},
 	},
 	{
 		Provider: "deepseek",
 		Default:  "deepseek-v3",
 		PerType: map[ssd.EvaluationType]string{
-			ssd.EvalBrandMatch:           "deepseek-v3",
-			ssd.EvalComplianceCheck:      "deepseek-v3",
-			ssd.EvalDriftJudge:           "deepseek-r1", // reasoning
-			ssd.EvalGroundingCheck:       "deepseek-v3",
-			ssd.EvalPIIDetect:            "deepseek-v3",
+			ssd.EvalBrandMatch:          "deepseek-v3",
+			ssd.EvalComplianceCheck:     "deepseek-v3",
+			ssd.EvalDriftJudge:          "deepseek-r1", // reasoning
+			ssd.EvalGroundingCheck:      "deepseek-v3",
+			ssd.EvalPIIDetect:           "deepseek-v3",
 			ssd.EvalPromptInjectionScan: "deepseek-v3",
-			ssd.EvalConsensus:            "deepseek-r1",
+			ssd.EvalConsensus:           "deepseek-r1",
 			// v2.7.0-alpha: composition uses R1 (reasoning helps with
 			// the structured role/goal/backstory/constraints synthesis);
 			// validation uses V3 (default — the 5-criteria checklist
@@ -168,26 +168,26 @@ var RecommendedModels = []ModelRecommendation{
 		Provider: "qwen",
 		Default:  "qwen-2.5-72b",
 		PerType: map[ssd.EvaluationType]string{
-			ssd.EvalBrandMatch:           "qwen-2.5-7b",
-			ssd.EvalComplianceCheck:      "qwen-2.5-72b",
-			ssd.EvalDriftJudge:           "qwen-2.5-72b",
-			ssd.EvalGroundingCheck:       "qwen-2.5-72b",
-			ssd.EvalPIIDetect:            "qwen-2.5-7b",
+			ssd.EvalBrandMatch:          "qwen-2.5-7b",
+			ssd.EvalComplianceCheck:     "qwen-2.5-72b",
+			ssd.EvalDriftJudge:          "qwen-2.5-72b",
+			ssd.EvalGroundingCheck:      "qwen-2.5-72b",
+			ssd.EvalPIIDetect:           "qwen-2.5-7b",
 			ssd.EvalPromptInjectionScan: "qwen-2.5-72b",
-			ssd.EvalConsensus:            "qwen-2.5-72b",
+			ssd.EvalConsensus:           "qwen-2.5-72b",
 		},
 	},
 	{
 		Provider: "perplexity",
 		Default:  "sonar-pro",
 		PerType: map[ssd.EvaluationType]string{
-			ssd.EvalBrandMatch:           "sonar",
-			ssd.EvalComplianceCheck:      "sonar-pro",
-			ssd.EvalDriftJudge:           "sonar-pro",
-			ssd.EvalGroundingCheck:       "sonar-pro", // search-augmented — best for grounding
-			ssd.EvalPIIDetect:            "sonar",
+			ssd.EvalBrandMatch:          "sonar",
+			ssd.EvalComplianceCheck:     "sonar-pro",
+			ssd.EvalDriftJudge:          "sonar-pro",
+			ssd.EvalGroundingCheck:      "sonar-pro", // search-augmented — best for grounding
+			ssd.EvalPIIDetect:           "sonar",
 			ssd.EvalPromptInjectionScan: "sonar-pro",
-			ssd.EvalConsensus:            "sonar-pro",
+			ssd.EvalConsensus:           "sonar-pro",
 		},
 	},
 }

@@ -52,12 +52,12 @@ type federationLookupInput struct {
 
 // FederationLookupResult is the output of dark_memory_federation_lookup.
 type FederationLookupResult struct {
-	PeerEnabled  bool                       `json:"peer_enabled"`
-	PeerDSN      string                     `json:"peer_dsn,omitempty"`
-	Hint         string                     `json:"hint,omitempty"`
-	PeerArtifact *federation.PeerArtifact    `json:"peer_artifact,omitempty"`
-	PeerDrift    *federation.PeerDrift       `json:"peer_drift,omitempty"`
-	PeerSessionArtifacts []int64            `json:"peer_session_artifacts,omitempty"`
+	PeerEnabled          bool                     `json:"peer_enabled"`
+	PeerDSN              string                   `json:"peer_dsn,omitempty"`
+	Hint                 string                   `json:"hint,omitempty"`
+	PeerArtifact         *federation.PeerArtifact `json:"peer_artifact,omitempty"`
+	PeerDrift            *federation.PeerDrift    `json:"peer_drift,omitempty"`
+	PeerSessionArtifacts []int64                  `json:"peer_session_artifacts,omitempty"`
 }
 
 // RegisterFederation wires federation_lookup into the registry as an

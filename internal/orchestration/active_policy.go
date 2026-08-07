@@ -33,18 +33,18 @@ import (
 
 // ActivePolicyResult is the snapshot of the active policy.
 type ActivePolicyResult struct {
-	ConstitutionID      string                 `json:"constitution_id,omitempty"`
-	ConstitutionVersion string                 `json:"constitution_version,omitempty"`
-	ConstitutionSHA256  string                 `json:"constitution_sha256,omitempty"`
-	ConstitutionLabel   string                 `json:"constitution_label,omitempty"`
-	ConstitutionSource  string                 `json:"constitution_source,omitempty"`
-	ConstitutionDrift   bool                   `json:"constitution_drift"`        // true if SHA mismatch detected
-	DriftReason         string                 `json:"drift_reason,omitempty"`
-	Mods                []ActiveModRef         `json:"mods"`                      // active mods
-	Jurisdiction        string                 `json:"jurisdiction,omitempty"`    // active compliance jurisdiction (if any)
-	CanaryPresent       bool                   `json:"canary_present"`            // true if a canary token is installed
-	CanaryToken         string                 `json:"canary_token,omitempty"`    // redacted in user-facing contexts; only present if ShowCanaryToken=true
-	PolicyVersion       string                 `json:"policy_version"`            // schema version of this snapshot
+	ConstitutionID      string         `json:"constitution_id,omitempty"`
+	ConstitutionVersion string         `json:"constitution_version,omitempty"`
+	ConstitutionSHA256  string         `json:"constitution_sha256,omitempty"`
+	ConstitutionLabel   string         `json:"constitution_label,omitempty"`
+	ConstitutionSource  string         `json:"constitution_source,omitempty"`
+	ConstitutionDrift   bool           `json:"constitution_drift"` // true if SHA mismatch detected
+	DriftReason         string         `json:"drift_reason,omitempty"`
+	Mods                []ActiveModRef `json:"mods"`                   // active mods
+	Jurisdiction        string         `json:"jurisdiction,omitempty"` // active compliance jurisdiction (if any)
+	CanaryPresent       bool           `json:"canary_present"`         // true if a canary token is installed
+	CanaryToken         string         `json:"canary_token,omitempty"` // redacted in user-facing contexts; only present if ShowCanaryToken=true
+	PolicyVersion       string         `json:"policy_version"`         // schema version of this snapshot
 }
 
 // ActiveModRef is one active mod in the policy snapshot.

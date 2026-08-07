@@ -77,15 +77,17 @@ type StaticSessionResolver struct {
 }
 
 // ActiveSessionID implements ActiveSessionResolver. Ignores ctx.
-func (s StaticSessionResolver) ActiveSessionID(_ context.Context, _ string) string { return s.SessionID }
+func (s StaticSessionResolver) ActiveSessionID(_ context.Context, _ string) string {
+	return s.SessionID
+}
 
 // GateMiddleware wires PreCheck + PostCheck around a tool handler.
 // One GateMiddleware is constructed per Server (BootState carries it
 // as `Gate *server.GateMiddleware`).
 type GateMiddleware struct {
-	FrameSource         policy.FrameSource
-	DriftChecker        *drift.Checker
-	ActiveSession       ActiveSessionResolver
+	FrameSource   policy.FrameSource
+	DriftChecker  *drift.Checker
+	ActiveSession ActiveSessionResolver
 	// ActiveProject returns the currently-active project_id (mirrors
 	// bootState.Store.ActiveProject). Used as a fallback by
 	// buildGateInput when args lacks project_id — many session-required
@@ -95,9 +97,9 @@ type GateMiddleware struct {
 	// regression where these tools refused with ErrFrameStaleTooFar
 	// because buildGateInput was passing projectID="" to the resolver,
 	// which short-circuited without consulting the store.
-	ActiveProject       func() string
-	ActiveConstitution  func() (id, ver string)
-	Now                 func() time.Time
+	ActiveProject      func() string
+	ActiveConstitution func() (id, ver string)
+	Now                func() time.Time
 	// RecordRefusal (v2.11.0, spec 757) is the optional error-telemetry
 	// hook. When set, the middleware calls it for every PreCheck /
 	// PostCheck refusal BEFORE returning the refusal ToolError — the
@@ -223,7 +225,7 @@ func (m *GateMiddleware) Wrap(
 // The ActiveProject fallback fixes the v2.1.0 regression where
 // session-required tools without project_id in args (agent_memory_*,
 // session_status, session_close) refused with ErrFrameStaleTooFar:
-// the resolver's "projectID == ''" short-circuit returned "" without
+// the resolver's "projectID == ”" short-circuit returned "" without
 // consulting the store, so GateInput had SessionID="" which PreCheck
 // reads as "no session".
 //

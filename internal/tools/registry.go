@@ -226,52 +226,52 @@ type NamespaceGroup struct {
 //
 // Per RFC D-9 + BRIDGE_AND_COEXISTENCE.md §3 (bridge.4), v2.6.0:
 //
-//	PROJECT          (1)  - create                              (v1.2.0, INV-7)
-//	SESSION          (4)  - start, resume, status, close
-//	RESEARCH         (3)  - topic, recall, resume_thread
-//	AGENT_BOOTSTRAP  (3)  - bootstrap, recommend_companions, detect_environment (v2.6.0)
-//	VIBE             (4)  - publish, spec, pipeline_status, resolve_drift
-//	CONTEXT          (4)  - artifact_context, spec_context, session_context, recall
-//	AGENT_MEMORY     (10) - save, list, recall, get, update, archive, delegate, entities, subagent_register, subagent_unregister (v2.1.0 + v2.3.0 + v2.9.3)
-//	MINDSET          (1)  - mindset_apply                        (v2.7.0-alpha, procedural + judge-validated)
-//	DELEGATION       (1)  - delegate_intent                      (Wave 5C, A1: handle/delegate/refuse)
-//	JUDGE            (3)  - judge, consensus, judgment_history
-//	POLICY           (2)  - active_policy, load_constitution
-//	OBSERVABILITY    (4)  - memory_state, writes, anomalies, health_ping (v1.3.0)
-//	ERROR_OBS        (4)  - error_list, error_get, error_summary, error_resolve (v2.11.0, spec 757)
-//	ADMIN            (3)  - admin_migrate, admin_schema_status, admin_vacuum
-//	L6-VLP           (1)  - vlp_handle_event          (DMAP v1.1 spec 193)
-//	EMBEDDER         (1)  - embedder_setup_prompt     (v2.9.0-alpha PR-2)
+//		PROJECT          (1)  - create                              (v1.2.0, INV-7)
+//		SESSION          (4)  - start, resume, status, close
+//		RESEARCH         (3)  - topic, recall, resume_thread
+//		AGENT_BOOTSTRAP  (3)  - bootstrap, recommend_companions, detect_environment (v2.6.0)
+//		VIBE             (4)  - publish, spec, pipeline_status, resolve_drift
+//		CONTEXT          (4)  - artifact_context, spec_context, session_context, recall
+//		AGENT_MEMORY     (10) - save, list, recall, get, update, archive, delegate, entities, subagent_register, subagent_unregister (v2.1.0 + v2.3.0 + v2.9.3)
+//		MINDSET          (1)  - mindset_apply                        (v2.7.0-alpha, procedural + judge-validated)
+//		DELEGATION       (1)  - delegate_intent                      (Wave 5C, A1: handle/delegate/refuse)
+//		JUDGE            (3)  - judge, consensus, judgment_history
+//		POLICY           (2)  - active_policy, load_constitution
+//		OBSERVABILITY    (4)  - memory_state, writes, anomalies, health_ping (v1.3.0)
+//		ERROR_OBS        (4)  - error_list, error_get, error_summary, error_resolve (v2.11.0, spec 757)
+//		ADMIN            (3)  - admin_migrate, admin_schema_status, admin_vacuum
+//		L6-VLP           (1)  - vlp_handle_event          (DMAP v1.1 spec 193)
+//		EMBEDDER         (1)  - embedder_setup_prompt     (v2.9.0-alpha PR-2)
 //
-//   - PROJECT was added in v1.2.0 to close the bootstrap loop
-//     (operators can now provision a tenant from inside the MCP
-//     surface instead of having to insert into the projects table
-//     out of band). It is positioned at index 0 because the natural
-//     discovery order is project_create  session_start  .;
-//     harness callers that iterate the canonical list get
-//     project_create first.
-//   - OBSERVABILITY grew from 3 to 4 in v1.3.0 with `health_ping`.
-//     Health_ping is the operator-facing liveness probe; it is a
-//     SIBLING of memory_state, not a replacement, because the two
-//     have different latency budgets and different side-effect
-//     profiles (health_ping does not touch the audit bus). See
-//     RFC §C-2 and docs/PRODUCTION_CHECKLIST.md §Health probe.
-//   - AGENT_MEMORY (v2.1.0) sits between CONTEXT (read-only
-//     introspection) and JUDGE (LLM eval). Memory is a read+write
-//     data plane; judge/consensus are evals on top of that data.
-//     Mem0-aligned (arxiv 2504.19413), with dark-memory's INV-7
-//     project isolation layered on. Five tools cover the full
-//     lifecycle (save / list / get / update / archive); retrieval
-//     search ships as a future minor (F48).
-//   - AGENT_BOOTSTRAP (v2.6.0) sits between RESEARCH and VIBE.
-//     These are the 3 self-bootstrap tools that let any harness learn
-//     how to use the MCP via resources + tool introspection, without
-//     requiring the harness to read any external docs. Slotted before
-//     VIBE because the natural bootstrap order is:
-//     "what is this MCP and what does it do?" (recommend_companions)
-//      "what resources can I read?" (agent_bootstrap)
-//      "what does my runtime look like?" (detect_environment)
-//      "now I can do real work" (vibe_publish, etc.).
+//	  - PROJECT was added in v1.2.0 to close the bootstrap loop
+//	    (operators can now provision a tenant from inside the MCP
+//	    surface instead of having to insert into the projects table
+//	    out of band). It is positioned at index 0 because the natural
+//	    discovery order is project_create  session_start  .;
+//	    harness callers that iterate the canonical list get
+//	    project_create first.
+//	  - OBSERVABILITY grew from 3 to 4 in v1.3.0 with `health_ping`.
+//	    Health_ping is the operator-facing liveness probe; it is a
+//	    SIBLING of memory_state, not a replacement, because the two
+//	    have different latency budgets and different side-effect
+//	    profiles (health_ping does not touch the audit bus). See
+//	    RFC §C-2 and docs/PRODUCTION_CHECKLIST.md §Health probe.
+//	  - AGENT_MEMORY (v2.1.0) sits between CONTEXT (read-only
+//	    introspection) and JUDGE (LLM eval). Memory is a read+write
+//	    data plane; judge/consensus are evals on top of that data.
+//	    Mem0-aligned (arxiv 2504.19413), with dark-memory's INV-7
+//	    project isolation layered on. Five tools cover the full
+//	    lifecycle (save / list / get / update / archive); retrieval
+//	    search ships as a future minor (F48).
+//	  - AGENT_BOOTSTRAP (v2.6.0) sits between RESEARCH and VIBE.
+//	    These are the 3 self-bootstrap tools that let any harness learn
+//	    how to use the MCP via resources + tool introspection, without
+//	    requiring the harness to read any external docs. Slotted before
+//	    VIBE because the natural bootstrap order is:
+//	    "what is this MCP and what does it do?" (recommend_companions)
+//	     "what resources can I read?" (agent_bootstrap)
+//	     "what does my runtime look like?" (detect_environment)
+//	     "now I can do real work" (vibe_publish, etc.).
 var canonicalNamespaces = []NamespaceGroup{
 	{
 		Name:  "PROJECT",

@@ -56,7 +56,7 @@ func buildBinary(tmp, repoRoot, name, subdir string) string {
 	cmd.Dir = filepath.Join(repoRoot, subdir)
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		panic("build "+name+": "+err.Error())
+		panic("build " + name + ": " + err.Error())
 	}
 	return out
 }

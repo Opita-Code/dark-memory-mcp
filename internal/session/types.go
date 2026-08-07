@@ -11,21 +11,21 @@
 // through five states. The pre-pivote `active` / `closed` / `abandoned`
 // three-state enum is REPLACED by:
 //
-//   open (was active)
-//     receiving tool calls; last_heartbeat_at is recent
-//     transitions: idle (idle_timeout), closed_clean (_close reason=clean),
-//                  closed_aborted (sweeper/boot reconciliation)
-//   idle
-//     was open; last_heartbeat_at is stale (no writes in IDLE_TIMEOUT)
-//     transitions: open (heartbeat refresh), closed_clean, closed_aborted
-//   closed_clean (terminal, NOT resurrectable)
-//     operator called dark_memory_session_close(reason='clean')
-//   closed_aborted (RESURRECTABLE)
-//     operator called dark_memory_session_close(reason='aborted'), OR
-//     sweeper/boot_reconcile promoted a stale open
-//     transitions: open (via _resurrect) — frame state inherited
-//   archived (terminal, NOT resurrectable)
-//     operator called dark_memory_session_close(reason='archived')
+//	open (was active)
+//	  receiving tool calls; last_heartbeat_at is recent
+//	  transitions: idle (idle_timeout), closed_clean (_close reason=clean),
+//	               closed_aborted (sweeper/boot reconciliation)
+//	idle
+//	  was open; last_heartbeat_at is stale (no writes in IDLE_TIMEOUT)
+//	  transitions: open (heartbeat refresh), closed_clean, closed_aborted
+//	closed_clean (terminal, NOT resurrectable)
+//	  operator called dark_memory_session_close(reason='clean')
+//	closed_aborted (RESURRECTABLE)
+//	  operator called dark_memory_session_close(reason='aborted'), OR
+//	  sweeper/boot_reconcile promoted a stale open
+//	  transitions: open (via _resurrect) — frame state inherited
+//	archived (terminal, NOT resurrectable)
+//	  operator called dark_memory_session_close(reason='archived')
 //
 // INV-8 (Resilience): only operator-chosen 'clean' or 'archived'
 // closes are terminal-non-resurrectable. Every other close path keeps
@@ -77,11 +77,11 @@ type Status string
 // is iterated (open → idle → terminal-clean | terminal-archived) and
 // sweeper transitions id → aborted follow the documented chain.
 const (
-	StatusOpen         Status = "open"          // receiving tool calls
-	StatusIdle         Status = "idle"          // stale heartbeat, awaiting timeout
-	StatusClosedClean  Status = "closed_clean"  // terminal, NOT resurrectable
+	StatusOpen          Status = "open"           // receiving tool calls
+	StatusIdle          Status = "idle"           // stale heartbeat, awaiting timeout
+	StatusClosedClean   Status = "closed_clean"   // terminal, NOT resurrectable
 	StatusClosedAborted Status = "closed_aborted" // RESURRECTABLE
-	StatusArchived     Status = "archived"      // terminal, NOT resurrectable
+	StatusArchived      Status = "archived"       // terminal, NOT resurrectable
 )
 
 // AllStatuses returns the canonical Status slice. Use for validation
@@ -215,13 +215,13 @@ type Session struct {
 	ConstitutionID  string `json:"constitution_id,omitempty"`
 	ConstitutionVer string `json:"constitution_ver,omitempty"`
 	ActiveMods      string `json:"active_mods,omitempty"` // JSON array of mod_id
-	Operator        string `json:"operator,omitempty"`     // who started this session
+	Operator        string `json:"operator,omitempty"`    // who started this session
 	StartedAt       string `json:"started_at"`
 	ClosedAt        string `json:"closed_at,omitempty"`
 
 	// Lifecycle pivot (Wave 5E):
 	LastHeartbeatAt string `json:"last_heartbeat_at,omitempty"` // INV-9; updated by _heartbeat
-	ParentSessionID string `json:"parent_session_id,omitempty"`  // immediate predecessor in resurrection chain
+	ParentSessionID string `json:"parent_session_id,omitempty"` // immediate predecessor in resurrection chain
 	ResurrectedFrom string `json:"resurrected_from,omitempty"`  // original ancestor; same as Parent for non-chained chains
 
 	// Free-form:

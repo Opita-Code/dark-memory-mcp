@@ -50,27 +50,27 @@ type DelegateIntentInput struct {
 // DelegateSubTaskOutput is one ready-to-spawn unit of the plan:
 // the mindset + curated context + C2 binding for ONE sub-agent.
 type DelegateSubTaskOutput struct {
-	ID                 string   `json:"id"`
-	VibeCase           string   `json:"vibe_case"`
-	Task               string   `json:"task"`
-	SystemPrompt       string   `json:"system_prompt,omitempty"`
-	DelegationContext  string   `json:"delegation_context,omitempty"`
-	SubagentID         string   `json:"subagent_id,omitempty"`
-	ToolsRecommended   []string `json:"tools_recommended,omitempty"`
-	ModelRecommended   string   `json:"model_recommended,omitempty"`
-	DependsOn          []string `json:"depends_on,omitempty"`
-	PinnedCount        int      `json:"pinned_count,omitempty"`
-	TodoCount          int      `json:"todo_count,omitempty"`
+	ID                string   `json:"id"`
+	VibeCase          string   `json:"vibe_case"`
+	Task              string   `json:"task"`
+	SystemPrompt      string   `json:"system_prompt,omitempty"`
+	DelegationContext string   `json:"delegation_context,omitempty"`
+	SubagentID        string   `json:"subagent_id,omitempty"`
+	ToolsRecommended  []string `json:"tools_recommended,omitempty"`
+	ModelRecommended  string   `json:"model_recommended,omitempty"`
+	DependsOn         []string `json:"depends_on,omitempty"`
+	PinnedCount       int      `json:"pinned_count,omitempty"`
+	TodoCount         int      `json:"todo_count,omitempty"`
 }
 
 // DelegateIntentOutput is the router's decision + the ready-to-spawn
 // plan (nil plan when handler != DELEGATE).
 type DelegateIntentOutput struct {
-	Handler   string                 `json:"handler"`
-	Reasoning string                 `json:"reasoning"`
-	Case      string                 `json:"case"`
+	Handler   string                  `json:"handler"`
+	Reasoning string                  `json:"reasoning"`
+	Case      string                  `json:"case"`
 	Plan      []DelegateSubTaskOutput `json:"plan,omitempty"`
-	Operator  string                 `json:"operator"`
+	Operator  string                  `json:"operator"`
 }
 
 // DelegateIntent runs the DECIDE → PLAN → MIND → CURATE pipeline for

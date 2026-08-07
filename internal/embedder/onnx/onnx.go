@@ -20,7 +20,7 @@
 //
 //   - DARK_MEMORY_EMBEDDER=onnx     → force ONNX (privacy-first operators)
 //   - DARK_MEMORY_EMBEDDER unset    → FactoryAuto() picks ONNX when no other
-//                                    rung matches (per row 164 §2 step 5).
+//     rung matches (per row 164 §2 step 5).
 //
 // # Thread safety
 //

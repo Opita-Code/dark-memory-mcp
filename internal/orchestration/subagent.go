@@ -124,8 +124,8 @@ type SubagentUnregisterInput struct {
 // SubagentUnregisterOutput confirms the clear (or reports
 // ErrNotFound when nothing was bound).
 type SubagentUnregisterOutput struct {
-	Cleared     bool   `json:"cleared"`
-	SubagentID  string `json:"subagent_id"`
+	Cleared      bool   `json:"cleared"`
+	SubagentID   string `json:"subagent_id"`
 	ClearedAtRFC string `json:"cleared_at"`
 }
 

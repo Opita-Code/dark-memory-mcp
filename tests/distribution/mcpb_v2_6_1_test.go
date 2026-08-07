@@ -8,8 +8,8 @@
 // window: registry workflow reaches `publish` before npm's CDN has
 // indexed the new version, so mcp-publisher returns:
 //
-//   NPM package '@opitacode/dark-memory-mcp' exists, but version
-//   '2.6.0' was not found (status: 404).
+//	NPM package '@opitacode/dark-memory-mcp' exists, but version
+//	'2.6.0' was not found (status: 404).
 //
 // Fix (operator-approved decision agent_memory id=80): wrap the
 // `./mcp-publisher publish` call in a retry loop — up to 3 attempts
@@ -85,7 +85,7 @@ func TestV261_RegistryPublishRetryLoop(t *testing.T) {
 		!strings.Contains(content, "RETRY_DELAY=45") &&
 		!strings.Contains(content, "RETRY_DELAY=30") {
 		t.Errorf("publish-mcp-registry.yml must set RETRY_DELAY >= 30 " +
-			"(npm CDN propagation is typically 5-30s; smaller values reintroduce the race). "+
+			"(npm CDN propagation is typically 5-30s; smaller values reintroduce the race). " +
 			"v2.7.1: bumped from 30 to 60 per agent_memory id=93 to cover worst-case flakes.")
 	}
 

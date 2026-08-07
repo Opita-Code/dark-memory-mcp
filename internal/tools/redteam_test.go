@@ -111,9 +111,9 @@ func TestScanRedTeamMods_ReturnsOurThreeMods(t *testing.T) {
 		t.Fatalf("expected at least 3 redteam mods, got %d", len(mods))
 	}
 	want := map[string]bool{
-		"redteam/prompt-injection-lab":  false,
-		"redteam/jailbreak-taxonomy":    false,
-		"redteam/llm-refusal-analysis":  false,
+		"redteam/prompt-injection-lab": false,
+		"redteam/jailbreak-taxonomy":   false,
+		"redteam/llm-refusal-analysis": false,
 	}
 	for _, m := range mods {
 		if _, ok := want[m.ModID]; ok {
@@ -274,10 +274,10 @@ func TestRedteamLogAttemptHandler_ClampsExcerpt(t *testing.T) {
 	longExcerpt := strings.Repeat("x", 1000)
 	h := redteamLogAttemptHandler(nil)
 	payload, _ := json.Marshal(map[string]any{
-		"mod_id":                   "redteam/jailbreak-taxonomy",
-		"prompt_id":                "JB-C-001",
-		"target_model":             "gpt-4o",
-		"observed_label":           "REFUSAL",
+		"mod_id":                    "redteam/jailbreak-taxonomy",
+		"prompt_id":                 "JB-C-001",
+		"target_model":              "gpt-4o",
+		"observed_label":            "REFUSAL",
 		"observed_response_excerpt": longExcerpt,
 	})
 	resp, _ := h(context.Background(), payload)

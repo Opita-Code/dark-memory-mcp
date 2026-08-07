@@ -90,14 +90,14 @@ func New(opts Options) (embedder.Embedder, error) {
 		opts.Dim = dimForModel(opts.Model)
 	}
 	return &voyageAdapter{
-		apiKey:         apiKey,
-		base:           opts.BaseURL,
-		model:          opts.Model,
-		dim:            opts.Dim,
-		connectBudget:  opts.ConnectTimeout,
-		readBudget:     opts.ReadTimeout,
-		maxRetries:     opts.MaxRetries,
-		client:         &http.Client{Timeout: opts.ConnectTimeout + opts.ReadTimeout},
+		apiKey:        apiKey,
+		base:          opts.BaseURL,
+		model:         opts.Model,
+		dim:           opts.Dim,
+		connectBudget: opts.ConnectTimeout,
+		readBudget:    opts.ReadTimeout,
+		maxRetries:    opts.MaxRetries,
+		client:        &http.Client{Timeout: opts.ConnectTimeout + opts.ReadTimeout},
 	}, nil
 }
 

@@ -18,7 +18,7 @@ var onnxruntimeWindowsDLL []byte
 // Declared (vs. in binary_other.go) so the onnx.go code can reference
 // them unconditionally; platformBinary() selects the right one based
 // on runtime.GOOS + runtime.GOARCH.
-var onnxruntimeLinuxSO []byte   //nolint:unused // populated on linux+amd64
+var onnxruntimeLinuxSO []byte     //nolint:unused // populated on linux+amd64
 var onnxruntimeDarwinDylib []byte //nolint:unused // populated on darwin+arm64
 
 // unsupportedPlatform is false on this build; New() succeeds.

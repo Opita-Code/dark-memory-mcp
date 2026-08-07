@@ -131,7 +131,7 @@ func TestSplitStatements(t *testing.T) {
 
 		{
 			name: "trigger body BEGIN..END single statement inside",
-			in: `CREATE TRIGGER foo_ai AFTER INSERT ON foo BEGIN INSERT INTO foo_fts(rowid, content) VALUES (new.id, new.content); END`,
+			in:   `CREATE TRIGGER foo_ai AFTER INSERT ON foo BEGIN INSERT INTO foo_fts(rowid, content) VALUES (new.id, new.content); END`,
 			want: []string{
 				"CREATE TRIGGER foo_ai AFTER INSERT ON foo BEGIN INSERT INTO foo_fts(rowid, content) VALUES (new.id, new.content); END",
 			},
@@ -146,7 +146,7 @@ func TestSplitStatements(t *testing.T) {
 		},
 		{
 			name: "two triggers separated by semicolon",
-			in: `CREATE TRIGGER foo_ai AFTER INSERT ON foo BEGIN INSERT INTO foo_fts(rowid, content) VALUES (new.id, new.content); END; CREATE TRIGGER foo_ad AFTER DELETE ON foo BEGIN INSERT INTO foo_fts(foo_fts, rowid, content) VALUES('delete', old.id, old.content); END`,
+			in:   `CREATE TRIGGER foo_ai AFTER INSERT ON foo BEGIN INSERT INTO foo_fts(rowid, content) VALUES (new.id, new.content); END; CREATE TRIGGER foo_ad AFTER DELETE ON foo BEGIN INSERT INTO foo_fts(foo_fts, rowid, content) VALUES('delete', old.id, old.content); END`,
 			want: []string{
 				"CREATE TRIGGER foo_ai AFTER INSERT ON foo BEGIN INSERT INTO foo_fts(rowid, content) VALUES (new.id, new.content); END",
 				"CREATE TRIGGER foo_ad AFTER DELETE ON foo BEGIN INSERT INTO foo_fts(foo_fts, rowid, content) VALUES('delete', old.id, old.content); END",
@@ -182,7 +182,7 @@ $tag$ LANGUAGE plpgsql`,
 		},
 		{
 			name: "two dollar-quoted stmts separated by semicolon",
-			in: `CREATE FUNCTION a() RETURNS INT AS $$ BEGIN RETURN 1; END; $$ LANGUAGE plpgsql; CREATE FUNCTION b() RETURNS INT AS $$ BEGIN RETURN 2; END; $$ LANGUAGE plpgsql`,
+			in:   `CREATE FUNCTION a() RETURNS INT AS $$ BEGIN RETURN 1; END; $$ LANGUAGE plpgsql; CREATE FUNCTION b() RETURNS INT AS $$ BEGIN RETURN 2; END; $$ LANGUAGE plpgsql`,
 			want: []string{
 				"CREATE FUNCTION a() RETURNS INT AS $$ BEGIN RETURN 1; END; $$ LANGUAGE plpgsql",
 				"CREATE FUNCTION b() RETURNS INT AS $$ BEGIN RETURN 2; END; $$ LANGUAGE plpgsql",
@@ -190,7 +190,7 @@ $tag$ LANGUAGE plpgsql`,
 		},
 		{
 			name: "dollar quote tag with underscore",
-			in: `DO $_body_$ BEGIN PERFORM 1; END $_body_$`,
+			in:   `DO $_body_$ BEGIN PERFORM 1; END $_body_$`,
 			want: []string{"DO $_body_$ BEGIN PERFORM 1; END $_body_$"},
 		},
 
@@ -214,7 +214,7 @@ $tag$ LANGUAGE plpgsql`,
 		},
 		{
 			name: "lowercase begin/end",
-			in: `create trigger foo_ai after insert on foo begin insert into foo_fts(rowid) values (new.id); end`,
+			in:   `create trigger foo_ai after insert on foo begin insert into foo_fts(rowid) values (new.id); end`,
 			want: []string{
 				"create trigger foo_ai after insert on foo begin insert into foo_fts(rowid) values (new.id); end",
 			},
@@ -268,12 +268,12 @@ CREATE INDEX idx_foo ON agent_memory (content)`,
 // migrations v1..v17 still produce reasonable splits after the
 // upgrade. We pin two invariants:
 //
-//   1. Every DDL/DML keyword (CREATE/ALTER/INSERT/UPDATE/DELETE/DROP/PRAGMA)
-//      that appears at the start of a line in the source body is
-//      captured in some output stmt (no silent drops).
-//   2. Each captured output stmt that has a real DDL/DML keyword at
-//      its start contains exactly one of those keywords (no accidental
-//      merges).
+//  1. Every DDL/DML keyword (CREATE/ALTER/INSERT/UPDATE/DELETE/DROP/PRAGMA)
+//     that appears at the start of a line in the source body is
+//     captured in some output stmt (no silent drops).
+//  2. Each captured output stmt that has a real DDL/DML keyword at
+//     its start contains exactly one of those keywords (no accidental
+//     merges).
 //
 // We do NOT pin the exact stmt count because the new splitter may
 // capture trailing comment-only content as a separate stmt (the

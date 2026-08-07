@@ -9,7 +9,7 @@
 //   - project_id:   optional (defaults to active project)
 //   - session_id:   required when scope="session"
 //   - since_token:  optional int64 cursor for delta (delta items
-//                   with id > since_token)
+//     with id > since_token)
 //
 // # Outputs
 //   - frames: per-kind atomic frames (Identity, Scope, Capabilities,
@@ -58,11 +58,11 @@ type RecallInput struct {
 // Callers should treat the JSON as opaque; the cache layer is the
 // canonical reader.
 type RecallOutput struct {
-	Frames    RecallFrames         `json:"frames"`
-	Delta     []audit.WriteEvent   `json:"delta"`
-	NewToken  int64                `json:"new_token"`
-	CacheHits map[string]bool      `json:"cache_hits,omitempty"` // reserved for future wave
-	ComposedAt time.Time           `json:"composed_at"`
+	Frames     RecallFrames       `json:"frames"`
+	Delta      []audit.WriteEvent `json:"delta"`
+	NewToken   int64              `json:"new_token"`
+	CacheHits  map[string]bool    `json:"cache_hits,omitempty"` // reserved for future wave
+	ComposedAt time.Time          `json:"composed_at"`
 }
 
 // RecallFrames bundles the 5 atomic frame kinds. Each field is nil
@@ -121,7 +121,7 @@ func runRecall(ctx context.Context, st store.Store, safety *store.SafetyHolder, 
 	}
 
 	out := &RecallOutput{
-		Frames:    RecallFrames{},
+		Frames:     RecallFrames{},
 		ComposedAt: time.Now().UTC(),
 	}
 

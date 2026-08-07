@@ -31,7 +31,7 @@ func TestWire_F33_VibePublishHappyPath(t *testing.T) {
 	tasksJSON := `[{"id":"T1","description":"F33 wire happy","depends_on":[]}]`
 	resp, err := s.toolsCall("dark_memory_vibe_publish", map[string]any{
 		"spec": map[string]any{
-			"vibe_case":     "C1",
+			"vibe_case":    "C1",
 			"constitution": "",
 			"spec":         `{"intent":"wire F33 nested happy path"}`,
 			"tasks":        tasksJSON,
@@ -136,4 +136,3 @@ func filesystemStat(path string) (any, error) {
 // bytes.NewBuffer is used in helper_test.go (a sibling file), so
 // referencing it here pins the wire package's bytes import.
 var _ = bytes.NewBuffer
-

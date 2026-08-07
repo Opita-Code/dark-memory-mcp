@@ -43,8 +43,8 @@ type Capabilities struct {
 type RiskClass string
 
 const (
-	RiskClassResearchOnly      RiskClass = "research-only"
-	RiskClassActiveProbing     RiskClass = "active-probing"
+	RiskClassResearchOnly       RiskClass = "research-only"
+	RiskClassActiveProbing      RiskClass = "active-probing"
 	RiskClassExploitDevelopment RiskClass = "exploit-development"
 )
 
@@ -52,10 +52,10 @@ const (
 type TargetScope string
 
 const (
-	TargetScopePublicInternet      TargetScope = "public_internet"
+	TargetScopePublicInternet        TargetScope = "public_internet"
 	TargetScopePrivateInfrastructure TargetScope = "private_infrastructure"
-	TargetScopeDarkweb            TargetScope = "darkweb"
-	TargetScopeLocalOnly          TargetScope = "local_only"
+	TargetScopeDarkweb               TargetScope = "darkweb"
+	TargetScopeLocalOnly             TargetScope = "local_only"
 )
 
 // Source describes where a mod came from.

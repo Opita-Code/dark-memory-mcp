@@ -1,4 +1,4 @@
-﻿// Package project_test covers the project namespace (INV-7):
+// Package project_test covers the project namespace (INV-7):
 // isolation between parallel projects sharing the same dark.db, plus
 // the migration v7 backward-compatibility (existing 164 specs in
 // 'default' project), and the Store.SetActiveProject enforcement.
@@ -11,14 +11,14 @@ import (
 	"time"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/audit"
+	"github.com/dark-agents/dark-memory-mcp/internal/constitution"
+	"github.com/dark-agents/dark-memory-mcp/internal/mods"
 	"github.com/dark-agents/dark-memory-mcp/internal/project"
 	"github.com/dark-agents/dark-memory-mcp/internal/research"
 	"github.com/dark-agents/dark-memory-mcp/internal/session"
+	"github.com/dark-agents/dark-memory-mcp/internal/ssd"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 	"github.com/dark-agents/dark-memory-mcp/internal/store/runtime"
-	"github.com/dark-agents/dark-memory-mcp/internal/constitution"
-	"github.com/dark-agents/dark-memory-mcp/internal/mods"
-	"github.com/dark-agents/dark-memory-mcp/internal/ssd"
 	"github.com/dark-agents/dark-memory-mcp/internal/vibeflow"
 )
 
@@ -161,10 +161,10 @@ func TestProject_CRUD(t *testing.T) {
 	s := openTestStore(t)
 
 	p := &project.Project{
-		ProjectID:     "acme-2026",
-		DisplayName:   "ACME Corp",
-		Description:   "Test project for ACME",
-		ConstitutionID: "acme-constitution",
+		ProjectID:       "acme-2026",
+		DisplayName:     "ACME Corp",
+		Description:     "Test project for ACME",
+		ConstitutionID:  "acme-constitution",
 		ConstitutionVer: "1.0.0",
 	}
 	if err := s.CreateProject(ctx, p); err != nil {
@@ -231,9 +231,9 @@ func TestProject_DriftStrictness_Roundtrip(t *testing.T) {
 
 	// Case 2: explicit override → persisted verbatim.
 	p2 := &project.Project{
-		ProjectID:        "drift-strict",
-		DisplayName:      "Strict Drift",
-		DriftStrictness:  "strict",
+		ProjectID:       "drift-strict",
+		DisplayName:     "Strict Drift",
+		DriftStrictness: "strict",
 	}
 	if err := s.CreateProject(ctx, p2); err != nil {
 		t.Fatalf("create p2: %v", err)

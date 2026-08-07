@@ -67,7 +67,7 @@ func TestRecallSubagentFindings_GroupsByKind(t *testing.T) {
 		{ID: 1, Kind: "finding", Tags: "subagent-abc, code-review"},
 		{ID: 2, Kind: "decision", Tags: "subagent-abc"},
 		{ID: 3, Kind: "observation", Tags: "subagent-abc"},
-		{ID: 4, Kind: "note", Tags: "subagent-abc"}, // other kind — ignored
+		{ID: 4, Kind: "note", Tags: "subagent-abc"},    // other kind — ignored
 		{ID: 5, Kind: "finding", Tags: "subagent-xyz"}, // other subagent — ignored
 	}}
 

@@ -76,8 +76,8 @@ func TestRequiresActiveSession(t *testing.T) {
 func TestPreCheck_SessionFreeToolAllowsWithoutSession(t *testing.T) {
 	in := GateInput{
 		ToolName:  "health_ping",
-		ProjectID: "",  // explicitly empty
-		SessionID: "",  // explicitly empty
+		ProjectID: "", // explicitly empty
+		SessionID: "", // explicitly empty
 		Now:       timeNow(),
 	}
 	res, err := PreCheck(context.Background(), nil, in)

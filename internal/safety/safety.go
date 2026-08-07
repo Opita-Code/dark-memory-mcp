@@ -20,9 +20,10 @@ import (
 // CanaryToken is a unique secret string. It is embedded in system
 // prompts (by external callers — this package does NOT inject into
 // prompts itself) and used to detect:
-//   (a) System prompt leakage (the LLM should never reveal it).
-//   (b) Constitution extraction attempts.
-//   (c) Cross-tool contamination.
+//
+//	(a) System prompt leakage (the LLM should never reveal it).
+//	(b) Constitution extraction attempts.
+//	(c) Cross-tool contamination.
 //
 // INV-3 (canary in writes) requires any Save* call to validate that the
 // payload does NOT contain the active canary. This is a structural

@@ -2,6 +2,7 @@ package version
 
 import (
 	"encoding/json"
+	"runtime/debug"
 	"strings"
 	"testing"
 )
@@ -139,5 +140,93 @@ func TestResolve_BuildInfoContract(t *testing.T) {
 		// ok
 	default:
 		t.Errorf("Source = %q, want one of ldflags|buildinfo|dev", got.Source)
+	}
+}
+
+// TestApplyBuildSettings_RevisionTruncatesTo7 pins the vcs.revision
+// truncation: >= 7 chars → first 7; shorter → full value. Kills the
+// assignment-removal mutants in the revision branch.
+func TestApplyBuildSettings_RevisionTruncatesTo7(t *testing.T) {
+	r := &Resolved{}
+	applyBuildSettings(r, []debug.BuildSetting{
+		{Key: "vcs.revision", Value: "0123456789abcdef"},
+	})
+	if r.Commit != "0123456" {
+		t.Errorf("long revision: Commit = %q, want first-7 %q", r.Commit, "0123456")
+	}
+
+	r2 := &Resolved{}
+	applyBuildSettings(r2, []debug.BuildSetting{
+		{Key: "vcs.revision", Value: "abc"},
+	})
+	if r2.Commit != "abc" {
+		t.Errorf("short revision: Commit = %q, want %q", r2.Commit, "abc")
+	}
+}
+
+// TestApplyBuildSettings_ModifiedAndTime pins the vcs.modified and
+// vcs.time branches.
+func TestApplyBuildSettings_ModifiedAndTime(t *testing.T) {
+	r := &Resolved{}
+	applyBuildSettings(r, []debug.BuildSetting{
+		{Key: "vcs.modified", Value: "true"},
+		{Key: "vcs.time", Value: "2026-08-06T10:00:00Z"},
+	})
+	if !r.Dirty {
+		t.Error("vcs.modified=true: Dirty = false, want true")
+	}
+	if r.BuildTime != "2026-08-06T10:00:00Z" {
+		t.Errorf("vcs.time: BuildTime = %q, want injected value", r.BuildTime)
+	}
+
+	r2 := &Resolved{}
+	applyBuildSettings(r2, []debug.BuildSetting{
+		{Key: "vcs.modified", Value: "false"},
+	})
+	if r2.Dirty {
+		t.Error("vcs.modified=false: Dirty = true, want false")
+	}
+}
+
+// TestApplyBuildSettings_UnknownKeysIgnored pins that unrecognized
+// settings don't touch the frame.
+func TestApplyBuildSettings_UnknownKeysIgnored(t *testing.T) {
+	r := &Resolved{Version: "1.0.0"}
+	applyBuildSettings(r, []debug.BuildSetting{
+		{Key: "unknown.key", Value: "zzz"},
+	})
+	if r.Commit != "" || r.Dirty || r.BuildTime != "" {
+		t.Errorf("unknown key mutated frame: %+v", r)
+	}
+}
+
+// TestApplyBuildMainVersion pins the buildinfo Main.Version mapping:
+// a real version (v1.3.2) → "1.3.2" + Source=buildinfo; empty and
+// "(devel)" fall through untouched (dev default stays).
+func TestApplyBuildMainVersion(t *testing.T) {
+	r := &Resolved{Source: "dev", Version: "dev", IsDev: true}
+	applyBuildMainVersion(r, "v1.3.2")
+	if r.Version != "1.3.2" {
+		t.Errorf("Version = %q, want %q", r.Version, "1.3.2")
+	}
+	if r.Source != "buildinfo" {
+		t.Errorf("Source = %q, want buildinfo", r.Source)
+	}
+	if r.IsDev {
+		t.Error("IsDev = true after buildinfo, want false")
+	}
+
+	// Empty Main.Version: dev default preserved.
+	r2 := &Resolved{Source: "dev", Version: "dev", IsDev: true}
+	applyBuildMainVersion(r2, "")
+	if r2.Version != "dev" || r2.Source != "dev" {
+		t.Errorf("empty Main.Version changed frame: %+v", r2)
+	}
+
+	// "(devel)" (go build from checkout): dev default preserved.
+	r3 := &Resolved{Source: "dev", Version: "dev", IsDev: true}
+	applyBuildMainVersion(r3, "(devel)")
+	if r3.Version != "dev" || r3.Source != "dev" {
+		t.Errorf("(devel) Main.Version changed frame: %+v", r3)
 	}
 }

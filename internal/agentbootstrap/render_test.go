@@ -95,12 +95,12 @@ func TestRender_SYSTEM_PROMPT_KeyValues(t *testing.T) {
 	}
 
 	checks := []string{
-		"MCP schema v77",        // SchemaVersion injected
-		"**123 tools**",         // CanonicalTools injected
+		"MCP schema v77", // SchemaVersion injected
+		"**123 tools**",  // CanonicalTools injected
 		"Total: **123 canonical tools**",
-		"across 17 namespaces",  // NamespaceCount injected
-		"| `PROJECT` | 1 |",     // NamespaceCounts injected (PROJECT)
-		"| `ERROR_OBS` | 4 |",   // NamespaceCounts injected (ERROR_OBS)
+		"across 17 namespaces",   // NamespaceCount injected
+		"| `PROJECT` | 1 |",      // NamespaceCounts injected (PROJECT)
+		"| `ERROR_OBS` | 4 |",    // NamespaceCounts injected (ERROR_OBS)
 		"## 2. The 10 resources", // TotalResources injected
 	}
 	for _, want := range checks {

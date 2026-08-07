@@ -354,6 +354,7 @@ func shutdownCloseReason() string {
 // DSNs come in two flavours:
 //   - Keyword form: "host=localhost port=5432 user=app password=secret dbname=mcp"
 //   - URI form:     "postgresql://app:secret@localhost:5432/mcp"
+//
 // We redact the password component in both. SQLite paths are file
 // paths and have no embedded secrets.
 //

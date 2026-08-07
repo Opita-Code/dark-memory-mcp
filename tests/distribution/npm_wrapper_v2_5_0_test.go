@@ -10,7 +10,7 @@
 //   - server.json (Official MCP Registry manifest)
 //   - .github/workflows/publish-npm.yml + publish-mcp-registry.yml
 //   - Cross-validation: package.json versions + server.json version
-//     + git tag (when CI runs on a tag)
+//   - git tag (when CI runs on a tag)
 //
 // Why this matters: a single typo in package.json or server.json
 // causes the npm publish + Official MCP Registry entry to fail at
@@ -214,16 +214,16 @@ func TestV250_WrapperPackageHasBinEntry(t *testing.T) {
 // install a darwin-arm64 binary on a linux-x64 host.
 func TestV250_PlatformPackagesHaveOSAndCPU(t *testing.T) {
 	platforms := map[string]struct {
-		os   string
-		cpu  string
-		ext  string // binary extension on this OS
+		os  string
+		cpu string
+		ext string // binary extension on this OS
 	}{
-		"darwin-x64":    {"darwin", "x64", ""},
-		"darwin-arm64":  {"darwin", "arm64", ""},
-		"linux-x64":     {"linux", "x64", ""},
-		"linux-arm64":   {"linux", "arm64", ""},
-		"win32-x64":     {"win32", "x64", ".exe"},
-		"win32-arm64":   {"win32", "arm64", ".exe"},
+		"darwin-x64":   {"darwin", "x64", ""},
+		"darwin-arm64": {"darwin", "arm64", ""},
+		"linux-x64":    {"linux", "x64", ""},
+		"linux-arm64":  {"linux", "arm64", ""},
+		"win32-x64":    {"win32", "x64", ".exe"},
+		"win32-arm64":  {"win32", "arm64", ".exe"},
 	}
 
 	for _, dir := range platformDirs(t) {

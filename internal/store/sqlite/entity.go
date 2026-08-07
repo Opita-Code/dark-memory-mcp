@@ -6,17 +6,17 @@
 // (internal/entity); PR-3.1 will add a drift_judge bridge.
 //
 // # Backward compat (row 160 PR-3)
-// - extract_entities is OPT-IN. SaveAgentMemory only writes entity
-//   rows when the caller populates m.Entities (transient field).
-// - Entity filter on search is OPT-IN. f.Entities empty → no
-//   filter (pre-PR-3 behavior).
+//   - extract_entities is OPT-IN. SaveAgentMemory only writes entity
+//     rows when the caller populates m.Entities (transient field).
+//   - Entity filter on search is OPT-IN. f.Entities empty → no
+//     filter (pre-PR-3 behavior).
 //
 // # Cross-project isolation
-// - GetAgentMemoryEntities joins on agent_memory.project_id =
-//   active_project. Cross-project reads return nil.
-// - SearchAgentMemory applies the entity filter after the BM25 /
-//   vector / RRF arms produce their candidate set; the filter is
-//   a post-rank prune that preserves the original ranking order.
+//   - GetAgentMemoryEntities joins on agent_memory.project_id =
+//     active_project. Cross-project reads return nil.
+//   - SearchAgentMemory applies the entity filter after the BM25 /
+//     vector / RRF arms produce their candidate set; the filter is
+//     a post-rank prune that preserves the original ranking order.
 package sqlite
 
 import (

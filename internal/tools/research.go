@@ -1,6 +1,7 @@
 // Package tools — research.go: the RESEARCH namespace (3 tools).
 //
 // Per RFC §5 / D-9:
+//
 //	dark_memory_research_topic
 //	dark_memory_research_recall
 //	dark_memory_research_resume_thread
@@ -43,8 +44,8 @@ func RegisterResearch(reg *Registry, orch *orchestration.Orchestrator, st store.
 			"type":     "object",
 			"required": []string{"query"},
 			"properties": map[string]any{
-				"query":      map[string]any{"type": "string"},
-				"max_tokens": map[string]any{"type": "integer", "description": "Token budget for the response. Default 4000."},
+				"query":          map[string]any{"type": "string"},
+				"max_tokens":     map[string]any{"type": "integer", "description": "Token budget for the response. Default 4000."},
 				"min_confidence": map[string]any{"type": "number", "description": "Drop items below this confidence (0..1). Default 0.3."},
 			},
 		}),

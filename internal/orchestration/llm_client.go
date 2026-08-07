@@ -49,7 +49,7 @@ import (
 // Both are read at serve time (per call) so operators can tune
 // without a restart.
 const (
-	defaultJudgeTimeoutMS = 120000
+	defaultJudgeTimeoutMS  = 120000
 	defaultJudgeRetryCount = 2
 	maxJudgeRetryCount     = 5
 )

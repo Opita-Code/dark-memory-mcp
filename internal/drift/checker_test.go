@@ -266,10 +266,10 @@ func TestCheckArtifact_PassesContentToJudge(t *testing.T) {
 // (structured JSON + legacy bare-word form + normalization).
 func TestParseDecisionFromJudgeJSON(t *testing.T) {
 	cases := []struct {
-		name     string
-		json     string
-		conf     float32
-		want     string
+		name string
+		json string
+		conf float32
+		want string
 	}{
 		{"structured aligned", `{"verdict":"aligned","confidence":0.92}`, 0.92, "aligned"},
 		{"structured drift_detected", `{"verdict":"drift_detected","confidence":0.85}`, 0.85, "drift_detected"},

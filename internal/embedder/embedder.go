@@ -236,13 +236,13 @@ func factoryInner() (Embedder, error) {
 //
 // Order of precedence (v2.9.1-alpha PR-2.1):
 //
-//	1. DARK_MEMORY_EMBEDDER manual override (any kind, registered).
-//	2. Harness-detected preferred rung (claude-code → voyage;
-//	   opencode/codex → openai; ollama → ollama).
-//	3. Bundled ONNX (always available, offline default).
-//	4. OPENAI_API_KEY last rung (backward compat with PR-2).
-//	5. None() stub (BM25-only path; the only path that "succeeds"
-//	   with zero configuration).
+//  1. DARK_MEMORY_EMBEDDER manual override (any kind, registered).
+//  2. Harness-detected preferred rung (claude-code → voyage;
+//     opencode/codex → openai; ollama → ollama).
+//  3. Bundled ONNX (always available, offline default).
+//  4. OPENAI_API_KEY last rung (backward compat with PR-2).
+//  5. None() stub (BM25-only path; the only path that "succeeds"
+//     with zero configuration).
 //
 // Unlike Factory(), FactoryAuto intentionally uses the harness's
 // existing env state (per row 163 + row 164 §1: "we never ask for new

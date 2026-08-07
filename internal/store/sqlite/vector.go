@@ -120,9 +120,9 @@ func cosine(a, b embedder.Vec) float64 {
 // rrfHit is one row's RRF score + axis ranks. The store consumes
 // this to assemble SearchHit values for Mode="rrf".
 type rrfHit struct {
-	ID        int64
-	Score     float64
-	BM25Rank  int // 0 = not present in BM25 axis
+	ID         int64
+	Score      float64
+	BM25Rank   int // 0 = not present in BM25 axis
 	VectorRank int // 0 = not present in vector axis
 }
 

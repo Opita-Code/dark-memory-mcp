@@ -41,8 +41,8 @@ import (
 
 	"github.com/dark-agents/dark-memory-mcp/internal/atomic"
 	"github.com/dark-agents/dark-memory-mcp/internal/policy"
-	"github.com/dark-agents/dark-memory-mcp/internal/store"
 	"github.com/dark-agents/dark-memory-mcp/internal/ssd"
+	"github.com/dark-agents/dark-memory-mcp/internal/store"
 )
 
 // DefaultToolGrants is the comma-separated list of MCP tools granted
@@ -394,7 +394,7 @@ func parseTimestamp(s string) time.Time {
 // (see internal/ssd drift_judge evaluator). Other eval_types may use
 // different shapes; parseSDDVerdict only handles drift_judge.
 type sddVerdictJSON struct {
-	Verdict  string `json:"verdict"`  // aligned | drift_detected | needs_human
+	Verdict   string `json:"verdict"` // aligned | drift_detected | needs_human
 	Reasoning string `json:"reasoning"`
 }
 

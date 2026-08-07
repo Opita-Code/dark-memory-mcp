@@ -2,12 +2,12 @@
 //
 // This is the v2.1.0 upgrade of the naive `strings.Split(body, ";")`
 // splitter. It tracks:
-//   1. Line comments (`--` to end of line)
-//   2. Block comments (`/* ... */`)
-//   3. Single-quoted string literals with `''` escape
-//   4. BEGIN..END blocks (full nesting)
-//   5. Dollar-quoted strings (`$tag$...$tag$`) — Postgres, but cheap
-//      to support
+//  1. Line comments (`--` to end of line)
+//  2. Block comments (`/* ... */`)
+//  3. Single-quoted string literals with `”` escape
+//  4. BEGIN..END blocks (full nesting)
+//  5. Dollar-quoted strings (`$tag$...$tag$`) — Postgres, but cheap
+//     to support
 //
 // The `;` is a split point ONLY when:
 //   - we're not inside a string literal
@@ -24,18 +24,19 @@
 // The state machine is intentionally a single-pass rune loop. The
 // state diagram is:
 //
-//                    --     /*     '       BEGIN    $tag$
-//   normal       ---> lineCmt blkCmt string begin    dollar
-//     |  ^         |       |       |       |       |
-//     |  |         v       v       v       v       v
-//     |  +----- (back to normal on terminator)
+//	                 --     /*     '       BEGIN    $tag$
+//	normal       ---> lineCmt blkCmt string begin    dollar
+//	  |  ^         |       |       |       |       |
+//	  |  |         v       v       v       v       v
+//	  |  +----- (back to normal on terminator)
 //
 // Transitions back to normal:
-//   lineCmt  : on '\n'
-//   blkCmt   : on '*/'
-//   string   : on unescaped "'"
-//   begin    : on matching END (decrements depth)
-//   dollar   : on matching $tag$ close
+//
+//	lineCmt  : on '\n'
+//	blkCmt   : on '*/'
+//	string   : on unescaped "'"
+//	begin    : on matching END (decrements depth)
+//	dollar   : on matching $tag$ close
 //
 // See split_test.go for the table-driven coverage. The drift-check
 // for this code is the test suite.

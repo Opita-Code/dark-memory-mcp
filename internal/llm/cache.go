@@ -27,22 +27,22 @@ import (
 
 // CacheEntry is one cached LLM response.
 type CacheEntry struct {
-	Key         string    `json:"key"`          // FNV-1a64(model||system||user) hex
-	ContentSHA  string    `json:"content_sha"`  // SHA-256(text) hex
-	Text        string    `json:"text"`         // raw LLM response
-	StoredAt    time.Time `json:"stored_at"`
-	Model       string    `json:"model"`
+	Key        string    `json:"key"`         // FNV-1a64(model||system||user) hex
+	ContentSHA string    `json:"content_sha"` // SHA-256(text) hex
+	Text       string    `json:"text"`        // raw LLM response
+	StoredAt   time.Time `json:"stored_at"`
+	Model      string    `json:"model"`
 }
 
 // CacheStats reports aggregate metrics.
 type CacheStats struct {
-	Hits        int    `json:"hits"`
-	Misses      int    `json:"misses"`
-	Sets        int    `json:"sets"`
-	Evictions   int    `json:"evictions"` // TTL expired or integrity failure
-	IntegrityFails int `json:"integrity_fails"` // INV-5: stored text mismatch
-	Size        int    `json:"size"`
-	Path        string `json:"path"`
+	Hits           int    `json:"hits"`
+	Misses         int    `json:"misses"`
+	Sets           int    `json:"sets"`
+	Evictions      int    `json:"evictions"`       // TTL expired or integrity failure
+	IntegrityFails int    `json:"integrity_fails"` // INV-5: stored text mismatch
+	Size           int    `json:"size"`
+	Path           string `json:"path"`
 }
 
 // AnomalySink is invoked when Cache detects a failure mode.

@@ -43,14 +43,14 @@ import (
 // One tool call returns this — never 5 separate tool calls.
 type ArtifactContext struct {
 	Artifact       *vibeflow.Artifact
-	SpecMarkdown   string                  // rendered from vibe_specs.spec_json
-	SpecTasks      []TaskView              // parsed from vibe_specs.tasks_json
+	SpecMarkdown   string                   // rendered from vibe_specs.spec_json
+	SpecTasks      []TaskView               // parsed from vibe_specs.tasks_json
 	Brand          *vibeflow.BrandGuide     // resolved from artifact.brand_id
 	Compliance     *vibeflow.ComplianceRule // resolved from artifact.jurisdiction
 	LastDrift      *vibeflow.DriftReport
-	VerdictChain   []SddVerdictView        // brand + compliance + drift ordered by time
-	WriteAuditTail []audit.WriteEvent      // last 10 writes for this artifact
-	RelatedLinks   []research.Link         // cross-links from research_items
+	VerdictChain   []SddVerdictView   // brand + compliance + drift ordered by time
+	WriteAuditTail []audit.WriteEvent // last 10 writes for this artifact
+	RelatedLinks   []research.Link    // cross-links from research_items
 }
 
 // TaskView is a single task from a spec, parsed and ready to render.
@@ -197,13 +197,13 @@ func loadRelatedLinks(ctx context.Context, s store.Store, sessionID string, arti
 // SessionContext is the composed view for an operational session.
 // One tool call returns this when the LLM asks "what's my session state?".
 type SessionContext struct {
-	Session           *session.Session
+	Session            *session.Session
 	ActiveConstitution *constitution.Constitution
-	ActiveMods        []mods.Mod
-	Counts            SessionCounts
-	RecentWrites      []audit.WriteEvent // last 20 writes for this session
-	PendingDrifts     []DriftTask        // drift reports not yet reconciled
-	ActiveSpec        *vibeflow.Spec     // most recent spec for this session
+	ActiveMods         []mods.Mod
+	Counts             SessionCounts
+	RecentWrites       []audit.WriteEvent // last 20 writes for this session
+	PendingDrifts      []DriftTask        // drift reports not yet reconciled
+	ActiveSpec         *vibeflow.Spec     // most recent spec for this session
 }
 
 // SessionCounts is the per-session row counts.

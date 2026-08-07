@@ -10,13 +10,13 @@ package ssd
 type EvaluationType string
 
 const (
-	EvalBrandMatch           EvaluationType = "brand_match"
-	EvalComplianceCheck      EvaluationType = "compliance_check"
-	EvalDriftJudge           EvaluationType = "drift_judge"
-	EvalGroundingCheck       EvaluationType = "grounding_check"
-	EvalPIIDetect            EvaluationType = "pii_detect"
-	EvalPromptInjectionScan  EvaluationType = "prompt_injection_scan"
-	EvalConsensus            EvaluationType = "consensus"
+	EvalBrandMatch          EvaluationType = "brand_match"
+	EvalComplianceCheck     EvaluationType = "compliance_check"
+	EvalDriftJudge          EvaluationType = "drift_judge"
+	EvalGroundingCheck      EvaluationType = "grounding_check"
+	EvalPIIDetect           EvaluationType = "pii_detect"
+	EvalPromptInjectionScan EvaluationType = "prompt_injection_scan"
+	EvalConsensus           EvaluationType = "consensus"
 	// v2.7.0-alpha: mindset delegation primitive. MindsetCompose is
 	// the GENERATIVE call (LLM synthesizes a subagent system_prompt
 	// given vibe_case + task_description). MindsetQuality is the

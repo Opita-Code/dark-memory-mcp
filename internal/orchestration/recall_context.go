@@ -73,9 +73,9 @@ func (o *Orchestrator) RecallContext(ctx context.Context, in RecallContextInput)
 
 	econ := economy.Options{
 		FilterConfidenceThreshold: economy.DefaultOptions().FilterConfidenceThreshold,
-		TruncatePerItem:            500,
-		CapTotal:                   capTotal,
-		CompressBody:               true,
+		TruncatePerItem:           500,
+		CapTotal:                  capTotal,
+		CompressBody:              true,
 	}
 
 	compressed := economy.Compress(raw, econ)

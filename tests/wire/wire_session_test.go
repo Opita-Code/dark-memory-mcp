@@ -33,10 +33,10 @@ import (
 // stdio JSON-RPC channel. The harness's per-call framing rules come
 // straight from the opencode source (see opencode/packages/opencode/src/mcp/catalog.ts):
 //
-//   * One JSON object per write, terminated by '\n' (not '\r\n').
-//   * Server emits one JSON object per reply, also '\n'-terminated.
-//   * arguments is a single JSON object (NOT a wrapper envelope).
-//   * clientInfo.name must be a non-empty string on initialize.
+//   - One JSON object per write, terminated by '\n' (not '\r\n').
+//   - Server emits one JSON object per reply, also '\n'-terminated.
+//   - arguments is a single JSON object (NOT a wrapper envelope).
+//   - clientInfo.name must be a non-empty string on initialize.
 type wireSession struct {
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
@@ -247,8 +247,8 @@ func (s *wireSession) roundTrip(raw []byte) error {
 		return fmt.Errorf("read: %w", err)
 	}
 	var env struct {
-		ID    any   `json:"id"`
-		Error any   `json:"error"`
+		ID    any `json:"id"`
+		Error any `json:"error"`
 	}
 	if err := json.Unmarshal(resp, &env); err != nil {
 		return fmt.Errorf("unmarshal: %w: %s", err, string(resp))
@@ -365,8 +365,8 @@ func (s *sessionStderr) Write(p []byte) (int, error) {
 // readOne blocks until a complete line arrives or the underlying
 // reader returns EOF.
 type lineReader struct {
-	r io.ReadCloser
-	c chan readResult
+	r    io.ReadCloser
+	c    chan readResult
 	once bool
 }
 

@@ -168,8 +168,8 @@ func wrapTasksParseErr(formDesc string, cause error) error {
 type VibeSpecResult struct {
 	SpecID         int64    `json:"spec_id"`
 	TasksValidated int      `json:"tasks_validated"`
-	TaskIDs        []string `json:"task_ids"`            // canonical order
-	TasksJSON      string   `json:"tasks_json"`          // serialised for storage
+	TaskIDs        []string `json:"task_ids"`           // canonical order
+	TasksJSON      string   `json:"tasks_json"`         // serialised for storage
 	Warnings       []string `json:"warnings,omitempty"` // non-fatal: orphan ext refs, etc.
 	// AutoSavedTodoIDs (v2.8.0-alpha A4) — one row id per task,
 	// parallel to TaskIDs. Empty when AutoSaveTodos=false, V280

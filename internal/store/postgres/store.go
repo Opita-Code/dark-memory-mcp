@@ -47,27 +47,27 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/dark-agents/dark-memory-mcp/internal/agentmemory"
 	"github.com/dark-agents/dark-memory-mcp/internal/atomic"
 	"github.com/dark-agents/dark-memory-mcp/internal/audit"
 	"github.com/dark-agents/dark-memory-mcp/internal/constitution"
 	"github.com/dark-agents/dark-memory-mcp/internal/embedder"
+	"github.com/dark-agents/dark-memory-mcp/internal/errorobs"
 	"github.com/dark-agents/dark-memory-mcp/internal/migrate"
 	migratepostgres "github.com/dark-agents/dark-memory-mcp/internal/migrate/postgres"
 	"github.com/dark-agents/dark-memory-mcp/internal/mods"
 	"github.com/dark-agents/dark-memory-mcp/internal/project"
-	"github.com/dark-agents/dark-memory-mcp/internal/store"
 	"github.com/dark-agents/dark-memory-mcp/internal/research"
 	"github.com/dark-agents/dark-memory-mcp/internal/safety"
 	"github.com/dark-agents/dark-memory-mcp/internal/session"
 	"github.com/dark-agents/dark-memory-mcp/internal/ssd"
+	"github.com/dark-agents/dark-memory-mcp/internal/store"
 	"github.com/dark-agents/dark-memory-mcp/internal/vibeflow"
-	"github.com/dark-agents/dark-memory-mcp/internal/agentmemory"
-	"github.com/dark-agents/dark-memory-mcp/internal/errorobs"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// openPostgres opens a Postgres 
+// openPostgres opens a Postgres
 func openPostgres(ctx context.Context, cfg store.Config) (store.Store, error) {
 	if cfg.DSN == "" {
 		return nil, fmt.Errorf("%w: Postgres DSN required", store.ErrInvalidArgument)
@@ -681,7 +681,7 @@ func (s *Store) SaveSession(ctx context.Context, wc store.WriteContext, sess *se
 			sess.SessionID, sess.Status, sess.ConstitutionID, sess.ConstitutionVer, sess.ActiveMods,
 			sess.StartedAt, closedAt, sess.LastHeartbeatAt, sess.ParentSessionID,
 			sess.ResurrectedFrom, sess.Notes, sess.Operator, projectID,
-			sess.StartedAt /* created_at proxy = started_at for new sessions */,
+			sess.StartedAt, /* created_at proxy = started_at for new sessions */
 		).Scan(&id); err != nil {
 			return err
 		}
@@ -907,7 +907,7 @@ func (s *Store) SaveResurrect(ctx context.Context, wc store.WriteContext, origin
 			closedAt,
 			newSess.ParentSessionID, newSess.ResurrectedFrom, newSess.Notes,
 			newSess.Operator, activeProject,
-			newSess.StartedAt /* created_at proxy = started_at for resurrected sessions */,
+			newSess.StartedAt, /* created_at proxy = started_at for resurrected sessions */
 		).Scan(&newID); err != nil {
 			return err
 		}
@@ -954,21 +954,21 @@ func (s *Store) ListSessions(ctx context.Context, limit int) ([]session.Session,
 			&sess.Operator, &sess.StartedAt, &closedAt, &heartbeat, &parent, &rescFrom, &notes); err != nil {
 			return nil, err
 		}
-if closedAt != nil {
-		sess.ClosedAt = *closedAt
-	}
-	if heartbeat != nil {
-		sess.LastHeartbeatAt = *heartbeat
-	}
-	if parent != nil {
-		sess.ParentSessionID = *parent
-	}
-	if rescFrom != nil {
-		sess.ResurrectedFrom = *rescFrom
-	}
-	if notes != nil {
-		sess.Notes = *notes
-	}
+		if closedAt != nil {
+			sess.ClosedAt = *closedAt
+		}
+		if heartbeat != nil {
+			sess.LastHeartbeatAt = *heartbeat
+		}
+		if parent != nil {
+			sess.ParentSessionID = *parent
+		}
+		if rescFrom != nil {
+			sess.ResurrectedFrom = *rescFrom
+		}
+		if notes != nil {
+			sess.Notes = *notes
+		}
 		out = append(out, sess)
 	}
 	return out, nil
@@ -1026,7 +1026,7 @@ func (s *Store) ListStaleSessions(ctx context.Context, statuses []string, cutoff
 		if notes != nil {
 			sess.Notes = *notes
 		}
-out = append(out, sess)
+		out = append(out, sess)
 	}
 	return out, nil
 }

@@ -50,14 +50,14 @@ type BackendError struct {
 // Link is one cross-reference from a research_item to a target (attack,
 // cve, technique, paper, mod). Persisted in research_links.
 type Link struct {
-	ID             int64  `json:"id"`
-	ResearchItemID int64  `json:"research_item_id"`
-	TargetType     string `json:"target_type"` // attack | cve | technique | paper | mod
-	TargetID       string `json:"target_id"`
-	Note           string `json:"note,omitempty"`
-	Source         string `json:"source,omitempty"` // "user" | "auto-link-v2" | "operator"
+	ID             int64   `json:"id"`
+	ResearchItemID int64   `json:"research_item_id"`
+	TargetType     string  `json:"target_type"` // attack | cve | technique | paper | mod
+	TargetID       string  `json:"target_id"`
+	Note           string  `json:"note,omitempty"`
+	Source         string  `json:"source,omitempty"` // "user" | "auto-link-v2" | "operator"
 	Confidence     float32 `json:"confidence,omitempty"`
-	CreatedAt      string `json:"created_at"`
+	CreatedAt      string  `json:"created_at"`
 }
 
 // SessionScope controls whether Recall() filters by session_id.
@@ -84,12 +84,12 @@ type Status struct {
 
 // RecallOptions tunes a Recall call.
 type RecallOptions struct {
-	Query       string
-	Intent      string // optional intent filter
-	Source      string // optional source filter
-	SessionID   string // required when SessionScope == self
+	Query        string
+	Intent       string // optional intent filter
+	Source       string // optional source filter
+	SessionID    string // required when SessionScope == self
 	SessionScope SessionScope
-	Limit       int
+	Limit        int
 }
 
 // time alias to avoid importing time in callers that don't need it

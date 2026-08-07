@@ -21,42 +21,42 @@ import (
 // MemoryStateResult is the runtime snapshot. Counts are aggregate
 // across the entire dark.db (not filtered by active project).
 type MemoryStateResult struct {
-	Driver            string   `json:"driver"`
-	SchemaVersion     int      `json:"schema_version"`
-	Tables            []string `json:"tables"`
+	Driver            string       `json:"driver"`
+	SchemaVersion     int          `json:"schema_version"`
+	Tables            []string     `json:"tables"`
 	Counts            MemoryCounts `json:"counts"`
-	ActiveProject     string   `json:"active_project,omitempty"`
-	CanaryPresent     bool     `json:"canary_present"`
-	ConstitutionID    string   `json:"constitution_id,omitempty"`
-	ConstitutionVer   string   `json:"constitution_ver,omitempty"`
-	ConstitutionDrift bool     `json:"constitution_drift"`
-	SnapshotVersion   string   `json:"snapshot_version"` // schema version of this snapshot
+	ActiveProject     string       `json:"active_project,omitempty"`
+	CanaryPresent     bool         `json:"canary_present"`
+	ConstitutionID    string       `json:"constitution_id,omitempty"`
+	ConstitutionVer   string       `json:"constitution_ver,omitempty"`
+	ConstitutionDrift bool         `json:"constitution_drift"`
+	SnapshotVersion   string       `json:"snapshot_version"` // schema version of this snapshot
 }
 
 // MemoryCounts groups the per-table row counts. Mirrors store.Stats
 // but adds project-filtered fields where they make sense for the
 // operator.
 type MemoryCounts struct {
-	Specs            int `json:"specs"`
-	BrandGuides      int `json:"brand_guides"`
-	ComplianceRules  int `json:"compliance_rules"`
-	Artifacts        int `json:"artifacts"`
-	DriftReports     int `json:"drift_reports"`
-	SDDEvaluations   int `json:"sdd_evaluations"`
-	SessionsActive   int `json:"sessions_active"`
-	SessionsTotal    int `json:"sessions_total"`
-	RunsTotal        int `json:"runs_total"`
-	ItemsTotal       int `json:"items_total"`
-	LinksTotal       int `json:"links_total"`
-	WriteAuditTotal  int `json:"write_audit_total"`
-	ModsTotal        int `json:"mods_total"`
+	Specs              int `json:"specs"`
+	BrandGuides        int `json:"brand_guides"`
+	ComplianceRules    int `json:"compliance_rules"`
+	Artifacts          int `json:"artifacts"`
+	DriftReports       int `json:"drift_reports"`
+	SDDEvaluations     int `json:"sdd_evaluations"`
+	SessionsActive     int `json:"sessions_active"`
+	SessionsTotal      int `json:"sessions_total"`
+	RunsTotal          int `json:"runs_total"`
+	ItemsTotal         int `json:"items_total"`
+	LinksTotal         int `json:"links_total"`
+	WriteAuditTotal    int `json:"write_audit_total"`
+	ModsTotal          int `json:"mods_total"`
 	ConstitutionsTotal int `json:"constitutions_total"`
-	ProjectsTotal    int `json:"projects_total"`
+	ProjectsTotal      int `json:"projects_total"`
 	// ErrorEvents (v2.11.0, spec 757) — total error_events clusters
 	// in the Error Observatory + the unresolved backlog count. Both
 	// best-effort (0 when the summary read fails).
-	ErrorEvents        int `json:"error_events,omitempty"`
-	ErrorEventsOpen    int `json:"error_events_open,omitempty"`
+	ErrorEvents     int `json:"error_events,omitempty"`
+	ErrorEventsOpen int `json:"error_events_open,omitempty"`
 }
 
 // MemoryState returns the runtime snapshot. Read-only.

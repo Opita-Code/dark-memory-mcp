@@ -46,10 +46,10 @@ package tools
 // appear on both happy and sad paths (e.g. happy → suggest next
 // artifact; sad → suggest resolve_drift).
 type ToolResponse struct {
-	Data  any        `json:"data,omitempty"`
-	Audit *AuditRef  `json:"audit,omitempty"`
+	Data  any         `json:"data,omitempty"`
+	Audit *AuditRef   `json:"audit,omitempty"`
 	Next  *NextAction `json:"next,omitempty"`
-	Error *ToolError `json:"error,omitempty"`
+	Error *ToolError  `json:"error,omitempty"`
 }
 
 // AuditRef is the reference to the write_audit row(s) a tool call
@@ -57,10 +57,10 @@ type ToolResponse struct {
 // a write_audit row atomically; this struct is how we surface that
 // row's ID + payload SHA back to the caller.
 type AuditRef struct {
-	ID       int64    `json:"id"`        // write_audit.id (or first id if multi-row)
-	IDs      []int64  `json:"ids,omitempty"` // all ids when a single call emits >1
-	Operation string  `json:"operation"` // e.g. "SaveSpec", "SaveArtifact", "SaveDriftReport"
-	SHA256   string   `json:"sha256,omitempty"` // sha256(payload) per INV-1
+	ID        int64   `json:"id"`               // write_audit.id (or first id if multi-row)
+	IDs       []int64 `json:"ids,omitempty"`    // all ids when a single call emits >1
+	Operation string  `json:"operation"`        // e.g. "SaveSpec", "SaveArtifact", "SaveDriftReport"
+	SHA256    string  `json:"sha256,omitempty"` // sha256(payload) per INV-1
 }
 
 // NextAction is the sequence-aware "what to do next" hint. Always
@@ -73,10 +73,10 @@ type AuditRef struct {
 //   - "on_drift": only when the call returned a drift_detected verdict
 //   - "on_human_gate": only when verdict == needs_human
 type NextAction struct {
-	Tool string         `json:"tool"`         // bare tool name (no prefix)
-	Args map[string]any `json:"args,omitempty"` // argument hints (typed)
-	When string         `json:"when"`         // always | on_drift | on_human_gate
-	Reason string       `json:"reason,omitempty"` // 1-sentence human-readable explanation
+	Tool   string         `json:"tool"`             // bare tool name (no prefix)
+	Args   map[string]any `json:"args,omitempty"`   // argument hints (typed)
+	When   string         `json:"when"`             // always | on_drift | on_human_gate
+	Reason string         `json:"reason,omitempty"` // 1-sentence human-readable explanation
 }
 
 // ToolError is the structured error returned by a failed tool call.
@@ -92,22 +92,22 @@ type NextAction struct {
 // omitempty so the legacy shape is preserved for non-type-mismatch
 // errors.
 type ToolError struct {
-	Code          string `json:"code"`                          // sentinel name
-	Message       string `json:"message"`                       // 1-sentence fact + 1-sentence implication
-	Hint          string `json:"hint,omitempty"`                // optional: what to do next
-	Field         string `json:"field,omitempty"`               // F35: JSON path to the offending field (e.g. "tasks[2].depends_on"); empty if not a type-mismatch
-	ExpectedType  string `json:"expected_type,omitempty"`       // F35: Go type the struct expects (e.g. "[]string")
-	ActualType    string `json:"actual_type,omitempty"`         // F35: JSON type the payload supplied (e.g. "string")
-	SchemaHintURL string `json:"schema_hint_url,omitempty"`     // F35: optional URL to the per-tool schema doc
+	Code          string `json:"code"`                      // sentinel name
+	Message       string `json:"message"`                   // 1-sentence fact + 1-sentence implication
+	Hint          string `json:"hint,omitempty"`            // optional: what to do next
+	Field         string `json:"field,omitempty"`           // F35: JSON path to the offending field (e.g. "tasks[2].depends_on"); empty if not a type-mismatch
+	ExpectedType  string `json:"expected_type,omitempty"`   // F35: Go type the struct expects (e.g. "[]string")
+	ActualType    string `json:"actual_type,omitempty"`     // F35: JSON type the payload supplied (e.g. "string")
+	SchemaHintURL string `json:"schema_hint_url,omitempty"` // F35: optional URL to the per-tool schema doc
 }
 
 // Common canonical NextAction verbs. Used by next.go and the tool
 // namespace files.
 const (
-	NextActionPublish    = "publish"      // artifact accepted; safe to ship
-	NextActionReconcile  = "reconcile"    // drift_detected; call resolve_drift
-	NextActionHumanGate  = "human_gate"   // needs_human; operator reviews
-	NextActionAlways     = "always"       // when trigger
-	NextActionOnDrift    = "on_drift"     // when trigger
+	NextActionPublish     = "publish"       // artifact accepted; safe to ship
+	NextActionReconcile   = "reconcile"     // drift_detected; call resolve_drift
+	NextActionHumanGate   = "human_gate"    // needs_human; operator reviews
+	NextActionAlways      = "always"        // when trigger
+	NextActionOnDrift     = "on_drift"      // when trigger
 	NextActionOnHumanGate = "on_human_gate" // when trigger
 )

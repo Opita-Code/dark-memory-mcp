@@ -54,12 +54,12 @@ type Reason string
 // post-hook drift case). Keep in sync with the constitution's
 // [refusal] body which lists the 6 typed errors + ErrDriftAtWrite.
 const (
-	ReasonOK              Reason = "ok"
-	ReasonScopeRequired   Reason = "scope_required"
+	ReasonOK               Reason = "ok"
+	ReasonScopeRequired    Reason = "scope_required"
 	ReasonCapabilityDenied Reason = "capability_not_granted"
-	ReasonPersonaMissing  Reason = "persona_not_resolvable"
-	ReasonFrameStale      Reason = "frame_stale_too_far"
-	ReasonDriftAtWrite    Reason = "drift_at_write"
+	ReasonPersonaMissing   Reason = "persona_not_resolvable"
+	ReasonFrameStale       Reason = "frame_stale_too_far"
+	ReasonDriftAtWrite     Reason = "drift_at_write"
 )
 
 // RequiresActiveSession lists tools that REQUIRE an active session
@@ -258,7 +258,7 @@ func PreCheck(ctx context.Context, src FrameSource, in GateInput) (*PreCheckResu
 			Message: fmt.Sprintf("constitution mismatch: identity=%s@%s, input=%s@%s",
 				identity.ConstitutionID, identity.ConstitutionVer,
 				in.ConstitutionID, in.ConstitutionVer),
-			Hint:    "Session needs dark_memory_session_resurrect or constitution rebind",
+			Hint: "Session needs dark_memory_session_resurrect or constitution rebind",
 		}, nil
 	}
 	if age := in.Now.Sub(identity.ComposedAt()); age > atomic.MaxIdentityFrameAge {
@@ -413,26 +413,32 @@ type PostCheckResult struct {
 // # Behavior matrix (Wave 5A.vi, M6)
 //
 // DriftChecker=nil OR DriftArtifact=nil OR tool not artifact-creating:
-//   → DriftVerdict="skipped", Allowed=true (legacy stub path).
+//
+//	→ DriftVerdict="skipped", Allowed=true (legacy stub path).
 //
 // DriftChecker set, tool is artifact-creating, Strictness=off:
-//   → DriftVerdict="skipped", Allowed=true.
+//
+//	→ DriftVerdict="skipped", Allowed=true.
 //
 // Strictness=warn, drift_detected or needs_human:
-//   → DriftVerdict=verdict, Allowed=true (caller tags
-//     validation_status="drift_pending" out-of-band).
+//
+//	→ DriftVerdict=verdict, Allowed=true (caller tags
+//	  validation_status="drift_pending" out-of-band).
 //
 // Strictness=strict, drift_detected:
-//   → Allowed=false, Reason=ReasonDriftAtWrite, Hint="resolve drift
-//     via dark_memory_resolve_drift before retrying".
+//
+//	→ Allowed=false, Reason=ReasonDriftAtWrite, Hint="resolve drift
+//	  via dark_memory_resolve_drift before retrying".
 //
 // Strictness=strict, needs_human:
-//   → Allowed=false, Reason=ReasonDriftAtWrite (conservative — treat
-//     human-gate the same as drift_detected under strict mode so the
-//     operator gets a clear signal rather than a silent approval).
+//
+//	→ Allowed=false, Reason=ReasonDriftAtWrite (conservative — treat
+//	  human-gate the same as drift_detected under strict mode so the
+//	  operator gets a clear signal rather than a silent approval).
 //
 // Strictness=strict, aligned:
-//   → DriftVerdict="aligned", Allowed=true.
+//
+//	→ DriftVerdict="aligned", Allowed=true.
 //
 // # Compatibility
 // The pre-5A.vi signature had PostCheckInput{Pre, Response, ComposedAt}.

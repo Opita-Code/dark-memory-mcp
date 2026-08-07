@@ -1,6 +1,7 @@
 // Package tools — observability.go: the OBSERVABILITY namespace (4 tools).
 //
 // Per RFC §5 / D-9:
+//
 //	dark_memory_memory_state
 //	dark_memory_writes
 //	dark_memory_anomalies
