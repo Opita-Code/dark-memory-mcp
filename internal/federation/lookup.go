@@ -49,6 +49,31 @@ var ErrPeerDisabled = errors.New("federation: peer not configured (DARK_FEDERATI
 // startup error; the server should fail boot rather than silently degrade.
 var ErrInvalidSchema = errors.New("federation: peer DB missing required tables (vibe_artifacts, vibe_drift_reports)")
 
+// buildReadonlyDSN converts a peer DSN into a readonly DSN that the
+// modernc/sqlite driver honors. Two things must be true for the driver to
+// enforce read-only semantics:
+//
+//  1. The DSN must be a file: URI. modernc/sqlite only interprets the
+//     query-string flags on a file: URI; a bare path with "?mode=ro"
+//     appended is treated as part of the filename and silently creates the
+//     file (a classic "readonly that never was" bug).
+//  2. mode=ro must be in the query string. We also set
+//     _pragma=busy_timeout(5000) so a brief lock contention from the peer
+//     writer doesn't immediately fail the lookup.
+//
+// Already-readonly DSNs are returned as-is; in-memory DBs are not file URIs
+// and are returned unchanged.
+func buildReadonlyDSN(dsn string) string {
+	if dsn == "" || strings.HasPrefix(dsn, "file:") || dsn == ":memory:" {
+		return dsn
+	}
+	sep := "?"
+	if strings.Contains(dsn, "?") {
+		sep = "&"
+	}
+	return "file:" + dsn + sep + "_pragma=busy_timeout(5000)&mode=ro"
+}
+
 // Peer is a read-only handle to the federation peer's SQLite DB. Construct
 // via NewPeerFromEnv; close via Close when done.
 type Peer struct {
@@ -97,17 +122,7 @@ func NewPeerFromEnv() (*Peer, error) {
 		return nil, nil
 	}
 
-	// modernc/sqlite accepts a query string on the DSN. `mode=ro` is the
-	// canonical readonly flag. We also set `_pragma=busy_timeout(5000)`
-	// so a brief lock contention doesn't immediately fail the lookup.
-	readonlyDSN := dsn
-	if strings.Contains(readonlyDSN, "?") {
-		readonlyDSN += "&mode=ro"
-	} else {
-		readonlyDSN += "?mode=ro"
-	}
-
-	db, err := sql.Open("sqlite", readonlyDSN)
+	db, err := sql.Open("sqlite", buildReadonlyDSN(dsn))
 	if err != nil {
 		return nil, fmt.Errorf("federation: open peer %q: %w", dsn, err)
 	}
