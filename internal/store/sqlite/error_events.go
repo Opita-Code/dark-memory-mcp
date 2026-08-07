@@ -238,7 +238,7 @@ func (s *Store) ListErrorEvents(ctx context.Context, f errorobs.ErrorListFilters
 		args = append(args, f.Since)
 	}
 
-	query := "SELECT id, project_id, session_id, tool_name, domain, code, message, " +
+	query := "SELECT id, project_id, COALESCE(session_id, ''), COALESCE(tool_name, ''), domain, code, message, " +
 		"COALESCE(context_json, ''), severity, count, first_seen_at, last_seen_at, " +
 		"resolved, COALESCE(resolved_at, ''), COALESCE(resolution_note, ''), created_at " +
 		"FROM error_events WHERE " + strings.Join(clauses, " AND ") +
@@ -289,7 +289,7 @@ func (s *Store) GetErrorEvent(ctx context.Context, id int64) (*errorobs.ErrorEve
 	var e errorobs.ErrorEvent
 	var resolved int
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, project_id, session_id, tool_name, domain, code, message,
+		SELECT id, project_id, COALESCE(session_id, ''), COALESCE(tool_name, ''), domain, code, message,
 		       COALESCE(context_json, ''), severity, count, first_seen_at,
 		       last_seen_at, resolved, COALESCE(resolved_at, ''),
 		       COALESCE(resolution_note, ''), created_at

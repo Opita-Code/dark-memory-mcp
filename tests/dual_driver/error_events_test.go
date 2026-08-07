@@ -407,3 +407,54 @@ func TestErrorEvents_CrossProject_Invisible(t *testing.T) {
 }
 
 func boolP(b bool) *bool { return &b }
+
+// TestErrorEvents_NullSession_NullTool pins the NULL-column tolerance:
+// a gate-refusal event saved with NO session and NO tool (exactly what
+// RecordRefusal produces when the gate refuses before a session is
+// bound — the error_events rows 1-13 in prod were all
+// session_id=NULL) must round-trip through ListErrorEvents and
+// GetErrorEvent without the Scan failing on NULL → ErrInternal.
+func TestErrorEvents_NullSession_NullTool(t *testing.T) {
+	ctx := context.Background()
+	st, cleanup := openErrorDB(t)
+	defer cleanup()
+
+	// No session, no tool — the RecordRefusal shape.
+	e := errorobs.New("default", "", "", errors.New("gate refusal ErrFrameStaleTooFar: session or project not bound"))
+	if err := st.SaveErrorEvent(ctx, e); err != nil {
+		t.Fatalf("SaveErrorEvent: %v", err)
+	}
+	if e.ID <= 0 {
+		t.Fatal("SaveErrorEvent did not populate ID")
+	}
+
+	// List must not error (regression: Scan on NULL session_id failed).
+	list, err := st.ListErrorEvents(ctx, errorobs.ErrorListFilters{})
+	if err != nil {
+		t.Fatalf("ListErrorEvents with NULL session/tool: %v", err)
+	}
+	found := false
+	for _, row := range list {
+		if row.ID == e.ID {
+			found = true
+			if row.SessionID != "" {
+				t.Errorf("SessionID = %q, want empty (COALESCE)", row.SessionID)
+			}
+			if row.ToolName != "" {
+				t.Errorf("ToolName = %q, want empty (COALESCE)", row.ToolName)
+			}
+		}
+	}
+	if !found {
+		t.Errorf("ListErrorEvents did not return the saved NULL-session row")
+	}
+
+	// Get must not error either.
+	got, err := st.GetErrorEvent(ctx, e.ID)
+	if err != nil {
+		t.Fatalf("GetErrorEvent with NULL session/tool: %v", err)
+	}
+	if got == nil {
+		t.Fatal("GetErrorEvent returned nil for saved row")
+	}
+}
