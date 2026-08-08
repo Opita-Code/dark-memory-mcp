@@ -75,10 +75,11 @@ The wrapper passes through all CLI args to the underlying binary. You can also s
 | Variable                     | Default                  | Purpose                                  |
 |------------------------------|--------------------------|------------------------------------------|
 | `DARK_DB`                    | platform user data dir   | Where the SQLite DB lives                |
-| `DARK_DRIFT_JUDGE_DAEMON_URL`| (LLM-as-judge daemon)    | Drift judge endpoint                     |
-| `ANTHROPIC_API_KEY`          | (empty)                  | Anthropic API key (for drift_judge)      |
-| `OPENAI_API_KEY`             | (empty)                  | OpenAI API key (for drift_judge)         |
-| `GEMINI_API_KEY`             | (empty)                  | Gemini API key (for drift_judge)         |
+| `SDD_LLM_BASE_URL`           | (empty)                  | Base URL for Anthropic-compatible LLM endpoint (e.g. MiniMax) |
+| `ANTHROPIC_API_KEY`          | (empty)                  | API key for Anthropic-compatible LLM (drift_judge, mindset)   |
+| `OPENAI_API_KEY`             | (empty)                  | OpenAI API key (for drift_judge)                              |
+| `GEMINI_API_KEY`             | (empty)                  | Gemini API key (for drift_judge)                              |
+| `DARK_DRIFT_JUDGE_DAEMON_URL`| (empty)                  | Drift judge daemon endpoint (virtual-key pool)                |
 
 Set them in your MCP host config under `env`:
 
