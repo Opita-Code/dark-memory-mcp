@@ -59,6 +59,9 @@ type JudgeConsensusInput struct {
 	// every consensus sample receives raw content unchanged (no
 	// enrichment block). Mirrors JudgeInput.NoEnrich for consistency.
 	NoEnrich bool `json:"no_enrich,omitempty"`
+	// VibeCase (v2.12.0) forwarded to every Judge sample so all N
+	// samples use the same vibe-case rubric (G-Eval style).
+	VibeCase string `json:"vibe_case,omitempty"`
 }
 
 // JudgeConsensusSample is one Judge call's result inside a consensus run.
@@ -166,6 +169,9 @@ func (o *Orchestrator) JudgeConsensus(ctx context.Context, in JudgeConsensusInpu
 				// v2.4.2: forward NoEnrich so all N samples share the
 				// same opt-out semantics (raw content vs enriched).
 				NoEnrich: in.NoEnrich,
+				// v2.12.0: forward VibeCase so all N samples use the
+				// same G-Eval rubric.
+				VibeCase: in.VibeCase,
 			})
 			if jerr != nil {
 				outcomes[i].err = jerr

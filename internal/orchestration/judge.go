@@ -57,6 +57,14 @@ type JudgeInput struct {
 	//   - the content must not see prior context (sensitive audits)
 	//   - debugging enrichment behavior
 	NoEnrich bool `json:"no_enrich,omitempty"`
+	// VibeCase (v2.12.0) is the vibe-flow case of the artifact under
+	// review: C1=code, C2=text, C3=image, C4=video, C5=audio,
+	// C6=multimodal, C7=mixed. When set, the LLM system prompt is
+	// extended with a vibe-case-specific rubric (G-Eval style) so
+	// code artifacts get technical criteria (correctness, security,
+	// maintainability, spec conformance) instead of generic ones.
+	// Empty = legacy behavior (no rubric).
+	VibeCase string `json:"vibe_case,omitempty"`
 }
 
 // JudgeOutput is the result of a Judge call.
@@ -146,6 +154,7 @@ func (o *Orchestrator) Judge(ctx context.Context, in JudgeInput) (*JudgeOutput, 
 		TargetID:   in.TargetID,
 		Content:    in.Content,
 		Model:      model,
+		VibeCase:   in.VibeCase,
 	}
 
 	resp, err := client.Judge(ctx, req)

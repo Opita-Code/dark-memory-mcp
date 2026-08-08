@@ -187,6 +187,9 @@ type JudgeRequest struct {
 	TargetID     string `json:"target_id"`               // brand_id | artifact_id | ...
 	Model        string `json:"model,omitempty"`         // recommended by OSINTSelector
 	SystemPrompt string `json:"system_prompt,omitempty"` // optional override
+	// VibeCase (v2.12.0) is the vibe-flow case of the artifact
+	// (C1=code, ..., C7=mixed). Empty = legacy generic prompt.
+	VibeCase string `json:"vibe_case,omitempty"`
 }
 
 // JudgeResponse is the LLM's verdict.
@@ -399,10 +402,16 @@ func (s *SelfHarnessClient) judgeViaHTTP(ctx context.Context, req JudgeRequest, 
 		model = "MiniMax-M3" // default; matches harness model
 	}
 
-	// Resolve system prompt. Caller override > per-eval_type default.
+	// Resolve system prompt. Caller override > per-eval_type default
+	// > vibe-case rubric (v2.12.0).
 	system := req.SystemPrompt
 	if system == "" {
 		system = defaultSystemForEval(req.EvalType)
+		if req.VibeCase != "" {
+			if rubric := rubricPromptFor(req.VibeCase, req.EvalType); rubric != "" {
+				system += "\n\n" + rubric
+			}
+		}
 	}
 
 	body := map[string]any{
@@ -571,6 +580,71 @@ func extractConfidence(verdictJSON string) float32 {
 		return 0
 	}
 	return v.Confidence
+}
+
+// rubricPromptFor (v2.12.0) returns a G-Eval-style rubric appendix for a
+// (vibe_case, eval_type) pair, or "" when no rubric applies. When non-empty,
+// the caller appends it to the default system prompt so the LLM evaluates
+// against an explicit checklist and produces the verdict as the conclusion
+// of that checklist (research-informed: G-Eval, self-consistency, JudgeBench;
+// see vibe-flow/main/JUDGE_RUBRICS.md + agent_memory row 497).
+//
+// vibe_case taxonomy: C1=code, C2=text, C3=image, C4=video, C5=audio,
+// C6=multimodal, C7=mixed (mindset_meta_prompts.go).
+func rubricPromptFor(vibeCase, evalType string) string {
+	// Empty vibe_case = legacy behavior (no rubric). This is the
+	// retrocompat contract: callers that don't pass vibe_case get
+	// exactly the pre-v2.12.0 prompt.
+	if vibeCase == "" {
+		return ""
+	}
+	var criteria []string
+	switch vibeCase {
+	case "C1": // code — technical rubric (JudgeBench / arxiv 2508.14419)
+		criteria = []string{
+			"CORRECTNESS: does the code compile and behave as the spec requires? Check missing functions, wrong return types, off-by-one errors, wrong control flow. Quote exact lines.",
+			"SECURITY: objectively verify — SQL injection (string-concatenated queries), command injection, hardcoded secrets, unsafe deserialization, missing auth checks, path traversal. Quote vulnerable lines or state none found.",
+			"MAINTAINABILITY: naming clarity, function length, dead code, duplicated logic, missing error handling. Quote specific lines.",
+			"SPEC_CONFORMANCE: for each spec requirement, is it implemented? Identify missing/partial/contradicted requirements. Quote spec requirement + implementing code.",
+		}
+	case "C2": // text — communication rubric
+		criteria = []string{
+			"COHERENCE: internally consistent? Do claims contradict? Does the conclusion follow the body? Quote evidence.",
+			"RELEVANCE: on-topic vs the spec/ask? Any filler or off-topic content? Quote it.",
+			"FLUENCY: grammar, spelling, sentence structure, register consistency. Quote errors.",
+			"BRAND_ALIGNMENT: matches brand voice, terminology, disclosure requirements? Quote examples.",
+		}
+	default:
+		// C3-C7 or unknown — generic fallback rubric.
+		criteria = []string{
+			"SPEC_ALIGNMENT: does the artifact match the spec? Identify missing or contradicted requirements. Quote evidence.",
+			"INTERNAL_CONSISTENCY: are claims internally consistent? Quote contradictions.",
+			"QUALITY_FLOOR: complete, usable, free of obvious defects? Quote any defects.",
+		}
+	}
+
+	// brand_match specializes the rubric for brand evaluation.
+	if evalType == "brand_match" && vibeCase == "C1" {
+		criteria = []string{
+			"TOKEN_CORRECTNESS: does the code implement the brand guide's technical requirements (token usage, API contracts, naming)?",
+		}
+	}
+	if evalType == "brand_match" && vibeCase == "C2" {
+		criteria = []string{
+			"VOICE_MATCH: compare the text's voice (formality, jargon, register) to the brand guide. Quote match/drift evidence.",
+		}
+	}
+
+	var b strings.Builder
+	b.WriteString("VIBE-CASE RUBRIC (evaluate each criterion, quote exact evidence):\n")
+	for _, c := range criteria {
+		b.WriteString("  - ")
+		b.WriteString(c)
+		b.WriteString("\n")
+	}
+	b.WriteString("\nPROCEDURE: evaluate each criterion with quoted evidence; then decide the verdict as the LOGICAL CONCLUSION of your checklist. If any criterion FAILS with concrete evidence -> verdict=drift_detected. If all pass -> verdict=aligned. If evidence is insufficient -> verdict=needs_human.\n")
+	b.WriteString("CONSISTENCY: your verdict MUST match your reasoning. Do NOT report drift_detected while your reasoning says there is no drift.")
+	return b.String()
 }
 
 // truncateForErr caps a string for inclusion in an error message.

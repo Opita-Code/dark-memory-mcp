@@ -36,6 +36,7 @@ func RegisterJudge(reg *Registry, orch *orchestration.Orchestrator, st store.Sto
 				"model":       map[string]any{"type": "string"},
 				"agent_id":    map[string]any{"type": "string", "description": "v2.4.2: optional Mem0 agent_id (LLM identity). Resolved priority: caller input > projects.default_agent_id > empty string."},
 				"no_enrich":   map[string]any{"type": "boolean", "description": "v2.4.2: opt-out escape hatch. Default false (enrichment runs for brand_match + compliance_check). When true, Judge passes raw content to the LLM."},
+				"vibe_case":   map[string]any{"type": "string", "enum": []string{"C1", "C2", "C3", "C4", "C5", "C6", "C7"}, "description": "v2.12.0: vibe-flow case of the artifact (C1=code, C2=text, ...). When set, the judge uses a G-Eval rubric for that case (technical criteria for code). Empty = legacy generic prompt."},
 			},
 		}),
 		func(ctx context.Context, in orchestration.JudgeInput) (*orchestration.JudgeOutput, error) {
@@ -57,6 +58,7 @@ func RegisterJudge(reg *Registry, orch *orchestration.Orchestrator, st store.Sto
 				"model":       map[string]any{"type": "string"},
 				"agent_id":    map[string]any{"type": "string", "description": "v2.4.2: forwarded to all N Judge samples for consistent agent-scoped enrichment."},
 				"no_enrich":   map[string]any{"type": "boolean", "description": "v2.4.2: forwarded to all N Judge samples for consistent opt-out semantics. Default false."},
+				"vibe_case":   map[string]any{"type": "string", "enum": []string{"C1", "C2", "C3", "C4", "C5", "C6", "C7"}, "description": "v2.12.0: vibe-flow case (C1=code, C2=text, ...). Forwarded to all N samples so each uses the same G-Eval rubric. Empty = legacy."},
 			},
 		}),
 		func(ctx context.Context, in orchestration.JudgeConsensusInput) (*orchestration.JudgeConsensusResult, error) {
