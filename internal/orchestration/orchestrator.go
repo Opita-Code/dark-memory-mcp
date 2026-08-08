@@ -88,21 +88,37 @@ func New(s store.Store, safe *safety.Holder) *Orchestrator {
 }
 
 // WithLLMSelector attaches an LLMSelector to the orchestrator. Used
-// by O5 Judge. If not set, NewSelfHarnessClient is called at Judge time
-// (auto-detect from env).
+// by O5 Judge. This is the PRIMARY mechanism: the harness wires its
+// cloud LLM at boot time (spec 173 O5, v2.11.1).
+//
+// When no selector is injected, ensureLLMSelector (the SECONDARY
+// fallback) auto-detects the harness LLM from env vars at call time.
+// Operators who want explicit control should call WithLLMSelector
+// at boot; operators without harness injection get the env-var bridge.
 func (o *Orchestrator) WithLLMSelector(s LLMSelector) *Orchestrator {
 	o.selector = s
 	return o
 }
 
-// ensureLLMSelector lazily constructs a default OSINTSelector backed
-// by SelfHarnessClient (auto-detect harness LLM). Called at Judge time.
+// ensureLLMSelector lazily returns the LLM selector.
+//
+// Primary: harness injection via WithLLMSelector (checked first).
+// Secondary: auto-detect the harness LLM from env vars
+//   (ANTHROPIC_API_KEY / OPENAI_API_KEY / GEMINI_API_KEY /
+//    DARK_DRIFT_JUDGE_DAEMON_URL / legacy DARK_SCRAPPER_URL).
+//   This is a bridge for operators who have not yet adopted the
+//   injection pattern — it detects the SAME LLM the harness used to
+//   call the MCP tool and reuses it for Judge/mindset calls.
+//
+// Falls back to ErrNoLLMAvailable if no LLM is reachable through
+// either mechanism.
 func (o *Orchestrator) ensureLLMSelector() LLMSelector {
 	if o.selector != nil {
 		return o.selector
 	}
-	// Default: use the harness's LLM. If no key is set, the
-	// selector will return ErrNoLLMAvailable on Select.
+	// Secondary: use the harness's LLM via env-var detection.
+	// If no key is set, the selector will return ErrNoLLMAvailable
+	// on Select — same behavior as the primary nil-injection path.
 	client, _ := NewSelfHarnessClient()
 	return NewOSINTSelector(client)
 }

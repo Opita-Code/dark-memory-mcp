@@ -5,6 +5,19 @@
 // (DECIDE → PLAN → MIND → CURATE). Uses the real SQLite store in a
 // temp dir (the pattern used by tests/dual_driver), with a real
 // session so the active-project/active-session contract holds.
+//
+// LLM wiring (spec 173 O5, v2.11.1 fix):
+//   - Primary mechanism: harness injection via WithLLMSelector.
+//     The harness (opencode / Claude Desktop / etc.) wires its cloud
+//     LLM at boot time. This is the canonical path.
+//   - Secondary fallback: ensureLLMSelector auto-detects the harness
+//     LLM from env vars (ANTHROPIC_API_KEY / OPENAI_API_KEY / …).
+//     This is a bridge for operators who have not yet adopted the
+//     injection pattern.
+//   - Test contract: the test injects the LLM if NewSelfHarnessClient
+//     succeeds, and llmAvailable(orch) gates LLM-dependent assertions.
+//     When no LLM is available, the test skips or asserts the
+//     best-effort fallback (empty system_prompt).
 package orchestration
 
 import (
@@ -17,10 +30,23 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/store/sqlite"
 )
 
+// wireLLM constructs the LLM selector for an orchestrator following
+// the v2.11.1 injection-first pattern. Returns nil when no LLM is
+// available (env vars missing or invalid) — the orchestrator's
+// ensureLLMSelector will then apply the secondary fallback.
+func wireLLM() LLMSelector {
+	c, err := NewSelfHarnessClient()
+	if err != nil || c == nil {
+		return nil
+	}
+	return NewOSINTSelector(c)
+}
+
 // newDelegateTestOrchestrator builds an Orchestrator backed by a
 // real SQLite store in a temp dir, with an active project and an
 // active session (via the canonical SessionStart path) so the gate
-// contract holds.
+// contract holds. The LLM is wired via WithLLMSelector (primary
+// harness-injection mechanism).
 func newDelegateTestOrchestrator(t *testing.T, ctx context.Context) *Orchestrator {
 	t.Helper()
 	cfg := store.Config{
@@ -38,6 +64,10 @@ func newDelegateTestOrchestrator(t *testing.T, ctx context.Context) *Orchestrato
 		t.Fatalf("SetActiveProject: %v", err)
 	}
 	orch := New(st, &safety.Holder{})
+	// Primary: harness LLM injection (spec 173 O5, v2.11.1).
+	// wireLLM returns nil when no LLM is available; the orchestrator's
+	// ensureLLMSelector will then apply the secondary env-var fallback.
+	orch = orch.WithLLMSelector(wireLLM())
 	if _, err := orch.SessionStart(ctx, SessionStartInput{
 		Operator:  "tester",
 		ProjectID: "default",
@@ -86,16 +116,16 @@ func TestDelegateIntent_MissingFields(t *testing.T) {
 	}
 }
 
-// llmAvailable reports whether a real LLM is configured in this test
-// process. The MIND step (mindset_apply) requires an API key; without
-// one, DelegateIntent returns the documented best-effort fallback
-// (empty system_prompt + nil tools/model), which is NOT what the
-// acceptance test below asserts. CI runs without keys, so the
-// LLM-dependent assertions are gated on this probe (same detection
-// logic as NewSelfHarnessClient — no duplicated env list).
-func llmAvailable() bool {
-	c, err := NewSelfHarnessClient()
-	return err == nil && c != nil
+// llmAvailable reports whether the orchestrator has an LLM wired
+// via the primary harness-injection mechanism (WithLLMSelector).
+// This is the v2.11.1 contract: wireLLM returns the selector when
+// the harness LLM is reachable, and nil otherwise. When nil, the
+// orchestrator's secondary fallback (ensureLLMSelector) auto-detects
+// from env vars — but the test's LLM-dependent assertions are gated
+// on the PRIMARY injection, so a test that receives nil here will
+// exercise the best-effort fallback contract (empty prompt, nil tools).
+func llmAvailable(orch *Orchestrator) bool {
+	return orch.selector != nil
 }
 
 // TestDelegateIntent_C7_BasicPlan is the full-pipeline acceptance
@@ -108,12 +138,12 @@ func llmAvailable() bool {
 // the deterministic DECIDE/PLAN/CURATE shape is still covered
 // unconditionally by TestDelegateIntent_C7_DeterministicShape below.
 func TestDelegateIntent_C7_BasicPlan(t *testing.T) {
-	if !llmAvailable() {
-		t.Skip("no LLM key configured (ANTHROPIC_API_KEY / OPENAI_API_KEY / GEMINI_API_KEY / DARK_DRIFT_JUDGE_DAEMON_URL); full-pipeline C7 acceptance needs a real LLM")
-	}
 	t.Setenv("DARK_MEMORY_V280", "1")
 	ctx := context.Background()
 	orch := newDelegateTestOrchestrator(t, ctx)
+	if !llmAvailable(orch) {
+		t.Skip("no LLM wired (ANTHROPIC_API_KEY / OPENAI_API_KEY / GEMINI_API_KEY / DARK_DRIFT_JUDGE_DAEMON_URL not set or not reachable); full-pipeline C7 acceptance needs a working LLM")
+	}
 
 	out, err := orch.DelegateIntent(ctx, DelegateIntentInput{
 		VibeCase:        "C7",
@@ -187,7 +217,7 @@ func TestDelegateIntent_C7_DeterministicShape(t *testing.T) {
 	}
 	// MIND is LLM-backed: assert the shape matches the documented
 	// best-effort contract for the current environment.
-	if llmAvailable() {
+	if llmAvailable(orch) {
 		if sub.SystemPrompt == "" {
 			t.Error("with LLM available, system_prompt must be non-empty")
 		}
