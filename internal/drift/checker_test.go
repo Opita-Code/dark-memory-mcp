@@ -279,6 +279,9 @@ func TestParseDecisionFromJudgeJSON(t *testing.T) {
 		{"bare drift", `drift_detected`, 0.9, "drift_detected"},
 		{"bare needs_human", `needs_human`, 0.9, "needs_human"},
 		{"aligned low conf → needs_human", `{"verdict":"aligned","confidence":0.1}`, 0.1, "needs_human"},
+		{"aligned conf exactly 0.3 → aligned (strict <)", `{"verdict":"aligned","confidence":0.3}`, 0.3, "aligned"},
+		{"aligned conf 0.2999 → needs_human", `{"verdict":"aligned","confidence":0.2999}`, 0.2999, "needs_human"},
+		{"aligned conf 0.3001 → aligned", `{"verdict":"aligned","confidence":0.3001}`, 0.3001, "aligned"},
 		{"unknown → drift_detected (conservative)", `{"verdict":"weird_value"}`, 0.9, "drift_detected"},
 		{"empty → skipped", "", 0, "skipped"},
 		{"whitespace only → skipped", "   \n\t  ", 0, "skipped"},
@@ -307,6 +310,21 @@ func TestNewChecker_DefaultsToOff(t *testing.T) {
 	}
 	if c.Now == nil {
 		t.Errorf("NewChecker should default Now to non-nil")
+	}
+}
+
+// TestNewChecker_PreservesExplicitStrictness: NewChecker with a
+// non-zero Strictness must PRESERVE it (the ==0 default branch must not
+// clobber an explicitly configured Warn/Strict). Kills the
+// CONDITIONALS_NEGATION mutant at checker.go:114 (`== 0` → `!= 0`).
+func TestNewChecker_PreservesExplicitStrictness(t *testing.T) {
+	c := NewChecker(nil, nil, StrictnessWarn)
+	if c.Strictness != StrictnessWarn {
+		t.Errorf("NewChecker(st, nil, StrictnessWarn).Strictness = %v, want StrictnessWarn", c.Strictness)
+	}
+	c = NewChecker(nil, nil, StrictnessStrict)
+	if c.Strictness != StrictnessStrict {
+		t.Errorf("NewChecker(st, nil, StrictnessStrict).Strictness = %v, want StrictnessStrict", c.Strictness)
 	}
 }
 

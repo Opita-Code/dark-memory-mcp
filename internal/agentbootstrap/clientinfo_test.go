@@ -286,3 +286,128 @@ func TestMetaPropagator_ExtractMeta_IsPassThrough(t *testing.T) {
 		t.Error("ExtractMeta modified the unrelated _meta field")
 	}
 }
+
+// --- Wave 3 mutation-killing coverage (2026-08-07) ---
+// The original suite left these branches untested; each mutant below
+// ESCAPED the baseline run and is a REAL branch (not equivalent):
+//   - NormalizeClientName: "claude.code" reaches the inner `code`
+//     return (clientinfo.go.14); empty-Title known name distinguishes
+//     the `true &&` mutation (clientinfo.go.16)
+//   - RegisterHooks AfterInitialize callback side-effect (.32)
+//   - ExtractMeta side-effect on a clientInfo-bearing _meta (.33)
+// Plus defensive nil/pointer/map-shape cases (.5, .10, .15 are
+// equivalents -> blacklisted; .29 lock is -race-only -> blacklisted).
+
+func TestMT_NormalizeClientName_ClaudeDotCode(t *testing.T) {
+	// Kills clientinfo.go.14 (`return "claude-code"` removed).
+	// "claude.code" contains "claude" (matches k=="claude") and "code",
+	// but NOT the literal "claude-code", so it reaches the inner
+	// `strings.Contains(c, "code")` return the original suite's
+	// "claude-code via Name" case never exercises.
+	got := NormalizeClientName(mcp.Implementation{Name: "claude.code", Title: "", Version: ""})
+	if got != "claude-code" {
+		t.Errorf("NormalizeClientName(claude.code) = %q, want %q", got, "claude-code")
+	}
+}
+
+func TestMT_NormalizeClientName_EmptyTitleKnownName(t *testing.T) {
+	// Kills clientinfo.go.16 (`if true && info.Title == ""`).
+	// Name non-empty + Title empty: original condition is false
+	// (Name != ""), so it matches by Name. Mutant short-circuits to
+	// "unknown".
+	got := NormalizeClientName(mcp.Implementation{Name: "opencode", Title: "", Version: ""})
+	if got != "opencode" {
+		t.Errorf("NormalizeClientName(opencode, empty title) = %q, want %q", got, "opencode")
+	}
+}
+
+func TestMT_NormalizeClientName_EmptyNameNonEmptyTitle(t *testing.T) {
+	// Name empty, Title non-empty: must not short-circuit to "unknown".
+	got := NormalizeClientName(mcp.Implementation{Name: "", Title: "opencode", Version: ""})
+	if got != "opencode" {
+		t.Errorf("NormalizeClientName(empty name, opencode title) = %q, want %q", got, "opencode")
+	}
+}
+
+func TestMT_RegisterHooks_AfterInitializeStoresClientInfo(t *testing.T) {
+	// Kills clientinfo.go.32 (SetFromInitialize removed from the
+	// AfterInitialize hook). Drives the actual hook callback.
+	globalClientInfoStore().ClearForTest()
+	hooks, _ := RegisterHooks()
+	if len(hooks.OnAfterInitialize) != 1 {
+		t.Fatalf("expected 1 AfterInitialize hook, got %d", len(hooks.OnAfterInitialize))
+	}
+	hooks.OnAfterInitialize[0](t.Context(), "conn-1", &mcp.InitializeRequest{
+		Params: mcp.InitializeParams{
+			ProtocolVersion: "2025-06-18",
+			ClientInfo:      mcp.Implementation{Name: "claude-desktop", Title: "Claude Desktop", Version: "1.0.0"},
+		},
+	}, nil)
+
+	got := CurrentClientInfo()
+	if got.Info.Name != "claude-desktop" {
+		t.Errorf("AfterInitialize hook did not store clientInfo; got Name=%q", got.Info.Name)
+	}
+	if got.Source != "initialize.clientInfo" {
+		t.Errorf("AfterInitialize hook source = %q, want %q", got.Source, "initialize.clientInfo")
+	}
+	globalClientInfoStore().ClearForTest()
+}
+
+func TestMT_MetaPropagator_ExtractMeta_StoresClientInfo(t *testing.T) {
+	// Kills clientinfo.go.33 (SetFromMeta removed from ExtractMeta).
+	globalClientInfoStore().ClearForTest()
+	p := &ClientInfoMetaPropagator{}
+	meta := &mcp.Meta{
+		AdditionalFields: map[string]any{
+			MetaClientInfoKey: mcp.Implementation{Name: "opencode", Version: "1.0.5"},
+		},
+	}
+	p.ExtractMeta(t.Context(), meta)
+
+	got := CurrentClientInfo()
+	if got.Info.Name != "opencode" {
+		t.Errorf("ExtractMeta did not store clientInfo; got Name=%q", got.Info.Name)
+	}
+	globalClientInfoStore().ClearForTest()
+}
+
+func TestMT_SetFromMeta_NilPointerImplementation(t *testing.T) {
+	s := NewClientInfoStore()
+	meta := &mcp.Meta{
+		AdditionalFields: map[string]any{
+			MetaClientInfoKey: (*mcp.Implementation)(nil),
+		},
+	}
+	if s.SetFromMeta(meta) {
+		t.Error("SetFromMeta returned true on nil pointer Implementation")
+	}
+}
+
+func TestMT_SetFromMeta_MapEmptyName(t *testing.T) {
+	s := NewClientInfoStore()
+	meta := &mcp.Meta{
+		AdditionalFields: map[string]any{
+			MetaClientInfoKey: map[string]any{"name": "", "title": "No Name", "version": "1.0.0"},
+		},
+	}
+	if s.SetFromMeta(meta) {
+		t.Error("SetFromMeta returned true on map with empty name")
+	}
+}
+
+func TestMT_SetFromMeta_NonImplementationValue(t *testing.T) {
+	s := NewClientInfoStore()
+	meta := &mcp.Meta{AdditionalFields: map[string]any{MetaClientInfoKey: 42}}
+	if s.SetFromMeta(meta) {
+		t.Error("SetFromMeta returned true on non-Implementation value")
+	}
+}
+
+func TestMT_SetFromInitialize_NilRequest(t *testing.T) {
+	s := NewClientInfoStore()
+	s.SetFromInitialize(nil) // must not panic
+	if got := s.Current(); got.Info.Name != "" {
+		t.Errorf("Current().Info.Name = %q, want empty", got.Info.Name)
+	}
+}

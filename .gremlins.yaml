@@ -1,0 +1,26 @@
+# Gremlins v0.6.0 — mutation testing config for dark-memory-mcp.
+# (dark-testing skill v1.1.0: gremlins REPLACED go-mutesting, which does
+# not support Go modules. Install: go install github.com/go-gremlins/gremlins/cmd/gremlins@v0.6.0)
+#
+# CRITICAL — run gremlins from a CLEAN WORKTREE, not this checkout:
+#   git worktree add /tmp/dmm-gremlins HEAD
+#   # strip the embedder blobs (~87MB, they get copied per worker and
+#   # saturate disk on Windows, turning KILLED into TIMED OUT):
+#   rm -f /tmp/dmm-gremlins/internal/embedder/onnx/bundled/*/libonnxruntime* \
+#         /tmp/dmm-gremlins/internal/embedder/onnx/data/model_quantized.onnx
+#   cd /tmp/dmm-gremlins && gremlins unleash ./internal/<pkg>
+#
+# Keys are namespaced under `unleash.` (see internal/configuration).
+# timeout-coefficient 15: default 3 gives a per-mutant context deadline of
+#   ~3×gather which is too tight on Windows (compilation + full suite) —
+#   every mutant reports TIMED OUT. 15 gives ~30-150s per mutant.
+unleash:
+  timeout-coefficient: 15
+  test-cpu: 1
+  workers: 2
+  # Exclude the native-bindings embedder package from ANALYSIS (it is FFI
+  # to libonnxruntime, no meaningful mutation surface). Note: exclude-files
+  # only skips mutant analysis — the blobs are still copied by the workdir
+  # dealer, hence the strip step above.
+  exclude-files:
+    - ".*/embedder/.*"

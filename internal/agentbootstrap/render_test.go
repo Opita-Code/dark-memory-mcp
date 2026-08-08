@@ -149,6 +149,31 @@ func TestRender_UnknownKeyFails(t *testing.T) {
 	}
 }
 
+// --- Wave 3 mutation-killing coverage (2026-08-07) ---
+// render.go.0 removes the fs.ReadFile error return; render.go.2 removes
+// the template.Parse error return. Both are REAL error paths that the
+// original suite never exercised (it only rendered existing files and
+// the missingkey=error path, which is an Execute error, not Parse).
+
+func TestMT_Render_ReadErrorFails(t *testing.T) {
+	if _, err := Render(missingFS{}, "does-not-exist.md", testData()); err == nil {
+		t.Fatal("expected error reading missing path, got nil")
+	}
+}
+
+func TestMT_RenderBytes_ParseErrorFails(t *testing.T) {
+	// Unclosed action = parse error (not an unknown-key error).
+	marked := []byte("{{.Field")
+	if _, err := RenderBytes(marked, "broken.md", testData()); err == nil {
+		t.Fatal("expected parse error for unclosed template action, got nil")
+	}
+}
+
+// missingFS is an fs.FS whose Open always fails (forces fs.ReadFile error).
+type missingFS struct{}
+
+func (missingFS) Open(name string) (fs.File, error) { return nil, fs.ErrNotExist }
+
 // assertAllFilesExist is a helper the render test relies on: every
 // file in the embedded fs must be covered by the template render list
 // above (a new .md dropped into data/ without a render test is

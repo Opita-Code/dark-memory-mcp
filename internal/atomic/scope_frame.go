@@ -161,7 +161,8 @@ func (f *ScopeFrame) Validate() error {
 	}
 	if f.LastDriftVerdict != "" &&
 		f.LastDriftVerdict != "aligned" &&
-		f.LastDriftVerdict != "drift_detected" && true {
+		f.LastDriftVerdict != "drift_detected" &&
+		f.LastDriftVerdict != "needs_human" {
 		return ErrScopeVerdictUnknown
 	}
 	if f.ComposedAtValue.IsZero() {
