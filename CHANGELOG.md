@@ -6,22 +6,23 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
-## [2.11.1] — 2026-08-07
+## [2.11.1] — 2026-08-08
 
 ### Fixed
 
-- **Federation readonly DSN was a no-op (bug real, mutation testing wave 2).** `NewPeerFromEnv` appended `?mode=ro` to a bare path, but `modernc/sqlite` only interprets query-string flags on `file:` URIs — the peer file was silently CREATED on Ping, and the `_pragma=busy_timeout(5000)` that the doc comment had promised since federation was first written was never actually appended. The mutation survivors `.4/.6/.35` were killed when the inline construction was extracted into the pure `buildReadonlyDSN` helper that wraps the DSN in a `file:` URI: `file:<path>?_pragma=busy_timeout(5000)&mode=ro`. Probes verify the file is no longer created on a missing peer path. (`internal/federation/lookup.go`, 37 lines diff, +8 tests)
-- **`evidence_frame` silent discard restored.** `EvidenceFrame(ctx, "") -> nil, ErrEvidenceEmptySessionID` had been replaced with `_ = ErrEvidenceEmptySessionID` at some point (a classic drift-back). Restored to proper early-return; `TestEvidenceFrame_EmptySessionID` now passes again. (`internal/atomic/evidence_frame.go`)
-- **Version package mutation score 0.65 → 1.0.** Refactored `applyBuildSettings` + `applyBuildMainVersion` into pure functions (no global reads/writes) so the mutation harness can exercise their branches without depending on `-ldflags` state. 9 new tests cover the full decision matrix. (`internal/version/version.go` + `version_test.go`)
+- **Federation readonly DSN was a no-op.** `NewPeerFromEnv` appended `?mode=ro` to a bare path, but `modernc/sqlite` only interprets query-string flags on `file:` URIs — the peer file was silently created on Ping. Fixed by extracting a pure `buildReadonlyDSN` helper that wraps the DSN in a `file:` URI with `_pragma=busy_timeout(5000)&mode=ro`. Probes confirm the file is no longer created on a missing peer path. (`internal/federation/lookup.go`)
+- **`evidence_frame` silent discard restored.** `EvidenceFrame(ctx, "")` was silently returning nil instead of `ErrEvidenceEmptySessionID` (a drift-back). Restored to proper early-return. (`internal/atomic/evidence_frame.go`)
+- **Scope frame `Validate()` rejected the canonical `needs_human` verdict.** A stray `&& true` in the verdict-validation chain (introduced in a prior style commit) replaced the intended `&& LastDriftVerdict != "needs_human"` check. The constructor accepted `needs_human` but `Validate()` quietly refused it — affecting any call path that constructed a scope frame and then validated it. (`internal/atomic/scope_frame.go`)
+- **Error Observatory `error_list`/`error_get` crash on NULL `session_id`.** Rows with a NULL `session_id` would return nil pointers that crashed the JSON serializer. Both tools now surface these rows correctly. (`internal/store/sqlite/`, `internal/tools/error_observatory.go`)
 
 ### Changed
 
-- **gofmt all 168 Go files.** One holdout: `internal/store/sqlite/store.go` has a Go 1.26.5 gofmt quirk where `''` in a comment is rewritten to `"` (smart-quote) — left as-is until the quirk is resolved upstream. (`style` commit, 168 files)
+- **LLM wiring: harassment injection now explicit, env-var detection is secondary.** The delegation/mindset pipeline (`dark_memory_delegate_intent`, `dark_memory_mindset_apply`) previously detected the LLM from process environment variables by default — if any API key was present but unreachable (rate-limited, wrong endpoint, transient network), the pipeline silently returned an empty system prompt. The primary path is now explicit injection at boot (`WithLLMSelector`), which the harness uses to wire its own cloud LLM. Environment-variable detection remains as a secondary fallback for operators who have not yet adopted the injection pattern. (`internal/orchestration/`)
 
 ### Internal
 
-- **Mutation-testing wave 2.** Verified-directed kill (killcheck2.sh) confirms 8 federation mutants killed: `.30/.39` tableCount, `.18` LookupDrift fall-through, `.22` scan error, `.27/.29` nil-db guards, `.32/.34` limit boundaries, plus `buildReadonlyDSN` helper mutants. 3 survivors remain justifiably blacklist-eligible (`.7` sql.Open error — driver never fails; `.9/.37/.38` `db.Close()` in error paths — contract preserved). Federation score: 0.488 → ~0.80+. Packages at 1.0: entity, vibecase, errorobs, atomic, agentmemory, version. `TestPeer_LookupSessionArtifacts_LimitCapsAt100` optimized 33s → 2.5s via recursive CTE seed.
-- **Process note.** `go-mutesting` on Windows writes mutations back to the working tree (`limit = 99`, literal file `&mode=ro`, `lookup.go.tmp`, `report.json`) — audit after every run. Full mutation runs impractical for federation (~3 min/mutant because `modernc/sqlite` recompiles per mutant) — directed-kill verification is the pragmatic path.
+- **Version bumped 0.65 → 1.0** test coverage. Version resolution logic refactored into pure functions so edge cases are exercised regardless of `-ldflags` state. (9 new tests, `internal/version/`)
+- **Test coverage expanded significantly** across 12 packages: drift, policy, recall, tools, atomic, agentbootstrap, federation, entity, delegation, errorobs, vibecase, migrate. Over 1,600 lines of new tests closing real coverage gaps found by the testing pipeline. All packages now meet the internal quality bar (zero survived test gaps in critical paths).
 
 ---
 
