@@ -6,6 +6,34 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [2.12.0] — 2026-08-08 — vibe-case-aware judging
+
+**Two-spec release.** `dark_memory_judge` / `dark_memory_consensus` now know
+what they are judging (spec 878) and the agent layer gained a chunked
+delegation pipeline for large content (spec 874). No new canonical tools, no
+schema migration — wire contract is purely appenditive (`vibe_case` is
+optional and defaults to the exact legacy behavior).
+
+### Added
+
+- **`vibe_case` parameter on `dark_memory_judge` + `dark_memory_consensus`.** When set (C1=code, C2=text, C3=image, C4=video, C5=audio, C6=multimodal, C7=mixed), the LLM system prompt is extended with a G-Eval-style rubric for that case. Code artifacts (C1) get technical criteria — CORRECTNESS, SECURITY, MAINTAINABILITY, SPEC_CONFORMANCE — so the judge evaluates objectively (JudgeBench-informed) instead of with generic "does it align" language. Text (C2) gets COHERENCE, RELEVANCE, FLUENCY, BRAND_ALIGNMENT. C3-C7 get a spec-alignment fallback. The verdict must be the LOGICAL CONCLUSION of the checklist (research: G-Eval + self-consistency, Wang ICLR 2023). Empty `vibe_case` = exact legacy behavior (retrocompat, tested). (`internal/orchestration/judge.go`, `internal/orchestration/judge_consensus.go`, `internal/orchestration/llm_client.go` `rubricPromptFor`, `internal/tools/judge.go`)
+
+### Changed
+
+- **Judge contract: verdict is now the conclusion of a checklist, not an independent field.** `vibe_case` rubrics force the model to evaluate each criterion with quoted evidence and derive the verdict from that reasoning. This closes the reproduced defect where `verdict=drift_detected` coexisted with reasoning saying "no drift is detected" (spec 878 §1.1). Verified with a real MiniMax-M3 run: a deliberately-broken code artifact (SQL injection + password log + stub token) → `drift_detected` 0.97 with all 4 C1 criteria failing and quoted lines; `--consensus 3` → 3/3 `drift_detected` (agree 1.0, conf 0.977).
+
+### Notes
+
+- The `consistency` post-check (verdict↔reasoning contradiction → override `needs_human`) lives in the agent-layer `vibe-judge.py` (spec 878, T2) — see `~/.config/dark-agent/judge-delegation/vibe-judge.py` and `vibe-flow/main/JUDGE_RUBRICS.md`.
+- **Agent-layer judge delegation (spec 874)** — 4 CLIs (`count-tokens.py`, `chunk-content.py`, `aggregate-verdicts.py`, `delegate-judge.sh`) at `~/.config/dark-agent/judge-delegation/` implement LLM×MapReduce for content > ~8K tokens: count → decide single-shot vs chunk → parallel LLM calls → position-weighted aggregation with a <60% agreement → `needs_human` floor. Verified with a real 31.5K-token artifact with injected drift (10 chunks, parallelism 4): run 1 `drift_detected` conf 0.963, run 2 `needs_human` on 50% agreement (correct refusal to fabricate). See `vibe-flow/main/JUDGE_DELEGATION.md`.
+
+### Docs
+
+- `vibe-flow/main/JUDGE_RUBRICS.md` — spec 878 design + verification matrix (new).
+- `vibe-flow/main/JUDGE_DELEGATION.md` — spec 874 delegation pipeline + Windows gotchas (new).
+
+---
+
 ## [2.11.1] — 2026-08-08
 
 ### Fixed

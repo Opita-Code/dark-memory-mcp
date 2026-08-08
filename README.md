@@ -350,13 +350,31 @@ El agente puede guardar cosas de **tres tipos de alcance**:
 Y puede buscar por **tipo de nota** (`note`, `observation`, `decision`,
 `finding`, `todo`, `link`, `context`) o por texto libre (búsqueda BM25).
 
-### ⚖️ Juzgar (JUDGE — 3 tools)
+### ⚖️ Juzgar (JUDGE — 3 tools, v2.12.0 vibe-case-aware)
+
+> **Nuevo en v2.12.0.** `judge` y `consensus` aceptan `vibe_case`
+> (C1=código, C2=texto, C3=imagen, C4=video, C5=audio, C6=multimodal,
+> C7=mixed). Cuando lo pasas, el juez evalúa contra una rúbrica G-Eval
+> específica del caso en vez del prompt genérico: código (C1) se juzga con
+> CORRECTNESS / SECURITY / MAINTAINABILITY / SPEC_CONFORMANCE (objetivo,
+> con líneas citadas); texto (C2) con COHERENCE / RELEVANCE / FLUENCY /
+> BRAND_ALIGNMENT. El veredicto sale como conclusión lógica del checklist,
+> no como un campo independiente — cierra la contradicción
+> veredicto↔razonamiento. Si no pasas `vibe_case`, el comportamiento es
+> exactamente el legacy (retrocompat).
 
 | Herramienta | Cuándo se usa |
 |---|---|
-| `dark_memory_judge` | "Revisa si esto cumple la promesa" |
-| `dark_memory_consensus` | "Pregúntale a 5 jueces y dame la mayoría" |
+| `dark_memory_judge` | "Revisa si esto cumple la promesa" — pasa `vibe_case="C1"` si es código, `"C2"` si es texto |
+| `dark_memory_consensus` | "Pregúntale a 5 jueces y dame la mayoría" — `vibe_case` se propaga a las N muestras |
 | `dark_memory_judgment_history` | "¿Qué ha dicho el juez antes?" |
+
+Para contenido grande (>~8K tokens), el agente puede delegar el juicio con
+el pipeline LLM×MapReduce del agent-layer (spec 874): 4 CLIs en
+`~/.config/dark-agent/judge-delegation/` que trocean, juzgan en paralelo y
+agregan con piso de 60% de acuerdo → `needs_human`. Ver
+[`vibe-flow/main/JUDGE_DELEGATION.md`](vibe-flow/main/JUDGE_DELEGATION.md) y
+[`vibe-flow/main/JUDGE_RUBRICS.md`](vibe-flow/main/JUDGE_RUBRICS.md).
 
 ### 🧠 Componer mindsets (MINDSET — 1 tool, v2.7.0-alpha)
 
@@ -571,7 +589,7 @@ de estado):
 
 ### Estado actual (al cierre de esta versión)
 
-- **Versión**: v2.11.1-alpha (harness skill + README tuteo fix)
+- **Versión**: v2.12.0 (vibe-case-aware judging, specs 874 + 878)
 - **Schema DB**: v25 (error_events para el Error Observatory, spec 757)
 - **Tools canónicos**: 49 (+ 3 en modo armed)
 - **Backends**: SQLite (default) + Postgres (research only en este host)
