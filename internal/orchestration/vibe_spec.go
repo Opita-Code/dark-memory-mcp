@@ -33,6 +33,7 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 	"github.com/dark-agents/dark-memory-mcp/internal/vibecase"
 	"github.com/dark-agents/dark-memory-mcp/internal/vibeflow"
+	"github.com/dark-agents/dark-memory-mcp/internal/vlp"
 )
 
 // VibeSpecTask is one work unit in the spec.
@@ -275,6 +276,12 @@ func (o *Orchestrator) VibeSpec(ctx context.Context, in VibeSpecInput) (*VibeSpe
 	if err != nil {
 		return nil, fmt.Errorf("vibe_spec: save spec: %w", err)
 	}
+
+	// v2.13.0 (spec 952 T3): auto-emit EventVibePublish so the VLP
+	// state machine advances from drafting_spec to spec_active when
+	// the spec is created. Best-effort: no VLP wired or session
+	// already past drafting_spec = silent no-op.
+	o.emitVLP(ctx, in.SessionID, "orchestrator_vibe_spec", vlp.EventVibePublish)
 
 	result := &VibeSpecResult{
 		SpecID:         specID,

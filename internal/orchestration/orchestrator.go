@@ -30,10 +30,14 @@
 package orchestration
 
 import (
+	"context"
+	"errors"
+	"log"
 	"time"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/safety"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
+	"github.com/dark-agents/dark-memory-mcp/internal/vlp"
 )
 
 // Orchestrator is the typed workflow API. Construct with New().
@@ -43,6 +47,7 @@ type Orchestrator struct {
 	now      func() time.Time  // injectable for tests
 	backends []ResearchBackend // registered research backends (O3)
 	selector LLMSelector       // LLM selector for O5 Judge
+	vlpUC    *vlp.UseCase      // VLP state machine (v2.13.0: auto-drive vibe-loop)
 
 	// OnActiveSessionChanged (v2.1.3 cache-invalidation fix) is invoked
 	// after every successful SetActiveSession / ClearActiveSession write
@@ -85,6 +90,15 @@ func New(s store.Store, safe *safety.Holder) *Orchestrator {
 		Safety: safe,
 		now:    func() time.Time { return time.Now().UTC() },
 	}
+}
+
+// WithVLP attaches the VLP state machine (UseCase) to the orchestrator.
+// When set, PublishVibe / VibeSpec / SessionStart auto-emit VLP events
+// so the vibe-loop state stays in sync with data-plane operations.
+// Nil-safe: operations skip VLP emission when uc is nil.
+func (o *Orchestrator) WithVLP(uc *vlp.UseCase) *Orchestrator {
+	o.vlpUC = uc
+	return o
 }
 
 // WithLLMSelector attaches an LLMSelector to the orchestrator. Used
@@ -150,4 +164,54 @@ func (e *fieldError) Unwrap() error { return e.store }
 // fix-up hint instead of a generic message.
 func errMissingField(field string) error {
 	return &fieldError{store: store.ErrInvalidArgument, Field: field}
+}
+
+// emitVLP fires a VLP event against a session. Best-effort: no VLP
+// wired (uc nil), no session_id, or state-already-advanced
+// (ErrInvalidTransition) are all silent no-ops. Other errors are
+// logged but never fail the caller — VLP is a companion, not a gate.
+// Callers use this after their data-plane operations succeed so the
+// vibe-loop state stays in sync without requiring a separate harness
+// call to vlp_handle_event.
+func (o *Orchestrator) emitVLP(ctx context.Context, sessionID, actor string, event vlp.Event) {
+	o.emitVLPWithVerdict(ctx, sessionID, actor, event, vlp.VerdictUnknown)
+}
+
+// emitVLPWithVerdict is emitVLP with a verdict payload (for drift_log).
+func (o *Orchestrator) emitVLPWithVerdict(ctx context.Context, sessionID, actor string, event vlp.Event, verdict vlp.Verdict) {
+	if o.vlpUC == nil || sessionID == "" {
+		return
+	}
+	wc := store.WriteContext{
+		Actor:     actor,
+		SessionID: sessionID,
+		WritePath: "emitVLP:" + event.String(),
+	}
+	_, err := o.vlpUC.HandleEvent(ctx, wc, sessionID, event, verdict, "")
+	if err != nil {
+		// ErrInvalidTransition means the harness already advanced the
+		// VLP manually — not an error, just a no-op.
+		var invalidTransition vlp.ErrInvalidTransition
+		if errors.As(err, &invalidTransition) {
+			return
+		}
+		// Other errors (store failures, missing session, etc.) are
+		// logged but don't fail the caller. VLP is best-effort.
+		log.Printf("dark-mem-mcp: emitVLP session=%s event=%s verdict=%s: %v",
+			sessionID, event, verdict, err)
+	}
+}
+
+// verdictToVLP maps a publish verdict string to the VLP Verdict enum.
+func verdictToVLP(v string) vlp.Verdict {
+	switch v {
+	case "aligned":
+		return vlp.VerdictAligned
+	case "drift_detected":
+		return vlp.VerdictDriftDetected
+	case "needs_human":
+		return vlp.VerdictNeedsHuman
+	default:
+		return vlp.VerdictUnknown
+	}
 }

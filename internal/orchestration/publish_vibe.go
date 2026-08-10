@@ -38,6 +38,7 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 	"github.com/dark-agents/dark-memory-mcp/internal/vibecase"
 	"github.com/dark-agents/dark-memory-mcp/internal/vibeflow"
+	"github.com/dark-agents/dark-memory-mcp/internal/vlp"
 )
 
 // PublishSpecInput is the spec half of a PublishVibe call. The caller
@@ -163,6 +164,12 @@ func (o *Orchestrator) PublishVibe(ctx context.Context, in PublishVibeInput) (*P
 		return nil, fmt.Errorf("publish_vibe: save spec: %w", err)
 	}
 
+	// v2.13.0 (spec 952 T2): auto-emit EventVibePublish so the VLP
+	// advances drafting_spec → spec_active without a separate harness
+	// call. Best-effort: if the harness already advanced manually,
+	// ErrInvalidTransition is a silent no-op.
+	o.emitVLP(ctx, in.SessionID, "orchestrator_publish_vibe", vlp.EventVibePublish)
+
 	// 3. Persist the artifact, linked to spec_id.
 	artifact := &vibeflow.Artifact{
 		SessionID:        in.SessionID,
@@ -180,6 +187,10 @@ func (o *Orchestrator) PublishVibe(ctx context.Context, in PublishVibeInput) (*P
 	if err != nil {
 		return nil, fmt.Errorf("publish_vibe: save artifact: %w", err)
 	}
+
+	// v2.13.0 (spec 952 T2): auto-emit EventArtifactLog so the VLP
+	// advances spec_active → drift_judging. Best-effort.
+	o.emitVLP(ctx, in.SessionID, "orchestrator_publish_vibe", vlp.EventArtifactLog)
 
 	result := &PublishResult{
 		SpecID:     specID,
@@ -330,6 +341,13 @@ func (o *Orchestrator) PublishVibe(ctx context.Context, in PublishVibeInput) (*P
 	} else {
 		result.DriftID = driftID
 	}
+
+	// v2.13.0 (spec 952 T2): auto-emit EventDriftLog with the
+	// verdict so the VLP advances drift_judging → complete |
+	// needs_human | spec_active (loop). Best-effort: if the harness
+	// advanced manually, silence the ErrInvalidTransition.
+	o.emitVLPWithVerdict(ctx, in.SessionID, "orchestrator_publish_vibe",
+		vlp.EventDriftLog, verdictToVLP(result.Verdict))
 
 	// 8. Update artifact validation_status based on verdict.
 	switch result.Verdict {

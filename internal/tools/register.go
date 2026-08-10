@@ -148,6 +148,12 @@ func RegisterAll(reg *Registry, orch *orchestration.Orchestrator, st store.Store
 	if err != nil {
 		return nil, fmt.Errorf("tools: RegisterAll: vlp.NewUseCase: %w", err)
 	}
+	// v2.13.0 (spec 952 T1): wire the VLP UseCase into the
+	// Orchestrator so PublishVibe / VibeSpec / SessionStart
+	// auto-emit VLP events and keep the vibe-loop state in sync
+	// with data-plane operations. Best-effort: the orch layer
+	// handles nil uc gracefully (no-op on VLP events).
+	orch.WithVLP(uc)
 	RegisterVLP(reg, uc)
 
 	// L7-REDTEAM (3) — armed-mode optional. RegisterRedTeam panics

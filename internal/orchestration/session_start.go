@@ -28,6 +28,7 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/errorobs"
 	"github.com/dark-agents/dark-memory-mcp/internal/session"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
+	"github.com/dark-agents/dark-memory-mcp/internal/vlp"
 )
 
 // SessionStartInput is the request to open a session.
@@ -198,6 +199,13 @@ func (o *Orchestrator) SessionStart(ctx context.Context, in SessionStartInput) (
 	if o.OnActiveSessionChanged != nil {
 		o.OnActiveSessionChanged(in.ProjectID)
 	}
+
+	// v2.13.0 (spec 952 T4): auto-emit EventSessionStart so the
+	// VLP state machine advances from virtual StateIdle to
+	// StateDraftingSpec without requiring a separate harness call
+	// to vlp_handle_event. Best-effort: no VLP wired or session
+	// already bootstrapped = silent no-op.
+	o.emitVLP(ctx, sess.SessionID, "orchestrator_session_start", vlp.EventSessionStart)
 
 	// Note: SaveSession itself emits a write_audit row (INV-1). No
 	// second audit row needed here. The orchestrator-level audit

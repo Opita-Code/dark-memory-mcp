@@ -112,8 +112,19 @@ func (sw *Sweeper) Last() SweeperOutput { return sw.last }
 // not break the sweeper loop. The in-memory out.Errors counter stays
 // the primary signal (it is what tests assert); this is the durable
 // side.
+//
+// v2.13.0 (TD-5): skip SaveErrorEvent when no active project is set
+// (normal boot state — the sweeper starts before the first
+// session_start picks a project, and SaveErrorEvent requires an
+// active project). The in-memory counter is the primary signal.
 func (sw *Sweeper) recordErr(ctx context.Context, sessionID string, err error) {
 	if err == nil {
+		return
+	}
+	if sw.st.ActiveProject() == "" {
+		// No project yet — normal boot state. Log the error at
+		// debug level so operators can see it but don't spam the
+		// Error Observatory with clusters that aren't actionable.
 		return
 	}
 	e := errorobs.New(sw.st.ActiveProject(), sessionID, "session_sweeper", err).WithSeverity(errorobs.SeverityWarn)
@@ -158,6 +169,15 @@ func (sw *Sweeper) runTick(ctx context.Context) SweeperOutput {
 		TickAt:           start,
 		IdleTimeout:      sw.in.IdleTimeout.String(),
 		HeartbeatTimeout: sw.in.HeartbeatTimeout.String(),
+	}
+
+	// v2.13.0 (TD-5): no active project means no sessions to sweep
+	// (normal boot state before the first session_start picks a
+	// project). Return a clean zero-output rather than emitting
+	// noise into the Error Observatory.
+	if sw.st.ActiveProject() == "" {
+		out.Duration = time.Since(start).String()
+		return out
 	}
 
 	// Pass 1: open → idle. Sessions that haven't heartbeated for

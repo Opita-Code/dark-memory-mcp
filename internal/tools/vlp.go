@@ -68,7 +68,7 @@ func RegisterVLP(reg *Registry, uc *vlp.UseCase) {
 				},
 				"event": map[string]any{
 					"type":        "string",
-					"enum":        []string{"session_start", "vibe_publish", "artifact_log", "drift_log", "abort"},
+					"enum":        []string{"session_start", "vibe_publish", "artifact_log", "delegate", "drift_log", "abort"},
 					"description": "Canonical event name. Use 'drift_log' with verdict=aligned/drift_detected/needs_human.",
 				},
 				"verdict": map[string]any{

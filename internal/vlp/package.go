@@ -178,6 +178,7 @@ var callMappings = map[string]callMapping{
 	"dark_memory_session_start": {Event: EventSessionStart},
 	"dark_memory_vibe_publish":  {Event: EventVibePublish},
 	"dark_memory_artifact_log":  {Event: EventArtifactLog},
+	"dark_memory_delegate":      {Event: EventDelegate},
 	"dark_memory_drift_log":     {Event: EventDriftLog, ParamForVerdict: "verdict"},
 	"dark_memory_session_abort": {Event: EventAbort},
 }
