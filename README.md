@@ -13,7 +13,7 @@
 ║                           MEMORIA PERSISTENTE PARA AGENTES DE IA                   ║
 ║                                                                                    ║
 ║     El cuaderno que tu agente no olvida. Sesión tras sesión, proyecto tras         ║
-║     proyecto. Con verificación automática de que lo entregado cumple lo pedido.     ║
+║     proyecto. Con verificación automática de que lo entregado cumple lo pedido.    ║
 ║                                                                                    ║
 ╚════════════════════════════════════════════════════════════════════════════════════╝
 ```
