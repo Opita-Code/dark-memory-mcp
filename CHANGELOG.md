@@ -18,6 +18,28 @@ y `session_start` emiten eventos VLP automáticamente. El agente ya no necesita
 sincronizar el estado a mano. La delegación está completa en el wire tool VLP,
 y el sweeper ya no contamina el Error Observatory al arrancar.
 
+### Corregido
+
+- **DARK-MEM-018: `constitution_drift=true` permanente (watchdog vs ActivePolicy).**
+  El watchdog (`runWatchdog` en sqlite + postgres) persistía `parsed_json='{}'`
+  (placeholder) mientras `sha256=hash(archivo TOML)`. `ActivePolicy` verifica
+  `sha256(parsed_json) == stored sha256` — con `parsed_json='{}'` eso nunca
+  podía cuadrar, reportando drift en cada boot y alimentando sospechas de
+  fallo del judge. Fix: el watchdog ahora persiste el contenido REAL del
+  archivo en `parsed_json` (inicial + upgrade), y el branch healthy hace
+  self-heal de filas legacy (`parsed_json IN ('{}','NULL')` → contenido real)
+  para que `hash(parsed_json) == sha256` por construcción.
+  (`internal/store/sqlite/store.go`, `internal/store/postgres/store.go`,
+  `tests/dual_driver/store_test.go` — `TestSQLiteWatchdog_ParsedJSONMatchesSHA`)
+- **DARK-MEM-019: `load_constitution` con `version=""` devolvía ErrNotFound.**
+  El contrato de la tool es "Empty = latest", pero `GetConstitution` ejecutaba
+  `WHERE version=''` que nunca matchea, devolviendo ErrNotFound para una
+  constitution que existe. Fix: `version=""` resuelve la fila enabled más
+  reciente (`ORDER BY activated_at DESC, version DESC LIMIT 1`), espejo de
+  `ActiveConstitution`.
+  (`internal/store/sqlite/store.go`,
+  `tests/dual_driver/store_test.go` — `TestSQLiteGetConstitution_EmptyVersionResolvesLatest`)
+
 ### Agregado
 
 - **Catálogo de providers (spec 937).** `internal/orchestration/provider_catalog.go`:

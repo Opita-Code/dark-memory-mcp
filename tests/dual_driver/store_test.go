@@ -9,6 +9,7 @@ package dual_driver_test
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -1343,4 +1344,118 @@ func TestSQLiteConstitutionWatchdogMigration(t *testing.T) {
 		t.Fatalf("open store (re-open): %v", err)
 	}
 	s3.Close()
+}
+
+// TestSQLiteWatchdog_ParsedJSONMatchesSHA pins DARK-MEM-018: the
+// watchdog must persist the REAL file content in parsed_json so that
+// ActivePolicy's integrity check (hash(parsed_json) == stored sha256)
+// never drifts. Pre-fix, the watchdog wrote parsed_json='{}' while
+// sha256=hash(file), a permanent mismatch that reported
+// constitution_drift=true on every boot.
+func TestSQLiteWatchdog_ParsedJSONMatchesSHA(t *testing.T) {
+	ctx := context.Background()
+	tmp := t.TempDir()
+	dsn := filepath.Join(tmp, "parsed-json-test.db")
+	consFile := filepath.Join(tmp, "dark-mem.constitution.toml")
+
+	body := "[meta]\nid=\"dark-agents/dark-mem\"\nversion=\"1.0.0\"\n"
+	if err := os.WriteFile(consFile, []byte(body), 0644); err != nil {
+		t.Fatalf("write constitution: %v", err)
+	}
+
+	cfg := store.Config{
+		Driver:           store.DriverSQLite,
+		DSN:              dsn,
+		WALMode:          true,
+		ForeignKeys:      true,
+		BusyTimeout:      5 * time.Second,
+		ConstitutionFile: consFile,
+		ConstitutionID:   "dark-agents/dark-mem",
+		ConstitutionVer:  "1.0.0",
+	}
+	s, err := runtime.Open(ctx, cfg)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer s.Close()
+
+	c, err := s.GetConstitution(ctx, "dark-agents/dark-mem", "1.0.0")
+	if err != nil {
+		t.Fatalf("GetConstitution: %v", err)
+	}
+	if c == nil {
+		t.Fatal("constitution row not found after watchdog init")
+	}
+	if c.ParsedJSON != body {
+		t.Errorf("parsed_json = %q, want file content %q (DARK-MEM-018)", c.ParsedJSON, body)
+	}
+	// The stored SHA must be the hash of parsed_json (the contract
+	// ActivePolicy verifies).
+	computed := sha256.Sum256([]byte(c.ParsedJSON))
+	got := hex.EncodeToString(computed[:])
+	if got != c.SHA256 {
+		t.Errorf("sha256(parsed_json)=%s != stored sha256=%s (DARK-MEM-018)", got, c.SHA256)
+	}
+
+	// Reopen: healthy path must be idempotent and NOT introduce drift.
+	s.Close()
+	s2, err := runtime.Open(ctx, cfg)
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	defer s2.Close()
+	c2, err := s2.GetConstitution(ctx, "dark-agents/dark-mem", "1.0.0")
+	if err != nil {
+		t.Fatalf("GetConstitution after reopen: %v", err)
+	}
+	if c2.ParsedJSON != body {
+		t.Errorf("parsed_json after reopen = %q, want %q", c2.ParsedJSON, body)
+	}
+}
+
+// TestSQLiteGetConstitution_EmptyVersionResolvesLatest pins
+// DARK-MEM-019: load_constitution with version="" must resolve the
+// latest ENABLED constitution (the tool contract "Empty = latest").
+// Pre-fix, GetConstitution executed WHERE version='' which never
+// matched, returning ErrNotFound for a constitution that exists.
+func TestSQLiteGetConstitution_EmptyVersionResolvesLatest(t *testing.T) {
+	ctx := context.Background()
+	tmp := t.TempDir()
+	dsn := filepath.Join(tmp, "empty-version-test.db")
+	consFile := filepath.Join(tmp, "dark-mem.constitution.toml")
+
+	body := "[meta]\nid=\"dark-agents/dark-mem\"\nversion=\"1.0.0\"\n"
+	if err := os.WriteFile(consFile, []byte(body), 0644); err != nil {
+		t.Fatalf("write constitution: %v", err)
+	}
+
+	cfg := store.Config{
+		Driver:           store.DriverSQLite,
+		DSN:              dsn,
+		WALMode:          true,
+		ForeignKeys:      true,
+		BusyTimeout:      5 * time.Second,
+		ConstitutionFile: consFile,
+		ConstitutionID:   "dark-agents/dark-mem",
+		ConstitutionVer:  "1.0.0",
+	}
+	s, err := runtime.Open(ctx, cfg)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer s.Close()
+
+	c, err := s.GetConstitution(ctx, "dark-agents/dark-mem", "")
+	if err != nil {
+		t.Fatalf("GetConstitution with empty version: %v", err)
+	}
+	if c == nil {
+		t.Fatal("GetConstitution(empty version) returned nil — expected latest row (DARK-MEM-019)")
+	}
+	if c.Version != "1.0.0" {
+		t.Errorf("resolved version = %q, want 1.0.0", c.Version)
+	}
+	if !c.Enabled {
+		t.Error("resolved row should be enabled")
+	}
 }

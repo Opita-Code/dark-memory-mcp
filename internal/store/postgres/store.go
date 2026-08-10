@@ -247,13 +247,15 @@ func (s *Store) runWatchdog(ctx context.Context) error {
 		s.cfg.ConstitutionID).Scan(&stored, &storedVer)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
+			// DARK-MEM-018: parsed_json must hold the file content so
+			// ActivePolicy's integrity check stays consistent.
 			if _, err := s.pool.Exec(ctx,
 				`INSERT INTO constitutions
 				 (constitution_id, version, label, source, file_path, parsed_json, sha256, enabled, created_at, activated_at, last_verified_at, last_verified_sha256)
 				 VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE, $8, $9, $10, $11)
 				 ON CONFLICT (constitution_id, version) DO NOTHING`,
 				s.cfg.ConstitutionID, s.cfg.ConstitutionVer, "watchdog-initial",
-				"watchdog", s.cfg.ConstitutionFile, "{}", computed,
+				"watchdog", s.cfg.ConstitutionFile, string(data), computed,
 				time.Now().UTC().Format(time.RFC3339Nano),
 				time.Now().UTC().Format(time.RFC3339Nano),
 				time.Now().UTC().Format(time.RFC3339Nano),
@@ -284,7 +286,7 @@ func (s *Store) runWatchdog(ctx context.Context) error {
 				 (constitution_id, version, label, source, file_path, parsed_json, sha256, enabled, created_at, activated_at, last_verified_at, last_verified_sha256)
 				 VALUES ($1, $2, $3, $4, $5, $6, $7, TRUE, $8, $9, $10, $11)`,
 				s.cfg.ConstitutionID, s.cfg.ConstitutionVer, "watchdog-upgrade",
-				"watchdog", s.cfg.ConstitutionFile, "{}", computed,
+				"watchdog", s.cfg.ConstitutionFile, string(data), computed,
 				now, now, now, computed)
 			if err != nil {
 				return fmt.Errorf("watchdog: write upgrade row: %w", err)
@@ -300,11 +302,18 @@ func (s *Store) runWatchdog(ctx context.Context) error {
 		return fmt.Errorf("%w: file=%s computed=%s stored=%s (version=%s; same-version tamper is refused unconditionally)",
 			store.ErrConstitutionDrift, s.cfg.ConstitutionFile, computed, *stored, storedVersion)
 	}
+	// Healthy; update last_verified columns.
+	//
+	// DARK-MEM-018 self-heal: pre-fix watchdog rows stored
+	// parsed_json='{}' with sha256=hash(file); backfill parsed_json
+	// so ActivePolicy's hash(parsed_json) check matches.
 	_, _ = s.pool.Exec(ctx,
 		`UPDATE constitutions
-		 SET last_verified_at = $1, last_verified_sha256 = $2
-		 WHERE constitution_id = $3 AND version = $4`,
-		time.Now().UTC().Format(time.RFC3339Nano), computed,
+		 SET last_verified_at = $1,
+		     last_verified_sha256 = $2,
+		     parsed_json = CASE WHEN parsed_json = '{}' THEN $3 ELSE parsed_json END
+		 WHERE constitution_id = $4 AND version = $5`,
+		time.Now().UTC().Format(time.RFC3339Nano), computed, string(data),
 		s.cfg.ConstitutionID, s.cfg.ConstitutionVer)
 	return nil
 }

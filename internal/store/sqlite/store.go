@@ -270,6 +270,11 @@ func (s *Store) runWatchdog(ctx context.Context) error {
 		if errors.Is(err, sql.ErrNoRows) {
 			// No stored constitution yet. Write the watchdog initial
 			// row so subsequent Opens can detect drift.
+			// DARK-MEM-018: parsed_json must hold the file content so
+			// that ActivePolicy's integrity check (hash(parsed_json) ==
+			// stored sha256) stays consistent. The stored sha256 is
+			// hash(file bytes); setting parsed_json = string(data) makes
+			// hash(parsed_json) == sha256 by construction.
 			if _, err := s.db.ExecContext(ctx,
 				`INSERT OR IGNORE INTO constitutions
 				 (constitution_id, version, label, source, file_path, parsed_json, sha256, enabled, created_at, activated_at, last_verified_at, last_verified_sha256)
@@ -279,7 +284,7 @@ func (s *Store) runWatchdog(ctx context.Context) error {
 				"watchdog-initial",
 				"watchdog",
 				s.cfg.ConstitutionFile,
-				"{}",
+				string(data),
 				computed,
 				time.Now().UTC().Format(time.RFC3339Nano),
 				time.Now().UTC().Format(time.RFC3339Nano),
@@ -318,7 +323,7 @@ func (s *Store) runWatchdog(ctx context.Context) error {
 				"watchdog-upgrade",
 				"watchdog",
 				s.cfg.ConstitutionFile,
-				"{}",
+				string(data),
 				computed,
 				now, now, now, computed)
 			if err != nil {
@@ -338,11 +343,19 @@ func (s *Store) runWatchdog(ctx context.Context) error {
 			store.ErrConstitutionDrift, s.cfg.ConstitutionFile, computed, stored, storedVer)
 	}
 	// Healthy; update last_verified columns.
+	//
+	// DARK-MEM-018 self-heal: rows written by a pre-fix watchdog stored
+	// parsed_json='{}' while sha256=hash(file). ActivePolicy's integrity
+	// check hashes parsed_json, so those legacy rows drifted permanently.
+	// When the file hash still matches (healthy), backfill parsed_json
+	// with the real file content so hash(parsed_json) == stored sha256.
 	_, _ = s.db.ExecContext(ctx,
 		`UPDATE constitutions
-		 SET last_verified_at = ?, last_verified_sha256 = ?
+		 SET last_verified_at = ?,
+		     last_verified_sha256 = ?,
+		     parsed_json = CASE WHEN parsed_json = '{}' THEN ? ELSE parsed_json END
 		 WHERE constitution_id = ? AND version = ?`,
-		time.Now().UTC().Format(time.RFC3339Nano), computed,
+		time.Now().UTC().Format(time.RFC3339Nano), computed, string(data),
 		s.cfg.ConstitutionID, s.cfg.ConstitutionVer)
 	return nil
 }
@@ -2671,6 +2684,22 @@ func (s *Store) SaveConstitution(ctx context.Context, wc store.WriteContext, c *
 
 func (s *Store) GetConstitution(ctx context.Context, constitutionID, version string) (*constitution.Constitution, error) {
 	// Global by design — see T4f decision.
+	//
+	// DARK-MEM-019: empty version means "latest enabled" — the tool
+	// contract (load_constitution "Empty = latest") previously fell
+	// through to WHERE version='' which never matched, returning
+	// ErrNotFound for a constitution that exists. Mirror ActiveConstitution's
+	// resolution: enabled=1 ordered by activated_at DESC, version DESC.
+	if version == "" {
+		row := s.db.QueryRowContext(ctx,
+			`SELECT id, constitution_id, version, label, source, file_path, parsed_json, sha256,
+			        enabled, created_at, activated_at
+			 FROM constitutions
+			 WHERE constitution_id = ? AND enabled = 1
+			 ORDER BY activated_at DESC, version DESC
+			 LIMIT 1`, constitutionID)
+		return scanConstitution(row)
+	}
 	row := s.db.QueryRowContext(ctx,
 		`SELECT id, constitution_id, version, label, source, file_path, parsed_json, sha256,
 		        enabled, created_at, activated_at
