@@ -102,8 +102,9 @@ elif [[ "$json" == "1" ]]; then
         commit="$(git rev-parse --short HEAD 2>/dev/null || echo "")"
         [[ "$(git status --porcelain 2>/dev/null | head -n1)" != "" ]] && dirty=true
     fi
-    printf '{"version":"%s","commit":"%s","dirty":%t,"source":"%s"}' \
-        "$version" "$commit" "$dirty" "$source"
+    dirty_str="false"; [[ "$dirty" == "true" ]] && dirty_str="true"
+    printf '{"version":"%s","commit":"%s","dirty":%s,"source":"%s"}' \
+        "$version" "$commit" "$dirty_str" "$source"
 else
     printf -- '-X %s.%s=%s' "$PKG" "$VAR" "$version"
 fi
