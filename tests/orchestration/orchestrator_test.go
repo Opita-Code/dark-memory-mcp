@@ -863,9 +863,12 @@ func TestRecommendedModel_KnownProvider(t *testing.T) {
 		{"anthropic", "drift_judge", "claude-opus-4-7"},  // opus for reasoning
 		{"anthropic", "brand_match", "claude-haiku-4-5"}, // haiku for fast
 		{"openai", "compliance_check", "gpt-5"},
-		{"google", "grounding_check", "gemini-2.5-pro"},
-		{"deepseek", "drift_judge", "deepseek-r1"},     // r1 for reasoning
-		{"perplexity", "grounding_check", "sonar-pro"}, // search-augmented
+		{"google", "grounding_check", "gemini-3.6-pro"},
+		{"deepseek", "drift_judge", "deepseek-v4-pro"},   // v4-pro for reasoning
+		{"minimax", "drift_judge", "MiniMax-M3"},
+		{"zhipu", "compliance_check", "glm-5.2"},
+		{"moonshot", "brand_match", "kimi-k2.7-code"},
+		{"qwen", "grounding_check", "qwen3.8-max"},
 	}
 	for _, c := range cases {
 		got := orchestration.RecommendedModel(c.provider, c.evalType)
@@ -893,10 +896,10 @@ func TestRecommendedModel_UnknownProvider(t *testing.T) {
 // O5: ListProviders returns the top-10.
 func TestListProviders(t *testing.T) {
 	providers := orchestration.ListProviders()
-	if len(providers) < 10 {
-		t.Fatalf("expected at least 10 providers, got %d: %v", len(providers), providers)
+	if len(providers) != 8 {
+		t.Fatalf("expected 8 providers, got %d: %v", len(providers), providers)
 	}
-	want := []string{"anthropic", "openai", "google", "mistral", "cohere", "meta", "xai", "deepseek", "qwen", "perplexity"}
+	want := []string{"anthropic", "openai", "google", "deepseek", "minimax", "zhipu", "moonshot", "qwen"}
 	for i, w := range want {
 		if i >= len(providers) || providers[i] != w {
 			t.Errorf("provider %d: got %q, want %q", i, providers[i], w)
