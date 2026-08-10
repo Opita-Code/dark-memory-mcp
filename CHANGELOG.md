@@ -6,6 +6,141 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [2.13.0] — 2026-08-10 — libertad de provider + vibe-loop unificado
+
+**La versión que elimina el acoplamiento con MiniMax y unifica el vibe-loop.**
+Dark Memory ya no tiene ningún provider cableado en el código. Detecta el
+provider del harness desde variables de entorno (Anthropic, OpenAI, Gemini,
+DeepSeek, MiniMax, Moonshot, Zhipu, Qwen — 8 providers verificados contra
+documentación oficial) y usa la misma llave del harness. El orquestrador y la
+máquina de estados VLP son ahora un solo sistema: `vibe_publish`, `vibe_spec`
+y `session_start` emiten eventos VLP automáticamente. El agente ya no necesita
+sincronizar el estado a mano. La delegación está completa en el wire tool VLP,
+y el sweeper ya no contamina el Error Observatory al arrancar.
+
+### Agregado
+
+- **Catálogo de providers (spec 937).** `internal/orchestration/provider_catalog.go`:
+  registro data-driven de 8 providers LLM (US: Anthropic, OpenAI, Gemini;
+  China: DeepSeek, MiniMax, Zhipu AI, Moonshot, Qwen) con endpoints
+  verificados, nombres de variables de entorno, modelos por defecto y
+  dialecto (Anthropic Messages vs OpenAI Chat Completions). Una sola fuente
+  de verdad. Sin strings cableados.
+  (`internal/orchestration/provider_catalog.go`, `_test.go`)
+- **Juez con dialecto OpenAI.** `judgeViaOpenAIHTTP` maneja providers que
+  hablan la API Chat Completions (OpenAI, DeepSeek, MiniMax, Moonshot,
+  Zhipu, Qwen). El system prompt va como primer mensaje; la respuesta se
+  lee de `choices[0].message.content`. Mismo contrato de
+  retry/backoff/timeout que el path Anthropic existente.
+  (`internal/orchestration/llm_client.go`)
+- **Cliente auto-detectable.** `NewSelfHarnessClient` detecta el LLM desde
+  variables de entorno al arrancar, con prioridad: `DARK_JUDGE_PROVIDER`
+  (explícito) → Anthropic → OpenAI → Gemini → DeepSeek → MiniMax →
+  Moonshot → Zhipu → Qwen → daemon → legacy `DARK_SCRAPPER_URL`. Sin
+  configuración para el caso común. (`internal/orchestration/llm_client.go`,
+  `internal/orchestration/provider_catalog.go`)
+- **3 herramientas SESSION nuevas (+heartbeat, +recover, +resurrect).**
+  Ciclo completo INV-8/INV-9: `session_heartbeat` mantiene vivas las
+  sesiones activas durante pausas largas de razonamiento; `session_recover`
+  encuentra sesiones abortadas de harnesses caídos; `session_resurrect` las
+  revive con el contexto heredado.
+  (OPITA-007, `internal/tools/session.go`)
+- **Auto-drive del vibe-loop (spec 952).** `PublishVibe` emite
+  EventVibePublish → EventArtifactLog → EventDriftLog en secuencia para que
+  la máquina de estados VLP se mantenga sincronizada con las operaciones
+  del data-plane. `VibeSpec` emite EventVibePublish. `SessionStart` emite
+  EventSessionStart. Todo best-effort: si el agente ya avanzó el VLP
+  manualmente, `ErrInvalidTransition` es un no-op silencioso.
+  (`internal/orchestration/`)
+- **Delegación en el wire tool VLP (spec 952).** `"delegate"` ahora es un
+  evento válido en `vlp_handle_event`, correspondiente a la transición
+  `EventDelegate` que ya existía en `internal/vlp/state.go`. El agente ya
+  puede llevar el estado a `delegating` después de que `delegate_intent`
+  decida DELEGATE. (`internal/tools/vlp.go`, `internal/vlp/package.go`)
+
+### Corregido
+
+- **parseVerdict era ciego al eval_type (OPITA-006).** `parseDriftVerdict` no
+  sabía qué juez produjo el JSON, así que `grounding_check`, `pii_detect` y
+  `prompt_injection_scan` (con llaves booleanas: `"grounded":true`,
+  `"pii_found":false`, `"injection_found":false`) se clasificaban mal como
+  `drift_detected` porque el parser solo entendía la forma
+  `"verdict":"aligned"`. `consensus(grounding_check)` devolvía
+  `drift_detected` incluso cuando el LLM decía `grounded:true`. Corregido
+  con `parseVerdict(evalType, json, confidence)` — cada juez mapea a los
+  tres estados canónicos. (`internal/orchestration/publish_vibe.go`)
+- **Timeout de mindset (15s → 120s).** `mindset_apply` tenía un deadline de
+  15 segundos en el cliente HTTP — insuficiente para el pipeline de
+  componer + validar con juez + reintentos con un provider real
+  (~6s/llamada × 3 iteraciones). Causa raíz de los fallos C7 en
+  delegación (system_prompt vacío con LLM vivo). Ampliado a 120s y
+  verificado extremo a extremo con DeepSeek.
+  (`internal/orchestration/mindset_apply.go`)
+- **`delegate_intent` ahora expone errores de MIND.**
+  `DelegateSubTaskOutput.MindsetErr` lleva la razón del fallo de
+  composición/validación en vez de devolver un `system_prompt` vacío
+  silencioso — cierra el silent-discard site de la fila 277.
+  (`internal/orchestration/delegate_intent.go`)
+- **Ruido del sweeper en boot (TD-5).** La función `recordErr` del sweeper
+  intentaba persistir errores antes de que hubiera un proyecto activo
+  (`session_start` no había corrido todavía), causando una cascada donde
+  `SaveErrorEvent` también fallaba con "no active project". Ahora
+  `recordErr` omite la persistencia cuando `ActiveProject()` está vacío, y
+  `runTick` devuelve un cero limpio en vez de llenar el Error Observatory.
+  (`internal/orchestration/session_sweeper.go`)
+- **Anti-hardcoding: `canonicalNamespaces` fuente única.** ~100 sitios de
+  hardcoding manual en ~30 archivos eliminados. Conteo de herramientas,
+  versión de schema, metadata de bootstrap y badges del README derivan del
+  registro en runtime. (`internal/tools/registry.go` + cross-package)
+- **`inject-version.sh` arreglo de printf (TD-4).** `printf "%t"` no es un
+  especificador de formato válido en bash. Reemplazado con booleano
+  explícito → `dirty_str` vía `%s`. `make release` funciona de nuevo.
+  (`scripts/inject-version.sh`)
+
+### Cambiado
+
+- **Detección de provider es primaria; env-var es secundaria.** El harness
+  inyecta su LLM al arrancar vía `WithLLMSelector`. La detección por
+  variables de entorno (`NewSelfHarnessClient`) corre solo cuando el
+  harness no inyecta — es un puente para operadores que no han adoptado el
+  patrón de inyección. El agente puede BYOK con `DARK_JUDGE_PROVIDER=deepseek`
+  (o cualquier provider del catálogo) + la variable `*_API_KEY` correspondiente.
+- **`recommended_models.go` actualizado a 2026-Q3.** Modelos alineados con el
+  catálogo: `deepseek-v4-flash/pro`, `glm-5.2`, `kimi-k3`, `qwen3.8-max`,
+  `gemini-3.6-flash/pro`. (`internal/orchestration/recommended_models.go`)
+- **Timeouts de sesión ampliados (60s → 15m / 300s → 60m).** Los defaults
+  pre-v2.10.0 eran agresivos y mataban sesiones activas durante pausas
+  normales de razonamiento del LLM. Los nuevos defaults (15min idle, 60min
+  heartbeat) corresponden al patrón de uso de harnesses interactivos.
+  Anulables vía `DARK_SESSION_IDLE_TIMEOUT` / `DARK_SESSION_HEARTBEAT_TIMEOUT`.
+- **El VLP ahora es compañero, no una carga manual del harness.** Los
+  orquestradores auto-avanzan el estado; el agente solo llama
+  `vlp_handle_event` explícitamente para transiciones de delegación o
+  anulaciones manuales. Esto cierra la brecha de bifurcación de estado
+  donde el data-plane y el VLP podían divergir porque el harness olvidaba
+  sincronizarlos.
+
+### Eliminado
+
+- **Hardcoding de MiniMax.** `SDD_LLM_BASE_URL` y `SDD_LLM_MODEL` ya no son
+  leídos por dark-memory. El provider se inyecta desde el harness o se
+  detecta de las variables `*_API_KEY` estándar. MiniMax sigue en el
+  catálogo y funciona cuando se configura con `MINIMAX_API_KEY` +
+  `DARK_JUDGE_PROVIDER=minimax`.
+
+### Interno
+
+- **24 tests nuevos** para catálogo de providers, detección, auto-detección
+  y dialecto OpenAI (`provider_catalog_test.go`, `provider_detection_test.go`)
+- **Aislamiento de entorno en tests:** las llaves del catálogo se limpian
+  antes de tests sensibles al entorno para que máquinas de CI con llaves
+  reales no produzcan falsos positivos (`llm_client_scrapper_alias_test.go`,
+  `error_observatory_test.go`)
+- **Suite de orquestración verde con DeepSeek vivo** (113s, tests C7 de
+  delegación pasan a 33s cada uno)
+
+---
+
 ## [2.12.0] — 2026-08-08 — vibe-case-aware judging
 
 **Two-spec release.** `dark_memory_judge` / `dark_memory_consensus` now know
