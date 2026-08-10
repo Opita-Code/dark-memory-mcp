@@ -6,17 +6,17 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
-## [2.13.0] — 2026-08-10 — libertad de provider + vibe-loop unificado
+## [2.13.1] — 2026-08-10 — parche de integridad de constitution
 
-**La versión que elimina el acoplamiento con MiniMax y unifica el vibe-loop.**
-Dark Memory ya no tiene ningún provider cableado en el código. Detecta el
-provider del harness desde variables de entorno (Anthropic, OpenAI, Gemini,
-DeepSeek, MiniMax, Moonshot, Zhipu, Qwen — 8 providers verificados contra
-documentación oficial) y usa la misma llave del harness. El orquestrador y la
-máquina de estados VLP son ahora un solo sistema: `vibe_publish`, `vibe_spec`
-y `session_start` emiten eventos VLP automáticamente. El agente ya no necesita
-sincronizar el estado a mano. La delegación está completa en el wire tool VLP,
-y el sweeper ya no contamina el Error Observatory al arrancar.
+**Dos bugs de integridad que generaban falsos positivos de drift y rotura de tool.**
+El drift permanente de constitution (`constitution_drift=true` en cada boot)
+era un falso positivo causado por una inconsistencia semántica entre el watchdog
+y `ActivePolicy`. El watchdog computaba el hash del archivo TOML pero persistía
+`parsed_json='{}'` (placeholder), y `ActivePolicy` hasheaba `parsed_json` — nunca
+iban a coincidir. Además, `load_constitution` con `version=""` (contrato
+"Empty = latest") ejecutaba `WHERE version=''` que nunca matchea, devolviendo
+`ErrNotFound` para constitutions que existen. Ambos arreglados con tests que fijan
+el contrato y self-heal automático de filas legacy.
 
 ### Corregido
 
@@ -39,6 +39,20 @@ y el sweeper ya no contamina el Error Observatory al arrancar.
   `ActiveConstitution`.
   (`internal/store/sqlite/store.go`,
   `tests/dual_driver/store_test.go` — `TestSQLiteGetConstitution_EmptyVersionResolvesLatest`)
+
+---
+
+## [2.13.0] — 2026-08-10 — libertad de provider + vibe-loop unificado
+
+**La versión que elimina el acoplamiento con MiniMax y unifica el vibe-loop.**
+Dark Memory ya no tiene ningún provider cableado en el código. Detecta el
+provider del harness desde variables de entorno (Anthropic, OpenAI, Gemini,
+DeepSeek, MiniMax, Moonshot, Zhipu, Qwen — 8 providers verificados contra
+documentación oficial) y usa la misma llave del harness. El orquestrador y la
+máquina de estados VLP son ahora un solo sistema: `vibe_publish`, `vibe_spec`
+y `session_start` emiten eventos VLP automáticamente. El agente ya no necesita
+sincronizar el estado a mano. La delegación está completa en el wire tool VLP,
+y el sweeper ya no contamina el Error Observatory al arrancar.
 
 ### Agregado
 
