@@ -53,7 +53,12 @@ func RegisterAll(reg *Registry, orch *orchestration.Orchestrator, st store.Store
 	// project_create is registered before session_start is reachable
 	// in tools/list (matches the canonical order at index 0).
 	RegisterProject(reg, orch, st)
-	// SESSION (4)
+	// SESSION (7) — v2.13.0: +session_heartbeat, +session_recover,
+	// +session_resurrect (OPITA-007). Heartbeat lets harnesses refresh
+	// last_heartbeat_at explicitly (root-cause fix for the sweeper
+	// closing active sessions during long reasoning pauses); recover +
+	// resurrect give harnesses the INV-8 recovery path so a session
+	// lost to the sweeper can be found and resumed with its context.
 	RegisterSession(reg, orch, st)
 	// RESEARCH (3)
 	RegisterResearch(reg, orch, st)

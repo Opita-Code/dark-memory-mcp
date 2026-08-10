@@ -89,7 +89,7 @@ import (
 // operators can grep write_audit rows for sessions using the
 // fallback.
 const DefaultToolGrants = "project_create," + // PROJECT (1)
-	"session_start,session_resume,session_status,session_close," + // SESSION (4)
+	"session_start,session_resume,session_status,session_close,session_heartbeat,session_recover,session_resurrect," + // SESSION (7)
 	"research_topic,research_recall,research_resume_thread," + // RESEARCH (3)
 	"agent_bootstrap,agent_recommend_companions,agent_detect_environment," + // AGENT_BOOTSTRAP (3) — v2.6.0
 	"vibe_publish,vibe_spec,pipeline_status,resolve_drift," + // VIBE (4)

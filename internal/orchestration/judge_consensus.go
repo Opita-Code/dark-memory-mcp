@@ -177,7 +177,7 @@ func (o *Orchestrator) JudgeConsensus(ctx context.Context, in JudgeConsensusInpu
 				outcomes[i].err = jerr
 				return
 			}
-			v := parseDriftVerdict(jOut.VerdictJSON, jOut.Confidence)
+			v := parseVerdict(in.EvalType, jOut.VerdictJSON, jOut.Confidence)
 			outcomes[i].sample = JudgeConsensusSample{
 				SampleIndex:  i,
 				EvaluationID: jOut.EvaluationID,

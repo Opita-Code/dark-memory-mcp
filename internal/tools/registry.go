@@ -227,7 +227,7 @@ type NamespaceGroup struct {
 // Per RFC D-9 + BRIDGE_AND_COEXISTENCE.md §3 (bridge.4), v2.6.0:
 //
 //		PROJECT          (1)  - create                              (v1.2.0, INV-7)
-//		SESSION          (4)  - start, resume, status, close
+//		SESSION          (7)  - start, resume, status, close, heartbeat, recover, resurrect (v2.13.0: +3 lifecycle)
 //		RESEARCH         (3)  - topic, recall, resume_thread
 //		AGENT_BOOTSTRAP  (3)  - bootstrap, recommend_companions, detect_environment (v2.6.0)
 //		VIBE             (4)  - publish, spec, pipeline_status, resolve_drift
@@ -279,7 +279,7 @@ var canonicalNamespaces = []NamespaceGroup{
 	},
 	{
 		Name:  "SESSION",
-		Tools: []string{"session_start", "session_resume", "session_status", "session_close"},
+		Tools: []string{"session_start", "session_resume", "session_status", "session_close", "session_heartbeat", "session_recover", "session_resurrect"},
 	},
 	{
 		Name:  "RESEARCH",

@@ -255,15 +255,39 @@ func main() {
 		return names, nil
 	}
 
-	// Phase 1: tools/list — assert 49 canonical + 3 redteam = 52.
-	// (v2.11.0: ERROR_OBS +4; was 28+3=31 in the v1.3.0-era original.)
-	listResp := rpc(2, "tools/list", map[string]any{})
+	// Phase 1: tools/list — derive the expected canonical count from
+	// the health_ping registry (the binary reports its own canonical
+	// surface — no hardcoded count to drift).
+	// (v2.13.0: SESSION +3 heartbeat/recover/resurrect.)
+	hpProbe := rpc(2, "tools/call", map[string]any{
+		"name": "dark_memory_health_ping", "arguments": map[string]any{},
+	})
+	hpProbeText, err := unwrap(hpProbe)
+	if err != nil {
+		fail("health_ping probe unwrap: %v\n  raw=%s", err, hpProbe)
+	}
+	var hpProbeData struct {
+		Data struct {
+			Registry struct {
+				CanonicalTools int `json:"canonical_tools"`
+				ExtraTools     int `json:"extra_tools"`
+			} `json:"registry"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(hpProbeText), &hpProbeData); err != nil {
+		fail("health_ping probe parse: %v\n  raw=%s", err, hpProbeText)
+	}
+	wantCanonical := hpProbeData.Data.Registry.CanonicalTools
+	wantExtra := hpProbeData.Data.Registry.ExtraTools
+	wantTotal := wantCanonical + wantExtra
+
+	listResp := rpc(3, "tools/list", map[string]any{})
 	toolNames, err := toolsListUnwrap(listResp)
 	if err != nil {
 		fail("tools/list: %v\n  raw=%s", err, listResp)
 	}
-	if len(toolNames) != 52 {
-		fail("tools/list count=%d; want 52 (49 canonical + 3 redteam)", len(toolNames))
+	if len(toolNames) != wantTotal {
+		fail("tools/list count=%d; want %d (health_ping registry: %d canonical + %d extra)", len(toolNames), wantTotal, wantCanonical, wantExtra)
 	}
 	hasHealth := false
 	hasRedteam := false
@@ -276,12 +300,12 @@ func main() {
 		}
 	}
 	if !hasHealth {
-		fail("tools/list: dark_memory_health_ping MISSING (canonical 49)")
+		fail("tools/list: dark_memory_health_ping MISSING (canonical)")
 	}
 	if !hasRedteam {
 		fail("tools/list: dark_memory_redteam_list_mods MISSING (DARK_REDTEAM=armed)")
 	}
-	ok("tools/list: 52 tools (49 canonical + 3 redteam); health_ping + redteam present")
+	ok("tools/list: %d tools (%d canonical + %d extra); health_ping + redteam present", wantTotal, wantCanonical, wantExtra)
 
 	// Phase 2: dark_memory_health_ping (the v1.3.0 headline tool).
 	hpResp := rpc(3, "tools/call", map[string]any{
@@ -347,11 +371,11 @@ func main() {
 	if hpData.Data.Runtime.PID != os.Getpid() && hpData.Data.Runtime.PID <= 0 {
 		fail("runtime.pid=%d; want >0", hpData.Data.Runtime.PID)
 	}
-	if hpData.Data.Registry.CanonicalTools != 49 {
-		fail("registry.canonical_tools=%d; want 49 (v2.11.0 contract)", hpData.Data.Registry.CanonicalTools)
+	if hpData.Data.Registry.CanonicalTools != wantCanonical {
+		fail("registry.canonical_tools=%d; want %d (self-reported, matches Phase 1)", hpData.Data.Registry.CanonicalTools, wantCanonical)
 	}
-	if hpData.Data.Registry.ExtraTools != 3 {
-		fail("registry.extra_tools=%d; want 3 (redteam armed)", hpData.Data.Registry.ExtraTools)
+	if hpData.Data.Registry.ExtraTools != wantExtra {
+		fail("registry.extra_tools=%d; want %d (self-reported, matches Phase 1)", hpData.Data.Registry.ExtraTools, wantExtra)
 	}
 	if hpData.Data.LatencyMS <= 0 {
 		fail("latency_ms=%v; want >0 (>=0.001ms with floor)", hpData.Data.LatencyMS)

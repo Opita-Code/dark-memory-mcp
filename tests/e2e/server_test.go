@@ -27,7 +27,7 @@ import (
 // History (kept for archaeology): 26 in v1.1.x, 27 in v1.2.x, 28 in
 // v1.3.x, 29 in v2.0.x, 34 in v2.1.0, 35 in v2.3.0, 38 in v2.6.0,
 // 39 in v2.7.0-alpha, 41 in v2.8.0-alpha, 42 in v2.9.0-alpha PR-2,
-// 43 in v2.9.0-alpha PR-3, 44 in v2.9.3, 45 in v2.10.0, 49 in v2.11.0.
+// 43 in v2.9.0-alpha PR-3, 44 in v2.9.3, 45 in v2.10.0, 49 in v2.11.0, 52 in v2.13.0.
 //
 // (Function name kept as TestE2E_29ToolsRegistered for the Go test
 // runner's sake — go test can't easily rename tests across versions.)

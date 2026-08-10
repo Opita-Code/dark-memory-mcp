@@ -34,7 +34,7 @@ func testData() BootstrapData {
 		TotalResources:   10,
 		NamespaceCount:   17,
 		NamespaceCounts: map[string]int{
-			"PROJECT": 1, "SESSION": 4, "RESEARCH": 3, "AGENT_BOOTSTRAP": 3,
+			"PROJECT": 1, "SESSION": 7, "RESEARCH": 3, "AGENT_BOOTSTRAP": 3,
 			"VIBE": 4, "CONTEXT": 4, "AGENT_MEMORY": 10, "MINDSET": 1,
 			"DELEGATION": 1, "JUDGE": 3, "POLICY": 2, "OBSERVABILITY": 4,
 			"ERROR_OBS": 4, "ADMIN": 3, "L6-VLP": 1, "EMBEDDER": 1,

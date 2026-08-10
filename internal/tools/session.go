@@ -1,4 +1,4 @@
-// Package tools — session.go: the SESSION namespace (4 tools).
+// Package tools — session.go: the SESSION namespace (7 tools).
 //
 // Per RFC §5 / D-9:
 //
@@ -6,10 +6,16 @@
 //	dark_memory_session_resume
 //	dark_memory_session_status
 //	dark_memory_session_close
+//	dark_memory_session_heartbeat
+//	dark_memory_session_recover
+//	dark_memory_session_resurrect
 //
-// Maps to orchestrator O1 (SessionStart), O2 (SessionClose) + 2 new
-// read-only helpers (Status reads via Store.GetSession; Resume
-// validates session_id then sets active project).
+// Maps to orchestrator O1 (SessionStart), O2 (SessionClose) + 5
+// lifecycle helpers: Status reads via Store.GetSession; Resume
+// validates session_id then sets active project; Heartbeat refreshes
+// last_heartbeat_at so the sweeper keeps the session alive; Recover
+// discovers resurrectable closed_aborted sessions (INV-8); Resurrect
+// creates a new session inheriting the original's scope state.
 package tools
 
 import (
@@ -79,7 +85,7 @@ func resolveClosingSoonConfig() (threshold, heartbeatTimeout time.Duration) {
 	return
 }
 
-// RegisterSession wires the 4 SESSION tools into the registry.
+// RegisterSession wires the 7 SESSION tools into the registry.
 // Caller passes the orchestrator + store so handlers can reach them
 // without circular imports.
 func RegisterSession(reg *Registry, orch *orchestration.Orchestrator, st store.Store) {
@@ -166,6 +172,76 @@ func RegisterSession(reg *Registry, orch *orchestration.Orchestrator, st store.S
 		}),
 		func(ctx context.Context, in orchestration.SessionCloseInput) (*orchestration.SessionCloseOutput, error) {
 			return orch.SessionClose(ctx, in)
+		}))
+
+	// session_heartbeat — v2.13.0 (OPITA-007): refreshes the session's
+	// last_heartbeat_at so the sweeper keeps the session alive.
+	//
+	// WHY (root-cause of the "sweeper closes active sessions" reports):
+	// Store.SaveHeartbeat was only reachable via the internal orchestrator
+	// — no MCP tool exposed it. The sweeper compares last_heartbeat_at
+	// against HEARTBEAT_TIMEOUT (default 60m); with no way to refresh it,
+	// any harness that does long reasoning pauses or long read-only
+	// stretches (> 60m between writes) gets its session demoted to
+	// closed_aborted → ErrFrameStaleTooFar on the next write. The
+	// heartbeat tool gives harnesses the explicit "I'm alive" signal
+	// the INV-9 contract always assumed existed.
+	reg.Add(BindOrchestrator("session_heartbeat",
+		"Refresh a session's last_heartbeat_at so the sweeper does not auto-close it. Call every ~30s during long reasoning pauses or read-only stretches (>60m between writes would otherwise demote the session to closed_aborted). Returns the new last_heartbeat_at.",
+		MustJSONSchema(map[string]any{
+			"type":     "object",
+			"required": []string{"session_id"},
+			"properties": map[string]any{
+				"session_id": map[string]any{"type": "string"},
+			},
+		}),
+		func(ctx context.Context, in orchestration.SessionHeartbeatInput) (*orchestration.SessionHeartbeatOutput, error) {
+			return orch.SessionHeartbeat(ctx, in)
+		}))
+
+	// session_recover — v2.13.0 (OPITA-007): read-only discovery of a
+	// resurrectable closed_aborted session for an operator within a
+	// lookback window (INV-8). Never mutates state; returns the
+	// candidate + requires_consent=true so the caller can decide
+	// whether to follow up with session_resurrect. Complements
+	// session_resurrect: without this, a harness that loses its
+	// session to the sweeper has no way to find it again.
+	reg.Add(BindOrchestrator("session_recover",
+		"Detect the most-recent closed_aborted session for an operator within a lookback window (INV-8). Read-only: never creates a session. Returns the candidate + requires_consent=true when found, so the caller can decide to follow up with session_resurrect.",
+		MustJSONSchema(map[string]any{
+			"type":     "object",
+			"required": []string{"operator"},
+			"properties": map[string]any{
+				"operator": map[string]any{"type": "string", "description": "The human/agent identity to recover for (e.g. dark-agent)."},
+				"lookback": map[string]any{"type": "string", "description": "Search window (default 24h). Formats: 24h, 7d, 30m, or Go duration."},
+			},
+		}),
+		func(ctx context.Context, in orchestration.SessionRecoverInput) (*orchestration.SessionRecoverOutput, error) {
+			return orch.SessionRecover(ctx, in)
+		}))
+
+	// session_resurrect — v2.13.0 (OPITA-007): creates a NEW session
+	// row that inherits scope state (constitution binding, active mods)
+	// from a closed_aborted session. The original is untouched (audit
+	// anchor). parent_session_id + resurrected_from chain the new
+	// session to the original, so the audit trail stays complete.
+	// The frame-aware inheritance audit (5E.iv) surfaces
+	// constitution_bumped when the global binding changed since the
+	// original closed.
+	reg.Add(BindOrchestrator("session_resurrect",
+		"Resurrect a closed_aborted session (INV-8): creates a new session inheriting the original's constitution binding + active mods. The original stays untouched. Use session_recover first to discover the candidate. Returns the new session_id + inheritance audit.",
+		MustJSONSchema(map[string]any{
+			"type":     "object",
+			"required": []string{},
+			"properties": map[string]any{
+				"original_session_id": map[string]any{"type": "string", "description": "The closed_aborted session to resurrect from. If empty, discovery form: operator + lookback find the latest candidate."},
+				"operator":            map[string]any{"type": "string", "description": "Used only in discovery form (original_session_id empty)."},
+				"lookback":            map[string]any{"type": "string", "description": "Used only in discovery form. Default 24h."},
+				"reason":              map[string]any{"type": "string", "description": "Optional reason: explicit_recovery, harness_restart, ..."},
+			},
+		}),
+		func(ctx context.Context, in orchestration.SessionResurrectInput) (*orchestration.SessionResurrectOutput, error) {
+			return orch.SessionResurrect(ctx, in)
 		}))
 }
 

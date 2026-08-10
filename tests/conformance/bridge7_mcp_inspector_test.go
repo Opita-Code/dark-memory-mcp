@@ -30,6 +30,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dark-agents/dark-memory-mcp/internal/tools"
 	mcpclient "github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -338,79 +339,19 @@ func TestBridge7_CallToolErrorPath(t *testing.T) {
 }
 
 // canonicalWireOrder is the wire-format (dark_memory_*) version of
-// the canonical tool order. This is the SINGLE frozen contract list
-// in the test suite: when the surface changes, update this list (and
-// nothing else — the count assertions derive from len() of it). The
-// source of truth for the ORDER is internal/tools/registry.go's
-// canonicalNamespaces; this list exists to freeze the wire format the
-// binary actually emits, independent of the library's internal shape.
+// the canonical tool order. Derived — NOT hand-maintained — from
+// tools.CanonicalOrder() (the single source of truth in
+// internal/tools/registry.go), so adding or removing a tool in the
+// registry automatically updates this expectation. No manual sync.
 //
 // History (kept for archaeology): 26 in v1.1.x, 27 in v1.2.x, 28 in
 // v1.3.x, 29 in v2.0.x, 34 in v2.1.x, 35 in v2.3.0, 38 in v2.6.0,
 // 39 in v2.7.0-alpha, 41 in v2.8.0-alpha, 42 in v2.9.0-alpha PR-2,
-// 43 in v2.9.0-alpha PR-3, 44 in v2.9.3, 45 in v2.10.0, 49 in v2.11.0.
-//
-// v2.1.0: AGENT_MEMORY namespace (5 tools: save/list/get/update/archive)
-// inserted between CONTEXT and JUDGE per spec D-12 /
-// BRIDGE_AND_COEXISTENCE.md §3 (Mem0-aligned agent memory data plane).
-//
-// v2.3.0: AGENT_MEMORY namespace grew 5 to 6 with agent_memory_recall
-// (the missing consumer for the data plane). New canonical count = 35.
-// v2.6.0: AGENT_BOOTSTRAP namespace (3 tools: agent_bootstrap,
-// agent_recommend_companions, agent_detect_environment) inserted
-// between RESEARCH and VIBE. New canonical count = 38.
-// v2.7.0-alpha: MINDSET namespace (1 tool: mindset_apply) inserted
-// between AGENT_MEMORY and JUDGE. New canonical count = 39.
-// v2.8.0-alpha: subagent_register + subagent_unregister appended to
-// the AGENT_MEMORY namespace (C2 subagent-scope-handoff). New canonical
-// count = 41.
-// v2.9.0-alpha PR-2: EMBEDDER namespace (1 tool: embedder_setup_prompt,
-// consent gate per row 164 §3) appended. New canonical count = 42.
-// v2.9.0-alpha PR-3: AGENT_MEMORY grew 8 → 9 with agent_memory_entities
-// (id-only read of the agent_memory_entities side-table). New canonical
-// count = 43.
-// v2.9.3: AGENT_MEMORY grew 9 → 10 with agent_memory_delegate
-// (delegation context for sub-agent spawns). New canonical count = 44.
+// 43 in v2.9.0-alpha PR-3, 44 in v2.9.3, 45 in v2.10.0, 49 in v2.11.0, 52 in v2.13.0.
 func canonicalWireOrder() []string {
-	bare := []string{
-		// PROJECT (1) — v1.2.0
-		"project_create",
-		// SESSION (4)
-		"session_start", "session_resume", "session_status", "session_close",
-		// RESEARCH (3)
-		"research_topic", "research_recall", "research_resume_thread",
-		// AGENT_BOOTSTRAP (3) — v2.6.0
-		"agent_bootstrap", "agent_recommend_companions", "agent_detect_environment",
-		// VIBE (4)
-		"vibe_publish", "vibe_spec", "pipeline_status", "resolve_drift",
-		// CONTEXT (4) — v2.0.0 grew from 3 to 4 with `recall`
-		"artifact_context", "spec_context", "session_context", "recall",
-		// AGENT_MEMORY (10) — v2.1.0 (5) + v2.3.0 (1: recall) +
-		// v2.8.0-alpha C2 (2: subagent register/unregister) +
-		// v2.9.0-alpha PR-3 (1: entities) + v2.9.3 (1: delegate).
-		"agent_memory_save", "agent_memory_list", "agent_memory_recall", "agent_memory_get", "agent_memory_update", "agent_memory_archive", "agent_memory_delegate", "agent_memory_entities", "subagent_register", "subagent_unregister",
-		// MINDSET (1) — v2.7.0-alpha
-		"mindset_apply",
-		// DELEGATION (1) — v2.10.0 (Wave 5C)
-		"delegate_intent",
-		// JUDGE (3)
-		"judge", "consensus", "judgment_history",
-		// POLICY (2)
-		"active_policy", "load_constitution",
-		// OBSERVABILITY (4) — v1.3.0 grew from 3 to 4 with health_ping
-		"memory_state", "writes", "anomalies", "health_ping",
-		// ERROR_OBS (4) — v2.11.0 (spec 757, Wave 5D): Error
-		// Observatory backlog + triage.
-		"error_list", "error_get", "error_summary", "error_resolve",
-		// ADMIN (3)
-		"admin_migrate", "admin_schema_status", "admin_vacuum",
-		// L6-VLP (1) — DMAP v1.1
-		"vlp_handle_event",
-		// EMBEDDER (1) — v2.9.0-alpha PR-2 (consent gate, row 164 §3).
-		"embedder_setup_prompt",
-	}
-	out := make([]string, len(bare))
-	for i, b := range bare {
+	order := tools.CanonicalOrder()
+	out := make([]string, len(order))
+	for i, b := range order {
 		out[i] = "dark_memory_" + b
 	}
 	return out

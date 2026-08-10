@@ -481,14 +481,94 @@ func (o *Orchestrator) autoArchiveSpecTodosOnAligned(
 // every VibePublish to be misclassified. The fix checks the modern shape
 // first (canonical v1.4.0+), then falls back to legacy, then to a
 // whitespace/case-tolerant substring match.
+//
+// v2.13.0 fix (OPITA-006): parseDriftVerdict was EVAL_TYPE-BLIND. The
+// drift_judge/brand_match/compliance_check/mindset_quality shapes use a
+// `verdict` key with TYPE-SPECIFIC values ("match", "compliant", ...),
+// while grounding_check/pii_detect/prompt_injection_scan emit boolean
+// keys ("grounded", "pii_found", "injection_found"). The old parser only
+// understood the drift_judge value set, so every non-drift_judge verdict
+// fell through to the "drift_detected" default — consensus(grounding_check)
+// returned drift_detected even when the LLM said grounded:true. The fix
+// delegates to parseVerdict with an explicit eval_type so each judge
+// shape maps to the canonical three-state verdict.
 func parseDriftVerdict(verdictJSON string, confidence float32) string {
+	return parseVerdict("drift_judge", verdictJSON, confidence)
+}
+
+// parseVerdict maps an LLM Judge verdict JSON to one of the canonical
+// drift verdicts — aligned | drift_detected | needs_human — given the
+// eval_type that produced it. Each judge emits a different JSON shape
+// (see defaultSystemForEval in llm_client.go); this function translates
+// each shape's semantics into the canonical three-state verdict used by
+// drift reports and consensus aggregation.
+//
+// Semantics per eval_type (what "aligned" means for each judge):
+//
+//	drift_judge            {"verdict":"aligned"|"drift_detected"|"needs_human"}  → verbatim
+//	brand_match            {"verdict":"match"|"drift_detected"}                  → match=aligned
+//	compliance_check       {"verdict":"compliant"|"non_compliant"}               → compliant=aligned
+//	mindset_quality        {"verdict":"aligned"|"drift_detected"|"needs_human"}  → verbatim
+//	grounding_check        {"grounded":true|false}                               → true=aligned
+//	pii_detect             {"pii_found":true|false}                              → false=aligned
+//	prompt_injection_scan  {"injection_found":true|false}                        → false=aligned
+//
+// confidence < 0.5 always returns "needs_human" regardless of the LLM's
+// verdict — that's the floor at which we trust the LLM-as-judge.
+func parseVerdict(evalType, verdictJSON string, confidence float32) string {
 	if confidence < 0.5 {
 		return "needs_human"
 	}
 	// Try to parse the JSON; check both shapes.
 	var v map[string]any
 	if err := json.Unmarshal([]byte(verdictJSON), &v); err == nil {
-		// Modern shape (preferred, post-v1.4.0).
+		// eval_type-specific boolean shapes (non-verdict judges).
+		switch evalType {
+		case "grounding_check":
+			if grounded, ok := v["grounded"].(bool); ok {
+				if grounded {
+					return "aligned"
+				}
+				return "drift_detected"
+			}
+		case "pii_detect":
+			if found, ok := v["pii_found"].(bool); ok {
+				if found {
+					// PII present = the content fails the check.
+					return "drift_detected"
+				}
+				return "aligned"
+			}
+		case "prompt_injection_scan":
+			if found, ok := v["injection_found"].(bool); ok {
+				if found {
+					return "drift_detected"
+				}
+				return "aligned"
+			}
+		case "brand_match":
+			// brand_match emits {"verdict":"match"|"drift_detected"}.
+			if verdict, ok := v["verdict"].(string); ok {
+				switch verdict {
+				case "match":
+					return "aligned"
+				case "drift_detected":
+					return "drift_detected"
+				}
+			}
+		case "compliance_check":
+			// compliance_check emits {"verdict":"compliant"|"non_compliant"}.
+			if verdict, ok := v["verdict"].(string); ok {
+				switch verdict {
+				case "compliant":
+					return "aligned"
+				case "non_compliant":
+					return "drift_detected"
+				}
+			}
+		}
+		// Generic `verdict` string shape (drift_judge, mindset_quality,
+		// and anything else that speaks the canonical values).
 		if verdict, ok := v["verdict"].(string); ok {
 			switch verdict {
 			case "aligned":
