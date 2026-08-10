@@ -2,8 +2,8 @@
 name: dark-memory
 description: |
   Use for governance, memory, drift detection, and audit trail via
-  dark-memory-mcp. Covers 52 tools (49 canonical + 3 red-team extras) across
-  11 namespaces: session lifecycle, agent_memory CRUD+search, vibe-flow
+  dark-memory-mcp. Covers 52 canonical + 3 red-team tools across
+  16 namespaces: session lifecycle, agent_memory CRUD+search, vibe-flow
   spec/artifact publish + drift, LLM-as-judge, delegation+mindset, research,
   observability, error observatory, governance, admin, and self-bootstrap.
   Use ONLY when the work touches dark-memory, dark-memory-mcp, agent_memory,
@@ -21,12 +21,12 @@ description: |
   embedder_setup_prompt, redteam_list_mods, "guardar en memoria", "qué sabemos",
   "crear spec", "publicar artifact", "delegar a subagente", "sesión dark-memory",
   "audit trail", "governance", "drift check", "Mem0", "FTS5".
-target_version: 2.11.0-alpha
+target_version: 2.13.0
 ---
 
 # dark-memory-mcp — Harness Skill
 
-> **Targets dark-memory-mcp v2.11.0-alpha** — 49 canonical + 3 red-team tools, schema v25.
+> **Targets dark-memory-mcp v2.13.0** — 52 canonical + 3 red-team tools, schema v25.
 >
 > **Self-update**: call `dark_memory_health_ping`. If `server.version > target_version`,
 > the server was upgraded. Re-ingest via `dark_memory_agent_bootstrap(surface='system_prompt')`
@@ -36,7 +36,7 @@ target_version: 2.11.0-alpha
 
 ---
 
-## TL;DR — 7 rules that prevent 90% of friction
+## TL;DR — 8 rules that prevent 90% of friction
 
 | # | DO | DON'T |
 |---|---|---|
@@ -47,6 +47,7 @@ target_version: 2.11.0-alpha
 | 5 | **`consensus(n=3)` on high-stakes claims**, `judge` for routine | Ship debatable claims without a second opinion |
 | 6 | **On `drift_detected`: fix and re-publish. On `needs_human`: STOP** | Ignore drift verdicts — they block the vibe loop |
 | 7 | **`session_close(reason=clean)` at the end** | Leave sessions dangling (sweeper closes them, but loses context) |
+| 8 | **Sub-agent spawn: `delegate_intent` for routing decisions, `mindset_apply` for prompt composition, `agent_memory_delegate` for context handoff** | Spawn sub-agents blind — they inherit no dark-memory context and their writes pollute your ContextRecap |
 
 ---
 
@@ -63,8 +64,10 @@ target_version: 2.11.0-alpha
 | Publish an artifact under a spec + get drift verdict | `vibe_publish(artifact={...}, spec={vibe_case:...})` |
 | Self-check a claim | `judge(eval_type=drift_judge|compliance_check|...)` |
 | N-shot verification | `consensus(eval_type=..., n=3)` |
-| Delegate work to a sub-agent | `agent_memory_delegate` → inject `delegation_context` into sub-agent prompt |
-| Compose a sub-agent system prompt | `mindset_apply(vibe_case, task_description)` |
+| "Should I delegate this work to a sub-agent?" — decide + plan + prompt | `delegate_intent(vibe_case=C7, task_description="...")` |
+| "Just give me a sub-agent prompt for X" — compose only | `mindset_apply(vibe_case=C1..C7, task_description="...")` |
+| Hand off dark-memory context to a sub-agent | `agent_memory_delegate` → inject `delegation_context` into sub-agent prompt |
+| Isolate sub-agent writes (C2) | `subagent_register` before spawn, `subagent_unregister` after |
 | Diagnose "the MCP seems broken" | `health_ping` → `error_summary` → `error_list` |
 | Check drift status of a published artifact | `pipeline_status(artifact_id=N)` |
 | Accept/reject a drift report | `resolve_drift(drift_id=N, decision=accept|reject)` |
@@ -76,14 +79,17 @@ target_version: 2.11.0-alpha
 
 ## 1. Tool taxonomy — 52 tools grouped by purpose
 
-### 1.1 Session lifecycle (4 tools)
+### 1.1 Session lifecycle (7 tools)
 
 | Tool | Purpose |
 |---|---|
-| `session_start(operator, project_id)` | **ALWAYS first.** Returns `session_id` + `context_recap` (pinned memories + open todos). Pass `cold_start=true` to skip recap. |
+| `session_start(operator, project_id)` | **ALWAYS first.** Returns `session_id` + `context_recap` (pinned memories + open todos). Pass `cold_start=true` to skip recap. Auto-emits `EventSessionStart` into the VLP (v2.13.0). |
 | `session_resume(session_id)` | Re-attach to an existing session after restart/crash. |
+| `session_heartbeat(session_id)` | **New in v2.13.0.** Refresh `last_heartbeat_at` so the sweeper doesn't demote an active session during long reasoning pauses. Call before stretches > 15m. |
 | `session_status(session_id)` | Check liveness: `status`, `closing_soon`, `seconds_until_close`. |
 | `session_close(session_id)` | End cleanly. Default `close_reason=clean`. |
+| `session_recover(operator, lookback?)` | **New in v2.13.0.** Find the most-recent `closed_aborted` session (crashed harness, INV-8). |
+| `session_resurrect(original_session_id?, ...)` | **New in v2.13.0.** Create a new session inheriting the aborted one's constitution + mods. |
 
 ### 1.2 Agent memory — persistent cross-session knowledge (8 tools)
 
@@ -106,11 +112,11 @@ target_version: 2.11.0-alpha
 
 | Tool | Purpose |
 |---|---|
-| `vibe_spec(vibe_case, tasks, session_id?)` | Create a governed spec. Tasks are validated (unique ids, no cycles). Auto-creates `kind=todo` rows per task. |
-| `vibe_publish(spec, artifact, session_id?, auto_drift_check?)` | Publish artifact under spec → runs drift_judge automatically. On `aligned`, auto-saves a `kind=decision` row. |
+| `vibe_spec(vibe_case, tasks, session_id?)` | Create a governed spec. Tasks are validated (unique ids, no cycles). Auto-creates `kind=todo` rows per task. Auto-emits `EventVibePublish` into the VLP (v2.13.0). |
+| `vibe_publish(spec, artifact, session_id?, auto_drift_check?)` | Publish artifact under spec → runs drift_judge automatically. On `aligned`, auto-saves a `kind=decision` row. Auto-emits `EventVibePublish → EventArtifactLog → EventDriftLog` (v2.13.0). |
 | `pipeline_status(artifact_id)` | Get latest drift report for an artifact. Returns nil if none. |
 | `resolve_drift(drift_id, decision, operator_id)` | Operator gate: `accept` (artifact correct) or `reject` (artifact wrong). |
-| `vlp_handle_event(session_id, event, verdict?)` | Drive VLP state machine: `session_start → vibe_publish → drift_log → complete`. |
+| `vlp_handle_event(session_id, event, verdict?)` | Drive VLP state machine: `session_start → vibe_publish → artifact_log → delegate → drift_log → complete`. **v2.13.0**: `event="delegate"` is valid now; orchestrators auto-drive the rest — call this tool only for delegation transitions or manual overrides. |
 
 **Drift verdicts**: `aligned` (ship), `drift_detected` (fix + re-publish), `needs_human` (STOP, surface).
 
@@ -141,14 +147,49 @@ target_version: 2.11.0-alpha
 
 **Rule**: `research_recall` before `research_topic`. `research_topic` before `webfetch`.
 
-### 1.7 Delegation + mindset (4 tools)
+### 1.7 Delegation + mindset (4 tools) — v2.13.0 guidance
+
+**v2.13.0: LLM wiring = provider catalog.** The harness (opencode / Claude Desktop) provides the LLM to dark-memory via `WithLLMSelector` at boot time — the PRIMARY mechanism, uses the same cloud model as your agent. If the harness doesn't inject, dark-memory auto-detects from the FIRST catalog `*_API_KEY` env var in order: `DARK_JUDGE_PROVIDER` override → ANTHROPIC → OPENAI → GEMINI → DEEPSEEK → MINIMAX → MOONSHOT → ZAI → DASHSCOPE → daemon → legacy. **You do NOT need to set API keys** — the harness already has them. The `judge`, `consensus`, `mindset_apply`, and `delegate_intent` tools all use the harness-injected LLM automatically.
+
+**When to use each delegation tool:**
+
+| Scenario | Tool |
+|---|---|
+| "Should I delegate this task, and if so how?" — routing decision + plan | `delegate_intent(vibe_case=C1..C7, task_description=...)` |
+| "Compose a sub-agent system prompt for this task" — prompt generation | `mindset_apply(vibe_case, task_description)` |
+| "Give a sub-agent access to my dark-memory context" — curated context handoff | `agent_memory_delegate(operator, subagent_id, task_description)` |
+| "Spawn a sub-agent that should work in isolation" | Chain all three: `delegate_intent` → `mindset_apply` → `agent_memory_delegate` → `subagent_register` → spawn with `delegation_context` |
 
 | Tool | Purpose |
 |---|---|
-| `mindset_apply(vibe_case, task_description, model_floor?)` | Procedurally compose + LLM-validate a sub-agent system prompt. Cached 1h. Gated by `DARK_MEMORY_V280=1`. |
-| `delegate_intent(vibe_case, task_description, operator?)` | Wave 5C: DECIDE → PLAN → MIND → CURATE pipeline. Returns ready-to-spawn subtask graph. Gated by `DARK_MEMORY_V280=1`. |
-| `agent_memory_delegate(operator, subagent_id, task_description)` | Sub-agent context handoff (see §1.2). |
+| `delegate_intent(vibe_case, task_description, operator?)` | Wave 5C: DECIDE → PLAN → MIND → CURATE pipeline. Returns ready-to-spawn subtask graph with `system_prompt`, `tools_recommended`, `model_recommended`, and `delegation_context` per subtask. Gated by `DARK_MEMORY_V280=1`. |
+| `mindset_apply(vibe_case, task_description, model_floor?)` | Procedurally compose + LLM-validate a sub-agent system prompt. Cached 1h. Returns `system_prompt` + `tools_recommended` + `model_recommended`. Gated by `DARK_MEMORY_V280=1`. |
+| `agent_memory_delegate(operator, subagent_id, task_description)` | Sub-agent context handoff. Returns `delegation_context` markdown (curated pinned memories + open todos) for injection into sub-agent task prompt. See §1.2. |
 | `subagent_register(operator, subagent_id, ttl_seconds?)` / `subagent_unregister` | C2 memory isolation. Sub-agent writes carry `subagent_id`, never leak into principal's ContextRecap. |
+
+**Full delegation flow** (v2.13.0 pattern — VLP delegate event wired):
+```
+1. delegate_intent(vibe_case="C7", task_description="review SQL injection in auth.go")
+   → decide DELEGATE → plan 1 subtask "bundle"
+   → mindset_apply composes system_prompt via harness LLM
+   → agent_memory_delegate builds curated context → C2 binding registered
+   → returns per-subtask: {id, system_prompt, delegation_context, subagent_id, tools_recommended}
+
+2. Fire vlp_handle_event(event="delegate") — moves the VLP loop
+   spec_active → delegating (v2.13.0 wire).
+
+3. Pull the returned fields into your sub-agent spawn:
+   - system_prompt → the sub-agent's role + goal + backstory
+   - delegation_context → inject AFTER your task description so the sub-agent sees dark-memory context
+   - subagent_id → pass to subagent_register (already done by delegate_intent) and track for cleanup
+
+4. After sub-agent finishes:
+   - agent_memory_list(scope=agent, agent_id=subagent_id) → review findings
+   - subagent_unregister(operator="dark-agent", subagent_id=subagent_id)
+
+5. vibe_publish the sub-agent's output as an artifact under a spec —
+   the orchestrator auto-emits EventArtifactLog + EventDriftLog.
+```
 
 ### 1.8 Observability + Error Observatory (8 tools)
 
@@ -221,9 +262,11 @@ target_version: 2.11.0-alpha
 
 8. **Closing sessions with `close_reason=aborted` habitually.** The default is `clean`. Use `aborted` only when the session actually crashed. The sweeper marks crashed sessions differently for resurrection.
 
-9. **Forgetting C2 isolation on sub-agent spawn.** Without `agent_memory_delegate` + `subagent_register`, the sub-agent's writes carry the principal's `agent_id` and pollute ContextRecap. Always register before spawn.
+9. **Forgetting C2 isolation on sub-agent spawn.** Without `agent_memory_delegate` + `subagent_register`, the sub-agent's writes carry the principal's `agent_id` and pollute ContextRecap. Always register before spawn. Use `delegate_intent` — it chains all three steps (MIND → CURATE with C2 binding) automatically.
 
 10. **Skipping `health_ping` on startup.** The MCP might be a stale binary, the DB might be locked, or the schema might need migration. `health_ping` catches all three in 50ms.
+
+11. **Worrying about LLM API keys.** The harness (opencode) injects its LLM into dark-memory at boot time. You do NOT need to set `ANTHROPIC_API_KEY` or similar env vars — judge, consensus, mindset_apply, and delegate_intent all use the harness-provided cloud LLM automatically. If a LLM-using tool returns `ErrNoLLMAvailable`, the harness's injection is not configured — surface to operator, don't try to set keys yourself.
 
 ---
 
@@ -255,18 +298,38 @@ target_version: 2.11.0-alpha
 6. IF aligned: resolve_drift(drift_id, "accept") [optional — aligned artifacts auto-resolve]
 ```
 
-### 3.3 Delegate to a sub-agent (v2.9.3+)
+### 3.3 Delegate to a sub-agent (v2.13.0 — delegate_intent chains all steps)
 
 ```
-1. subagent_id = generate_uuid()
-2. agent_memory_delegate(operator="dark-agent", subagent_id=subagent_id, task_description="review this code for SQL injection")
-                                       → delegation_context markdown
-3. Spawn sub-agent with delegation_context injected into its task prompt
+1. delegate_intent(vibe_case="C7", task_description="review auth.go for SQL injection")
+   → DECIDE: DELEGATE (1 bundle subtask)
+   → PLAN: 1 subtask "bundle" with no dependencies
+   → MIND: mindset_apply composes system_prompt via harness LLM
+   → CURATE: agent_memory_delegate builds curated context + C2 binding
+   → returns per-subtask: {id, system_prompt, delegation_context, subagent_id, tools_recommended, model_recommended}
+
+2. Fire vlp_handle_event(event="delegate") — moves spec_active → delegating (v2.13.0).
+
+3. Spawn sub-agent with:
+   - system_prompt  → role + goal + backstory (from step 1)
+   - delegation_context → inject AFTER your task description (curated memories + todos)
+   - subagent_id → already registered via C2; use for tracking and cleanup
+
 4. [sub-agent works, its writes carry subagent_id, not your agent_id]
+
 5. agent_memory_list(scope=agent, agent_id=subagent_id)
-                                       → review sub-agent's output
+   → review sub-agent's output
+
 6. subagent_unregister(operator="dark-agent", subagent_id=subagent_id)
 ```
+
+**When to use `delegate_intent` (all-in-one) vs individual tools:**
+
+- **`delegate_intent`**: "should I delegate this, and if so, give me everything I need to spawn." Best for one-shot delegation decisions where the routing (DECIDE) + plan shape (PLAN) + prompt composition (MIND) + context curation (CURATE) are needed together. Typical use: "review this code", "research this topic", "fix this bug".
+
+- **`mindset_apply` alone**: "just give me a system prompt for this task." Use when you already know you're spawning, already have context, and just need the prompt. Cached 1h for repeated calls with the same parameters.
+
+- **`agent_memory_delegate` alone**: "give a sub-agent access to my dark-memory context without composing a new prompt." Use when the sub-agent already has a prompt but needs curated dark-memory context injected.
 
 ### 3.4 Research something new
 
@@ -285,7 +348,79 @@ target_version: 2.11.0-alpha
 3. error_list(domain="gate", severity="fatal", limit=20) → drill down
 4. error_get(id=N) → full cluster details
 5. error_resolve(id=N, note="root cause: ...") → triage
+6. If a judge/LLM call failed with 401: check ANTHROPIC_API_KEY +
+   SDD_LLM_BASE_URL in opencode.jsonc. A 401 almost always means the
+   key/endpoint mismatch (e.g. api.minimaxi.com vs api.minimax.io),
+   not a code bug. Verify with curl before touching the Go code.
 ```
+
+### 3.6 Judge delegation (spec 874 — use when content is large)
+
+**When to delegate** (count-tokens.py decides, but the shortcut):
+- Content ≤ ~8K tokens → single-shot `judge` is faster AND more accurate.
+- Content > ~8K tokens OR > 50% of model context → delegate.
+
+**The pipeline** lives at `~/.config/dark-agent/judge-delegation/`:
+```
+count-tokens.py → chunk-content.py → delegate-judge.sh (parallel LLM) → aggregate-verdicts.py
+```
+
+**Usage from dark-agent**:
+```bash
+# Decide first
+python ~/.config/dark-agent/judge-delegation/count-tokens.py --file artifact.md
+# exit 0 → single-shot judge (dark_memory_judge)
+# exit 2 → delegated
+ANTHROPIC_API_KEY=... bash ~/.config/dark-agent/judge-delegation/delegate-judge.sh \
+  --file artifact.md --eval-type drift_judge --max-chunk-tokens 4000 --parallel 4 --json
+```
+
+**Known working config (2026-08-08)**:
+- `SDD_LLM_BASE_URL=https://api.minimax.io/anthropic` (NOT `.com` — that 401s)
+- Model: MiniMax-M3
+- The delegate-judge verdict schema matches dark-memory's `parseDriftVerdict`
+  (aligned | drift_detected | needs_human) so results are interchangeable.
+
+### 3.7 Judge consistency + vibe-case rubrics (spec 878 — use for technical/code artifacts)
+
+**Two defects fixed (2026-08-08):**
+1. **Contradiction verdict↔reasoning**: the LLM could say `drift_detected` while
+   its reasoning said "no drift". Fix (G-Eval): force the judge to evaluate EACH
+   rubric criterion with quoted evidence, then verdict = LOGICAL CONCLUSION of
+   the checklist. Post-check (`detect_contradiction`) overrides to `needs_human`.
+2. **No technical evaluation for code**: the judge never knew vibe_case.
+   Fix: per-(vibe_case, eval_type) rubrics. C1(code) gets CORRECTNESS, SECURITY,
+   MAINTAINABILITY, SPEC_CONFORMANCE — objective checks, not vibes.
+
+**Tool to use** — `vibe-judge.py` (works today, no restart):
+```bash
+# C1 code artifact — technical rubric
+ANTHROPIC_API_KEY=... python ~/.config/dark-agent/judge-delegation/vibe-judge.py \
+  --file auth.go --vibe-case C1 --eval-type drift_judge
+
+# C2 text — communication rubric + self-consistency (3 samples)
+ANTHROPIC_API_KEY=... python ~/.config/dark-agent/judge-delegation/vibe-judge.py \
+  --file copy.md --vibe-case C2 --eval-type brand_match --consensus 3
+```
+
+**MCP-native (v2.13.0, provider = harness LLM):**
+```json
+dark_memory_judge(eval_type="drift_judge", content="...", vibe_case="C1")
+dark_memory_consensus(eval_type="drift_judge", content="...", vibe_case="C1", n=3)
+```
+`vibe_case` enum: C1=code, C2=text, C3=image, C4=video, C5=audio, C6=multimodal, C7=mixed.
+Empty vibe_case = legacy generic prompt (retrocompat).
+
+**Decision rule**: if the artifact is code or technical (C1), or you suspect the
+LLM might contradict itself (large content, borderline verdict), use
+`vibe-judge.py` (or `vibe_case` on the native tool). It returns
+`criteria[]` + `criteria_failed[]` + `consistency` — the checklist grounds the verdict.
+Full design: `dark-memory-mcp/vibe-flow/main/JUDGE_RUBRICS.md`.
+
+**Windows gotchas** (encoded in the scripts):
+- Never pass large content via `--text` (32K argv limit) — use `--file`/stdin.
+- MSYS paths need `cygpath -w` before native Python touches them.
+- Full design: `dark-memory-mcp/vibe-flow/main/JUDGE_DELEGATION.md`
 
 ---
 
@@ -302,7 +437,7 @@ Call `dark_memory_agent_recommend_companions()` for a structured recommendation 
 
 ## 5. Version awareness — don't let this skill go stale
 
-This skill targets **dark-memory-mcp v2.11.0-alpha**. dark-memory releases frequently (v2.8.0 → v2.11.0 in ~4 days). To stay current:
+This skill targets **dark-memory-mcp v2.13.0**. dark-memory releases frequently (v2.8.0 → v2.13.0 in ~2 weeks). To stay current:
 
 1. **Every session start**: call `dark_memory_health_ping`. Check `server.version`.
 2. **If `server.version > target_version`**: the server was upgraded since this skill was written.
@@ -318,8 +453,8 @@ This skill targets **dark-memory-mcp v2.11.0-alpha**. dark-memory releases frequ
 
 | What | Where |
 |---|---|
-| dark-memory-mcp repo | `C:\Users\Nico\Documents\dark-memory-mcp` (working branch `v2.8.0-alpha-dev`) |
-| MCP binary (active) | `C:\Users\Nico\Documents\dark-memory-mcp\bin\dark-mem-mcp-v2.11.0-alpha.exe` |
+| dark-memory-mcp repo | `C:\Users\Nico\Documents\dark-memory-mcp` (main branch, tag `v2.13.0`) |
+| MCP binary (active) | `C:\Users\Nico\Documents\dark-memory-mcp\bin\dark-mem-mcp.exe` (30M, buildVersion=2.13.0) |
 | opencode.jsonc entry | `C:\Users\Nico\.config\opencode\opencode.jsonc` → `mcp.dark-memory` |
 | DB (SQLite) | `C:\Users\Nico\AppData\Local\dark-agents\dark.db` |
 | This skill | `C:\Users\Nico\.config\opencode\skills\dark-memory\SKILL.md` |
