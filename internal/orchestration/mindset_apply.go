@@ -53,9 +53,17 @@ import (
 
 const (
 	defaultMaxIterations = 3
-	defaultTimeoutMS     = 15000
-	defaultCacheTTLSec   = 3600
-	tagMindsetCache      = "mindset-cache"
+	// defaultTimeoutMS is the total budget for the whole mindset
+	// pipeline (compose + validate + retries + up to 3 iterations).
+	// v2.13.0 fix: was 15000 (15s) — too tight for real providers
+	// (deepseek ~6s/call × 2 calls × 3 iterations > 15s; observed
+	// "context deadline exceeded" at 16s in DelegateIntent C7). Raised
+	// to align with the judge's own per-call budget (judgeBaseTimeout
+	// default 120s × 1.5 for mindset_compose). DARK_MINDSET_TIMEOUT_MS
+	// still clamps [100, 120000].
+	defaultTimeoutMS   = 120000
+	defaultCacheTTLSec = 3600
+	tagMindsetCache    = "mindset-cache"
 )
 
 // resolveMaxIterations reads DARK_MINDSET_MAX_ITERATIONS. Default 3.
@@ -75,7 +83,7 @@ func resolveMaxIterations() int {
 	return n
 }
 
-// resolveTimeout reads DARK_MINDSET_TIMEOUT_MS. Default 15000ms.
+// resolveTimeout reads DARK_MINDSET_TIMEOUT_MS. Default 120000ms.
 // Clamped to [100, 120000]ms.
 func resolveTimeout() time.Duration {
 	raw := strings.TrimSpace(os.Getenv("DARK_MINDSET_TIMEOUT_MS"))

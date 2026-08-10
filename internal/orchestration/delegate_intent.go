@@ -54,6 +54,7 @@ type DelegateSubTaskOutput struct {
 	VibeCase          string   `json:"vibe_case"`
 	Task              string   `json:"task"`
 	SystemPrompt      string   `json:"system_prompt,omitempty"`
+	MindsetErr        string   `json:"mindset_err,omitempty"` // surfaced MIND failure (v2.13.0: was silent)
 	DelegationContext string   `json:"delegation_context,omitempty"`
 	SubagentID        string   `json:"subagent_id,omitempty"`
 	ToolsRecommended  []string `json:"tools_recommended,omitempty"`
@@ -175,8 +176,13 @@ func (o *Orchestrator) prepareSubTask(ctx context.Context, st delegation.SubTask
 		Operator:        operator,
 	})
 	if err != nil {
-		// Best-effort: no system_prompt, but don't fail the plan.
+		// Best-effort: no system_prompt, but don't fail the plan. The
+		// error is surfaced on the subtask (not swallowed) so the
+		// harness can decide whether to retry — a silent empty prompt
+		// looked identical to a legitimately-composed one and hid
+		// LLM/provider failures (row 277 silent-discard site).
 		sub.SystemPrompt = ""
+		sub.MindsetErr = err.Error()
 	} else {
 		sub.SystemPrompt = mindset.SystemPrompt
 		sub.ToolsRecommended = mindset.ToolsRecommended

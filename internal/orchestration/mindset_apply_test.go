@@ -234,8 +234,10 @@ func TestResolveEnvDefaults(t *testing.T) {
 	})
 	t.Run("timeout_default_ms", func(t *testing.T) {
 		t.Setenv("DARK_MINDSET_TIMEOUT_MS", "")
-		if got := resolveTimeout(); got != 15000*1_000_000 {
-			t.Errorf("default: want 15000ms, got %v", got)
+		// v2.13.0: default raised 15s → 120s (aligns with judge budget;
+		// 15s was too tight for real providers, see mindset_apply.go:56).
+		if got := resolveTimeout(); got != 120000*1_000_000 {
+			t.Errorf("default: want 120000ms, got %v", got)
 		}
 	})
 	t.Run("cache_ttl_default", func(t *testing.T) {

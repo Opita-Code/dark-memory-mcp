@@ -66,6 +66,11 @@ func TestPublishVibe_NoLLM_NeedsHumanNotDrift(t *testing.T) {
 		"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY",
 		"DARK_DRIFT_JUDGE_DAEMON_URL", "DARK_JUDGE_MODEL_DRIFT_JUDGE_DAEMON",
 		"DARK_JUDGE_MODEL_ANTHROPIC", "DARK_JUDGE_MODEL_OPENAI", "DARK_JUDGE_MODEL_GEMINI",
+		// v2.13.0: catalog keys must be cleared too — otherwise a real
+		// key (e.g. DEEPSEEK_API_KEY) makes Judge succeed and this
+		// no-LLM regression fails.
+		"DEEPSEEK_API_KEY", "MINIMAX_API_KEY", "MOONSHOT_API_KEY",
+		"ZAI_API_KEY", "DASHSCOPE_API_KEY", "DARK_JUDGE_PROVIDER",
 	} {
 		t.Setenv(k, "")
 	}

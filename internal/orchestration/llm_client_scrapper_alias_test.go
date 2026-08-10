@@ -57,6 +57,13 @@ func TestNewSelfHarnessClient_LegacyScrapperURL_FallsThrough(t *testing.T) {
 		"ANTHROPIC_API_KEY":           "",
 		"OPENAI_API_KEY":              "",
 		"GEMINI_API_KEY":              "",
+		// v2.13.0: clear catalog keys too (see legacy alias test)
+		"DEEPSEEK_API_KEY":  "",
+		"MINIMAX_API_KEY":   "",
+		"MOONSHOT_API_KEY":  "",
+		"ZAI_API_KEY":       "",
+		"DASHSCOPE_API_KEY": "",
+		"DARK_JUDGE_PROVIDER": "",
 	}, func() {
 		c, err := NewSelfHarnessClient()
 		if err != nil {
@@ -81,6 +88,13 @@ func TestNewSelfHarnessClient_BothEnvsSet_ModernWins(t *testing.T) {
 		"ANTHROPIC_API_KEY":           "",
 		"OPENAI_API_KEY":              "",
 		"GEMINI_API_KEY":              "",
+		// v2.13.0: clear catalog keys too (see legacy alias test)
+		"DEEPSEEK_API_KEY":  "",
+		"MINIMAX_API_KEY":   "",
+		"MOONSHOT_API_KEY":  "",
+		"ZAI_API_KEY":       "",
+		"DASHSCOPE_API_KEY": "",
+		"DARK_JUDGE_PROVIDER": "",
 	}, func() {
 		c, err := NewSelfHarnessClient()
 		if err != nil {
@@ -102,6 +116,13 @@ func TestNewSelfHarnessClient_NeitherEnvSet_ReturnsErrNoLLMAvailable(t *testing.
 		"ANTHROPIC_API_KEY":           "",
 		"OPENAI_API_KEY":              "",
 		"GEMINI_API_KEY":              "",
+		// v2.13.0: clear catalog keys too (see legacy alias test)
+		"DEEPSEEK_API_KEY":  "",
+		"MINIMAX_API_KEY":   "",
+		"MOONSHOT_API_KEY":  "",
+		"ZAI_API_KEY":       "",
+		"DASHSCOPE_API_KEY": "",
+		"DARK_JUDGE_PROVIDER": "",
 	}, func() {
 		c, err := NewSelfHarnessClient()
 		if err == nil {
@@ -128,6 +149,16 @@ func TestNewSelfHarnessClient_LegacyAlias_JudgeFailsFast(t *testing.T) {
 		"ANTHROPIC_API_KEY":           "",
 		"OPENAI_API_KEY":              "",
 		"GEMINI_API_KEY":              "",
+		// v2.13.0: catalog keys must be cleared too — otherwise a
+		// real key in the shell env (e.g. DEEPSEEK_API_KEY) wins the
+		// detection order and the alias test hits the live provider
+		// instead of localhost:1.
+		"DEEPSEEK_API_KEY":  "",
+		"MINIMAX_API_KEY":   "",
+		"MOONSHOT_API_KEY":  "",
+		"ZAI_API_KEY":       "",
+		"DASHSCOPE_API_KEY": "",
+		"DARK_JUDGE_PROVIDER": "",
 	}, func() {
 		c, err := NewSelfHarnessClient()
 		if err != nil {
