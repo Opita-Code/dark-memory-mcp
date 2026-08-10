@@ -6,10 +6,28 @@
 // is a Wave 4+ task that refreshes this table from public sources.
 // Until then, this file is the authoritative reference.
 //
-// Top 10 cloud LLM providers as of 2026-Q3. Per-eval-type model
-// recommendations are based on:
+// v2.13.0 update (2026-08-10): the provider set now mirrors the
+// provider catalog (provider_catalog.go) — the 8 providers with
+// verified endpoints. Model names were re-verified against primary
+// docs on 2026-08-10 (row 587):
 //
-//   - Reasoning depth    (drift_judge, consensus → opus-class)
+//	anthropic  -> claude-* (Messages API)
+//	openai     -> gpt-5 family
+//	google     -> gemini-3.6-* (OpenAI-compat)
+//	deepseek   -> deepseek-v4-flash / deepseek-v4-pro
+//	minimax    -> MiniMax-M3
+//	zhipu      -> glm-5.2
+//	moonshot   -> kimi-k3 / kimi-k2.7-code
+//	qwen       -> qwen3.8-max / qwen3.7-plus / qwen3.7-flash
+//
+// Providers WITHOUT an implemented endpoint (mistral, cohere, meta,
+// xai, perplexity) were removed from this table — they are not
+// reachable by the SelfHarnessClient, so recommending a model for
+// them was misleading. They can return when endpoints are added.
+//
+// Per-eval-type model recommendations are based on:
+//
+//   - Reasoning depth    (drift_judge, consensus → pro-class)
 //   - Rule precision     (compliance_check, pii_detect → careful smaller)
 //   - Latency/cost       (brand_match, pii_detect → flash/haiku)
 //   - Adversarial robustness (prompt_injection_scan → larger + careful)
@@ -33,7 +51,7 @@ type ModelRecommendation struct {
 	PerType  map[ssd.EvaluationType]string
 }
 
-// RecommendedModels is the top-10 cloud LLM providers + per-eval
+// RecommendedModels is the provider-catalog-aligned set + per-eval
 // model picks. Order matters for "best of all" recommendation: the
 // first entry whose provider is detected in env wins.
 var RecommendedModels = []ModelRecommendation{
@@ -48,14 +66,8 @@ var RecommendedModels = []ModelRecommendation{
 			ssd.EvalPIIDetect:           "claude-haiku-4-5", // pattern recognition
 			ssd.EvalPromptInjectionScan: "claude-sonnet-4-5",
 			ssd.EvalConsensus:           "claude-opus-4-7",
-			// v2.7.0-alpha: procedural subagent system_prompt composition +
-			// LLM-as-judge validation. Both need careful instruction-following
-			// + JSON-output discipline; sonnet is the right cost/quality
-			// tier (opus is overkill; haiku is borderline on the 5 pass
-			// criteria). Composition LLM also benefits from sonnet's
-			// strong schema adherence for the role/goal/backstory JSON.
-			ssd.EvalMindsetCompose: "claude-sonnet-4-5",
-			ssd.EvalMindsetQuality: "claude-sonnet-4-5",
+			ssd.EvalMindsetCompose:      "claude-sonnet-4-5",
+			ssd.EvalMindsetQuality:      "claude-sonnet-4-5",
 		},
 	},
 	{
@@ -69,125 +81,98 @@ var RecommendedModels = []ModelRecommendation{
 			ssd.EvalPIIDetect:           "gpt-5-mini",
 			ssd.EvalPromptInjectionScan: "gpt-5",
 			ssd.EvalConsensus:           "gpt-5",
-			// v2.7.0-alpha: composition is mechanical (fill JSON schema),
-			// mini is fine and cheaper. Validation needs careful rule-
-			// following + JSON discipline; gpt-5 matches the default.
-			ssd.EvalMindsetCompose: "gpt-5-mini",
-			ssd.EvalMindsetQuality: "gpt-5",
+			ssd.EvalMindsetCompose:      "gpt-5-mini",
+			ssd.EvalMindsetQuality:      "gpt-5",
 		},
 	},
 	{
 		Provider: "google",
-		Default:  "gemini-2.5-pro",
+		Default:  "gemini-3.6-flash",
 		PerType: map[ssd.EvaluationType]string{
-			ssd.EvalBrandMatch:          "gemini-2.5-flash",
-			ssd.EvalComplianceCheck:     "gemini-2.5-pro",
-			ssd.EvalDriftJudge:          "gemini-2.5-pro",
-			ssd.EvalGroundingCheck:      "gemini-2.5-pro",
-			ssd.EvalPIIDetect:           "gemini-2.5-flash",
-			ssd.EvalPromptInjectionScan: "gemini-2.5-pro",
-			ssd.EvalConsensus:           "gemini-2.5-pro",
-			// v2.7.0-alpha: composition uses flash (mechanical JSON fill);
-			// validation needs pro (5 pass criteria evaluation).
-			ssd.EvalMindsetCompose: "gemini-2.5-flash",
-			ssd.EvalMindsetQuality: "gemini-2.5-pro",
-		},
-	},
-	{
-		Provider: "mistral",
-		Default:  "mistral-large-2",
-		PerType: map[ssd.EvaluationType]string{
-			ssd.EvalBrandMatch:          "mistral-small",
-			ssd.EvalComplianceCheck:     "mistral-large-2",
-			ssd.EvalDriftJudge:          "mistral-large-2",
-			ssd.EvalGroundingCheck:      "mistral-large-2",
-			ssd.EvalPIIDetect:           "mistral-small",
-			ssd.EvalPromptInjectionScan: "mistral-large-2",
-			ssd.EvalConsensus:           "mistral-large-2",
-		},
-	},
-	{
-		Provider: "cohere",
-		Default:  "command-r-plus",
-		PerType: map[ssd.EvaluationType]string{
-			ssd.EvalBrandMatch:          "command-r",
-			ssd.EvalComplianceCheck:     "command-r-plus",
-			ssd.EvalDriftJudge:          "command-r-plus",
-			ssd.EvalGroundingCheck:      "command-r-plus",
-			ssd.EvalPIIDetect:           "command-r",
-			ssd.EvalPromptInjectionScan: "command-r-plus",
-			ssd.EvalConsensus:           "command-r-plus",
-		},
-	},
-	{
-		Provider: "meta",
-		Default:  "llama-3.1-405b",
-		PerType: map[ssd.EvaluationType]string{
-			ssd.EvalBrandMatch:          "llama-3.1-70b",
-			ssd.EvalComplianceCheck:     "llama-3.1-405b",
-			ssd.EvalDriftJudge:          "llama-3.1-405b",
-			ssd.EvalGroundingCheck:      "llama-3.1-405b",
-			ssd.EvalPIIDetect:           "llama-3.1-8b",
-			ssd.EvalPromptInjectionScan: "llama-3.1-405b",
-			ssd.EvalConsensus:           "llama-3.1-405b",
-		},
-	},
-	{
-		Provider: "xai",
-		Default:  "grok-2",
-		PerType: map[ssd.EvaluationType]string{
-			ssd.EvalBrandMatch:          "grok-2-mini",
-			ssd.EvalComplianceCheck:     "grok-2",
-			ssd.EvalDriftJudge:          "grok-2",
-			ssd.EvalGroundingCheck:      "grok-2",
-			ssd.EvalPIIDetect:           "grok-2-mini",
-			ssd.EvalPromptInjectionScan: "grok-2",
-			ssd.EvalConsensus:           "grok-2",
+			ssd.EvalBrandMatch:          "gemini-3.6-flash",
+			ssd.EvalComplianceCheck:     "gemini-3.6-pro",
+			ssd.EvalDriftJudge:          "gemini-3.6-pro",
+			ssd.EvalGroundingCheck:      "gemini-3.6-pro",
+			ssd.EvalPIIDetect:           "gemini-3.6-flash",
+			ssd.EvalPromptInjectionScan: "gemini-3.6-pro",
+			ssd.EvalConsensus:           "gemini-3.6-pro",
+			ssd.EvalMindsetCompose:      "gemini-3.6-flash",
+			ssd.EvalMindsetQuality:      "gemini-3.6-pro",
 		},
 	},
 	{
 		Provider: "deepseek",
-		Default:  "deepseek-v3",
+		Default:  "deepseek-v4-flash",
 		PerType: map[ssd.EvaluationType]string{
-			ssd.EvalBrandMatch:          "deepseek-v3",
-			ssd.EvalComplianceCheck:     "deepseek-v3",
-			ssd.EvalDriftJudge:          "deepseek-r1", // reasoning
-			ssd.EvalGroundingCheck:      "deepseek-v3",
-			ssd.EvalPIIDetect:           "deepseek-v3",
-			ssd.EvalPromptInjectionScan: "deepseek-v3",
-			ssd.EvalConsensus:           "deepseek-r1",
-			// v2.7.0-alpha: composition uses R1 (reasoning helps with
-			// the structured role/goal/backstory/constraints synthesis);
-			// validation uses V3 (default — the 5-criteria checklist
-			// is mechanical, not deep reasoning).
-			ssd.EvalMindsetCompose: "deepseek-r1",
-			ssd.EvalMindsetQuality: "deepseek-v3",
+			ssd.EvalBrandMatch:          "deepseek-v4-flash",
+			ssd.EvalComplianceCheck:     "deepseek-v4-flash",
+			ssd.EvalDriftJudge:          "deepseek-v4-pro", // deeper reasoning
+			ssd.EvalGroundingCheck:      "deepseek-v4-pro",
+			ssd.EvalPIIDetect:           "deepseek-v4-flash",
+			ssd.EvalPromptInjectionScan: "deepseek-v4-pro",
+			ssd.EvalConsensus:           "deepseek-v4-pro",
+			ssd.EvalMindsetCompose:      "deepseek-v4-pro",
+			ssd.EvalMindsetQuality:      "deepseek-v4-flash",
+		},
+	},
+	{
+		Provider: "minimax",
+		Default:  "MiniMax-M3",
+		PerType: map[ssd.EvaluationType]string{
+			ssd.EvalBrandMatch:          "MiniMax-M3",
+			ssd.EvalComplianceCheck:     "MiniMax-M3",
+			ssd.EvalDriftJudge:          "MiniMax-M3",
+			ssd.EvalGroundingCheck:      "MiniMax-M3",
+			ssd.EvalPIIDetect:           "MiniMax-M3",
+			ssd.EvalPromptInjectionScan: "MiniMax-M3",
+			ssd.EvalConsensus:           "MiniMax-M3",
+			ssd.EvalMindsetCompose:      "MiniMax-M3",
+			ssd.EvalMindsetQuality:      "MiniMax-M3",
+		},
+	},
+	{
+		Provider: "zhipu",
+		Default:  "glm-5.2",
+		PerType: map[ssd.EvaluationType]string{
+			ssd.EvalBrandMatch:          "glm-5.2",
+			ssd.EvalComplianceCheck:     "glm-5.2",
+			ssd.EvalDriftJudge:          "glm-5.2",
+			ssd.EvalGroundingCheck:      "glm-5.2",
+			ssd.EvalPIIDetect:           "glm-5.2",
+			ssd.EvalPromptInjectionScan: "glm-5.2",
+			ssd.EvalConsensus:           "glm-5.2",
+			ssd.EvalMindsetCompose:      "glm-5.2",
+			ssd.EvalMindsetQuality:      "glm-5.2",
+		},
+	},
+	{
+		Provider: "moonshot",
+		Default:  "kimi-k3",
+		PerType: map[ssd.EvaluationType]string{
+			ssd.EvalBrandMatch:          "kimi-k2.7-code",
+			ssd.EvalComplianceCheck:     "kimi-k3",
+			ssd.EvalDriftJudge:          "kimi-k3",
+			ssd.EvalGroundingCheck:      "kimi-k3",
+			ssd.EvalPIIDetect:           "kimi-k2.7-code",
+			ssd.EvalPromptInjectionScan: "kimi-k3",
+			ssd.EvalConsensus:           "kimi-k3",
+			ssd.EvalMindsetCompose:      "kimi-k2.7-code",
+			ssd.EvalMindsetQuality:      "kimi-k3",
 		},
 	},
 	{
 		Provider: "qwen",
-		Default:  "qwen-2.5-72b",
+		Default:  "qwen3.8-max",
 		PerType: map[ssd.EvaluationType]string{
-			ssd.EvalBrandMatch:          "qwen-2.5-7b",
-			ssd.EvalComplianceCheck:     "qwen-2.5-72b",
-			ssd.EvalDriftJudge:          "qwen-2.5-72b",
-			ssd.EvalGroundingCheck:      "qwen-2.5-72b",
-			ssd.EvalPIIDetect:           "qwen-2.5-7b",
-			ssd.EvalPromptInjectionScan: "qwen-2.5-72b",
-			ssd.EvalConsensus:           "qwen-2.5-72b",
-		},
-	},
-	{
-		Provider: "perplexity",
-		Default:  "sonar-pro",
-		PerType: map[ssd.EvaluationType]string{
-			ssd.EvalBrandMatch:          "sonar",
-			ssd.EvalComplianceCheck:     "sonar-pro",
-			ssd.EvalDriftJudge:          "sonar-pro",
-			ssd.EvalGroundingCheck:      "sonar-pro", // search-augmented — best for grounding
-			ssd.EvalPIIDetect:           "sonar",
-			ssd.EvalPromptInjectionScan: "sonar-pro",
-			ssd.EvalConsensus:           "sonar-pro",
+			ssd.EvalBrandMatch:          "qwen3.7-flash",
+			ssd.EvalComplianceCheck:     "qwen3.8-max",
+			ssd.EvalDriftJudge:          "qwen3.8-max",
+			ssd.EvalGroundingCheck:      "qwen3.8-max",
+			ssd.EvalPIIDetect:           "qwen3.7-flash",
+			ssd.EvalPromptInjectionScan: "qwen3.8-max",
+			ssd.EvalConsensus:           "qwen3.8-max",
+			ssd.EvalMindsetCompose:      "qwen3.7-plus",
+			ssd.EvalMindsetQuality:      "qwen3.8-max",
 		},
 	},
 }
@@ -196,7 +181,7 @@ var RecommendedModels = []ModelRecommendation{
 // eval_type) according to our OSINT catalog. Returns "" if the
 // provider is not in the catalog — in that case, the caller is
 // expected to fall through to the LLM client's own auto-config
-// (SelfHarnessClient or DarkscrapperClient).
+// (SelfHarnessClient).
 func RecommendedModel(provider, evalType string) string {
 	for _, rec := range RecommendedModels {
 		if rec.Provider == provider {
@@ -220,7 +205,7 @@ func IsKnownProvider(provider string) bool {
 	return false
 }
 
-// ListProviders returns the list of known providers (top-10).
+// ListProviders returns the list of known providers.
 func ListProviders() []string {
 	out := make([]string, len(RecommendedModels))
 	for i, rec := range RecommendedModels {

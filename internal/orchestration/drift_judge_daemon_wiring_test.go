@@ -207,29 +207,56 @@ func TestJudge_DispatchesDriftJudgeDaemon(t *testing.T) {
 	}
 }
 
-// TestJudge_OtherProvidersStillStubs verifies the negative test from
-// the original source comment: anthropic/openai/google still return
-// ErrNoLLMAvailable, do NOT silently return fake verdicts.
-func TestJudge_OtherProvidersStillStubs(t *testing.T) {
-	// Force the Wave 4 (anthropic + SDD_LLM_BASE_URL → real LLM call)
-	// branch OFF regardless of the operator's shell env. Without this,
-	// inheriting `SDD_LLM_BASE_URL=https://api.minimax.io/anthropic`
-	// from the harness env (set by opencode.jsonc for the dark-agents
-	// MCP) sends every "anthropic" call to a real HTTP endpoint with
-	// `key: "anything"`, producing HTTP 401 instead of the expected
-	// ErrNoLLMAvailable.
-	t.Setenv("SDD_LLM_BASE_URL", "")
-	for _, provider := range []string{"anthropic", "openai", "google"} {
+// TestJudge_NoDialectIsConfigError verifies that a provider without a
+// dialect (would only happen if the catalog is misconfigured — real
+// clients always carry a dialect from newCatalogClient) fails with a
+// clear config error, NOT a fake verdict.
+func TestJudge_NoDialectIsConfigError(t *testing.T) {
+	for _, provider := range []string{"anthropic", "openai", "google", "deepseek"} {
 		t.Run(provider, func(t *testing.T) {
 			c := &SelfHarnessClient{provider: provider, key: "anything"}
 			_, err := c.Judge(context.Background(), JudgeRequest{EvalType: "drift_judge", Content: "x"})
 			if err == nil {
-				t.Errorf("%s: expected ErrNoLLMAvailable, got nil", provider)
+				t.Errorf("%s: expected error, got nil", provider)
 			}
-			if !strings.Contains(err.Error(), "Wave 4") {
-				t.Errorf("%s: error should mention Wave 4 deferral: %v", provider, err)
+			if !strings.Contains(err.Error(), "no dialect") {
+				t.Errorf("%s: error should mention missing dialect: %v", provider, err)
 			}
 		})
+	}
+}
+
+// TestJudge_AnthropicDialectDirect verifies the Anthropic Messages
+// dialect path (provider=anthropic via catalog) does a real HTTP call
+// without needing SDD_LLM_BASE_URL.
+func TestJudge_AnthropicDialectDirect(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/messages" {
+			t.Errorf("path = %q, want /v1/messages", r.URL.Path)
+		}
+		if r.Header.Get("x-api-key") != "sk-anthropic" {
+			t.Errorf("x-api-key = %q, want sk-anthropic", r.Header.Get("x-api-key"))
+		}
+		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"{\"verdict\":\"aligned\"}"}],"model":"claude-sonnet-4-5"}`))
+	}))
+	defer srv.Close()
+
+	c := &SelfHarnessClient{
+		provider: "anthropic",
+		model:    "claude-sonnet-4-5",
+		key:      "sk-anthropic",
+		dialect:  DialectAnthropic,
+		baseURL:  srv.URL,
+	}
+	resp, err := c.Judge(context.Background(), JudgeRequest{EvalType: "drift_judge", Content: "x"})
+	if err != nil {
+		t.Fatalf("unexpected: %v", err)
+	}
+	if resp.Provider != "anthropic" {
+		t.Errorf("Provider: want anthropic, got %q", resp.Provider)
+	}
+	if !strings.Contains(resp.VerdictJSON, "aligned") {
+		t.Errorf("verdict = %q, want aligned", resp.VerdictJSON)
 	}
 }
 

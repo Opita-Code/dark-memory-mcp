@@ -224,21 +224,30 @@ var ErrNoLLMAvailable = errors.New("no LLM available: harness has no API key (se
 //     at :8901 (when pool is non-empty) or the deterministic mock-llm
 //     at :9000 (dev iteration).
 //
-//   - provider = anything else (anthropic | openai | google): stub.
-//     Direct HTTP clients for those providers remain deferred to
-//     Wave 4+. Returning ErrNoLLMAvailable here is BY DESIGN and
-//     preserves the source's stated philosophy of surfacing the gap
-//     instead of silently returning fake verdicts.
+//   - provider in the catalog (anthropic | openai | google | deepseek |
+//     minimax | zhipu | moonshot | qwen): direct HTTP via the catalog's
+//     dialect. Anthropic-dialect providers POST /v1/messages with
+//     x-api-key + anthropic-version; OpenAI-dialect providers POST
+//     /chat/completions with Authorization: Bearer. v2.13.0: the
+//     catalog (provider_catalog.go) is the single source of endpoints,
+//     verified against primary docs on 2026-08-10 (row 587).
 //
 // Self-judge pattern: the same model that called the MCP tool acts as judge.
 //
 // Detection order (first match wins):
 //
-//  1. ANTHROPIC_API_KEY  ÔåÆ Anthropic Claude (stub in this build)
-//  2. OPENAI_API_KEY     ÔåÆ OpenAI GPT (stub in this build)
-//  3. GEMINI_API_KEY     ÔåÆ Google Gemini (stub in this build)
-//  4. DARK_DRIFT_JUDGE_DAEMON_URL  ÔåÆ [drift-judge-daemon] pool (WIRED)
-//  5. none               ÔåÆ ErrNoLLMAvailable
+//  1. DARK_JUDGE_PROVIDER  ÔåÆ explicit operator pick (any catalog id)
+//  2. ANTHROPIC_API_KEY    ÔåÆ anthropic (Anthropic Messages)
+//  3. OPENAI_API_KEY       ÔåÆ openai (Chat Completions)
+//  4. GEMINI_API_KEY       ÔåÆ google (OpenAI-compat)
+//  5. DEEPSEEK_API_KEY     ÔåÆ deepseek (OpenAI + /anthropic)
+//  6. MINIMAX_API_KEY      ÔåÆ minimax (OpenAI + /anthropic)
+//  7. MOONSHOT_API_KEY     ÔåÆ moonshot (OpenAI)
+//  8. ZAI_API_KEY          ÔåÆ zhipu (OpenAI)
+//  9. DASHSCOPE_API_KEY    ÔåÆ qwen (OpenAI + /anthropic)
+// 10. DARK_DRIFT_JUDGE_DAEMON_URL  ÔåÆ [drift-judge-daemon] pool
+// 11. legacy DARK_SCRAPPER_URL     ÔåÆ [drift-judge-daemon] (deprecated)
+// 12. none                ÔåÆ ErrNoLLMAvailable
 //
 // The model is auto-picked via the OSINTSelector for the eval_type
 // (config-based today, real OSINT later ÔÇö see spec 173 O5).
@@ -246,40 +255,45 @@ type SelfHarnessClient struct {
 	provider string
 	model    string
 	key      string // API key or DARK_DRIFT_JUDGE_DAEMON_URL
+	dialect  ProviderDialect
+	baseURL  string
 }
 
 // NewSelfHarnessClient detects the available LLM via env vars.
 // Returns nil + ErrNoLLMAvailable if nothing is set.
 func NewSelfHarnessClient() (*SelfHarnessClient, error) {
-	if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
-		return &SelfHarnessClient{
-			provider: "anthropic",
-			model:    os.Getenv("DARK_JUDGE_MODEL_ANTHROPIC"), // optional override
-			key:      key,
-		}, nil
+	// 0. Explicit operator override: DARK_JUDGE_PROVIDER pins a
+	// catalog provider regardless of which keys are present.
+	if override := os.Getenv("DARK_JUDGE_PROVIDER"); override != "" {
+		spec := providerSpecByID(override)
+		if spec == nil {
+			return nil, fmt.Errorf("%w: DARK_JUDGE_PROVIDER=%q is not in the provider catalog (supported: %s)",
+				ErrNoLLMAvailable, override, strings.Join(catalogProviderIDs(), ", "))
+		}
+		key := os.Getenv(spec.EnvKey)
+		if key == "" {
+			return nil, fmt.Errorf("%w: DARK_JUDGE_PROVIDER=%s but %s is not set", ErrNoLLMAvailable, spec.ID, spec.EnvKey)
+		}
+		return newCatalogClient(spec, key), nil
 	}
-	if key := os.Getenv("OPENAI_API_KEY"); key != "" {
-		return &SelfHarnessClient{
-			provider: "openai",
-			model:    os.Getenv("DARK_JUDGE_MODEL_OPENAI"),
-			key:      key,
-		}, nil
+
+	// 1-9. Auto-detection: first catalog provider whose key is set wins.
+	for _, spec := range providerCatalog {
+		if key := os.Getenv(spec.EnvKey); key != "" {
+			return newCatalogClient(&spec, key), nil
+		}
 	}
-	if key := os.Getenv("GEMINI_API_KEY"); key != "" {
-		return &SelfHarnessClient{
-			provider: "google",
-			model:    os.Getenv("DARK_JUDGE_MODEL_GOOGLE"),
-			key:      key,
-		}, nil
-	}
+	// 10. [drift-judge-daemon] sentinel pool.
 	if url := os.Getenv("DARK_DRIFT_JUDGE_DAEMON_URL"); url != "" {
 		return &SelfHarnessClient{
 			provider: "drift_judge_daemon",
 			model:    os.Getenv("DARK_JUDGE_MODEL_DRIFT_JUDGE_DAEMON"),
 			key:      url,
+			dialect:  DialectAnthropic,
+			baseURL:  url,
 		}, nil
 	}
-	// v2.0.1 (follow-up 3 of 3): legacy-env shim for operators who
+	// 11. v2.0.1 (follow-up 3 of 3): legacy-env shim for operators who
 	// haven't migrated their `.env` from the v1.x env name. When
 	// DARK_SCRAPPER_URL is set AND DARK_DRIFT_JUDGE_DAEMON_URL is not,
 	// fall through to the legacy value and log a one-line notice at
@@ -291,9 +305,34 @@ func NewSelfHarnessClient() (*SelfHarnessClient, error) {
 			provider: "drift_judge_daemon",
 			model:    os.Getenv("DARK_JUDGE_MODEL_DRIFT_JUDGE_DAEMON"), // new name; legacy env had no model override
 			key:      legacyURL,
+			dialect:  DialectAnthropic,
+			baseURL:  legacyURL,
 		}, nil
 	}
 	return nil, ErrNoLLMAvailable
+}
+
+// newCatalogClient builds a SelfHarnessClient for a catalog provider,
+// honoring DARK_JUDGE_MODEL_<PROVIDER> overrides and the optional
+// DARK_JUDGE_DIALECT=anthropic switch for providers that speak both
+// dialects.
+func newCatalogClient(spec *ProviderSpec, key string) *SelfHarnessClient {
+	dialect := providerDialect(spec)
+	baseURL := spec.BaseURL
+	if dialect == DialectAnthropic && spec.AnthropicBaseURL != "" {
+		baseURL = spec.AnthropicBaseURL
+	}
+	model := os.Getenv("DARK_JUDGE_MODEL_" + strings.ToUpper(spec.ID))
+	if model == "" {
+		model = spec.DefaultModel
+	}
+	return &SelfHarnessClient{
+		provider: spec.ID,
+		model:    model,
+		key:      key,
+		dialect:  dialect,
+		baseURL:  baseURL,
+	}
 }
 
 // Name implements LLMClient.
@@ -306,19 +345,15 @@ func (s *SelfHarnessClient) Name() string {
 
 // Judge implements LLMClient.
 //
-// Wave 4 update (2026-07-18): provider=anthropic with SDD_LLM_BASE_URL set
-// now routes through the configured Anthropic-compatible endpoint using the
-// real ANTHROPIC_API_KEY. Probes confirmed that
-// `https://api.minimax.io/anthropic/v1/messages` accepts both
-// `x-api-key: <key>` and `Authorization: Bearer <key>`, so we send both
-// for safety. Without SDD_LLM_BASE_URL, fall through to the explicit stub
-// error to preserve the source's stated philosophy of surfacing the gap
-// (not silently faking verdicts). openai / google remain stubs.
+// v2.13.0 dispatch (provider_catalog.go is the endpoint source):
+//   - dialect anthropic → POST {base}/v1/messages (Anthropic Messages)
+//   - dialect openai    → POST {base}/chat/completions (Chat Completions)
+//   - provider drift_judge_daemon → sentinel-auth daemon pool (preserved)
 //
-// The drift_judge_daemon path (DARK_DRIFT_JUDGE_DAEMON_URL with sentinel auth
-// "ds-managed") is preserved verbatim for [drift-judge-daemon] compatibility.
-// Wire format is identical (Anthropic Messages API), so verify-llm-pipeline.ps1
-// stage 2/4 regression suite continues to apply.
+// The drift_judge_daemon path is preserved verbatim for
+// [drift-judge-daemon] compatibility. Wire format is identical
+// (Anthropic Messages API), so verify-llm-pipeline.ps1 stage 2/4
+// regression suite continues to apply.
 func (s *SelfHarnessClient) Judge(ctx context.Context, req JudgeRequest) (*JudgeResponse, error) {
 	if s == nil || s.provider == "" {
 		return nil, ErrNoLLMAvailable
@@ -326,17 +361,15 @@ func (s *SelfHarnessClient) Judge(ctx context.Context, req JudgeRequest) (*Judge
 	if s.provider == "drift_judge_daemon" {
 		return s.judgeViaDriftJudgeDaemon(ctx, req)
 	}
-	// Wave 4: anthropic + SDD_LLM_BASE_URL set ÔåÆ real LLM via judgeViaHTTP.
-	// Guarded so that absence of SDD_LLM_BASE_URL (or empty ANTHROPIC_API_KEY)
-	// still surfaces the explicit gap error rather than silently faking.
-	if s.provider == "anthropic" {
-		if baseURL := os.Getenv("SDD_LLM_BASE_URL"); baseURL != "" && s.key != "" {
-			return s.judgeViaHTTP(ctx, req, baseURL, s.key)
-		}
+	switch s.dialect {
+	case DialectOpenAI:
+		return s.judgeViaOpenAIHTTP(ctx, req)
+	case DialectAnthropic:
+		return s.judgeViaHTTP(ctx, req, s.baseURL, s.key)
+	default:
+		return nil, fmt.Errorf("%w: self_harness provider=%s has no dialect (provider catalog misconfigured)",
+			ErrNoLLMAvailable, s.provider)
 	}
-	// openai / google / no-env still return the explicit gap error.
-	return nil, fmt.Errorf("%w: self_harness provider=%s model=%s ÔÇö direct HTTP for this provider deferred to Wave 4 (or set SDD_LLM_BASE_URL for anthropic)",
-		ErrNoLLMAvailable, s.provider, s.model)
 }
 
 // judgeViaDriftJudgeDaemon is the [drift-judge-daemon] HTTP path. It posts to
@@ -393,13 +426,13 @@ func (s *SelfHarnessClient) judgeViaHTTP(ctx context.Context, req JudgeRequest, 
 		return nil, fmt.Errorf("judge: baseURL %q has no host", baseURL)
 	}
 
-	// Resolve model. Caller hint > client config > safe default.
+	// Resolve model. Caller hint > client config (catalog default or
+	// DARK_JUDGE_MODEL_<PROVIDER> override). No hardcoded fallback:
+	// if no model is set, the provider's own server-side default is
+	// used (the field is omitted from the body).
 	model := req.Model
 	if model == "" {
 		model = s.model
-	}
-	if model == "" {
-		model = "MiniMax-M3" // default; matches harness model
 	}
 
 	// Resolve system prompt. Caller override > per-eval_type default
@@ -521,6 +554,168 @@ func (s *SelfHarnessClient) judgeViaHTTPAttempt(ctx context.Context, bodyBytes [
 	}
 
 	// Best-effort confidence extraction from verdict JSON.
+	confidence := float32(0.7)
+	if c := extractConfidence(text); c > 0 {
+		confidence = c
+	}
+
+	return &JudgeResponse{
+		VerdictJSON: text,
+		Confidence:  confidence,
+		Model:       model,
+		Provider:    s.provider,
+	}, nil
+}
+
+// judgeViaOpenAIHTTP performs one OpenAI Chat Completions call for
+// OpenAI-dialect providers (openai, deepseek, minimax-v1, zhipu,
+// moonshot, qwen, google). It mirrors judgeViaHTTP's retry/backoff/
+// timeout machinery; the only differences are the request shape
+// (chat/completions, messages[] with role/content, no system field —
+// the system prompt is sent as the first system-role message) and the
+// response parsing (choices[0].message.content).
+func (s *SelfHarnessClient) judgeViaOpenAIHTTP(ctx context.Context, req JudgeRequest) (*JudgeResponse, error) {
+	if s == nil || s.provider == "" {
+		return nil, ErrNoLLMAvailable
+	}
+	if s.baseURL == "" {
+		return nil, fmt.Errorf("%w: provider=%s has empty baseURL (provider catalog misconfigured)", ErrNoLLMAvailable, s.provider)
+	}
+	endpoint, err := url.Parse(s.baseURL)
+	if err != nil {
+		return nil, fmt.Errorf("judge: invalid baseURL %q: %w", s.baseURL, err)
+	}
+	if endpoint.Scheme != "http" && endpoint.Scheme != "https" {
+		return nil, fmt.Errorf("judge: baseURL must be http(s); got %q", endpoint.Scheme)
+	}
+	if endpoint.Host == "" {
+		return nil, fmt.Errorf("judge: baseURL %q has no host", s.baseURL)
+	}
+
+	// Resolve model. Caller hint > client config (catalog default or
+	// DARK_JUDGE_MODEL_<PROVIDER>). No hardcoded fallback — omit the
+	// field when unset so the provider uses its server-side default.
+	model := req.Model
+	if model == "" {
+		model = s.model
+	}
+
+	// Resolve system prompt. Same per-eval_type defaults + vibe-case
+	// rubrics as the Anthropic path.
+	system := req.SystemPrompt
+	if system == "" {
+		system = defaultSystemForEval(req.EvalType)
+		if req.VibeCase != "" {
+			if rubric := rubricPromptFor(req.VibeCase, req.EvalType); rubric != "" {
+				system += "\n\n" + rubric
+			}
+		}
+	}
+
+	// Chat Completions shape. The system prompt goes in as the first
+	// system-role message (OpenAI dialect has no top-level "system"
+	// field).
+	messages := []map[string]string{{"role": "user", "content": req.Content}}
+	if system != "" {
+		messages = append([]map[string]string{{"role": "system", "content": system}}, messages...)
+	}
+	body := map[string]any{
+		"messages": messages,
+	}
+	if model != "" {
+		body["model"] = model
+	}
+	bodyBytes, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("judge: marshal request: %w", err)
+	}
+
+	endpointStr := strings.TrimRight(s.baseURL, "/") + "/chat/completions"
+
+	retries := judgeRetryCount()
+	var lastErr error
+	for attempt := 0; attempt <= retries; attempt++ {
+		if attempt > 0 {
+			if err := sleepWithContext(ctx, backoffForAttempt(attempt)); err != nil {
+				return nil, fmt.Errorf("judge: retry %d backoff: %w", attempt, err)
+			}
+		}
+		resp, err := s.judgeViaOpenAIHTTPAttempt(ctx, bodyBytes, endpointStr, judgeTimeoutForEval(req.EvalType), model)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+		if !isRetryableError(err) {
+			return nil, err
+		}
+	}
+	return nil, lastErr
+}
+
+// judgeViaOpenAIHTTPAttempt performs ONE Chat Completions POST with
+// its own timeout budget and parses choices[0].message.content.
+func (s *SelfHarnessClient) judgeViaOpenAIHTTPAttempt(ctx context.Context, bodyBytes []byte, endpointStr string, timeout time.Duration, model string) (*JudgeResponse, error) {
+	attemptCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	httpReq, err := http.NewRequestWithContext(attemptCtx, http.MethodPost, endpointStr, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil, fmt.Errorf("judge: build http request: %w", err)
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+s.key)
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	httpResp, err := judgeHTTPClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("judge: http request: %w", err)
+	}
+	defer httpResp.Body.Close()
+
+	respBytes, err := io.ReadAll(httpResp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("judge: read response: %w", err)
+	}
+
+	if httpResp.StatusCode != http.StatusOK {
+		return nil, &judgeHTTPStatusError{status: httpResp.StatusCode, body: truncateForErr(string(respBytes), 512)}
+	}
+
+	// Parse Chat Completions: {"choices":[{"message":{"content":"..."}}],"model":"..."}
+	var resp struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+			Text string `json:"text"` // legacy: some OpenAI-compat servers use choices[].text
+		} `json:"choices"`
+		Model string `json:"model"`
+		Text  string `json:"text"` // minimal mock shape
+	}
+	if err := json.Unmarshal(respBytes, &resp); err != nil {
+		return &JudgeResponse{
+			VerdictJSON: string(respBytes),
+			Confidence:  0.7,
+			Model:       model,
+			Provider:    s.provider,
+		}, nil
+	}
+
+	var text string
+	if len(resp.Choices) > 0 {
+		if resp.Choices[0].Message.Content != "" {
+			text = resp.Choices[0].Message.Content
+		} else {
+			text = resp.Choices[0].Text
+		}
+	}
+	if text == "" {
+		text = resp.Text
+	}
+
+	if resp.Model != "" {
+		model = resp.Model
+	}
+
 	confidence := float32(0.7)
 	if c := extractConfidence(text); c > 0 {
 		confidence = c
