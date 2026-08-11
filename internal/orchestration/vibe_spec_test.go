@@ -113,16 +113,19 @@ func TestParseTasksField_NotJSON_FormB(t *testing.T) {
 }
 
 // TestParseTasksField_UnknownFirstByte covers the case where the
-// harness emits an object (Form C-like) or any non-array/non-string
-// shape. The pre-fix implementation returned the generic field=tasks
-// error; the post-fix implementation must name the offending byte so
-// the operator can see "first byte='{'" or similar and pivot.
+// harness emits a non-array/non-string/non-object shape (e.g. a
+// bare number or boolean). The implementation must name the offending
+// byte so the operator can see "first byte='1'" or similar and pivot.
+//
+// v2.15.2 INFRA-005: an object starting with '{' is now Form C, not
+// "unknown form". This test exercises the numeric case which remains
+// in the unknown-form branch.
 func TestParseTasksField_UnknownFirstByte(t *testing.T) {
-	// Object (starts with '{') — neither Form A nor Form B applies.
-	raw := json.RawMessage(`{"id":"T1","description":"x"}`)
+	// Bare number — neither Form A, B, nor C applies.
+	raw := json.RawMessage(`42`)
 	_, err := parseTasksField(raw)
 	if err == nil {
-		t.Fatalf("Object-shaped tasks accepted; expected ErrInvalidArgument")
+		t.Fatalf("Number-shaped tasks accepted; expected ErrInvalidArgument")
 	}
 	var fe *store.FieldError
 	if !errors.As(err, &fe) || fe.Field != "tasks" {
@@ -133,10 +136,43 @@ func TestParseTasksField_UnknownFirstByte(t *testing.T) {
 		t.Errorf("INFRA-002 fix: unknown-shape error must say so explicitly; got %q", msg)
 	}
 	// The parser emits the first non-whitespace byte via %q, which
-	// wraps it in double quotes (e.g. `"{"`). Accept either double
-	// or single quotes around the offending byte.
-	if !strings.Contains(msg, `"{"`) && !strings.Contains(msg, "'{'") {
+	// wraps it in double quotes (e.g. `"4"`).
+	if !strings.Contains(msg, `"4"`) && !strings.Contains(msg, "'4'") {
 		t.Errorf("INFRA-002 fix: unknown-shape error must name the first byte so the operator can identify the form; got %q", msg)
+	}
+}
+
+// TestParseTasksField_HappyFormC covers the opencode 1.18.16 +
+// Vercel AI SDK + Anthropic protocol shape from anthropics/claude-code
+// issue #59227: the harness sends tasks as a JSON object wrapping an
+// array under the "tasks" key. v2.15.2 INFRA-005 unwraps this.
+func TestParseTasksField_HappyFormC(t *testing.T) {
+	raw := json.RawMessage(`{"tasks":[{"id":"T1","description":"hello"}]}`)
+	tasks, err := parseTasksField(raw)
+	if err != nil {
+		t.Fatalf("Form C happy path rejected: %v", err)
+	}
+	if len(tasks) != 1 || tasks[0].ID != "T1" {
+		t.Fatalf("Form C happy path produced wrong tasks: %#v", tasks)
+	}
+}
+
+// TestParseTasksField_FormC_MissingTasksKey covers the case where the
+// harness sends an object under Form C but without a "tasks" key.
+// The parser must reject with a Form C-specific error, not "unknown
+// form".
+func TestParseTasksField_FormC_MissingTasksKey(t *testing.T) {
+	raw := json.RawMessage(`{"id":"T1","description":"hello"}`)
+	_, err := parseTasksField(raw)
+	if err == nil {
+		t.Fatalf("Form C without tasks key accepted; expected ErrInvalidArgument")
+	}
+	var fe *store.FieldError
+	if !errors.As(err, &fe) || fe.Field != "tasks" {
+		t.Fatalf("F35 regression: %v", err)
+	}
+	if !strings.Contains(err.Error(), "Form C") {
+		t.Errorf("Form C missing-key error must mention Form C; got %q", err.Error())
 	}
 }
 
