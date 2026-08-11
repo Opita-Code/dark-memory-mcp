@@ -1117,4 +1117,34 @@ CREATE INDEX IF NOT EXISTS idx_error_events_resolved   ON error_events (resolved
 CREATE INDEX IF NOT EXISTS idx_error_events_dedup      ON error_events (domain, code, message_hash, tool_name, session_id, resolved);
 `,
 	},
+
+	// v26 — research_items coexistence columns (Fase 2, spec 1011).
+	//
+	// dark-memory and dark-research SHARE the same SQLite file
+	// (C:\Users\Nico\AppData\Local\dark-agents\dark.db per
+	// opencode.jsonc). dark-research's mem/migrate.go creates
+	// research_items WITHOUT actor/write_path/content_sha256; when
+	// dark-research boots first (it does — opencode starts both peers
+	// at boot), the table exists and dark-memory's CREATE TABLE IF
+	// NOT EXISTS is a no-op. SaveRun then INSERTs with
+	// actor/write_path/content_sha256 → "no column named actor".
+	//
+	// Fix: idempotent ALTER TABLE ADD COLUMN for the columns
+	// dark-memory's SaveRun needs. applyOne tolerates F37
+	// ("duplicate column name") so re-running on a schema that
+	// already has the columns (fresh dark-memory-owned DB) is a no-op.
+	//
+	// Note: research_items.actor/write_path/content_sha256 duplicate
+	// write_audit columns (INV-1); they exist for backward-compat with
+	// older SaveRun rows. Adding them to the shared table is safe —
+	// dark-research ignores unknown columns in its own INSERTs.
+	{
+		Version: 26,
+		Name:    "research_items_coexistence_columns",
+		Up: `
+ALTER TABLE research_items ADD COLUMN actor TEXT;
+ALTER TABLE research_items ADD COLUMN write_path TEXT;
+ALTER TABLE research_items ADD COLUMN content_sha256 TEXT;
+`,
+	},
 }
