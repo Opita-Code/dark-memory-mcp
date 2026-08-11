@@ -78,6 +78,15 @@ var judgeTimeoutMultipliers = map[string]float64{
 	"prompt_injection_scan": 0.5,
 	"mindset_compose":       1.5,
 	"mindset_quality":       1.0,
+	// v2.15.0 (Fase 2): testing eval types (dark-testing skill v2.0.0).
+	// Reasoning-heavy checks (spec alignment, test quality, oracle
+	// quality) get headroom; score/boolean checks are fast.
+	"spec_test_alignment": 1.5,
+	"mutation_score_check": 1.0,
+	"test_quality_review":  1.2,
+	"security_coverage":    1.2,
+	"resilience_check":     1.2,
+	"oracle_quality":       1.5,
 }
 
 // judgeTimeoutForEval is the per-attempt timeout for one eval_type.
@@ -757,6 +766,31 @@ func defaultSystemForEval(evalType string) string {
 		// v2.7.0-alpha: VALIDATIVE call — judge whether a proposed
 		// subagent system_prompt is well-formed against 5 pass criteria.
 		return base + ` Schema: {"verdict":"aligned"|"drift_detected"|"needs_human","confidence":0.0-1.0,"reasoning":"...","criteria_failed":["OVER_QUALIFIED"|"TASK_APPROPRIATE"|"CONSTRAINT_PRIMED"|"MINIMAL_TOOLS"|"NO_LEAKAGE"]}`
+	case "spec_test_alignment":
+		// v2.15.0 (Fase 2): do the tests verify every claim in the spec?
+		// M6 — alignment = tests_verifying_spec_claims / spec_claims.
+		return base + ` You are evaluating whether a test suite covers every claim in a spec. Schema: {"alignment":0.0-1.0,"spec_claims_verified":N,"spec_claims_total":N,"missing_claims":["..."],"reasoning":"..."}`
+	case "mutation_score_check":
+		// v2.15.0 (Fase 2): is the mutation score above the gate threshold?
+		// M1 — mutation_score = mutants_killed / total_mutants (gremlins).
+		return base + ` You are evaluating a mutation-testing report. Schema: {"score":0.0-1.0,"threshold":0.0-1.0,"pass":true|false,"mutants_killed":N,"mutants_total":N,"reasoning":"..."}`
+	case "test_quality_review":
+		// v2.15.0 (Fase 2): are the tests well-structured (7-layer taxonomy,
+		// M1-M8 metrics, oracle adequacy)? Reviewer-style, canonical verdict.
+		return base + ` You are a test-quality reviewer. Schema: {"verdict":"aligned"|"drift_detected"|"needs_human","confidence":0.0-1.0,"issues":["..."],"strengths":["..."],"reasoning":"..."}`
+	case "security_coverage":
+		// v2.15.0 (Fase 2): do tests cover all applicable OWASP LLM Top 10
+		// vectors? M7 — security_coverage = owasp_vectors_with_tests / total.
+		return base + ` You are evaluating security test coverage against OWASP LLM Top 10 (2025). Schema: {"coverage":0.0-1.0,"vectors_covered":["LLM01",...],"vectors_missing":["LLM03",...],"reasoning":"..."}`
+	case "resilience_check":
+		// v2.15.0 (Fase 2): do chaos experiments pass with safe degradation?
+		// M8 — resilience_score = chaos_experiments_passed / chaos_experiments_run.
+		return base + ` You are evaluating a chaos-engineering experiment report. Schema: {"passed":true|false,"experiments_passed":N,"experiments_run":N,"abort_guards_triggered":["..."],"reasoning":"..."}`
+	case "oracle_quality":
+		// v2.15.0 (Fase 2): are the test oracles adequate for
+		// non-deterministic outputs (pass@k, differential, LLM-as-judge,
+		// execution-based)? Reviewer-style, canonical verdict.
+		return base + ` You are evaluating oracle adequacy for non-deterministic outputs. Schema: {"verdict":"aligned"|"drift_detected"|"needs_human","confidence":0.0-1.0,"issues":["..."],"recommendations":["..."],"reasoning":"..."}`
 	default:
 		return base + ` Schema: {"verdict":"...","confidence":0.0-1.0}`
 	}

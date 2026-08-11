@@ -230,3 +230,160 @@ func TestParseVerdict_LowConfidence(t *testing.T) {
 		t.Errorf("low conf grounding_check: got %q, want %q", got, "needs_human")
 	}
 }
+
+// --- v2.15.0 (Fase 2) testing eval types (dark-testing skill v2.0.0) ---
+//
+// spec_test_alignment (M6), mutation_score_check (M1),
+// security_coverage (M7), resilience_check (M8), test_quality_review,
+// oracle_quality — each judge emits a distinct JSON shape; parseVerdict
+// must map it to the canonical three-state verdict.
+
+// TestParseVerdict_SpecTestAlignment_High verifies spec_test_alignment
+// {"alignment":0.9} (>= 0.7) maps to "aligned".
+func TestParseVerdict_SpecTestAlignment_High(t *testing.T) {
+	json := `{"alignment":0.9,"spec_claims_verified":9,"spec_claims_total":10,"missing_claims":["invariant M4"],"reasoning":"one invariant lacks a test"}`
+	if got := parseVerdict("spec_test_alignment", json, 0.9); got != "aligned" {
+		t.Errorf("spec_test_alignment alignment:0.9: got %q, want %q", got, "aligned")
+	}
+}
+
+// TestParseVerdict_SpecTestAlignment_Low verifies spec_test_alignment
+// {"alignment":0.5} (< 0.7) maps to "drift_detected".
+func TestParseVerdict_SpecTestAlignment_Low(t *testing.T) {
+	json := `{"alignment":0.5,"spec_claims_verified":5,"spec_claims_total":10,"missing_claims":["a","b","c","d","e"],"reasoning":"half the spec is untested"}`
+	if got := parseVerdict("spec_test_alignment", json, 0.9); got != "drift_detected" {
+		t.Errorf("spec_test_alignment alignment:0.5: got %q, want %q", got, "drift_detected")
+	}
+}
+
+// TestParseVerdict_MutationScoreCheck_Pass verifies mutation_score_check
+// {"pass":true} maps to "aligned" (score >= threshold).
+func TestParseVerdict_MutationScoreCheck_Pass(t *testing.T) {
+	json := `{"score":0.82,"threshold":0.7,"pass":true,"mutants_killed":82,"mutants_total":100,"reasoning":"above gate"}`
+	if got := parseVerdict("mutation_score_check", json, 0.9); got != "aligned" {
+		t.Errorf("mutation_score_check pass:true: got %q, want %q", got, "aligned")
+	}
+}
+
+// TestParseVerdict_MutationScoreCheck_Fail verifies mutation_score_check
+// {"pass":false} maps to "drift_detected".
+func TestParseVerdict_MutationScoreCheck_Fail(t *testing.T) {
+	json := `{"score":0.55,"threshold":0.7,"pass":false,"mutants_killed":55,"mutants_total":100,"reasoning":"below gate"}`
+	if got := parseVerdict("mutation_score_check", json, 0.9); got != "drift_detected" {
+		t.Errorf("mutation_score_check pass:false: got %q, want %q", got, "drift_detected")
+	}
+}
+
+// TestParseVerdict_SecurityCoverage_High verifies security_coverage
+// {"coverage":0.9} (>= 0.8) maps to "aligned".
+func TestParseVerdict_SecurityCoverage_High(t *testing.T) {
+	json := `{"coverage":0.9,"vectors_covered":["LLM01","LLM02","LLM06","LLM08","LLM10"],"vectors_missing":[],"reasoning":"all applicable vectors tested"}`
+	if got := parseVerdict("security_coverage", json, 0.9); got != "aligned" {
+		t.Errorf("security_coverage coverage:0.9: got %q, want %q", got, "aligned")
+	}
+}
+
+// TestParseVerdict_SecurityCoverage_Low verifies security_coverage
+// {"coverage":0.6} (< 0.8) maps to "drift_detected".
+func TestParseVerdict_SecurityCoverage_Low(t *testing.T) {
+	json := `{"coverage":0.6,"vectors_covered":["LLM01"],"vectors_missing":["LLM03","LLM06","LLM08"],"reasoning":"most vectors untested"}`
+	if got := parseVerdict("security_coverage", json, 0.9); got != "drift_detected" {
+		t.Errorf("security_coverage coverage:0.6: got %q, want %q", got, "drift_detected")
+	}
+}
+
+// TestParseVerdict_ResilienceCheck_Pass verifies resilience_check
+// {"passed":true} maps to "aligned" (>= 0.90 resilience target).
+func TestParseVerdict_ResilienceCheck_Pass(t *testing.T) {
+	json := `{"passed":true,"experiments_passed":9,"experiments_run":10,"abort_guards_triggered":[],"reasoning":"safe degradation"}`
+	if got := parseVerdict("resilience_check", json, 0.9); got != "aligned" {
+		t.Errorf("resilience_check passed:true: got %q, want %q", got, "aligned")
+	}
+}
+
+// TestParseVerdict_ResilienceCheck_Fail verifies resilience_check
+// {"passed":false} maps to "drift_detected" (abort guard fired).
+func TestParseVerdict_ResilienceCheck_Fail(t *testing.T) {
+	json := `{"passed":false,"experiments_passed":6,"experiments_run":10,"abort_guards_triggered":["dispatch_latency>2s"],"reasoning":"retry storm"}`
+	if got := parseVerdict("resilience_check", json, 0.9); got != "drift_detected" {
+		t.Errorf("resilience_check passed:false: got %q, want %q", got, "drift_detected")
+	}
+}
+
+// TestParseVerdict_TestQualityReview_Aligned verifies test_quality_review
+// {"verdict":"aligned"} maps verbatim (reviewer-style judge).
+func TestParseVerdict_TestQualityReview_Aligned(t *testing.T) {
+	json := `{"verdict":"aligned","confidence":0.85,"issues":[],"strengths":["table-driven"],"reasoning":"clean"}`
+	if got := parseVerdict("test_quality_review", json, 0.85); got != "aligned" {
+		t.Errorf("test_quality_review aligned: got %q, want %q", got, "aligned")
+	}
+}
+
+// TestParseVerdict_TestQualityReview_Drift verifies test_quality_review
+// {"verdict":"drift_detected"} maps verbatim.
+func TestParseVerdict_TestQualityReview_Drift(t *testing.T) {
+	json := `{"verdict":"drift_detected","confidence":0.8,"issues":["no error-path test"],"reasoning":"missing coverage"}`
+	if got := parseVerdict("test_quality_review", json, 0.8); got != "drift_detected" {
+		t.Errorf("test_quality_review drift_detected: got %q, want %q", got, "drift_detected")
+	}
+}
+
+// TestParseVerdict_OracleQuality_Aligned verifies oracle_quality
+// {"verdict":"aligned"} maps verbatim (oracle-adequacy reviewer).
+func TestParseVerdict_OracleQuality_Aligned(t *testing.T) {
+	json := `{"verdict":"aligned","confidence":0.9,"issues":[],"recommendations":["keep pass@k"],"reasoning":"oracle adequate"}`
+	if got := parseVerdict("oracle_quality", json, 0.9); got != "aligned" {
+		t.Errorf("oracle_quality aligned: got %q, want %q", got, "aligned")
+	}
+}
+
+// TestParseVerdict_OracleQuality_Drift verifies oracle_quality
+// {"verdict":"drift_detected"} maps verbatim.
+func TestParseVerdict_OracleQuality_Drift(t *testing.T) {
+	json := `{"verdict":"drift_detected","confidence":0.7,"issues":["single-sample assert on LLM output"],"recommendations":["pass@k>=10"],"reasoning":"non-deterministic oracle"}`
+	if got := parseVerdict("oracle_quality", json, 0.7); got != "drift_detected" {
+		t.Errorf("oracle_quality drift_detected: got %q, want %q", got, "drift_detected")
+	}
+}
+
+// TestDefaultSystemForEval_TestingTypes verifies the v2.15.0 eval types
+// get a non-empty, JSON-mode system prompt (the LLM must stay in
+// JSON-output mode for downstream parsing).
+func TestDefaultSystemForEval_TestingTypes(t *testing.T) {
+	types := []string{
+		"spec_test_alignment",
+		"mutation_score_check",
+		"test_quality_review",
+		"security_coverage",
+		"resilience_check",
+		"oracle_quality",
+	}
+	for _, et := range types {
+		s := defaultSystemForEval(et)
+		if s == "" {
+			t.Errorf("defaultSystemForEval(%q) returned empty", et)
+		}
+		if !strings.Contains(s, "Schema:") {
+			t.Errorf("defaultSystemForEval(%q) missing JSON Schema instruction", et)
+		}
+	}
+}
+
+// TestJudgeTimeoutMultipliers_TestingTypes verifies the v2.15.0 eval
+// types have a timeout multiplier (default 1.0 when unset — but the
+// Fase 2 contract requires explicit entries).
+func TestJudgeTimeoutMultipliers_TestingTypes(t *testing.T) {
+	types := []string{
+		"spec_test_alignment",
+		"mutation_score_check",
+		"test_quality_review",
+		"security_coverage",
+		"resilience_check",
+		"oracle_quality",
+	}
+	for _, et := range types {
+		if m := judgeTimeoutMultipliers[et]; m <= 0 {
+			t.Errorf("judgeTimeoutMultipliers[%q] missing (got %v)", et, m)
+		}
+	}
+}

@@ -652,6 +652,12 @@ func parseDriftVerdict(verdictJSON string, confidence float32) string {
 //	grounding_check        {"grounded":true|false}                               → true=aligned
 //	pii_detect             {"pii_found":true|false}                              → false=aligned
 //	prompt_injection_scan  {"injection_found":true|false}                        → false=aligned
+//	spec_test_alignment    {"alignment":0.0-1.0}                                 → >=0.7=aligned (M6)
+//	mutation_score_check   {"pass":true|false}                                   → true=aligned (M1)
+//	security_coverage      {"coverage":0.0-1.0}                                  → >=0.8=aligned (M7)
+//	resilience_check       {"passed":true|false}                                 → true=aligned (M8)
+//	test_quality_review    {"verdict":"aligned"|"drift_detected"|"needs_human"}  → verbatim
+//	oracle_quality         {"verdict":"aligned"|"drift_detected"|"needs_human"}  → verbatim
 //
 // confidence < 0.5 always returns "needs_human" regardless of the LLM's
 // verdict — that's the floor at which we trust the LLM-as-judge.
@@ -705,6 +711,44 @@ func parseVerdict(evalType, verdictJSON string, confidence float32) string {
 				case "non_compliant":
 					return "drift_detected"
 				}
+			}
+		case "spec_test_alignment":
+			// M6 — alignment = tests_verifying_spec_claims / spec_claims.
+			// >= 0.7 passes (target 1.0 for published artifacts; the
+			// judge reports missing claims so a 0.85 with one missing
+			// claim surfaces as drift, not aligned).
+			if a, ok := numericBool(v, "alignment"); ok {
+				if a >= 0.7 {
+					return "aligned"
+				}
+				return "drift_detected"
+			}
+		case "mutation_score_check":
+			// M1 — mutation_score = mutants_killed / total_mutants.
+			// The judge emits "pass" (score >= threshold). pass=true → aligned.
+			if pass, ok := v["pass"].(bool); ok {
+				if pass {
+					return "aligned"
+				}
+				return "drift_detected"
+			}
+		case "security_coverage":
+			// M7 — security_coverage = owasp_vectors_with_tests / total.
+			// >= 0.8 passes (target 1.0 for all applicable vectors).
+			if c, ok := numericBool(v, "coverage"); ok {
+				if c >= 0.8 {
+					return "aligned"
+				}
+				return "drift_detected"
+			}
+		case "resilience_check":
+			// M8 — resilience_score = chaos_experiments_passed / run.
+			// passed=true → aligned (target >= 0.90).
+			if passed, ok := v["passed"].(bool); ok {
+				if passed {
+					return "aligned"
+				}
+				return "drift_detected"
 			}
 		}
 		// Generic `verdict` string shape (drift_judge, mindset_quality,
@@ -761,6 +805,33 @@ func parseVerdict(evalType, verdictJSON string, confidence float32) string {
 		return "aligned"
 	}
 	return "drift_detected"
+}
+
+// numericBool reads a float field from a map[string]any (the shape
+// json.Unmarshal produces). Accepts float64 (the JSON default),
+// json.Number, and int (for tests constructing the map by hand).
+// Returns ok=false when the field is absent or not numeric.
+func numericBool(v map[string]any, key string) (float64, bool) {
+	raw, ok := v[key]
+	if !ok {
+		return 0, false
+	}
+	switch n := raw.(type) {
+	case float64:
+		return n, true
+	case json.Number:
+		f, err := n.Float64()
+		if err != nil {
+			return 0, false
+		}
+		return f, true
+	case int:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	default:
+		return 0, false
+	}
 }
 
 // nextActionForVerdict maps a verdict to a NextAction string the

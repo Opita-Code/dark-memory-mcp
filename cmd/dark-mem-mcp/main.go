@@ -43,6 +43,19 @@ func main() {
 		os.Exit(1)
 	}
 	bootState := srv.BootState()
+
+	// Fase 2 (v2.15.0): register the dark-research MCP peer as a
+	// research backend so dark_memory_research_topic returns real
+	// OSINT items instead of 0. OPT-IN: NewMCPResearchBackend
+	// returns nil when DARK_RESEARCH_MCP_BIN (or the canonical
+	// install location) doesn't resolve — research_topic then
+	// degrades gracefully to 0 items exactly as before.
+	if rb := orchestration.NewMCPResearchBackend(); rb != nil {
+		bootState.Orchestrator.WithBackends(rb)
+		fmt.Fprintf(os.Stderr, "dark-mem-mcp: research backend registered: %s (bin=%s)\n", rb.Name(), rb.BinPath)
+	} else {
+		fmt.Fprintf(os.Stderr, "dark-mem-mcp: research backend NOT registered (dark-research-mcp binary not found; set DARK_RESEARCH_MCP_BIN)\n")
+	}
 	// Stop the sweeper BEFORE srv.Close() — order matters per
 	// lifecycle.Shutdown step ordering.
 	defer bootState.StopSweeper()

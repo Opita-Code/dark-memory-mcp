@@ -24,12 +24,12 @@ import (
 func RegisterJudge(reg *Registry, orch *orchestration.Orchestrator, st store.Store) {
 	// judge — wraps O5 Judge orchestrator (single-sample).
 	reg.Add(BindOrchestrator("judge",
-		"Run a single LLM-as-judge verdict on content. Eval types: drift_judge, brand_match, compliance_check, pii_detect, prompt_injection_scan, grounding_check. v2.4.2: brand_match + compliance_check consult prior agent_memory decisions/findings (filtered by resolved agent_id); pass no_enrich=true to opt out.",
+		"Run a single LLM-as-judge verdict on content. Eval types: drift_judge, brand_match, compliance_check, pii_detect, prompt_injection_scan, grounding_check, mindset_compose, mindset_quality, spec_test_alignment, mutation_score_check, test_quality_review, security_coverage, resilience_check, oracle_quality. v2.4.2: brand_match + compliance_check consult prior agent_memory decisions/findings (filtered by resolved agent_id); pass no_enrich=true to opt out.",
 		MustJSONSchema(map[string]any{
 			"type":     "object",
 			"required": []string{"eval_type", "content"},
 			"properties": map[string]any{
-				"eval_type":   map[string]any{"type": "string", "enum": []string{"drift_judge", "brand_match", "compliance_check", "pii_detect", "prompt_injection_scan", "grounding_check", "mindset_compose", "mindset_quality"}},
+				"eval_type":   map[string]any{"type": "string", "enum": []string{"drift_judge", "brand_match", "compliance_check", "pii_detect", "prompt_injection_scan", "grounding_check", "mindset_compose", "mindset_quality", "spec_test_alignment", "mutation_score_check", "test_quality_review", "security_coverage", "resilience_check", "oracle_quality"}},
 				"target_type": map[string]any{"type": "string"},
 				"target_id":   map[string]any{"type": "string"},
 				"content":     map[string]any{"type": "string"},
