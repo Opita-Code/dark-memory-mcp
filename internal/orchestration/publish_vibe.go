@@ -83,6 +83,15 @@ type PublishVibeInput struct {
 	// bool zero value would otherwise default to false and surprise
 	// callers who don't set the field.
 	AutoDriftCheck *bool  `json:"auto_drift_check,omitempty"`
+	// AsyncDriftCheck (v2.14.0, spec 998 p1): when true, drift_judge
+	// (and brand_match + compliance_check) run in a BACKGROUND goroutine
+	// and PublishVibe returns immediately with verdict="pending" +
+	// next_action="poll". The operator polls pipeline_status for the
+	// final verdict. This fixes the sync-path UX where the MCP call
+	// blocked 10-30s+ on the LLM judge (the root reason we raised the
+	// opencode MCP timeout to 120s). Default false = legacy synchronous
+	// behavior (backward compatible).
+	AsyncDriftCheck bool `json:"async_drift_check,omitempty"`
 	SessionID      string `json:"session_id,omitempty"` // recorded on the artifact for INV-2
 	// AgentID (v2.4.1) is the Mem0 agent_id (LLM identity) that
 	// owns this artifact. Optional; resolved with priority
@@ -103,9 +112,9 @@ type PublishResult struct {
 	DriftID          int64   `json:"drift_id,omitempty"`
 	BrandEvalID      int64   `json:"brand_eval_id,omitempty"`
 	ComplianceEvalID int64   `json:"compliance_eval_id,omitempty"`
-	Verdict          string  `json:"verdict"`     // aligned | drift_detected | needs_human | skipped
+	Verdict          string  `json:"verdict"`     // aligned | drift_detected | needs_human | skipped | pending
 	Confidence       float32 `json:"confidence"`  // 0..1; 0 if skipped or no-LLM
-	NextAction       string  `json:"next_action"` // publish | reconcile | human_gate
+	NextAction       string  `json:"next_action"` // publish | reconcile | human_gate | poll
 	Reasoning        string  `json:"reasoning"`   // human-readable explanation
 	// ActiveAgentID (v2.4.1) echoes the resolved agent_id used for
 	// drift_judge enrichment. Empty when no agent_id is configured.
@@ -120,6 +129,10 @@ type PublishResult struct {
 	// spec id are closed). Empty when no todos existed or verdict !=
 	// aligned.
 	AutoArchivedTodoIDs []int64 `json:"auto_archived_todo_ids,omitempty"`
+	// Async (v2.14.0, spec 998 p1): true when the drift check is
+	// running in the background and Verdict="pending". The operator
+	// polls pipeline_status(artifact_id) for the final verdict.
+	Async bool `json:"async,omitempty"`
 }
 
 // PublishVibe is the canonical publish entry point. See package doc.
@@ -209,113 +222,53 @@ func (o *Orchestrator) PublishVibe(ctx context.Context, in PublishVibeInput) (*P
 	activeAgentID := o.resolveActiveAgentID(ctx, in.AgentID)
 	result.ActiveAgentID = activeAgentID
 
-	// 4. Optional brand_match. Only runs if both BrandID and Text are
-	// set. Judge failures (incl. canary rejection) are recorded in
-	// the drift reasoning but do not abort publish — the artifact is
-	// already persisted; the brand issue is reported alongside.
-	var brandEvalID int64
-	if in.Artifact.BrandID != "" && in.Artifact.Text != "" {
-		out, err := o.Judge(ctx, JudgeInput{
-			EvalType:   "brand_match",
-			TargetType: "artifact",
-			TargetID:   fmt.Sprintf("artifact_%d", artifactID),
-			Content:    in.Artifact.Text,
-		})
-		if err != nil {
-			result.Reasoning = fmt.Sprintf("brand_match failed: %v", err)
-			// v2.11.0 (spec 757): was appended to Reasoning only (a
-			// silent-ish discard); now also captured durably. LLM
-			// domain — the judge call itself failed.
-			o.RecordError(ctx, "publish_vibe", in.SessionID, fmt.Errorf("brand_match: %w", err), errorobs.SeverityWarn)
-		} else {
-			brandEvalID = out.EvaluationID
-			if out.Confidence < 0.5 {
-				result.Reasoning = fmt.Sprintf("brand_match low confidence (%f); drift_verdict will fall back to needs_human", out.Confidence)
-			}
-		}
-	}
-	result.BrandEvalID = brandEvalID
-
-	// 5. Optional compliance_check. Same pattern.
-	var compEvalID int64
-	if in.Artifact.Jurisdiction != "" && in.Artifact.Text != "" {
-		out, err := o.Judge(ctx, JudgeInput{
-			EvalType:   "compliance_check",
-			TargetType: "artifact",
-			TargetID:   fmt.Sprintf("artifact_%d", artifactID),
-			Content:    in.Artifact.Text,
-		})
-		if err != nil {
-			result.Reasoning = result.Reasoning + "; compliance_check failed: " + err.Error()
-			// v2.11.0 (spec 757): durable capture (was string-only).
-			o.RecordError(ctx, "publish_vibe", in.SessionID, fmt.Errorf("compliance_check: %w", err), errorobs.SeverityWarn)
-		} else {
-			compEvalID = out.EvaluationID
-		}
-	}
-	result.ComplianceEvalID = compEvalID
-
-	// 6. Drift judge. This is the canonical "did the artifact match
-	// the spec" verdict. AutoDriftCheck=false skips the LLM call and
-	// records verdict="skipped"; AutoDriftCheck=true (default) tries
-	// to call the LLM, and if unavailable records drift_detected with
-	// reasoning explaining the skip.
 	autoCheck := true
 	if in.AutoDriftCheck != nil {
 		autoCheck = *in.AutoDriftCheck
 	}
-	if !autoCheck {
-		result.Verdict = "skipped"
-		result.Confidence = 0
-		result.NextAction = "publish" // operator manually reviews
-		result.Reasoning = "auto_drift_check=false; operator reviews manually"
-	} else if in.Artifact.Text == "" {
-		result.Verdict = "skipped"
-		result.Confidence = 0
-		result.NextAction = "publish"
-		result.Reasoning = "no artifact text; drift_judge requires text body"
-	} else {
-		// v2.4.0 memory-RAG: prepend agent_memory hits to the
-		// drift_judge content so the judge sees relevant prior
-		// decisions / findings when scoring the artifact. v2.4.1:
-		// filtered by activeAgentID so the judge only sees prior
-		// context authored by the same agent (no cross-agent
-		// leakage when multiple LLMs share a project).
-		// Best-effort: errors are swallowed — drift_judge runs even
-		// if agent_memory is broken (the data-plane should never
-		// break the judge path; that's the principle that keeps
-		// the VLP integration non-blocking).
-		enriched := o.enrichWithAgentMemory(ctx, in.Artifact.Text, []string{"decision", "finding"}, activeAgentID, 5)
-		judgeOut, jerr := o.Judge(ctx, JudgeInput{
-			EvalType:   "drift_judge",
-			TargetType: "artifact",
-			TargetID:   fmt.Sprintf("artifact_%d", artifactID),
-			Content:    enriched,
-		})
-		if jerr != nil {
-			// v2.11.0 (spec 757) T6 — drift/error conflation fix:
-			// previously an LLM failure produced verdict="drift_detected"
-			// (the SAME verdict as genuine semantic drift), so the
-			// operator believed the artifact drifted when the judge
-			// simply never ran. Now:
-			//   - verdict = "needs_human" (NO verdict was produced —
-			//     the infra failed, not the artifact)
-			//   - error captured durably in the Error Observatory
-			//     (domain=llm)
-			//   - NextAction stays "human_gate" (operator retries with
-			//     a key or runs manual drift check)
-			o.RecordError(ctx, "publish_vibe", in.SessionID, fmt.Errorf("drift_judge: %w", jerr), errorobs.SeverityError)
-			result.Verdict = "needs_human"
-			result.Confidence = 0
-			result.NextAction = "human_gate"
-			result.Reasoning = fmt.Sprintf("drift_judge unavailable (LLM infra failure, not drift): %v", jerr)
-		} else {
-			result.Verdict = parseDriftVerdict(judgeOut.VerdictJSON, judgeOut.Confidence)
-			result.Confidence = judgeOut.Confidence
-			result.NextAction = nextActionForVerdict(result.Verdict)
-			result.Reasoning = "drift_judge ok: " + judgeOut.VerdictJSON
+
+	// v2.14.0 (spec 998 p1): AsyncDriftCheck=true runs the judge
+	// pipeline in a background goroutine and returns immediately with
+	// verdict="pending" + next_action="poll". The drift report row is
+	// persisted as "pending" now (so pipeline_status has something to
+	// poll), and the background judge updates it in place when done.
+	if in.AsyncDriftCheck {
+		result.Async = true
+		result.Verdict = "pending"
+		result.NextAction = "poll"
+		result.Reasoning = "async drift check running; poll pipeline_status(artifact_id=" + fmt.Sprintf("%d", artifactID) + ")"
+		// Persist the pending drift report first so pipeline_status
+		// returns a row immediately (not nil).
+		dPending := &vibeflow.DriftReport{
+			ArtifactID:     artifactID,
+			SpecID:         specID,
+			Verdict:        "pending",
+			JudgeReasoning: "async drift check started; awaiting background judge",
+			CreatedAt:      o.now().Format(time.RFC3339Nano),
 		}
+		pendingDriftID, derr := o.Store.SaveDriftReport(ctx, wc, dPending)
+		if derr != nil {
+			o.RecordError(ctx, "publish_vibe", in.SessionID, fmt.Errorf("async drift_log save: %w", derr), errorobs.SeverityWarn)
+			result.Reasoning = result.Reasoning + "; pending drift_log save failed: " + derr.Error()
+		} else {
+			result.DriftID = pendingDriftID
+		}
+		// Fire the background judge. context.Background detaches from
+		// the MCP call returning (the request ctx would be cancelled).
+		o.runAsyncJudgePipeline(ctx, wc, in, specID, artifactID, activeAgentID, autoCheck, pendingDriftID, result)
+		return result, nil
 	}
+
+	// 4-6. brand_match (optional) + compliance_check (optional) +
+	// drift_judge (the canonical verdict). Run through the shared
+	// runJudgePipeline so the sync path and the async background
+	// goroutine execute IDENTICAL judge logic.
+	verdict, confidence, reasoning, brandEvalID, compEvalID := o.runJudgePipeline(ctx, wc, in, specID, artifactID, activeAgentID, autoCheck)
+	result.Verdict = verdict
+	result.Confidence = confidence
+	result.Reasoning = reasoning
+	result.BrandEvalID = brandEvalID
+	result.ComplianceEvalID = compEvalID
 
 	// 7. Persist drift_log (always; even on skipped/no-LLM).
 	d := &vibeflow.DriftReport{
@@ -373,6 +326,175 @@ func (o *Orchestrator) PublishVibe(ctx context.Context, in PublishVibeInput) (*P
 	}
 
 	return result, nil
+}
+
+// runJudgePipeline executes the optional brand_match + compliance_check
+// + drift_judge judges and returns the canonical verdict triad
+// (verdict, confidence, reasoning) plus the eval IDs of the optional
+// judges. Shared by the sync publish path and the async background
+// goroutine so both execute IDENTICAL judge logic.
+//
+// Contract (unchanged from pre-v2.14.0 sync behavior):
+//   - autoCheck=false → skipped (no LLM calls).
+//   - no artifact text → skipped (drift_judge requires text).
+//   - LLM failure → needs_human (infra, not drift) + Error Observatory.
+//   - low confidence (<0.5) from any judge → needs_human fallback.
+func (o *Orchestrator) runJudgePipeline(
+	ctx context.Context,
+	wc store.WriteContext,
+	in PublishVibeInput,
+	specID, artifactID int64,
+	activeAgentID string,
+	autoCheck bool,
+) (verdict string, confidence float32, reasoning string, brandEvalID, compEvalID int64) {
+	reasoning = "drift check pending"
+
+	// Optional brand_match.
+	if in.Artifact.BrandID != "" && in.Artifact.Text != "" {
+		out, err := o.Judge(ctx, JudgeInput{
+			EvalType:   "brand_match",
+			TargetType: "artifact",
+			TargetID:   fmt.Sprintf("artifact_%d", artifactID),
+			Content:    in.Artifact.Text,
+		})
+		if err != nil {
+			reasoning = fmt.Sprintf("brand_match failed: %v", err)
+			o.RecordError(ctx, "publish_vibe", in.SessionID, fmt.Errorf("brand_match: %w", err), errorobs.SeverityWarn)
+		} else {
+			brandEvalID = out.EvaluationID
+			if out.Confidence < 0.5 {
+				reasoning = fmt.Sprintf("brand_match low confidence (%f); drift_verdict will fall back to needs_human", out.Confidence)
+			}
+		}
+	}
+
+	// Optional compliance_check.
+	if in.Artifact.Jurisdiction != "" && in.Artifact.Text != "" {
+		out, err := o.Judge(ctx, JudgeInput{
+			EvalType:   "compliance_check",
+			TargetType: "artifact",
+			TargetID:   fmt.Sprintf("artifact_%d", artifactID),
+			Content:    in.Artifact.Text,
+		})
+		if err != nil {
+			reasoning = reasoning + "; compliance_check failed: " + err.Error()
+			o.RecordError(ctx, "publish_vibe", in.SessionID, fmt.Errorf("compliance_check: %w", err), errorobs.SeverityWarn)
+		} else {
+			compEvalID = out.EvaluationID
+		}
+	}
+
+	// Canonical drift_judge.
+	if !autoCheck {
+		return "skipped", 0, "auto_drift_check=false; operator reviews manually", brandEvalID, compEvalID
+	}
+	if in.Artifact.Text == "" {
+		return "skipped", 0, "no artifact text; drift_judge requires text body", brandEvalID, compEvalID
+	}
+	enriched := o.enrichWithAgentMemory(ctx, in.Artifact.Text, []string{"decision", "finding"}, activeAgentID, 5)
+	judgeOut, jerr := o.Judge(ctx, JudgeInput{
+		EvalType:   "drift_judge",
+		TargetType: "artifact",
+		TargetID:   fmt.Sprintf("artifact_%d", artifactID),
+		Content:    enriched,
+	})
+	if jerr != nil {
+		o.RecordError(ctx, "publish_vibe", in.SessionID, fmt.Errorf("drift_judge: %w", jerr), errorobs.SeverityError)
+		return "needs_human", 0, fmt.Sprintf("drift_judge unavailable (LLM infra failure, not drift): %v", jerr), brandEvalID, compEvalID
+	}
+	v := parseDriftVerdict(judgeOut.VerdictJSON, judgeOut.Confidence)
+	return v, judgeOut.Confidence, "drift_judge ok: " + judgeOut.VerdictJSON, brandEvalID, compEvalID
+}
+
+// runAsyncJudgePipeline is the v2.14.0 (spec 998 p1) background drift
+// judge. It runs the SAME runJudgePipeline as the sync path but:
+//   - detached from the request ctx (context.Background + timeout) so
+//     it survives the MCP call returning;
+//   - updates the pending drift report row in place via
+//     UpdateDriftReportVerdict;
+//   - sets artifact validation status;
+//   - emits the VLP drift_log event with the final verdict (the VLP
+//     sits at drift_judging while the judge runs — correct semantics);
+//   - runs the A1 auto-save decision + A4 auto-archive todos hooks.
+//
+// Failure isolation: any panic or judge error is recorded in the Error
+// Observatory and the drift report is updated to needs_human so the
+// operator never sees a stuck "pending". The goroutine NEVER fails the
+// original publish call (the artifact + pending drift row are already
+// persisted when this runs).
+func (o *Orchestrator) runAsyncJudgePipeline(
+	ctx context.Context,
+	wc store.WriteContext,
+	in PublishVibeInput,
+	specID, artifactID int64,
+	activeAgentID string,
+	autoCheck bool,
+	pendingDriftID int64,
+	result *PublishResult,
+) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				o.RecordError(context.Background(), "publish_vibe_async", in.SessionID, fmt.Errorf("async drift_judge panic: %v", r), errorobs.SeverityError)
+				if pendingDriftID > 0 {
+					_ = o.Store.UpdateDriftReportVerdict(context.Background(), wc, pendingDriftID, "needs_human", "async drift_judge panic: "+fmt.Sprint(r))
+				}
+			}
+		}()
+		// Detach from the caller's request context: the MCP call is
+		// returning right now and its ctx will be cancelled. Bound the
+		// background work with its own timeout so a wedged LLM cannot
+		// leak a goroutine forever. 120s matches defaultJudgeTimeoutMS
+		// (base per-attempt timeout) — one judge round trip with retries.
+		bgCtx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+		defer cancel()
+
+		v, conf, reasoning, _, _ := o.runJudgePipeline(bgCtx, wc, in, specID, artifactID, activeAgentID, autoCheck)
+
+		// Update the pending drift report in place.
+		if pendingDriftID > 0 {
+			if err := o.Store.UpdateDriftReportVerdict(bgCtx, wc, pendingDriftID, v, reasoning); err != nil {
+				o.RecordError(bgCtx, "publish_vibe_async", in.SessionID, fmt.Errorf("update drift report verdict: %w", err), errorobs.SeverityWarn)
+			}
+		}
+
+		// Set artifact validation status (same mapping as sync).
+		validationWC := wc
+		switch v {
+		case "aligned":
+			if err := o.Store.SetArtifactValidation(bgCtx, validationWC, artifactID, "passed"); err != nil {
+				o.RecordError(bgCtx, "publish_vibe_async", in.SessionID, fmt.Errorf("set validation=passed: %w", err), errorobs.SeverityWarn)
+			}
+		case "skipped":
+			// leave pending; operator reviews.
+		default:
+			if err := o.Store.SetArtifactValidation(bgCtx, validationWC, artifactID, "failed"); err != nil {
+				o.RecordError(bgCtx, "publish_vibe_async", in.SessionID, fmt.Errorf("set validation=failed: %w", err), errorobs.SeverityWarn)
+			}
+		}
+
+		// Emit the VLP drift_log with the final verdict — the loop
+		// advances drift_judging → complete | needs_human | spec_active.
+		o.emitVLPWithVerdict(bgCtx, in.SessionID, "orchestrator_publish_vibe_async", vlp.EventDriftLog, verdictToVLP(v))
+
+		// A1 + A4 hooks (same as sync aligned path).
+		if v280Enabled() && v == "aligned" {
+			// Rebuild a result with the final verdict for the hooks.
+			hooked := &PublishResult{
+				Verdict:     v,
+				Confidence:  conf,
+				Reasoning:   reasoning,
+				SpecID:      specID,
+				ArtifactID:  artifactID,
+				DriftID:     pendingDriftID,
+				ActiveAgentID: activeAgentID,
+			}
+			if in.Artifact.AutoSaveDecision {
+				o.autoSaveDecisionOnAligned(bgCtx, wc, specID, artifactID, in, hooked, activeAgentID)
+			}
+			o.autoArchiveSpecTodosOnAligned(bgCtx, wc, specID, hooked)
+		}
+	}()
 }
 
 // autoSaveDecisionOnAligned is the A1 hook. When drift_judge says the

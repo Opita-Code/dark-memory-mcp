@@ -6,6 +6,56 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [2.14.0] — 2026-08-11 — async drift_judge (vibe_publish no bloquea)
+
+**El vibe-loop ya no bloquea la llamada MCP durante el LLM judge.**
+`vibe_publish` corría `drift_judge` (y `brand_match` + `compliance_check`)
+síncronamente: 10-30s+ esperando al LLM por llamada. Fue la razón raíz de
+por qué el harness subió el timeout MCP de opencode a 120s
+(opencode.jsonc `mcp.dark-memory.timeout = 120000`). Ahora hay un flag
+opt-in `async_drift_check` que devuelve la llamada al instante con
+`verdict="pending"` + `next_action="poll"`, y el judge corre en un
+goroutine detached que actualiza el drift report in place. El operador
+hace polling con `pipeline_status(artifact_id)` — la semántica del loop
+se preserva (VLP avanza `drift_judging → complete/needs_human/spec_active`
+cuando el background termina).
+
+### Añadido
+
+- **PublishVibeInput.AsyncDriftCheck (bool, default false).** Opt-in —
+  el path sync (backward compatible) queda intacto. Con `true`:
+  - PublishVibe persiste spec + artifact + drift report `verdict="pending"`
+    y retorna inmediatamente (`async=true`, `next_action="poll"`).
+  - Un goroutine detached (`context.Background` + timeout 120s) corre el
+    MISMO `runJudgePipeline` que el path sync (brand + compliance +
+    drift, con memory-RAG y parse de verdict idénticos).
+  - Al terminar: `UpdateDriftReportVerdict` (nuevo método store)
+    actualiza la fila pending in place, se setea el validation status
+    del artifact, se emite el VLP `drift_log` con el veredicto final, y
+    corren los hooks A1 (auto-save decision) + A4 (auto-archive todos).
+  - Failure isolation: panic o error del judge → drift report pasa a
+    `needs_human` (nunca un "pending" colgado) + Error Observatory.
+- **`UpdateDriftReportVerdict` en store interface + sqlite (+ notImpl
+  postgres).** UPDATE in place de verdict/judge_reasoning/reconciled_at
+  con audit INV-1 y scope INV-7.
+- **`async_drift_check` en el JSON Schema de `vibe_publish`.**
+- **Tests (publish_vibe_async_test.go):** retorno pending inmediato (<2s
+  con no-LLM), transición background pending → needs_human, y
+  async+auto_drift_check=false → skipped. Suite completa verde.
+
+### Motivo (mem #650 / spec 998 p1)
+
+La llamada síncrona `o.Judge(...)` dentro de `PublishVibe` bloqueaba el
+transport MCP hasta que el LLM respondía. En el harness actual
+(DEEPSEEK_API_KEY vía provider catalog) cada drift_judge toma ~10-30s;
+con `brand_match` + `compliance_check` opcionales encima, la llamada
+superaba los timeouts del harness y forzaba workarounds (timeout 120s).
+El async path devuelve el control al agente en <5ms; el agente puede
+seguir trabajando y consultar `pipeline_status` cuando necesite el
+veredicto.
+
+---
+
 ## [2.13.1] — 2026-08-10 — parche de integridad de constitution
 
 **Dos bugs de integridad que generaban falsos positivos de drift y rotura de tool.**

@@ -1531,6 +1531,9 @@ func (s *Store) SetArtifactValidation(ctx context.Context, wc store.WriteContext
 func (s *Store) SaveDriftReport(ctx context.Context, wc store.WriteContext, d *vibeflow.DriftReport) (int64, error) {
 	return 0, notImpl("SaveDriftReport")
 }
+func (s *Store) UpdateDriftReportVerdict(ctx context.Context, wc store.WriteContext, driftID int64, verdict, judgeReasoning string) error {
+	return notImpl("UpdateDriftReportVerdict")
+}
 func (s *Store) LatestDriftForArtifact(ctx context.Context, artifactID int64) (*vibeflow.DriftReport, error) {
 	return nil, notImpl("LatestDriftForArtifact")
 }

@@ -102,7 +102,13 @@ func RegisterVibe(reg *Registry, orch *orchestration.Orchestrator, st store.Stor
 					},
 				},
 				"auto_drift_check": map[string]any{"type": "boolean", "description": "Default true. Set false to skip drift_judge."},
-				"session_id":       map[string]any{"type": "string"},
+				// v2.14.0 (spec 998 p1): async_drift_check — when true,
+				// drift_judge (+ brand/compliance) run in a background
+				// goroutine and vibe_publish returns immediately with
+				// verdict="pending" + next_action="poll". Poll
+				// pipeline_status(artifact_id) for the final verdict.
+				"async_drift_check": map[string]any{"type": "boolean", "description": "Default false. When true, drift_judge runs in the background and vibe_publish returns immediately (verdict=pending); poll pipeline_status for the final verdict."},
+				"session_id":        map[string]any{"type": "string"},
 			},
 		}),
 		func(ctx context.Context, in orchestration.PublishVibeInput) (*orchestration.PublishResult, error) {

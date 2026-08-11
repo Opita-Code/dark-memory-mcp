@@ -428,6 +428,12 @@ type Store interface {
 
 	// --- Vibeflow: drift reports ---
 	SaveDriftReport(ctx context.Context, wc WriteContext, d *vibeflow.DriftReport) (int64, error)
+	// UpdateDriftReportVerdict (v2.14.0, spec 998 p1): fill in the final
+	// verdict of an async drift check. The async path persists a drift
+	// report with verdict="pending" at publish time (so pipeline_status
+	// has a row to poll) and the background judge updates it in place
+	// when the LLM verdict lands. Best-effort: no new row, no row churn.
+	UpdateDriftReportVerdict(ctx context.Context, wc WriteContext, driftID int64, verdict, judgeReasoning string) error
 	LatestDriftForArtifact(ctx context.Context, artifactID int64) (*vibeflow.DriftReport, error)
 	ListDriftReports(ctx context.Context, artifactID int64, verdict string, limit int) ([]vibeflow.DriftReport, error)
 

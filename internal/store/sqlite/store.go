@@ -2353,6 +2353,49 @@ func (s *Store) SaveDriftReport(ctx context.Context, wc store.WriteContext, d *v
 	return id, err
 }
 
+// UpdateDriftReportVerdict fills in the final verdict of an async drift
+// check (v2.14.0, spec 998 p1). The async path persists a "pending"
+// drift report at publish time and this method updates it in place when
+// the background judge completes. Requires an active project; updates
+// only rows in the active project (INV-7).
+func (s *Store) UpdateDriftReportVerdict(ctx context.Context, wc store.WriteContext, driftID int64, verdict, judgeReasoning string) error {
+	if err := s.requireProject(); err != nil {
+		return err
+	}
+	projectID := projectIDOrActive(wc.ProjectID, s.ActiveProject()) // capture before locking
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	err := s.runInTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx,
+			`UPDATE vibe_drift_reports
+			 SET verdict = ?, judge_reasoning = ?, reconciled_at = COALESCE(reconciled_at, ?)
+			 WHERE id = ? AND project_id = ?`,
+			verdict, nullStr(judgeReasoning), now, driftID, projectID)
+		if err != nil {
+			return err
+		}
+		affected, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if affected == 0 {
+			return fmt.Errorf("drift report %d not found in project %s", driftID, projectID)
+		}
+		return s.recordWriteLockedTx(ctx, tx, audit.WriteEvent{
+			TableName:       "vibe_drift_reports",
+			RowID:           driftID,
+			Actor:           wc.Actor,
+			SessionID:       wc.SessionID,
+			WritePath:       wc.WritePath,
+			ConstitutionID:  wc.ConstitutionID,
+			ConstitutionVer: wc.ConstitutionVer,
+			CreatedAt:       now,
+		}, "")
+	})
+	return err
+}
+
 func (s *Store) LatestDriftForArtifact(ctx context.Context, artifactID int64) (*vibeflow.DriftReport, error) {
 	if err := s.requireProject(); err != nil {
 		return nil, err
