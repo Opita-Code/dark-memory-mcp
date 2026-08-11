@@ -38,6 +38,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -113,7 +114,17 @@ func (b *MCPResearchBackend) Research(ctx context.Context, query, intent string)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, b.BinPath)
-	cmd.Env = os.Environ() // inherit BRAVE_API_KEY, DARK_RESEARCH_CONFIG, ...
+	// Isolate the peer's DB from the SHARED dark.db. When opencode runs
+	// dark-research as a peer MCP, an instance already holds
+	// C:\Users\Nico\AppData\Local\dark-agents\dark.db. If our spawned
+	// peer inherits DARK_DB (os.Environ) it opens the SAME file →
+	// SQLite lock contention on Windows → SaveRun fails ErrInternal.
+	// Point the spawned peer at its OWN temp DB: the research items we
+	// need come back over the MCP wire (tools/call result), not from
+	// the peer's store, so the peer's DB is only needed for its own
+	// boot + cache bookkeeping.
+	cmd.Env = withoutEnv(os.Environ(), "DARK_DB")
+	cmd.Env = append(cmd.Env, "DARK_DB="+b.peerDBPath())
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, fmt.Errorf("mcp backend: stdin pipe: %w", err)
@@ -357,4 +368,34 @@ func mapDarkResearchResult(text string) ([]research.Item, error) {
 		items = append(items, item)
 	}
 	return items, nil
+}
+
+// peerDBPath returns the isolated DB path for the spawned peer. The
+// peer only needs its own store for boot/cache bookkeeping; the
+// actual research items arrive over the MCP wire. Reuses the parent's
+// DB directory so temp DBs are colocated (same volume, no cross-drive
+// rename surprises) but NOT the shared dark.db file.
+func (b *MCPResearchBackend) peerDBPath() string {
+	base := os.TempDir()
+	if parent := os.Getenv("DARK_DB"); parent != "" {
+		if dir := filepath.Dir(parent); dir != "" {
+			base = dir
+		}
+	}
+	return filepath.Join(base, "dark-research-peer-"+strconv.FormatInt(time.Now().UnixNano(), 10)+".db")
+}
+
+// withoutEnv returns a copy of env with the given key removed (first
+// occurrence; the effective value in exec semantics is the last, so we
+// remove ALL occurrences to be safe).
+func withoutEnv(env []string, key string) []string {
+	prefix := key + "="
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		if strings.HasPrefix(kv, prefix) {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
 }
