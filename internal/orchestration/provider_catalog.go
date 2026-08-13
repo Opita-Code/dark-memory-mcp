@@ -120,6 +120,13 @@ var providerCatalog = []ProviderSpec{
 		ID:               "minimax",
 		Region:           RegionChina,
 		Dialect:          DialectOpenAI,
+		// 2026-08-12 (operator directive): revert from api.minimaxi.com (CN regional,
+		// Token Plan quota exhausted HTTP 429) to api.minimax.io (international, used
+		// by the dark-research MCP harness via SDD_LLM_BASE_URL=https://api.minimax.io/anthropic).
+		// The two endpoints share the same MINIMAX_API_KEY but have separate quotas;
+		// opencode's quota is intact while the .com.cn region's was exhausted after
+		// heavy drift_judge use. To use the .com.cn endpoint instead (e.g. for
+		// operator's specific need), set DARK_JUDGE_BASE_URL_OVERRIDE env var.
 		BaseURL:          "https://api.minimax.io/v1",
 		AnthropicBaseURL: "https://api.minimax.io/anthropic",
 		EnvKey:           "MINIMAX_API_KEY",
