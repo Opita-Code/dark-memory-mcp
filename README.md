@@ -22,12 +22,12 @@
 
 [![MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Go 1.25+](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go&logoColor=white)](go.mod)
-[![MCP tools](https://img.shields.io/badge/MCP-52%20canonical%20tools-blueviolet)](#las-52-herramientas)
+[![MCP tools](https://img.shields.io/badge/MCP-53%20canonical%20tools-blueviolet)](#las-53-herramientas)
 [![Schema](https://img.shields.io/badge/schema-v26-success)](#arquitectura)
 [![Install](https://img.shields.io/badge/install-npx%20%40opita--code%2Fdark--memory--mcp-cc3534)](docs/npm-install.md)
 [![Backends](https://img.shields.io/badge/backends-sqlite%20%7C%20postgres-blue)](#arquitectura)
 
-[¿Qué es esto?](#qué-es-esto) · [El problema que resuelve](#el-problema-que-resuelve) · [El vibe-loop](#el-vibe-loop-un-paradigma-nuevo) · [Conceptos clave](#conceptos-clave) · [Quickstart](#quickstart) · [Las 52 herramientas](#las-52-herramientas) · [Camino de aprendizaje](#camino-de-aprendizaje) · [Resolver problemas](#resolver-problemas) · [Contribuir](#contribuir)
+[¿Qué es esto?](#qué-es-esto) · [El problema que resuelve](#el-problema-que-resuelve) · [El vibe-loop](#el-vibe-loop-un-paradigma-nuevo) · [Conceptos clave](#conceptos-clave) · [Quickstart](#quickstart) · [Las 53 herramientas](#las-53-herramientas) · [Camino de aprendizaje](#camino-de-aprendizaje) · [Resolver problemas](#resolver-problemas) · [Contribuir](#contribuir)
 
 </div>
 
@@ -228,7 +228,7 @@ Debe mostrar algo como:
 
 ---
 
-## Las 52 herramientas
+## Las 53 herramientas
 
 Dark Memory expone **52 herramientas** (más 3 extras en modo investigación). El agente las invoca con el prefijo `dark_memory_`. Están agrupadas por 16 oficios:
 
