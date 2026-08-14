@@ -269,6 +269,12 @@ func (o *Orchestrator) PublishVibe(ctx context.Context, in PublishVibeInput) (*P
 	result.Reasoning = reasoning
 	result.BrandEvalID = brandEvalID
 	result.ComplianceEvalID = compEvalID
+	// Map the canonical verdict to the harness-branching hint. The
+	// result struct is initialized to NextAction="human_gate" as a
+	// pessimistic default; without this override the harness can
+	// never tell aligned (publish) from drift_detected (reconcile)
+	// in the sync path. Bug surfaced in pre-existing CI run 31815582636.
+	result.NextAction = nextActionForVerdict(verdict)
 
 	// 7. Persist drift_log (always; even on skipped/no-LLM).
 	d := &vibeflow.DriftReport{
@@ -838,11 +844,16 @@ func numericBool(v map[string]any, key string) (float64, bool) {
 // calling agent can branch on.
 func nextActionForVerdict(v string) string {
 	switch v {
-	case "aligned":
+	case "aligned", "skipped":
+		// aligned = drift_judge says spec satisfied → publish
+		// skipped = AutoDriftCheck=false (no drift check ran) → publish
+		// Both are "no drift detected" outcomes; the harness can proceed.
 		return "publish"
 	case "drift_detected":
 		return "reconcile"
 	default:
+		// needs_human (no LLM, low confidence, or anything else) →
+		// operator must decide.
 		return "human_gate"
 	}
 }

@@ -23,7 +23,7 @@
 [![MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Go 1.25+](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go&logoColor=white)](go.mod)
 [![MCP tools](https://img.shields.io/badge/MCP-52%20canonical%20tools-blueviolet)](#las-52-herramientas)
-[![Schema](https://img.shields.io/badge/schema-v25-success)](#arquitectura)
+[![Schema](https://img.shields.io/badge/schema-v26-success)](#arquitectura)
 [![Install](https://img.shields.io/badge/install-npx%20%40opita--code%2Fdark--memory--mcp-cc3534)](docs/npm-install.md)
 [![Backends](https://img.shields.io/badge/backends-sqlite%20%7C%20postgres-blue)](#arquitectura)
 

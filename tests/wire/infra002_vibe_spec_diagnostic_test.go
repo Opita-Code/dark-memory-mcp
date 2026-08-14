@@ -140,5 +140,11 @@ func TestWire_INFRA002_ParseTasksFieldSurfacesFormAndCause(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Case 3 transport error: %v resp=%s", err, respStr(resp))
 	}
-	checkField(t, "Object-shaped (unknown form)", resp, []string{"unknown form", "{"})
+	// v2.15.2 (INFRA-005, unpushed commit 6b6d939) introduced Form C
+	// (object with tasks key). An object-shaped tasks WITHOUT a
+	// tasks key now lands in Form C's "tasks key missing or empty"
+	// branch — not the legacy "unknown form" path. Update the
+	// accepted substrings to match the new canonical wording while
+	// staying permissive of the legacy fallback.
+	checkField(t, "Object-shaped (Form C or unknown form)", resp, []string{"form c", "unknown form", "{"})
 }

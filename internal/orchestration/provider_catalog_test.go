@@ -65,7 +65,7 @@ func TestProviderCatalog_EndpointsVerified(t *testing.T) {
 		{"openai", "https://api.openai.com/v1", "", "OPENAI_API_KEY", "gpt-5", DialectOpenAI, RegionUS},
 		{"google", "https://generativelanguage.googleapis.com/v1beta/openai/", "", "GEMINI_API_KEY", "gemini-3.6-flash", DialectOpenAI, RegionUS},
 		{"deepseek", "https://api.deepseek.com", "https://api.deepseek.com/anthropic", "DEEPSEEK_API_KEY", "deepseek-v4-flash", DialectOpenAI, RegionChina},
-		{"minimax", "https://api.minimax.io/v1", "https://api.minimax.io/anthropic", "MINIMAX_API_KEY", "MiniMax-M3", DialectOpenAI, RegionChina},
+		{"minimax", "https://api.minimaxi.com/v1", "https://api.minimaxi.com/anthropic", "MINIMAX_API_KEY", "MiniMax-M3", DialectOpenAI, RegionChina},
 		{"zhipu", "https://open.bigmodel.cn/api/paas/v4/", "", "ZAI_API_KEY", "glm-5.2", DialectOpenAI, RegionChina},
 		{"moonshot", "https://api.moonshot.cn/v1", "", "MOONSHOT_API_KEY", "kimi-k3", DialectOpenAI, RegionChina},
 		{"qwen", "https://dashscope.aliyuncs.com/compatible-mode/v1", "https://dashscope.aliyuncs.com/apps/anthropic", "DASHSCOPE_API_KEY", "qwen3.8-max", DialectOpenAI, RegionChina},

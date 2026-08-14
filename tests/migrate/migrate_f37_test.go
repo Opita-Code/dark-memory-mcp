@@ -178,7 +178,7 @@ func TestMigrate_RealDriverSQLite_BrandNewDB_F37(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SchemaVersion: %v", err)
 	}
-	const wantSchemaVersion = 25 // v2.11.0 (spec 757): error_events added
+	const wantSchemaVersion = 26 // v2.15.1 (spec 1011 fix): research_items coexistence added
 	if v != wantSchemaVersion {
 		t.Fatalf("expected schema_version=%d after all migrations applied, got %d", wantSchemaVersion, v)
 	}
