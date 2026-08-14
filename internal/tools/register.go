@@ -115,7 +115,9 @@ func RegisterAll(reg *Registry, orch *orchestration.Orchestrator, st store.Store
 		return nil, fmt.Errorf("tools: RegisterAll: recall.NewSingleton: %w", err)
 	}
 	RegisterRecall(reg, st, safety, src)
-	// JUDGE (3)
+	// JUDGE (4) — v2.17.0: +judge_list_personas (spec 1155) for
+	// enumerating the registered persona registry. The 4 tools are
+	// judge, consensus, judgment_history, judge_list_personas.
 	RegisterJudge(reg, orch, st)
 	// POLICY (2)
 	RegisterPolicy(reg, orch, st)

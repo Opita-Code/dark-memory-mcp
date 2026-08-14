@@ -342,7 +342,7 @@ var canonicalNamespaces = []NamespaceGroup{
 	},
 	{
 		Name:  "JUDGE",
-		Tools: []string{"judge", "consensus", "judgment_history"},
+		Tools: []string{"judge", "consensus", "judgment_history", "judge_list_personas"},
 	},
 	{
 		Name:  "POLICY",
