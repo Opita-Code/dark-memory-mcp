@@ -67,8 +67,7 @@ func main() {
 // allowSpawn is true, spawns the daemon binary and retries. Returns
 // the connected net.Conn.
 func connectWithOptionalSpawn(socketPath, daemonBin string, allowSpawn bool) (net.Conn, error) {
-	d := net.Dialer{Timeout: 5 * time.Second}
-	c, err := d.Dial(networkForSocket(socketPath), addrForSocket(socketPath))
+	c, err := daemon.DialSocket(socketPath, 5*time.Second)
 	if err == nil {
 		return c, nil
 	}
@@ -89,7 +88,7 @@ func connectWithOptionalSpawn(socketPath, daemonBin string, allowSpawn bool) (ne
 	if err := daemon.WaitForReady(daemon.DefaultReadyPath(), 5*time.Second); err != nil {
 		return nil, fmt.Errorf("daemon never became ready: %w (dial was: %v)", err, err)
 	}
-	c, err = d.Dial(networkForSocket(socketPath), addrForSocket(socketPath))
+	c, err = daemon.DialSocket(socketPath, 5*time.Second)
 	if err != nil {
 		return nil, fmt.Errorf("dial after spawn: %w", err)
 	}
@@ -115,20 +114,6 @@ func pipe(r io.Reader, w io.Writer) error {
 			return err
 		}
 	}
-}
-
-func networkForSocket(p string) string {
-	if len(p) >= 9 && p[:9] == `\\.\pipe\` {
-		return "pipe"
-	}
-	return "unix"
-}
-
-func addrForSocket(p string) string {
-	if len(p) >= 9 && p[:9] == `\\.\pipe\` {
-		return p[9:]
-	}
-	return p
 }
 
 func defaultDaemonBin() string {

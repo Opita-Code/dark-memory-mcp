@@ -10,55 +10,37 @@ import (
 )
 
 // Transport-agnostic socket helpers. On Unix, "unix" network; on
-// Windows, "pipe" network (\\.\pipe\dark-mem). The daemon and bridge
-// agree on the same socket path (DefaultSocketPath).
+// Windows, named pipes via go-winio (\\.\pipe\dark-mem). The daemon
+// and bridge agree on the same socket path (DefaultSocketPath).
 //
-// Note: This implementation uses net.Dialer's "unix" or "pipe"
-// network. On cross-platform support, Go's net package auto-routes
-// based on the path prefix.
+// NOTE: Go's stdlib net package does NOT support a "pipe" network.
+// Named pipes on Windows MUST use github.com/Microsoft/go-winio
+// (winio.ListenPipe / winio.DialPipe). The platform-specific impl
+// lives in socket_windows.go / socket_unix.go behind build tags.
+// (Bug fixed 2026-08-14: v2.19.0 shipped with net.Dial("pipe", ...)
+// which fails with "unknown network pipe" on Windows — the CI passed
+// on Linux but the daemon never became ready on Windows.)
 
-// dialSocket connects to the daemon socket with a timeout. Cross-
-// platform: detects Unix socket vs Windows named pipe by path
-// prefix.
-func dialSocket(socketPath string, timeout time.Duration) (net.Conn, error) {
-	d := net.Dialer{Timeout: timeout}
-	network, addr := normalizeSocket(socketPath)
-	return d.Dial(network, addr)
+// DialSocket connects to the daemon socket with a timeout. Cross-
+// platform: dispatches to the platform implementation.
+func DialSocket(socketPath string, timeout time.Duration) (net.Conn, error) {
+	return dialSocketImpl(socketPath, timeout)
 }
 
-// normalizeSocket converts a raw socket path to (network, address)
-// for net.Dial / net.Listen.
-func normalizeSocket(socketPath string) (network, address string) {
-	if isPipePath(socketPath) {
-		// Strip leading \\.\pipe\ for net.Dial "pipe" network.
-		addr := socketPath
-		if len(addr) >= 9 && addr[:9] == `\\.\pipe\` {
-			addr = addr[9:]
-		}
-		return "pipe", addr
-	}
-	return "unix", socketPath
-}
-
-// listenSocket creates a listener on socketPath (Unix socket or
+// ListenSocket creates a listener on socketPath (Unix socket or
 // Windows named pipe).
+func ListenSocket(socketPath string) (net.Listener, error) {
+	return listenSocketImpl(socketPath)
+}
+
+// dialSocket is the internal alias used by daemon.go / supervisor.go.
+func dialSocket(socketPath string, timeout time.Duration) (net.Conn, error) {
+	return dialSocketImpl(socketPath, timeout)
+}
+
+// listenSocket is the internal alias used by daemon.go.
 func listenSocket(socketPath string) (net.Listener, error) {
-	dir := filepath.Dir(socketPath)
-	if dir != "" && dir != "." && dir != "/" {
-		// Best-effort restrictive permissions; Windows ignores these.
-		_ = os.MkdirAll(dir, 0o700)
-		_ = os.Chmod(dir, 0o700)
-	}
-	network, addr := normalizeSocket(socketPath)
-	cfg := net.ListenConfig{}
-	ln, err := cfg.Listen(context.Background(), network, addr)
-	if err != nil {
-		return nil, fmt.Errorf("listen %s %s: %w", network, addr, err)
-	}
-	if unixLn, ok := ln.(*net.UnixListener); ok {
-		unixLn.SetUnlinkOnClose(true)
-	}
-	return ln, nil
+	return listenSocketImpl(socketPath)
 }
 
 // probeSocket checks if a daemon is listening without blocking.
@@ -75,3 +57,25 @@ func probeSocket(socketPath string) bool {
 func isPipePath(p string) bool {
 	return len(p) >= 9 && p[:9] == `\\.\pipe\`
 }
+
+// ensureSocketDir creates the parent dir for Unix sockets (no-op on
+// Windows named pipes, which live in the \\.\pipe\ namespace).
+func ensureSocketDir(socketPath string) {
+	if isPipePath(socketPath) {
+		return
+	}
+	dir := filepath.Dir(socketPath)
+	if dir != "" && dir != "." && dir != "/" {
+		// Best-effort restrictive permissions.
+		_ = os.MkdirAll(dir, 0o700)
+		_ = os.Chmod(dir, 0o700)
+	}
+}
+
+// wrapListenError adds context to a listen failure.
+func wrapListenError(network, addr string, err error) error {
+	return fmt.Errorf("listen %s %s: %w", network, addr, err)
+}
+
+// listenCtx is a shared background context for listeners.
+var listenCtx = context.Background()

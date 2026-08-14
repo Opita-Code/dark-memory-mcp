@@ -35,10 +35,25 @@ func DefaultSocketPath() string {
 // per dark-copilot G14 convention).
 //
 //   - macOS/Linux:  ~/.dark-agents/daemon.ready
-//   - Windows:      same dir as socket, daemon.ready
+//   - Windows:      %USERPROFILE%\.dark-agents\daemon.ready
+//
+// NOTE: On Windows the ready file MUST NOT derive from the socket
+// path — the socket is a named pipe (\\.\pipe\...) which lives in a
+// different namespace and cannot hold a regular file. (Bug fixed
+// 2026-08-14: v2.19.0 used filepath.Dir(socket) which produced
+// \\.\pipe\daemon.ready and failed with "cannot find the file".)
 func DefaultReadyPath() string {
 	if env := os.Getenv("DARK_MEM_DAEMON_READY"); env != "" {
 		return env
+	}
+	if isWindows() {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			home = os.Getenv("USERPROFILE")
+		}
+		if home != "" {
+			return filepath.Join(home, ".dark-agents", "daemon.ready")
+		}
 	}
 	dir := filepath.Dir(DefaultSocketPath())
 	return filepath.Join(dir, "daemon.ready")

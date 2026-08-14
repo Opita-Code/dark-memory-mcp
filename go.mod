@@ -3,6 +3,7 @@ module github.com/dark-agents/dark-memory-mcp
 go 1.25.5
 
 require (
+	github.com/Microsoft/go-winio v0.6.2
 	github.com/jackc/pgx/v5 v5.7.1
 	github.com/mark3labs/mcp-go v0.56.0
 	github.com/pelletier/go-toml/v2 v2.4.3
