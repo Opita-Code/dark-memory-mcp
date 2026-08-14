@@ -26,6 +26,7 @@ import (
 	"os"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/agentbootstrap"
+	"github.com/dark-agents/dark-memory-mcp/internal/lifecycle"
 	"github.com/dark-agents/dark-memory-mcp/internal/migrate/sqlite"
 	"github.com/dark-agents/dark-memory-mcp/internal/version"
 )
@@ -158,6 +159,42 @@ type DetectEnvironmentOutput struct {
 	NegotiatedCapabilities map[string]interface{} `json:"negotiated_capabilities"`
 	Transport              string                 `json:"transport"`
 	Server                 ServerInfo             `json:"server"`
+
+	// --- spec 1171 / v2.18.0 additions (NEW) ---
+	// HarnessNativeRung is the harness's native capability tier
+	// ("heavy" | "medium" | "light" | "unknown"). Sourced from
+	// internal/lifecycle.LookupHarnessNative. Empty when the harness
+	// is unknown.
+	HarnessNativeRung string `json:"harness_native_rung"`
+	// HarnessNativeFamily is the model family the harness natively uses
+	// ("anthropic" | "openai" | "google" | "deepseek" | "minimax" |
+	// "minimax-cn" | "moonshot" | "z-ai" | "dashscope" | "multi" |
+	// "unknown"). Empty when unknown.
+	HarnessNativeFamily string `json:"harness_native_family"`
+	// AvailableProviders lists the provider IDs whose env keys are set
+	// in the MCP's process. Order = catalog order. Empty when no
+	// provider keys are configured.
+	AvailableProviders []string `json:"available_providers"`
+	// RecommendedModel is the model the orchestrator should prefer.
+	// Empty when no provider is configured.
+	RecommendedModel string `json:"recommended_model"`
+	// RecommendedProvider is the provider ID backing RecommendedModel.
+	RecommendedProvider string `json:"recommended_provider"`
+	// RecommendedRung is the rung of the recommended model.
+	RecommendedRung string `json:"recommended_rung"`
+	// MatchedNative is true when the recommendation matched the harness's
+	// native family. False when the recommendation fell back to a
+	// different family because no provider matches the native family.
+	MatchedNative bool `json:"matched_native"`
+	// ProjectDefaultAgentID is the project's default agent_id (Mem0
+	// identity). Empty when no project is bound or the project has no
+	// default agent_id.
+	ProjectDefaultAgentID string `json:"project_default_agent_id"`
+	// CanWriteConfig is true when the harness has a writable config file
+	// the MCP can target (e.g. opencode.jsonc, .claude/settings.json).
+	// Used by spec 1153 (auto-config wizard) to decide whether to offer
+	// auto-write.
+	CanWriteConfig bool `json:"can_write_config"`
 }
 
 // ---------------------------------------------------------------------------
@@ -472,6 +509,11 @@ func handlerDetectEnvironment(ctx context.Context, raw json.RawMessage) (*ToolRe
 		Source:       rec.Source,
 	}
 
+	// --- spec 1171 additions ---
+	hn := lifecycle.LookupHarnessNative(client.Canonical)
+	available := lifecycle.DetectAvailableProviders()
+	rec1150 := lifecycle.Recommend(hn, available)
+
 	caps := map[string]interface{}{
 		"resources": true, // we ARE a server with resources, so the harness MUST support resources by spec
 		"tools":     true, // every MCP harness supports tools by spec
@@ -505,10 +547,39 @@ func handlerDetectEnvironment(ctx context.Context, raw json.RawMessage) (*ToolRe
 			ToolsTotal:     len(CanonicalOrder()),
 			ResourcesTotal: agentbootstrap.TotalResources(),
 		},
+		// --- spec 1171 additions ---
+		HarnessNativeRung:     string(hn.Rung),
+		HarnessNativeFamily:   hn.Family,
+		AvailableProviders:    rec1150.AvailableProviders,
+		RecommendedModel:      rec1150.Model,
+		RecommendedProvider:   rec1150.ProviderID,
+		RecommendedRung:       string(rec1150.Rung),
+		MatchedNative:         rec1150.MatchedNative,
+		ProjectDefaultAgentID: projectDefaultAgentID(ctx),
+		CanWriteConfig:        hn.CanWriteConfig,
 	}
 	_ = ctx
 	_ = raw
 	return &ToolResponse{Data: out}, nil
+}
+
+// projectDefaultAgentID returns the active project's default_agent_id
+// (Mem0 identity). Returns "" when no project is active or the project
+// has no default agent_id.
+//
+// The 3 AGENT_BOOTSTRAP tools are intentionally Store-less (see
+// "Note on the Store parameter" at the bottom of this file). The
+// orchestrator binds the active project via Store and can resolve
+// projects.default_agent_id directly; the bootstrap report surfaces
+// this field for the operator to SEE the binding, but the bootstrap
+// tool itself cannot read the Store.
+//
+// Spec 1171 keeps the field in the output so the orchestrator-side
+// wiring has a single source of truth. If a future revision gives the
+// bootstrap tools Store access, this helper will become the reader.
+func projectDefaultAgentID(ctx context.Context) string {
+	_ = ctx
+	return ""
 }
 
 // ---------------------------------------------------------------------------
