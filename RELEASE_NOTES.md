@@ -166,6 +166,12 @@ response.
 | v1.3.0 | 2026-07-16 | `dark_memory_health_ping`, wire-conformance test suite, CI recipe |
 | v1.3.1 | 2026-07-16 | Release-plumbing tag (retroactive, see CHANGELOG) |
 | v1.3.2 | 2026-07-16 | Federation (cross-namespace lookup) + drift-judge-daemon HTTP wiring |
+| v2.0.0–v2.14.0 | 2026-07-19 → 2026-08-11 | Provider freedom (v2.13.0), async drift_judge (v2.14.0), constitution integrity (v2.13.1), vibe-case-aware judging (v2.12.0), vibe-loop unified (v2.13.0) |
+| v2.15.0 | 2026-08-11 | 6 testing eval types (spec_test_alignment, mutation_score_check, test_quality_review, security_coverage, resilience_check, oracle_quality) + MCP research backend cross-MCP |
+| v2.15.1 | 2026-08-11 | research_items coexistence migration v26 (shared-DB schema drift) + isolate spawned peer DB from shared dark.db |
+| v2.15.2 | 2026-08-11 | Form C fallback for opencode 1.18.16 / Vercel AI SDK / Anthropic protocol (#59227) + raw payload logging for diagnosis |
+| v2.15.x | 2026-08-11 | fix(catalog): revert MiniMax endpoint between api.minimax.io (intl) and api.minimaxi.com — pending decision |
+| **v2.16.0** | **2026-08-14** | **judge evidence contract (anti-recap defense)** — see CHANGELOG.md §[2.16.0] |
 
 ## Upgrade
 

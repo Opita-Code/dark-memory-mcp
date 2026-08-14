@@ -6,6 +6,100 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [2.16.0] — 2026-08-14 — judge evidence contract (anti-recap defense)
+
+**El judge ahora exige evidencia verificable, no resúmenes.**
+Esta versión cierra la "recap problem" — el bug que el dark-testing skill
+v4 evidenció en eval 919 (la IA recibía un resumen de 200 palabras en lugar
+del archivo de 576 líneas y devolvía `needs_human conf 0.72` sin poder
+citar evidencia real). La causa raíz: el juez podía inventar quotes sin
+verificación contra el artefacto. La cura: el **evidence contract**.
+
+El judge ahora opera con un schema JSON estricto (`JudgeVerdict`) donde
+cada `EvidenceItem` cita un `file:line + quote` verbatim. Tres nuevos
+componentes lo hacen cumplir:
+
+- **T0 — Transport Contract** (`judge_evidence_transport.go`): garantiza
+  que el artefacto llegue verbatim al juez. `MinArtifactBytes=5_000`
+  rechaza cualquier cosa menor (un recap de 200 palabras mide ~1.6KB,
+  el dark-testing skill v4 mide ~50KB — el guardia lo captura con 100%
+  de confianza). `Sha256` se computa al cargar para audit trail.
+  `ReadLine(line)` da referencias verificables que el Validator usa.
+- **T2 — Strict Validator** (`judge_evidence_validator.go`): parsea el
+  output del LLM a través del schema estricto. Rechaza `evidence[]`
+  vacío en veredictos `aligned`/`drift_detected`. Verifica que cada
+  `quote` citado aparezca en el artefacto al `file:line` indicado.
+  Cualquier fallo se convierte en `needs_human` con el anchor
+  anti-alucinación (T3).
+- **T3 — Anti-Hallucination Anchors** (`judge_evidence_anchors.go`):
+  constante de texto que **debe** anexarse al final de cada system
+  prompt de persona. Implementa el patrón Anthropic (Jan 9 2026):
+  *"give the LLM a way out, like providing an instruction to return
+  'Unknown' when it doesn't have enough information"*.
+
+### Añadido
+
+- **`internal/orchestration/judge_evidence_types.go`** — `VerdictValue`,
+  `EvidenceItem`, `CalibrationMetrics`, `JudgeVerdict` (schema strict).
+- **`internal/orchestration/judge_evidence_transport.go`** — `Transport`,
+  `LoadArtifact`, `LoadedArtifact`, `MinArtifactBytes=5_000`, `Sha256`
+  audit trail, `ReadLine(line)`.
+- **`internal/orchestration/judge_evidence_anchors.go`** — `AntiHallucinationAnchor`,
+  `BuildAnchor()`, `InjectAnchor(personaSP)` (append-only — non-removable).
+- **`internal/orchestration/judge_evidence_validator.go`** — `Validate(raw, reader)`,
+  `ValidateOrNeedsHuman(raw, personaID, ...)` (anti-hallucination escape hatch).
+- **32 tests** cubriendo: parse JSON (válido/inválido/malformed), validación
+  de evidencia (matching/mismatch/substring), recap guard (T0 rechaza <5KB),
+  anti-hallucination (quote mismatch → needs_human), smoke test dual
+  (positivo: verbatim→aligned, negativo: recap→needs_human).
+- **Spec 1150 v2** — diseño completo de la feature documentado en el
+  commit message (6 mindsets × 20 edge cases × 5 specs).
+
+### Backward compatibility
+
+- **ADDITIVE**: ningún archivo existente modificado (judge.go, judge_consensus.go,
+  publish_vibe.go, ssd/types.go intactos).
+- **LIBRARY**: los nuevos tipos existen como API pública. Caller existente
+  que no usa los nuevos campos sigue funcionando sin cambios.
+- **INTEGRATION deferred**: la integración con el judge pipeline existente
+  (vía `judge.go` + `ssd.SDDEvaluation`) es trabajo de un release
+  posterior (Spec 1151 personas + Spec 1152 async+delegation).
+
+### Tier-1 sources
+
+- Anthropic Engineering Blog "Demystifying evals for AI agents" Jan 9 2026
+  (anti-hallucination anchor pattern)
+- arxiv 2512.22245 (FAIR/Meta, Dec 23 2025) — calibration metrics
+- arxiv 2403.17710 (JudgeDeceiver CCS 2024) — recap-style defenses
+- arxiv 2605.26156 (BITE ICML 2026) — style manipulation defenses
+- arxiv 2505.19443 (Sapkota et al, May 26 2025) — vibe vs agentic
+
+### Files en esta release
+
+- **Nuevos** (additive): `judge_evidence_types.go`, `judge_evidence_transport.go`,
+  `judge_evidence_anchors.go`, `judge_evidence_validator.go`,
+  `judge_evidence_smoke_test.go` + 4 unit test files.
+- **No modificados**: judge.go, judge_consensus.go, publish_vibe.go,
+  ssd/types.go, drift/checker.go, todos los demás.
+
+### Specs en flight (no parte de v2.16.0)
+
+- **Spec 1150** (T0/T1/T2/T3/T9): **EN RELEASE** (este commit).
+- **Spec 1151** (personas registry): DEFERRED a v2.17.0.
+- **Spec 1152** (async + delegation): DEFERRED a v2.18.0.
+- **Spec 1153** (auto-config wizard): DEFERRED a v2.19.0.
+
+### Notas de release
+
+- Bundled unpushed work: v2.15.0, v2.15.1, v2.15.2 (testing eval types +
+  research backend + peer DB isolation + Form C fallback) y los 2 reverts
+  del endpoint MiniMax. Ver `git log` desde v2.14.0.
+- Pre-existing test failure unrelated to v2.16.0:
+  `TestProviderCatalog_EndpointsVerified` (MiniMax endpoint — decisión
+  pendiente entre `api.minimax.io` y `api.minimaxi.com`).
+
+---
+
 ## [2.14.0] — 2026-08-11 — async drift_judge (vibe_publish no bloquea)
 
 **El vibe-loop ya no bloquea la llamada MCP durante el LLM judge.**
