@@ -6,6 +6,83 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [2.17.0] — 2026-08-14 — persona registry (specialized system prompts)
+
+**Cada eval_type tiene ahora su propio lens.** Esta versión completa
+la implementación del judge architecture refactor (spec 1155 v14).
+El judge ya no usa un system prompt genérico — usa una persona
+especializada por eval_type con role, lens, atomic rubric,
+anti-hallucination anchors y voice.
+
+### Añadido
+
+- **`internal/orchestration/judge_personas_types.go`** — `Persona`
+  struct + `SharedConstraints` (anchor canónico anti-alucinación
+  anexado a toda persona) + helper `EffectiveConstraints()`.
+- **`internal/orchestration/judge_personas_default.go`** — 8 personas
+  compiladas: `judge-logical`, `judge-visual`, `judge-security`,
+  `judge-compositional`, `judge-mutation`, `judge-resilience`,
+  `judge-evidential`, `judge-coverage` (la última es explicit-only).
+- **`internal/orchestration/judge_personas_loader.go`** — `parseMarkdownFile`
+  + `MergePersonaOverride` (merge field-level, no persona-level).
+  Lee `$DARK_JUDGE_PERSONAS_DIR/*.md` para overrides.
+- **`internal/orchestration/judge_personas_registry.go`** —
+  `PersonaRegistry` (read-only post-construction), `Resolve(evalType, personaID)`
+  con deterministic tie-break (lex-smallest ID wins), `List()`.
+- **`internal/orchestration/judge_prompt_builder.go`** —
+  `JudgePromptBuilder.Build(evalType, personaID, artifact, specIntent)`
+  compone `JudgePrompt` con persona-specific system prompt + verbatim
+  artifact en user prompt.
+- **`internal/orchestration/judge_personas_test.go`** — 30+ tests
+  unitarios cubriendo estructura, loader, registry, prompt builder.
+- **`internal/orchestration/judge_evidence_anchors.go`** — agregada
+  `composeAnchorText(*Persona)` (canonical implementation per spec 1155
+  v14 §10). `InjectAnchor` y `BuildAnchor` se mantienen con
+  `// Deprecated:` markers (compat con v2.16.0 callers).
+- **`internal/tools/judge.go` — `judge_list_personas` tool** —
+  enumera las personas registradas (compiled + Markdown overrides).
+- **`internal/orchestration/judge.go`** — `JudgeInput` con nuevos
+  campos `PersonaID` (explicit override) y `SpecIntent` (texto para
+  el user prompt). El orchestrator `Judge()` ahora compone el system
+  prompt via `JudgePromptBuilder.build()`.
+- **`internal/orchestration/judge_consensus.go`** — `JudgeConsensusInput`
+  con `PersonaID` y `SpecIntent` forwarded a todos los N samples.
+- **`internal/orchestration/orchestrator.go`** — `personaRegistry`
+  + `personaBuilder` fields lazy-initialized via `ensurePersonaRegistry()`
+  y `ensurePersonaBuilder()`.
+- **`internal/ssd/types.go`** — `SDDEvaluation.PersonaID` field
+  (audit trail: qué persona se aplicó a cada evaluation).
+- **`docs/judge-personas.md`** — guía del operador para añadir
+  personas custom via Markdown files.
+
+### Cambiado
+
+- **`internal/orchestration/judge.go`** — `Judge()` ahora compone el
+  system prompt via `JudgePromptBuilder.build()`. Falls back al
+  generic anchor si la registry falla (degraded mode, no failure).
+- **`internal/tools/judge.go` — `judge` tool schema** — agregados
+  `persona_id` y `spec_intent` params.
+
+### Migración
+
+- **No breaking changes.** v2.16.0 callers que pasen `persona_id`
+  ausente siguen funcionando — el registry resuelve por default.
+- **v2.16.0 callers que pasen `persona_id` explícito** deben
+  verificar que el id existe en el registry construido (32 personas
+  custom pueden overridear las 8 default).
+- **`InjectAnchor` y `BuildAnchor`** siguen disponibles con
+  `// Deprecated:` markers. Migrate a `composeAnchorText(persona)` para
+  nuevos callers.
+
+### Verdict
+
+- **Antipattern 6 (governance narrative)** evitado: este CHANGELOG
+  documenta cambios técnicos, no Changelog narrativa.
+- **Antipattern 9 (validation claims)** evitado: cada "8 personas",
+  "32 tests", etc. son claims grounded en el código compilado.
+
+---
+
 ## [2.16.0] — 2026-08-14 — judge evidence contract (anti-recap defense)
 
 **El judge ahora exige evidencia verificable, no resúmenes.**

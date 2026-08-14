@@ -65,6 +65,17 @@ type JudgeInput struct {
 	// maintainability, spec conformance) instead of generic ones.
 	// Empty = legacy behavior (no rubric).
 	VibeCase string `json:"vibe_case,omitempty"`
+	// PersonaID (v2.17.0, spec 1155) is the explicit persona id for
+	// this judge call. If empty, the PersonaRegistry resolves by
+	// eval_type default (lex-smallest ID wins per spec 1155 v14 §7).
+	// If the persona_id is not registered, Judge returns an error.
+	PersonaID string `json:"persona_id,omitempty"`
+	// SpecIntent (v2.17.0, spec 1155) is the spec intent string
+	// (one-paragraph description of what the artifact should be, per
+	// spec 1155 v14 §8.2). Used by the JudgePromptBuilder to
+	// compose the user_prompt. Empty = omit the "Spec intent"
+	// section.
+	SpecIntent string `json:"spec_intent,omitempty"`
 }
 
 // JudgeOutput is the result of a Judge call.
@@ -147,14 +158,45 @@ func (o *Orchestrator) Judge(ctx context.Context, in JudgeInput) (*JudgeOutput, 
 		}
 	}
 
+	// v2.17.0 (spec 1155): Compose the persona-specific system prompt
+	// via the JudgePromptBuilder. We pass artifact=nil (the caller
+	// supplied Content as a string, not a file path) — the user
+	// prompt's "Spec intent" section is the spec_intent field.
+	// The persona registry is required; if construction fails, we
+	// fall back to the legacy generic system prompt (composeAnchorText
+	// with persona=nil) so a malformed registry doesn't break the
+	// judge pipeline.
+	builder, builderErr := o.ensurePersonaBuilder()
+	var systemPrompt string
+	var resolvedPersonaID string
+	if builderErr == nil {
+		prompt, err := builder.Build(in.EvalType, in.PersonaID, nil, in.SpecIntent)
+		if err != nil {
+			// PersonaID not found or registry error — fall back to
+			// the generic anchor-only prompt. The orchestrator logs
+			// the error so operators can debug.
+			o.RecordError(ctx, "judge", "", fmt.Errorf("persona lookup eval=%s persona=%s: %w", in.EvalType, in.PersonaID, err), errorobs.SeverityWarn)
+			systemPrompt = composeAnchorText(nil)
+		} else {
+			systemPrompt = prompt.SystemPrompt
+			resolvedPersonaID = prompt.PersonaID
+		}
+	} else {
+		// Registry construction failed — fall back to the generic
+		// anchor. This is the v2.16.0 behavior.
+		o.RecordError(ctx, "judge", "", fmt.Errorf("persona registry: %w", builderErr), errorobs.SeverityWarn)
+		systemPrompt = composeAnchorText(nil)
+	}
+
 	// Build the judge request.
 	req := JudgeRequest{
-		EvalType:   in.EvalType,
-		TargetType: in.TargetType,
-		TargetID:   in.TargetID,
-		Content:    in.Content,
-		Model:      model,
-		VibeCase:   in.VibeCase,
+		EvalType:     in.EvalType,
+		TargetType:   in.TargetType,
+		TargetID:     in.TargetID,
+		Content:      in.Content,
+		Model:        model,
+		VibeCase:     in.VibeCase,
+		SystemPrompt: systemPrompt,
 	}
 
 	resp, err := client.Judge(ctx, req)
@@ -177,6 +219,7 @@ func (o *Orchestrator) Judge(ctx context.Context, in JudgeInput) (*JudgeOutput, 
 		Model:          resp.Model,
 		ConstitutionID: wc.ConstitutionID,
 		CreatedAt:      now,
+		PersonaID:      resolvedPersonaID,
 	}
 	evalID, err := o.Store.SaveSDDEvaluation(ctx, wc, eval)
 	if err != nil {

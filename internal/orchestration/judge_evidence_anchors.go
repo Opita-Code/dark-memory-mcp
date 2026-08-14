@@ -1,6 +1,7 @@
 // Package orchestration — judge_evidence_anchors.go
 //
-// v2.16.0: T3 — Anti-Hallucination Anchors.
+// v2.16.0: T3 — Anti-Hallucination Anchor (generic).
+// v2.17.0: spec 1155 v14 §10 — persona-specific anchor composition.
 //
 // Per Anthropic's "Demystifying evals for AI agents" (Jan 9 2026):
 //
@@ -8,22 +9,33 @@
 //    an instruction to return 'Unknown' when it doesn't have enough
 //    information."
 //
-// Every persona system prompt MUST include the AntiHallucinationAnchor
-// so the LLM has a safe escape hatch. Without the anchor, the LLM
-// tends to invent quotes (the "recap problem" root cause).
+// Spec 1155 v14 §10 makes the anchor PERSONA-SPECIFIC. The generic
+// anchor constant (AntiHallucinationAnchor) is still emitted by the
+// v2.17.0 persona-aware composeAnchorText(persona) function, but the
+// legacy InjectAnchor(x) is deprecated. v2.16.0 callers continue to
+// work via InjectAnchor (which compiles with a deprecation warning).
 //
-// The anchor is mandatory and non-removable — BuildAnchor() returns
-// the canonical string. Persona authors concat it to their SPs.
+// Deprecation table (per spec 1155 v14 §10):
 //
-// This is a pure constant + helper. No LLM interaction.
+//   Symbol                          v2.17.0 action
+//   -----                           --------------
+//   AntiHallucinationAnchor const   KEPT (used by composeAnchorText)
+//   InjectAnchor(string)            KEPT (deprecated — use composeAnchorText(*Persona))
+//   BuildAnchor()                   KEPT (deprecated — use composeAnchorText(*Persona))
+//   composeAnchorText(*Persona)     NEW (canonical)
+//
+// The v2.16.0 callers of InjectAnchor work via the renamed/aliased
+// path; we keep the old function with a deprecation marker so external
+// callers compile with a warning but still work. Internal callers in
+// this package are updated to composeAnchorText(persona) atomically in
+// the v2.17.0 release.
 package orchestration
 
-// AntiHallucinationAnchor is the canonical anchor that MUST be
-// appended to every persona system prompt. The judge MUST return
-// verdict="needs_human" when it cannot ground a quote verbatim.
-//
-// Tier-1 source: Anthropic Engineering Blog, "Demystifying evals for
-// AI agents" (Jan 9 2026), section "How evals fit with other methods".
+import "strings"
+
+// AntiHallucinationAnchor is the canonical anti-hallucination anchor
+// for the GENERIC case. Embedded into composeAnchorText(persona) below.
+// External callers should use composeAnchorText(*Persona) instead.
 const AntiHallucinationAnchor = `ANTI-HALLUCINATION ANCHOR (mandatory, non-removable):
 
 If you do not have enough information to evaluate this artifact against the
@@ -43,18 +55,62 @@ anthropic.com/engineering/demystifying-evals-for-ai-agents, Jan 2026):
 
 // BuildAnchor returns the canonical anchor string. Identical to the
 // const; provided as a function so callers can mock it in tests.
+//
+// Deprecated: use composeAnchorText(*Persona) for persona-specific
+// anchors. Kept for backward compatibility with v2.16.0 callers.
+// TODO(remove-on-v3.0.0): remove this function when v2.16.0 callers
+// have migrated.
 func BuildAnchor() string {
 	return AntiHallucinationAnchor
 }
 
-// InjectAnchor appends the anti-hallucination anchor to a persona
-// system prompt. The anchor is appended LAST so it cannot be
-// accidentally overridden by an earlier instruction.
 //
-// If systemPrompt is empty, returns just the anchor.
+// Deprecated: use composeAnchorText(*Persona) for persona-specific
+// anchors. Kept for backward compatibility with v2.16.0 callers.
+// TODO(remove-on-v3.0.0): remove this function when v2.16.0 callers
+// have migrated.
+//nolint:unused // used by tests; production callers use composeAnchorText
 func InjectAnchor(systemPrompt string) string {
 	if systemPrompt == "" {
 		return AntiHallucinationAnchor
 	}
 	return systemPrompt + "\n\n---\n\n" + AntiHallucinationAnchor
+}
+
+// composeAnchorText returns the persona-specific anchor text. It is the
+// canonical implementation per spec 1155 v14 §10. The anchor is
+// rendered as:
+//
+//   [persona-specific constraints]
+//   --- ANTI-HALLUCINATION ANCHOR (mandatory) ---
+//   [AntiHallucinationAnchor constant]
+//
+// The anchor is appended LAST so no later content can override it.
+//
+// If persona is nil, falls back to the generic anchor (equivalent to
+// InjectAnchor("")).
+func composeAnchorText(persona *Persona) string {
+	parts := []string{}
+
+	if persona != nil {
+		// Persona-specific constraints (the persona's own constraints).
+		// These are intentionally rendered ABOVE the generic anchor so
+		// the persona can refine the anti-hallucination discipline for
+		// its specific eval_type (e.g., a security persona can add
+		// "fail-closed" prompting in addition to the generic
+		// "insufficient information" escape hatch).
+		if len(persona.Constraints) > 0 {
+			parts = append(parts, "PERSONA-SPECIFIC CONSTRAINTS:")
+			for _, c := range persona.Constraints {
+				parts = append(parts, "  - "+strings.TrimSpace(c))
+			}
+			parts = append(parts, "")
+		}
+	}
+
+	parts = append(parts, "--- ANTI-HALLUCINATION ANCHOR (mandatory, non-removable) ---")
+	parts = append(parts, "")
+	parts = append(parts, AntiHallucinationAnchor)
+
+	return strings.Join(parts, "\n")
 }

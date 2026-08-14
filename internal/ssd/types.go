@@ -45,7 +45,12 @@ type SDDEvaluation struct {
 	ActiveModsJSON      string  `json:"active_mods_json,omitempty"`
 	RefusedAttempts     int     `json:"refused_attempts"`
 	RefusalPattern      string  `json:"refusal_pattern,omitempty"`
-	CreatedAt           string  `json:"created_at"`
+	// PersonaID (v2.17.0, spec 1155) is the resolved persona used for
+	// this evaluation. Empty for v2.16.0 evaluations (backward
+	// compat). Lets operators audit which persona was applied to each
+	// historical evaluation.
+	PersonaID string `json:"persona_id,omitempty"`
+	CreatedAt string  `json:"created_at"`
 }
 
 // ListFilters holds optional filters for ListEvaluations.

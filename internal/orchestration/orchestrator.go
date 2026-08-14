@@ -49,6 +49,10 @@ type Orchestrator struct {
 	selector LLMSelector       // LLM selector for O5 Judge
 	vlpUC    *vlp.UseCase      // VLP state machine (v2.13.0: auto-drive vibe-loop)
 
+	// v2.17.0 (spec 1155): Persona registry + prompt builder.
+	personaRegistry *PersonaRegistry    // lazy-initialized
+	personaBuilder  *JudgePromptBuilder // lazy-initialized, depends on registry
+
 	// OnActiveSessionChanged (v2.1.3 cache-invalidation fix) is invoked
 	// after every successful SetActiveSession / ClearActiveSession write
 	// so external caches (specifically the gate's
@@ -135,6 +139,49 @@ func (o *Orchestrator) ensureLLMSelector() LLMSelector {
 	// on Select — same behavior as the primary nil-injection path.
 	client, _ := NewSelfHarnessClient()
 	return NewOSINTSelector(client)
+}
+
+// ensurePersonaRegistry lazily constructs the PersonaRegistry from
+// the compiled default personas (plus any Markdown overrides from
+// $DARK_JUDGE_PERSONAS_DIR). The registry is read-only after this
+// returns.
+//
+// On construction error (e.g., missing judge-logical fallback), the
+// error is returned to the caller; the registry is NOT cached on
+// error so the next call retries.
+func (o *Orchestrator) ensurePersonaRegistry() (*PersonaRegistry, error) {
+	if o.personaRegistry != nil {
+		return o.personaRegistry, nil
+	}
+	r, err := NewPersonaRegistry(RegistryOptions{
+		IncludeMarkdownOverrides: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	o.personaRegistry = r
+	return r, nil
+}
+
+// ensurePersonaBuilder lazily returns the JudgePromptBuilder backed by
+// the orchestrator's PersonaRegistry. Errors from registry
+// construction are propagated.
+func (o *Orchestrator) ensurePersonaBuilder() (*JudgePromptBuilder, error) {
+	if o.personaBuilder != nil {
+		return o.personaBuilder, nil
+	}
+	r, err := o.ensurePersonaRegistry()
+	if err != nil {
+		return nil, err
+	}
+	o.personaBuilder = NewJudgePromptBuilder(r)
+	return o.personaBuilder, nil
+}
+
+// PersonaRegistry returns the orchestrator's PersonaRegistry (lazy-initialized).
+// Useful for tests that want to inspect the registry.
+func (o *Orchestrator) PersonaRegistry() (*PersonaRegistry, error) {
+	return o.ensurePersonaRegistry()
 }
 
 // fieldError carries the offending field name AND the sentinel it

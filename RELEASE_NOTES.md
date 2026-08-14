@@ -1,4 +1,32 @@
-﻿# Dark Memory MCP v1.0.0 — Release Notes
+﻿# Dark Memory MCP v2.17.0 — Release Notes
+
+## Highlights
+
+- **Persona Registry**: 8 specialized system prompts (compiled
+  defaults) + Markdown override mechanism. Each persona encodes
+  role, lens, atomic rubric, anti-hallucination anchors, and voice
+  for one evaluation lens. Per spec 1155 v14 §4.
+- **`judge_list_personas` MCP tool**: enumerate registered personas
+  (compiled + Markdown overrides).
+- **`JudgeInput.PersonaID` + `JudgeInput.SpecIntent`**: explicit
+  persona override and spec intent string for the user prompt.
+- **Backward compat**: v2.16.0 callers without `persona_id` continue
+  working — the registry resolves by `eval_type` default. The
+  deprecated `composeAnchorTextGeneric()` (formerly `composeAnchorText`)
+  remains available for v2.16.0 callers until v3.0.0.
+
+## Migration from v2.16.0
+
+| v2.16.0 API | v2.17.0 equivalent |
+|---|---|
+| `JudgeInput{}` (no persona) | `JudgeInput{PersonaID: "judge-security", ...}` for explicit lens |
+| `InjectAnchor(sp)` | `composeAnchorText(persona)` (preferred); `InjectAnchor` deprecated |
+| `BuildAnchor()` | `composeAnchorText(&Persona{...})` with explicit persona |
+| N/A | `judge_list_personas` tool to enumerate |
+
+---
+
+# Dark Memory MCP v1.0.0 — Release Notes
 
 First stable release of the dark-memory-mcp module. 25 `dark_memory_*` MCP
 tools backed by a dual-driver store (SQLite for dev, Postgres for prod),

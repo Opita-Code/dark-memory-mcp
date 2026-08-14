@@ -14,17 +14,20 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/orchestration"
 	"github.com/dark-agents/dark-memory-mcp/internal/ssd"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 )
 
-// RegisterJudge wires the 3 JUDGE tools into the registry.
+// RegisterJudge wires the JUDGE namespace tools into the registry.
+// v2.17.0 (spec 1155): adds judge_list_personas alongside the
+// existing judge + consensus + judgment_history.
 func RegisterJudge(reg *Registry, orch *orchestration.Orchestrator, st store.Store) {
 	// judge — wraps O5 Judge orchestrator (single-sample).
 	reg.Add(BindOrchestrator("judge",
-		"Run a single LLM-as-judge verdict on content. Eval types: drift_judge, brand_match, compliance_check, pii_detect, prompt_injection_scan, grounding_check, mindset_compose, mindset_quality, spec_test_alignment, mutation_score_check, test_quality_review, security_coverage, resilience_check, oracle_quality. v2.4.2: brand_match + compliance_check consult prior agent_memory decisions/findings (filtered by resolved agent_id); pass no_enrich=true to opt out.",
+		"Run a single LLM-as-judge verdict on content. Eval types: drift_judge, brand_match, compliance_check, pii_detect, prompt_injection_scan, grounding_check, mindset_compose, mindset_quality, spec_test_alignment, mutation_score_check, test_quality_review, security_coverage, resilience_check, oracle_quality. v2.4.2: brand_match + compliance_check consult prior agent_memory decisions/findings (filtered by resolved agent_id); pass no_enrich=true to opt out. v2.17.0: persona_id selects the evaluation lens; spec_intent is included in the user prompt.",
 		MustJSONSchema(map[string]any{
 			"type":     "object",
 			"required": []string{"eval_type", "content"},
@@ -37,6 +40,8 @@ func RegisterJudge(reg *Registry, orch *orchestration.Orchestrator, st store.Sto
 				"agent_id":    map[string]any{"type": "string", "description": "v2.4.2: optional Mem0 agent_id (LLM identity). Resolved priority: caller input > projects.default_agent_id > empty string."},
 				"no_enrich":   map[string]any{"type": "boolean", "description": "v2.4.2: opt-out escape hatch. Default false (enrichment runs for brand_match + compliance_check). When true, Judge passes raw content to the LLM."},
 				"vibe_case":   map[string]any{"type": "string", "enum": []string{"C1", "C2", "C3", "C4", "C5", "C6", "C7"}, "description": "v2.12.0: vibe-flow case of the artifact (C1=code, C2=text, ...). When set, the judge uses a G-Eval rubric for that case (technical criteria for code). Empty = legacy generic prompt."},
+				"persona_id":  map[string]any{"type": "string", "description": "v2.17.0 (spec 1155): explicit persona id. If empty, the registry resolves by eval_type default (lex-smallest ID wins). Use judge_list_personas to enumerate available personas."},
+				"spec_intent": map[string]any{"type": "string", "description": "v2.17.0 (spec 1155): one-paragraph description of what the artifact should be. Included in the user prompt as the 'Spec intent' section."},
 			},
 		}),
 		func(ctx context.Context, in orchestration.JudgeInput) (*orchestration.JudgeOutput, error) {
@@ -45,7 +50,7 @@ func RegisterJudge(reg *Registry, orch *orchestration.Orchestrator, st store.Sto
 
 	// consensus — wraps O8 JudgeConsensus orchestrator (N-shot).
 	reg.Add(BindOrchestrator("consensus",
-		"Run N-shot LLM-as-judge and return modal verdict + confidence interval. N clamped to [1, 7]. v2.4.2: forwards agent_id + no_enrich to all N samples so each gets the same agent-scoped enrichment.",
+		"Run N-shot LLM-as-judge and return modal verdict + confidence interval. N clamped to [1, 7]. v2.4.2: forwards agent_id + no_enrich to all N samples so each gets the same agent-scoped enrichment. v2.17.0: forwards persona_id and spec_intent to all N samples so each uses the same persona.",
 		MustJSONSchema(map[string]any{
 			"type":     "object",
 			"required": []string{"eval_type", "content"},
@@ -59,6 +64,8 @@ func RegisterJudge(reg *Registry, orch *orchestration.Orchestrator, st store.Sto
 				"agent_id":    map[string]any{"type": "string", "description": "v2.4.2: forwarded to all N Judge samples for consistent agent-scoped enrichment."},
 				"no_enrich":   map[string]any{"type": "boolean", "description": "v2.4.2: forwarded to all N Judge samples for consistent opt-out semantics. Default false."},
 				"vibe_case":   map[string]any{"type": "string", "enum": []string{"C1", "C2", "C3", "C4", "C5", "C6", "C7"}, "description": "v2.12.0: vibe-flow case (C1=code, C2=text, ...). Forwarded to all N samples so each uses the same G-Eval rubric. Empty = legacy."},
+				"persona_id":  map[string]any{"type": "string", "description": "v2.17.0 (spec 1155): explicit persona id; forwarded to all N samples."},
+				"spec_intent": map[string]any{"type": "string", "description": "v2.17.0 (spec 1155): spec intent; forwarded to all N samples."},
 			},
 		}),
 		func(ctx context.Context, in orchestration.JudgeConsensusInput) (*orchestration.JudgeConsensusResult, error) {
@@ -111,6 +118,49 @@ func RegisterJudge(reg *Registry, orch *orchestration.Orchestrator, st store.Sto
 			}
 			return &JudgmentHistoryResult{Evaluations: out, Count: len(out), FilteredOut: filteredOut}, nil
 		}))
+
+	// judge_list_personas (v2.17.0, spec 1155) — enumerate registered
+	// personas. No-op when the registry has not been initialized
+	// (returns empty list with a synthetic note).
+	reg.Add(BindOrchestrator("judge_list_personas",
+		"List the registered persona registries (compiled defaults + Markdown overrides). Read-only. v2.17.0 (spec 1155).",
+		MustJSONSchema(map[string]any{
+			"type":       "object",
+			"properties": map[string]any{},
+		}),
+		func(ctx context.Context, in struct{}) (*JudgeListPersonasResult, error) {
+			reg, err := orch.PersonaRegistry()
+			if err != nil {
+				return nil, fmt.Errorf("judge_list_personas: %w", err)
+			}
+			personas := reg.List()
+			out := make([]JudgePersonaSummary, 0, len(personas))
+			for _, p := range personas {
+				out = append(out, JudgePersonaSummary{
+					ID:        p.ID,
+					Name:      p.Name,
+					EvalTypes: p.EvalTypes,
+					Default:   p.Default,
+					Source:    p.Source,
+				})
+			}
+			return &JudgeListPersonasResult{Personas: out, Count: len(out)}, nil
+		}))
+}
+
+// JudgeListPersonasResult is the result of judge_list_personas.
+type JudgeListPersonasResult struct {
+	Personas []JudgePersonaSummary `json:"personas"`
+	Count    int                   `json:"count"`
+}
+
+// JudgePersonaSummary is one persona in the judge_list_personas output.
+type JudgePersonaSummary struct {
+	ID        string   `json:"id"`
+	Name      string   `json:"name"`
+	EvalTypes []string `json:"eval_types"`
+	Default   bool     `json:"default"`
+	Source    string   `json:"source"`
 }
 
 // JudgmentHistoryInput is the input for judgment_history.

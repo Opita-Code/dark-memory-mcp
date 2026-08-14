@@ -62,6 +62,13 @@ type JudgeConsensusInput struct {
 	// VibeCase (v2.12.0) forwarded to every Judge sample so all N
 	// samples use the same vibe-case rubric (G-Eval style).
 	VibeCase string `json:"vibe_case,omitempty"`
+	// PersonaID (v2.17.0, spec 1155) forwarded to every Judge sample
+	// so all N samples use the same persona. If empty, the registry
+	// resolves by eval_type default for each sample (consistent).
+	PersonaID string `json:"persona_id,omitempty"`
+	// SpecIntent (v2.17.0, spec 1155) forwarded to every Judge sample
+	// so all N samples see the same spec intent in the user prompt.
+	SpecIntent string `json:"spec_intent,omitempty"`
 }
 
 // JudgeConsensusSample is one Judge call's result inside a consensus run.
@@ -172,6 +179,13 @@ func (o *Orchestrator) JudgeConsensus(ctx context.Context, in JudgeConsensusInpu
 				// v2.12.0: forward VibeCase so all N samples use the
 				// same G-Eval rubric.
 				VibeCase: in.VibeCase,
+				// v2.17.0: forward PersonaID so all N samples use the
+				// same persona (deterministic tie-break applies
+				// identically across samples).
+				PersonaID: in.PersonaID,
+				// v2.17.0: forward SpecIntent so all N samples see the
+				// same spec intent in the user prompt.
+				SpecIntent: in.SpecIntent,
 			})
 			if jerr != nil {
 				outcomes[i].err = jerr
