@@ -1,251 +1,108 @@
-// Package main is the dark-mem-mcp binary — the MCP server that exposes
-// 49 dark_memory_* tools backed by the dark-memory-mcp library's
-// orchestrators. See ../internal/server/server.go for boot + lifecycle
-// logic; ../internal/tools/*.go for the per-namespace tool handlers.
+// Package main is the dark-mem-mcp binary entry. As of v2.19.0
+// (spec 1176), this binary is a DISPATCHER:
+//
+//   - DARK_MEM_BRIDGE=0 (or unset BUT the bridge binary exists):
+//     run as the legacy single-binary MCP server (today's behavior).
+//   - DARK_MEM_BRIDGE=1 (default), or --bridge flag: exec into the
+//     dark-mem-mcp-bridge binary which forwards stdio to the daemon.
+//
+// The dispatcher is intentionally minimal: it doesn't import any of
+// the heavy orchestrator code. The heavy code path (single-binary
+// MCP server) lives in the legacy `main` function below the bridge
+// dispatch.
 package main
 
 import (
 	"context"
 	"fmt"
 	"os"
-	"os/signal"
-	"runtime/debug"
-	"syscall"
+	"os/exec"
+	"path/filepath"
 
-	"github.com/dark-agents/dark-memory-mcp/internal/errorobs"
-	"github.com/dark-agents/dark-memory-mcp/internal/federation"
-	"github.com/dark-agents/dark-memory-mcp/internal/orchestration"
-	"github.com/dark-agents/dark-memory-mcp/internal/server"
-	"github.com/dark-agents/dark-memory-mcp/internal/store"
-	"github.com/dark-agents/dark-memory-mcp/internal/tools"
+	"github.com/dark-agents/dark-memory-mcp/internal/daemon"
 )
 
 func main() {
-	// Review-w4-002: panic recovery at the boot layer. mcp-go's
-	// WithRecovery() only catches panics INSIDE tool handlers (per its
-	// own docs). A panic during server.New or tools.RegisterAll would
-	// still crash the binary with a stack trace, killing the opencode
-	// subprocess and leaving the harness without a coherent error.
-	// The CLI binary has the same protection; mirror it here.
-	defer func() {
-		if r := recover(); r != nil {
-			fmt.Fprintf(os.Stderr, "dark-mem-mcp: panic during boot: %v\n%s\n", r, debug.Stack())
-			os.Exit(1)
+	// v2.19.0 dispatcher: bridge mode is the new default. Operators
+	// can set DARK_MEM_BRIDGE=0 (or pass --legacy) to opt into the
+	// single-binary mode (legacy behavior).
+	if shouldRunLegacy() {
+		runLegacyMain()
+		return
+	}
+	runBridge()
+}
+
+// shouldRunLegacy returns true when the operator has explicitly opted
+// out of the bridge (DARK_MEM_BRIDGE=0 or --legacy flag).
+func shouldRunLegacy() bool {
+	for _, arg := range os.Args[1:] {
+		if arg == "--legacy" {
+			return true
 		}
-	}()
+	}
+	if v := os.Getenv("DARK_MEM_BRIDGE"); v == "0" || v == "false" || v == "no" {
+		return true
+	}
+	return false
+}
 
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
-
-	srv, err := server.New(ctx)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "dark-mem-mcp: server.New failed: %v\n", err)
+// runBridge exec's into the bridge binary alongside the dispatcher.
+func runBridge() {
+	bin := findBridgeBinary()
+	if bin == "" {
+		fmt.Fprintf(os.Stderr,
+			"dark-mem-mcp: bridge binary not found alongside %s.\n"+
+			"  Build it with: go build -o bin/dark-mem-mcp-bridge.exe ./cmd/dark-mem-mcp-bridge\n"+
+			"  Or set DARK_MEM_BRIDGE=0 to run in legacy single-binary mode.\n",
+			os.Args[0])
 		os.Exit(1)
 	}
-	bootState := srv.BootState()
-
-	// Fase 2 (v2.15.0): register the dark-research MCP peer as a
-	// research backend so dark_memory_research_topic returns real
-	// OSINT items instead of 0. OPT-IN: NewMCPResearchBackend
-	// returns nil when DARK_RESEARCH_MCP_BIN (or the canonical
-	// install location) doesn't resolve — research_topic then
-	// degrades gracefully to 0 items exactly as before.
-	if rb := orchestration.NewMCPResearchBackend(); rb != nil {
-		bootState.Orchestrator.WithBackends(rb)
-		fmt.Fprintf(os.Stderr, "dark-mem-mcp: research backend registered: %s (bin=%s)\n", rb.Name(), rb.BinPath)
-	} else {
-		fmt.Fprintf(os.Stderr, "dark-mem-mcp: research backend NOT registered (dark-research-mcp binary not found; set DARK_RESEARCH_MCP_BIN)\n")
-	}
-	// Stop the sweeper BEFORE srv.Close() — order matters per
-	// lifecycle.Shutdown step ordering.
-	defer bootState.StopSweeper()
-	defer srv.Close()
-
-	// v1.3.0: install the boot-time metadata that
-	// dark_memory_health_ping reads (server version, name,
-	// coexistence group, driver label, DSN path) BEFORE the
-	// tool registry is built so the first health_ping call
-	// already reports the correct values. Installing AFTER
-	// RegisterAll is also OK (SetRuntimeContext uses atomic
-	// stores; subsequent health_pings see the new values) but
-	// doing it before is cleaner.
-	tools.SetRuntimeContext(tools.RuntimeContext{
-		BootedAt:         bootState.Config.BootedAt,
-		ServerVersion:    bootState.Config.ServerVersion,
-		ServerName:       bootState.Config.ServerName,
-		CoexistenceGroup: bootState.Config.CoexistenceGroup,
-		DriverLabel:      string(bootState.Config.DBDriver),
-		DSNPath:          bootState.Config.DBDSN,
-	})
-
-	// Register all canonical tools in order (BRIDGE_AND_COEXISTENCE.md
-	// §3 / spec 164 bridge.4 + DMAP v1.1 spec 193 Layer 6). RegisterAll
-	// returns an error if any canonical tool is missing from the
-	// registry — fail fast. The count is derived from
-	// canonicalNamespaces; no hardcoded number here.
-	//
-	// Safety is converted from *safety.Holder to *store.SafetyHolder
-	// (function-pointer adapter) so dark_memory_recall can thread
-	// canary state to composed IdentityFrame.CanaryActive.
-	safetyFP := &store.SafetyHolder{
-		SetCanary:       func(string) {},
-		Active:          func() string { return string(bootState.Safety.Active()) },
-		ValidatePayload: func(payload string) error { return bootState.Safety.ValidatePayload(payload) },
-	}
-	frameSrc, err := tools.RegisterAll(srv.Registry(), bootState.Orchestrator, bootState.Store, safetyFP)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "dark-mem-mcp: tools.RegisterAll failed: %v\n", err)
-		os.Exit(1)
-	}
-
-	// v2.0.2: real ActiveSessionResolver wired to the projects
-	// table. Replaces the v2.0.1 StaticSessionResolver{} stub (which
-	// returned "" and made the gate refuse every tool call).
-	// The resolver caches each project's active session_id for
-	// ~5s in-process so bursty workloads don't hit the DB on
-	// every tool call.
-	//
-	// v2.1.3: wire the resolver's Invalidate to the orchestrator's
-	// OnActiveSessionChanged callback. session_start's wire path
-	// pre-warms the cache with a stale value (the pre-SetActiveSession
-	// state, which is "" on a fresh boot) BEFORE the inner writes the
-	// new session_id. Without write-through invalidation, the next
-	// tool call within the 5s TTL hits cache and returns "" →
-	// ErrFrameStaleTooFar. By flushing the cache synchronously after
-	// SetActiveSession / ClearActiveSession writes, the next call
-	// always does a fresh DB lookup and gets the correct value.
-	// See vibe-flow/main/cache_invalidation_v2_1_3.md.
-	activeSessionResolver := server.NewStoreBackedActiveSessionResolver(
-		server.StoreBackedLookup(bootState.Store),
-	)
-	bootState.Orchestrator.OnActiveSessionChanged = activeSessionResolver.Invalidate
-
-	bootState.Gate = &server.GateMiddleware{
-		FrameSource:   frameSrc,
-		DriftChecker:  nil,
-		ActiveSession: activeSessionResolver,
-		// v2.1.1: ActiveProject fallback so session-required tools
-		// without project_id in args (agent_memory_*, session_status,
-		// session_close) can resolve the active project's session_id
-		// via the resolver. Without this, those tools refused with
-		// ErrFrameStaleTooFar because the resolver short-circuited on
-		// projectID == "". See vibe-flow/main/gate_emptypid_fallback_v2_1_1.md.
-		ActiveProject:      bootState.Store.ActiveProject,
-		ActiveConstitution: func() (string, string) { return bootState.Config.ConstitutionID, bootState.Config.ConstitutionVer },
-		// v2.11.0 (spec 757): gate refusals (ErrFrameStaleTooFar,
-		// ErrDriftAtWrite, scope/capability expiry) land in the Error
-		// Observatory durably. Best-effort — the refusal path never
-		// changes because telemetry failed.
-		RecordRefusal: func(ctx context.Context, toolName, sessionID, code, message string) {
-			bootState.Orchestrator.RecordError(ctx, toolName, sessionID,
-				fmt.Errorf("gate refusal %s: %s", code, message), errorobs.SeverityWarn)
-		},
-	}
-
-	// F7 federation peer: opt-in cross-namespace lookup against the
-	// dark-research DB. Read-only. Boot fails if DARK_FEDERATION_PEER_DSN
-	// points to a DB without vibe_artifacts + vibe_drift_reports tables
-	// (we validate at startup so a misconfiguration doesn't silently
-	// disable the federation lookup at request time).
-	peer, err := federation.NewPeerFromEnv()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "dark-mem-mcp: federation peer init failed: %v\n", err)
-		os.Exit(1)
-	}
-	tools.SetFederationPeer(peer)
-	defer func() {
-		if peer != nil {
-			_ = peer.Close()
+	cmd := exec.Command(bin, os.Args[1:]...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Env = os.Environ()
+	if err := cmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			os.Exit(exitErr.ExitCode())
 		}
-	}()
-	// Register the federation_lookup tool ONLY when the peer is enabled.
-	// Same opt-in pattern as DARK_REDTEAM=armed (redteam extras). When
-	// DARK_FEDERATION_PEER_DSN is unset, the surface stays at the
-	// canonical count and the conformance test
-	// `TestBridge7_ListToolsCanonical` continues to pass.
-	if peer != nil {
-		tools.RegisterFederation(srv.Registry())
-	}
-	if err := srv.RegisterAll(); err != nil {
-		fmt.Fprintf(os.Stderr, "dark-mem-mcp: server.RegisterAll failed: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Wave 5E.iii: start the INV-9 sweeper AFTER RegisterAll (so the
-	// tool registry is fully populated when the first MCP request can
-	// race the first tick) but BEFORE ServeStdio (so the boot_reconcile
-	// log line appears in the boot sequence, not after traffic starts).
-	if err := bootState.StartSweeper(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "dark-mem-mcp: sweeper start failed: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Wave 5E.v (L6 adapter integration, startup-recover hook per
-	// BRIDGE_AND_COEXISTENCE.md §6): detect a closed_aborted session
-	// from a prior harness and surface it to the operator BEFORE MCP
-	// traffic starts. Read-only by default — auto-resurrection gated
-	// behind DARK_AUTO_RESURRECT=on_boot (operator opt-in).
-	runStartupRecover(ctx, bootState.Orchestrator)
-
-	if err := srv.ServeStdio(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "dark-mem-mcp: ServeStdio failed: %v\n", err)
+		fmt.Fprintf(os.Stderr, "dark-mem-mcp: bridge exec failed: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-// runStartupRecover implements the startup-recover L6 hook. Detects
-// the most-recent closed_aborted session for the operator, logs a
-// discoverable line, and (when DARK_AUTO_RESURRECT=on_boot) auto-calls
-// SessionResurrect to revive it.
-//
-// Operator env vars:
-//
-//   - DARK_OPERATOR         (default "dark-agent"): the operator id
-//     to recover for. Set to the harness's notion of "current user".
-//   - DARK_AUTO_RESURRECT   (default off): when set to "on_boot",
-//     auto-call SessionResurrect on the detected candidate. Without
-//     this flag, the candidate is just LOGGED for the operator.
-//
-// Failure to recover is non-fatal — we log and continue. The harness
-// still boots; the operator can call dark_memory_session_recover +
-// dark_memory_session_resurrect manually if needed.
-func runStartupRecover(ctx context.Context, orch *orchestration.Orchestrator) {
-	operator := os.Getenv("DARK_OPERATOR")
-	if operator == "" {
-		operator = "dark-agent"
-	}
-	recoverOut, err := orch.SessionRecover(ctx, orchestration.SessionRecoverInput{
-		Operator: operator,
-		Lookback: "24h",
-	})
+// findBridgeBinary looks for dark-mem-mcp-bridge alongside the
+// dispatcher binary. The same directory is where `go build -o bin/`
+// places both binaries.
+func findBridgeBinary() string {
+	exe, err := os.Executable()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "dark-mem-mcp: startup-recover failed: %v\n", err)
-		return
+		return ""
 	}
-	if recoverOut == nil || !recoverOut.Found {
-		fmt.Fprintf(os.Stderr, "dark-mem-mcp: startup-recover ok (no candidate for operator=%s lookback=24h)\n", operator)
-		return
+	dir := filepath.Dir(exe)
+	candidates := []string{
+		filepath.Join(dir, "dark-mem-mcp-bridge.exe"),
+		filepath.Join(dir, "dark-mem-mcp-bridge"),
 	}
-	candidate := recoverOut.Candidate
-	fmt.Fprintf(os.Stderr,
-		"dark-mem-mcp: startup-recover found candidate_session_id=%s operator=%s closed_at=%s requires_consent=%v\n",
-		candidate.SessionID, candidate.Operator, candidate.ClosedAt, recoverOut.RequiresConsent)
+	for _, c := range candidates {
+		if _, err := os.Stat(c); err == nil {
+			return c
+		}
+	}
+	return ""
+}
 
-	if os.Getenv("DARK_AUTO_RESURRECT") != "on_boot" {
-		fmt.Fprintf(os.Stderr,
-			"dark-mem-mcp: startup-recover hint: invoke dark_memory_session_resurrect(original_session_id=%q) to revive, or set DARK_AUTO_RESURRECT=on_boot for automatic recovery\n",
-			candidate.SessionID)
-		return
-	}
-	resOut, err := orch.SessionResurrect(ctx, orchestration.SessionResurrectInput{
-		OriginalSessionID: candidate.SessionID,
-		Reason:            "auto_resurrect_on_boot",
-	})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "dark-mem-mcp: startup-recover auto-resurrect failed: %v\n", err)
-		return
-	}
-	fmt.Fprintf(os.Stderr,
-		"dark-mem-mcp: startup-recover auto-resurrected new_session_id=%s chain_len=%d constitution_bumped=%v\n",
-		resOut.NewSessionID, resOut.ResurrectChainLen, resOut.ConstitutionBumped)
+// runLegacyMain is the v2.18.0-and-earlier single-binary MCP server
+// path. Kept verbatim here under the dispatcher so existing
+// deployments that set DARK_MEM_BRIDGE=0 continue to work unchanged.
+//
+// This function lives in cmd/dark-mem-mcp/legacy_main.go to keep
+// the dispatcher file (cmd/dark-mem-mcp/main.go) thin.
+func runLegacyMain() {
+	legacyMain()
+	// legacyMain() never returns; it calls os.Exit on error. Keep
+	// a safety net here.
+	_ = context.Background()
+	_ = daemon.DefaultSocketPath()
 }
