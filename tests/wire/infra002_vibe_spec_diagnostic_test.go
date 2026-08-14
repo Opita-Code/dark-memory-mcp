@@ -143,8 +143,9 @@ func TestWire_INFRA002_ParseTasksFieldSurfacesFormAndCause(t *testing.T) {
 	// v2.15.2 (INFRA-005, unpushed commit 6b6d939) introduced Form C
 	// (object with tasks key). An object-shaped tasks WITHOUT a
 	// tasks key now lands in Form C's "tasks key missing or empty"
-	// branch — not the legacy "unknown form" path. Update the
-	// accepted substrings to match the new canonical wording while
-	// staying permissive of the legacy fallback.
-	checkField(t, "Object-shaped (Form C or unknown form)", resp, []string{"form c", "unknown form", "{"})
+	// branch — not the legacy "unknown form" path. The checkField
+	// helper uses AND semantics across substrings, so we use only
+	// "form c" as the canonical Form C marker (the "{ " was for the
+	// legacy raw-byte error message, which Form C no longer emits).
+	checkField(t, "Object-shaped (Form C)", resp, []string{"form c"})
 }
