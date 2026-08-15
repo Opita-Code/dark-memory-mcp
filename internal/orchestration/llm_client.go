@@ -450,6 +450,18 @@ func (s *SelfHarnessClient) judgeViaHTTP(ctx context.Context, req JudgeRequest, 
 			{"role": "user", "content": req.Content},
 		},
 	}
+	// m3-thinking (spec 1198, 2026-08-15): MiniMax-M3 via the
+	// Anthropic-compatible dialect keeps thinking OFF when `thinking`
+	// is omitted. The operator wants the judge to reason before
+	// verdicting ("el juez debe ser m3-thinking"), so we explicitly
+	// request adaptive thinking. Other Anthropic-dialect providers
+	// (Anthropic itself, DeepSeek's anthropic endpoint) accept the
+	// field or ignore it; MiniMax is the only provider where the
+	// response shape changes (thinking blocks) and the parser below
+	// handles that.
+	if s.provider == "minimax" || s.provider == "minimax-cn" {
+		body["thinking"] = map[string]any{"type": "adaptive"}
+	}
 	bodyBytes, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("judge: marshal request: %w", err)
@@ -519,6 +531,19 @@ func (s *SelfHarnessClient) judgeViaHTTPAttempt(ctx context.Context, bodyBytes [
 	//   1. Anthropic Messages API: {"content":[{"type":"text","text":"..."}], ...}
 	//   2. mock-llm minimal:        {"text":"..."}
 	//   3. fallback:                raw text wrapped as verdict
+	//
+	// m3-thinking (spec 1198): with thinking enabled, MiniMax-M3 emits
+	// the reasoning as a content block BEFORE the text block:
+	//
+	//	"content": [
+	//	  {"type":"thinking","thinking":"...","signature":"..."},
+	//	  {"type":"text","text":"{...verdict json...}"}
+//	]
+	//
+	// The verdict text is in the FIRST type=text block; content[0] may
+	// be a thinking block with no text field. Iterate and pick the
+	// first text block so `unknown 0.7` (empty text → default
+	// confidence) can never happen again.
 	var resp struct {
 		Content []struct {
 			Type string `json:"type"`
@@ -539,7 +564,13 @@ func (s *SelfHarnessClient) judgeViaHTTPAttempt(ctx context.Context, bodyBytes [
 	var text string
 	switch {
 	case len(resp.Content) > 0:
-		text = resp.Content[0].Text
+		// First type=text block wins; skip thinking blocks (spec 1198).
+		for _, block := range resp.Content {
+			if block.Type == "" || block.Type == "text" {
+				text = block.Text
+				break
+			}
+		}
 	case resp.Text != "":
 		text = resp.Text
 	}
