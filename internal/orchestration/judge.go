@@ -22,6 +22,7 @@ package orchestration
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -39,8 +40,7 @@ type JudgeInput struct {
 	TargetType string `json:"target_type"` // brand | artifact | spec | claim | code | ...
 	TargetID   string `json:"target_id"`
 	Content    string `json:"content"`         // the text to evaluate
-	Model      string `json:"model,omitempty"` // optional override of the selector's pick
-	// AgentID (v2.4.2) is the Mem0 agent_id (LLM identity) that owns
+	Model      string `json:"model,omitempty"` // optional override of the selector's pick	// AgentID (v2.4.2) is the Mem0 agent_id (LLM identity) that owns
 	// this judgment. Optional; resolved with priority (caller input >
 	// projects.default_agent_id > ""). When set, brand_match and
 	// compliance_check consult prior agent_memory rows authored by
@@ -204,7 +204,15 @@ func (o *Orchestrator) Judge(ctx context.Context, in JudgeInput) (*JudgeOutput, 
 		return nil, fmt.Errorf("judge: llm call: %w", err)
 	}
 
-	// Persist SDDEvaluation.
+	// Persist SDDEvaluation. VerdictJSON is normalized to canonical
+	// JSON before persistence (v2.21.2, spec 1205 P2): MiniMax-M3 with
+	// thinking adaptive answers in YAML/markdown (verdict: needs_human),
+	// and storing the raw blob made every JSON-strict reader
+	// (judgment_history, recall.DriftFrame parseSDDVerdict, the tools
+	// layer) see "unknown" even when the pipeline mapped the correct
+	// verdict. Normalizing at the write boundary fixes all readers at
+	// once; parseVerdict keeps its own lenient YAML path for in-flight
+	// responses, but what lands in sdd_evaluations is always JSON.
 	wc := store.WriteContext{
 		Actor:     "orchestrator_judge",
 		WritePath: "Judge",
@@ -214,7 +222,7 @@ func (o *Orchestrator) Judge(ctx context.Context, in JudgeInput) (*JudgeOutput, 
 		EvalType:       in.EvalType,
 		TargetType:     in.TargetType,
 		TargetID:       in.TargetID,
-		VerdictJSON:    resp.VerdictJSON,
+		VerdictJSON:    normalizeVerdictJSON(resp.VerdictJSON),
 		Confidence:     resp.Confidence,
 		Model:          resp.Model,
 		ConstitutionID: wc.ConstitutionID,
@@ -253,6 +261,60 @@ func providerFromName(name string) string {
 		return name[len(dsPrefix):]
 	}
 	return ""
+}
+
+// normalizeVerdictJSON converts a raw LLM judge response into the
+// canonical sdd_evaluations.verdict_json shape: a JSON object with a
+// `verdict` field (and any other fields the raw blob carried).
+//
+// Why (v2.21.2, spec 1205 P2 — verified against evals 983/996):
+// MiniMax-M3 with thinking:adaptive answers in YAML or markdown
+// (```yaml\nverdict: needs_human\nreasoning: ...\n```), NOT JSON. The
+// pipeline's parseVerdict learned the lenient YAML path (spec 1200 P0),
+// but every OTHER reader of sdd_evaluations.verdict_json was still
+// JSON-strict:
+//
+//   - judgment_history (internal/tools/judge.go parseVerdictJSON)
+//   - recall.DriftFrame (parseSDDVerdict → json.Unmarshal)
+//   - any tool-level consumer of the verdict column
+//
+// So a perfectly valid YAML `verdict: needs_human` from the judge was
+// persisted verbatim and read back as "unknown" by every reader that
+// only understands JSON — judgment_history lied even though the drift
+// report (pipeline verdict) was correct. Normalizing at the write
+// boundary fixes all readers at once: what lands in sdd_evaluations is
+// always JSON.
+//
+// Strategy: if the raw blob is already valid JSON, keep it as-is (the
+// canonical shape is preserved). If it is not JSON, build a JSON object
+// with a `verdict` field parsed via parseVerdict (the shared lenient
+// YAML/markdown matcher) plus the raw blob as `reasoning` so no
+// reasoning content is lost. parseVerdict's fail-safe (needs_human)
+// covers an unparseable blob — consistent with the pipeline.
+func normalizeVerdictJSON(raw string) string {
+	if raw == "" {
+		return raw
+	}
+	var probe map[string]any
+	if err := json.Unmarshal([]byte(raw), &probe); err == nil {
+		// Already JSON (canonical or eval-type-specific shape). Keep it.
+		return raw
+	}
+	// Non-JSON: YAML/markdown/thinking-prose. Extract the canonical
+	// verdict with the shared lenient matcher and preserve the raw
+	// blob as reasoning so the verdict is discoverable AND the
+	// reasoning survives for judgment_history / DriftFrame.
+	verdict := parseVerdict("drift_judge", raw, 0.7)
+	canonical, err := json.Marshal(map[string]any{
+		"verdict":   verdict,
+		"reasoning": raw,
+	})
+	if err != nil {
+		// Cannot marshal — extremely unlikely; fall back to raw so
+		// nothing is silently lost.
+		return raw
+	}
+	return string(canonical)
 }
 
 // kindsForEnrichment returns the agent_memory kinds to inject as
