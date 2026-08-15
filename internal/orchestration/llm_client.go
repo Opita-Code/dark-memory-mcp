@@ -544,10 +544,23 @@ func (s *SelfHarnessClient) judgeViaHTTPAttempt(ctx context.Context, bodyBytes [
 	// be a thinking block with no text field. Iterate and pick the
 	// first text block so `unknown 0.7` (empty text → default
 	// confidence) can never happen again.
+	//
+	// v2.21.1 (spec 1205 P0-bis): MiniMax-M3 can ALSO return a
+	// response whose content is ONLY a thinking block (no text block
+	// at all) — e.g. on rate-limit truncation or a mid-reasoning
+	// cutoff. The old loop left text="" → VerdictJSON="" → the
+	// pipeline's parseVerdict fell to its fail-safe. With the
+	// pre-45ab300 fail-safe that was drift_detected (spurious drift);
+	// with the 45ab300 fail-safe it is needs_human. Either way an
+	// empty VerdictJSON hides the judge's actual reasoning. Fix:
+	// when no text block exists, fall back to the LAST thinking
+	// block's text so the reasoning is preserved and parseVerdict's
+	// YAML/markdown matcher can read the verdict out of it.
 	var resp struct {
 		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
+			Type      string `json:"type"`
+			Text      string `json:"text"`
+			Thinking  string `json:"thinking"`
 		} `json:"content"`
 		Model string `json:"model"`
 		Text  string `json:"text"`
@@ -562,6 +575,7 @@ func (s *SelfHarnessClient) judgeViaHTTPAttempt(ctx context.Context, bodyBytes [
 	}
 
 	var text string
+	var thinking string
 	switch {
 	case len(resp.Content) > 0:
 		// First type=text block wins; skip thinking blocks (spec 1198).
@@ -569,6 +583,19 @@ func (s *SelfHarnessClient) judgeViaHTTPAttempt(ctx context.Context, bodyBytes [
 			if block.Type == "" || block.Type == "text" {
 				text = block.Text
 				break
+			}
+		}
+		// spec 1205 P0-bis: if there was NO text block (only
+		// thinking), keep the last thinking block as the VerdictJSON
+		// so the judge's reasoning survives for parseVerdict.
+		if text == "" {
+			for _, block := range resp.Content {
+				if block.Type == "thinking" && block.Thinking != "" {
+					thinking = block.Thinking
+				}
+			}
+			if thinking != "" {
+				text = thinking
 			}
 		}
 	case resp.Text != "":

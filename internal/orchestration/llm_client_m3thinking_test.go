@@ -60,6 +60,43 @@ func TestJudgeViaHTTP_ExtractsTextAfterThinkingBlock(t *testing.T) {
 	}
 }
 
+// TestJudgeViaHTTP_ThinkingOnlyBlockFallback is the spec 1205 P0-bis
+// regression: MiniMax-M3 can return content with ONLY a thinking block
+// (no text block — rate-limit truncation or mid-reasoning cutoff). The
+// pre-1205 parser left VerdictJSON empty → the pipeline read a spurious
+// drift_detected (pre-45ab300 fail-safe). Now the thinking text becomes
+// the VerdictJSON so the judge's reasoning survives.
+func TestJudgeViaHTTP_ThinkingOnlyBlockFallback(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{
+			"id":"test-2","type":"message","role":"assistant","model":"MiniMax-M3",
+			"content":[
+				{"type":"thinking","thinking":"verdict: needs_human\nreasoning: insufficient information to ground verdict","signature":"abc456"}
+			]
+		}`))
+	}))
+	defer srv.Close()
+
+	c := &SelfHarnessClient{provider: "minimax", baseURL: srv.URL, model: "MiniMax-M3"}
+	resp, err := c.judgeViaHTTP(context.Background(), JudgeRequest{
+		EvalType: "drift_judge",
+		Content:  "some artifact text",
+	}, srv.URL, "test-key")
+	if err != nil {
+		t.Fatalf("judgeViaHTTP() error: %v", err)
+	}
+	if resp.VerdictJSON == "" {
+		t.Fatalf("VerdictJSON must NOT be empty when only a thinking block exists")
+	}
+	if !strings.Contains(resp.VerdictJSON, "needs_human") {
+		t.Fatalf("VerdictJSON should carry the thinking-block verdict, got: %q", resp.VerdictJSON)
+	}
+	// The pipeline's parseVerdict must read the YAML verdict out of it.
+	if got := parseVerdict("drift_judge", resp.VerdictJSON, resp.Confidence); got != "needs_human" {
+		t.Fatalf("parseVerdict(thinking-only) = %q, want needs_human", got)
+	}
+}
+
 // TestJudgeViaHTTP_SendsThinkingAdaptiveForMiniMax verifies the
 // request body carries thinking:{"type":"adaptive"} when the provider
 // is minimax (m3-thinking), and that non-MiniMax providers do NOT get
