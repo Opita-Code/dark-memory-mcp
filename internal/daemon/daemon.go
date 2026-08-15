@@ -45,6 +45,15 @@ type Config struct {
 	IdleTimeout    time.Duration // 30m default
 	Version        string        // for pong response
 	OnRequest      RequestHandler // injected handler (returns Frame response)
+	// OnConn, when set, takes over connection handling (spec 1176
+	// §4.10 MCP-over-socket). The daemon accepts the connection and
+	// hands it to OnConn, which is responsible for speaking the
+	// native MCP wire (initialize / tools/list / tools/call) over
+	// that conn. When nil, the legacy Frame-protocol loop runs.
+	//
+	// The daemon still owns connection lifecycle: handleConn defers
+	// conn.Close() regardless of which path runs.
+	OnConn func(ctx context.Context, conn net.Conn)
 }
 
 // RequestHandler processes one RPC frame and returns the response
@@ -67,8 +76,8 @@ func NewDaemon(cfg Config) (*Daemon, error) {
 	if cfg.SocketPath == "" {
 		return nil, errors.New("Config.SocketPath is required")
 	}
-	if cfg.OnRequest == nil {
-		return nil, errors.New("Config.OnRequest is required")
+	if cfg.OnRequest == nil && cfg.OnConn == nil {
+		return nil, errors.New("Config.OnRequest or Config.OnConn is required")
 	}
 	if cfg.IdleTimeout <= 0 {
 		cfg.IdleTimeout = 30 * time.Minute
@@ -206,9 +215,16 @@ func (d *Daemon) acceptLoop(ln net.Listener, ctx context.Context) {
 }
 
 // handleConn reads frames from a single connection, dispatches each
-// RPC to OnRequest, and writes the response.
+// RPC to OnRequest, and writes the response. When Config.OnConn is
+// set (spec 1176 §4.10), the connection is handed over to OnConn
+// instead — it owns the MCP wire for that connection. The deferred
+// Close covers both paths.
 func (d *Daemon) handleConn(ctx context.Context, conn net.Conn) {
 	defer conn.Close()
+	if d.cfg.OnConn != nil {
+		d.cfg.OnConn(ctx, conn)
+		return
+	}
 	r := bufio.NewReader(conn)
 	for {
 		frame, err := ReadFrame(r)

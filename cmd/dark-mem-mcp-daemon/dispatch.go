@@ -12,16 +12,19 @@ import (
 // tool registry. The result is JSON-serializable (used as the bridge's
 // response frame body).
 //
-// Today this supports a minimal subset of the MCP surface:
+// Spec 1176 §4.10 (2026-08-14): the FULL MCP surface is now served over
+// the socket via daemon.Config.OnConn → server.Server.ServeStream, which
+// runs the same MCPServer as the single-binary mode (initialize,
+// tools/list, tools/call, notifications, resources). This Frame-based
+// handler is retained as a COMPATIBILITY FALLBACK for internal tooling
+// and tests that speak the Frame protocol directly; it supports a
+// minimal subset:
 //   - "ping"        -> {ok:true, ts:<unixnano>}
 //   - "tools/list"  -> {tools:[{name, description}, ...]}
 //
-// `tools/call` and notifications are explicitly NOT routed through
-// this shim in v2.19.0 — they remain on the stdio bridge path until
-// spec 1176 §4.10's MCP-over-socket plumbing lands in a follow-up.
-// (Today, calling `tools/call` here returns an error that surfaces
-// to the bridge caller; the harness can then fall back to spawning
-// a legacy single-binary if needed.)
+// `tools/call` via the Frame shim returns an error directing callers to
+// the MCP-over-socket path (set DARK_MEM_BRIDGE=0 for the single-binary
+// fallback). Production harnesses never hit this branch.
 func handleRPC(ctx context.Context, srv *server.Server, method string, params []byte) (any, error) {
 	switch method {
 	case "ping":

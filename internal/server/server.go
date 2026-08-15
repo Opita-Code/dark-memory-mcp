@@ -18,6 +18,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
+	"os"
 	"sort"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/agentbootstrap"
@@ -345,6 +347,29 @@ func (s *Server) ServeStdio(ctx context.Context) error {
 		s.boot.Config.ServerName, s.boot.Config.ServerVersion, s.boot.Config.CoexistenceGroup)
 	defer s.boot.Shutdown(ctx)
 	return server.ServeStdio(s.mcpSrv)
+}
+
+// ServeStream serves the full MCP surface over an existing net.Conn
+// (spec 1176 §4.10 — MCP-over-socket for the daemon). It is the
+// daemon-side equivalent of ServeStdio: the same MCPServer instance
+// (canonical-order filter, hooks, meta propagator, resources, gate
+// middleware) is driven over the connection's read/write endpoints,
+// so the wire is the native MCP JSON-RPC that opencode expects.
+//
+// The bridge is a transparent byte proxy: it forwards opencode's
+// stdio bytes to the daemon socket and the daemon's bytes back to
+// opencode. This function makes the daemon speak MCP natively on that
+// socket, which is what makes the bridge mode actually usable (the
+// legacy Frame protocol only understood "ping" + "tools/list").
+//
+// Blocks until ctx is cancelled or the connection is closed.
+func (s *Server) ServeStream(ctx context.Context, conn net.Conn) error {
+	stdioSrv := server.NewStdioServer(s.mcpSrv)
+	// The stdio server writes to conn and reads from conn. mcp-go
+	// treats these as stdin/stdout, so a bidirectional net.Conn is
+	// the right adapter. Read+write are both the same conn.
+	stdioSrv.SetErrorLogger(log.New(os.Stderr, "dark-mem-mcp-daemon: ", log.LstdFlags))
+	return stdioSrv.Listen(ctx, conn, conn)
 }
 
 // Close releases boot resources. Idempotent.
