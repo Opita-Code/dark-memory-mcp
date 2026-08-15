@@ -103,17 +103,22 @@ func TestJudgeViaHTTP_ThinkingOnlyBlockFallback(t *testing.T) {
 // the field (backwards compatibility).
 func TestJudgeViaHTTP_SendsThinkingAdaptiveForMiniMax(t *testing.T) {
 	var sawThinking atomic.Int32
+	var sawMaxTokens atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Thinking *struct {
 				Type string `json:"type"`
 			} `json:"thinking"`
+			MaxTokens int `json:"max_tokens"`
 		}
 		if err := jsonUnmarshalBody(r, &body); err != nil {
 			t.Errorf("decode body: %v", err)
 		}
 		if body.Thinking != nil && body.Thinking.Type == "adaptive" {
 			sawThinking.Add(1)
+		}
+		if body.MaxTokens == 4096 {
+			sawMaxTokens.Add(1)
 		}
 		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"{\"verdict\":\"aligned\",\"confidence\":0.9}"}],"model":"MiniMax-M3"}`))
 	}))
@@ -127,15 +132,26 @@ func TestJudgeViaHTTP_SendsThinkingAdaptiveForMiniMax(t *testing.T) {
 	if sawThinking.Load() != 1 {
 		t.Fatal("minimax provider should send thinking:{\"type\":\"adaptive\"}")
 	}
+	// spec 1205 P0-bis: m3-thinking writes prose reasoning into the
+	// thinking block BEFORE the JSON text block; 1024 max_tokens
+	// truncates mid-reasoning and the text block never materialises.
+	// MiniMax must get 4096 so the final JSON verdict survives.
+	if sawMaxTokens.Load() != 1 {
+		t.Fatal("minimax provider should send max_tokens=4096 (m3-thinking reasoning + JSON verdict budget)")
+	}
 
 	// Non-MiniMax provider → thinking must NOT be sent.
 	sawThinking.Store(0)
+	sawMaxTokens.Store(0)
 	c2 := &SelfHarnessClient{provider: "anthropic", baseURL: srv.URL, model: "claude-sonnet-4-5"}
 	if _, err := c2.judgeViaHTTP(context.Background(), JudgeRequest{EvalType: "drift_judge", Content: "x"}, srv.URL, "test-key"); err != nil {
 		t.Fatalf("anthropic judgeViaHTTP() error: %v", err)
 	}
 	if sawThinking.Load() != 0 {
 		t.Fatal("anthropic provider must NOT send thinking:adaptive (response shape unchanged)")
+	}
+	if sawMaxTokens.Load() != 0 {
+		t.Fatal("anthropic provider must keep max_tokens=1024 (legacy compact JSON verdict)")
 	}
 }
 

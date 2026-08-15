@@ -442,9 +442,21 @@ func (s *SelfHarnessClient) judgeViaHTTP(ctx context.Context, req JudgeRequest, 
 		}
 	}
 
+	// max_tokens bounds the ENTIRE output budget — thinking blocks AND
+	// the text block share it on MiniMax-M3 with thinking:adaptive.
+	// 1024 was enough for the old compact JSON verdict, but m3-thinking
+	// (spec 1198) writes its reasoning as prose in the thinking block
+	// first, then the JSON verdict in the text block; 1024 truncates
+	// mid-reasoning and the text block never materialises → VerdictJSON
+	// empty/partial → spurious drift (spec 1205 P0-bis, eval 994).
+	// 4096 gives m3-thinking room to reason AND emit the final JSON.
+	maxTokens := 1024
+	if s.provider == "minimax" || s.provider == "minimax-cn" {
+		maxTokens = 4096
+	}
 	body := map[string]any{
 		"model":      model,
-		"max_tokens": 1024,
+		"max_tokens": maxTokens,
 		"system":     system,
 		"messages": []map[string]string{
 			{"role": "user", "content": req.Content},
