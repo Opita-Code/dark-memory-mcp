@@ -341,6 +341,16 @@ var canonicalNamespaces = []NamespaceGroup{
 		Tools: []string{"delegate_intent"},
 	},
 	{
+		// v2.20.0 (spec 1188 T7). LLM provider config: key storage
+		// (OS keyring), key status, key removal, routing status. The
+		// 4 tools are pure operators over the keystore + health
+		// registry; no LLM call is made by any of them. Positioned
+		// between DELEGATION (mindset/context engine) and JUDGE (the
+		// consumer of these providers).
+		Name:  "LLM_CONFIG",
+		Tools: []string{"llm_key_add", "llm_key_list", "llm_key_remove", "llm_provider_status"},
+	},
+	{
 		Name:  "JUDGE",
 		Tools: []string{"judge", "consensus", "judgment_history", "judge_list_personas"},
 	},

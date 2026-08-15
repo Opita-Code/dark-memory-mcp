@@ -61,6 +61,25 @@ func openOrchestratorTestEnv(t *testing.T) (*orchestration.Orchestrator, store.S
 	return orchestration.New(s, nil), s
 }
 
+// wipeLLMEnv clears every LLM env var the detection + failover chain
+// reads, plus DARK_LLM_KEYRING=0 to force env-var-only keys (the OS
+// keyring may hold real migrated keys on the dev machine). Used by
+// no-LLM tests so Judge deterministically returns ErrNoLLMAvailable.
+func wipeLLMEnv(t *testing.T) {
+	t.Helper()
+	for _, k := range []string{
+		"SDD_LLM_BASE_URL",
+		"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY",
+		"DEEPSEEK_API_KEY", "MINIMAX_API_KEY", "MINIMAX_API_KEY_CN",
+		"MOONSHOT_API_KEY", "ZAI_API_KEY", "DASHSCOPE_API_KEY",
+		"DARK_DRIFT_JUDGE_DAEMON_URL", "DARK_SCRAPPER_URL",
+		"DARK_JUDGE_PROVIDER",
+	} {
+		t.Setenv(k, "")
+	}
+	t.Setenv("DARK_LLM_KEYRING", "0")
+}
+
 // O1: SessionStart â€” happy path. Creates a session bound to a project,
 // returns a non-empty SessionID, project_id echoed, audit row emitted.
 func TestSessionStart_HappyPath(t *testing.T) {
@@ -779,7 +798,7 @@ func TestJudge_CanaryRejection(t *testing.T) {
 
 // O5: Judge â€” no LLM available returns ErrNoLLMAvailable.
 func TestJudge_NoLLMAvailable(t *testing.T) {
-	t.Setenv("SDD_LLM_BASE_URL", "")
+	wipeLLMEnv(t)
 
 	ctx := context.Background()
 	orch, _ := openOrchestratorTestEnv(t)
@@ -828,11 +847,7 @@ func TestJudge_MissingContent(t *testing.T) {
 // O5: SelfHarnessClient â€” env detection returns ErrNoLLMAvailable
 // when no key is set in test env.
 func TestSelfHarnessClient_NoKey(t *testing.T) {
-	// Wipe env vars that SelfHarnessClient reads (test isolation).
-	t.Setenv("ANTHROPIC_API_KEY", "")
-	t.Setenv("OPENAI_API_KEY", "")
-	t.Setenv("GEMINI_API_KEY", "")
-	t.Setenv("DARK_SCRAPPER_URL", "")
+	wipeLLMEnv(t)
 	c, err := orchestration.NewSelfHarnessClient()
 	if err == nil {
 		t.Fatalf("expected ErrNoLLMAvailable, got client %v", c)
@@ -893,13 +908,14 @@ func TestRecommendedModel_UnknownProvider(t *testing.T) {
 	}
 }
 
-// O5: ListProviders returns the top-10.
+// O5: ListProviders returns the canonical set (9 since v2.20.0 —
+// spec 1188 added minimax-cn).
 func TestListProviders(t *testing.T) {
 	providers := orchestration.ListProviders()
-	if len(providers) != 8 {
-		t.Fatalf("expected 8 providers, got %d: %v", len(providers), providers)
+	if len(providers) != 9 {
+		t.Fatalf("expected 9 providers, got %d: %v", len(providers), providers)
 	}
-	want := []string{"anthropic", "openai", "google", "deepseek", "minimax", "zhipu", "moonshot", "qwen"}
+	want := []string{"anthropic", "openai", "google", "deepseek", "minimax", "minimax-cn", "zhipu", "moonshot", "qwen"}
 	for i, w := range want {
 		if i >= len(providers) || providers[i] != w {
 			t.Errorf("provider %d: got %q, want %q", i, providers[i], w)
@@ -1179,7 +1195,7 @@ func TestPublishVibe_DriftDetected(t *testing.T) {
 // but an LLM infra failure is NOT semantic drift — the operator must
 // not be told the artifact drifted when the judge never ran).
 func TestPublishVibe_NoLLM(t *testing.T) {
-	t.Setenv("SDD_LLM_BASE_URL", "")
+	wipeLLMEnv(t)
 
 	ctx := context.Background()
 	orch, s := openOrchestratorTestEnv(t)

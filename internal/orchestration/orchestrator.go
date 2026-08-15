@@ -121,12 +121,12 @@ func (o *Orchestrator) WithLLMSelector(s LLMSelector) *Orchestrator {
 // ensureLLMSelector lazily returns the LLM selector.
 //
 // Primary: harness injection via WithLLMSelector (checked first).
-// Secondary: auto-detect the harness LLM from env vars
-//   (ANTHROPIC_API_KEY / OPENAI_API_KEY / GEMINI_API_KEY /
-//    DARK_DRIFT_JUDGE_DAEMON_URL / legacy DARK_SCRAPPER_URL).
-//   This is a bridge for operators who have not yet adopted the
-//   injection pattern — it detects the SAME LLM the harness used to
-//   call the MCP tool and reuses it for Judge/mindset calls.
+// Secondary (spec 1188 / v2.20.0): DefaultFailoverClient — the
+// health-aware failover chain over the canonical catalog, backed by
+// the OS keyring (with env-var fallback). This REPLACED the old
+// first-match-wins NewSelfHarnessClient: when a provider dies, the
+// next healthy keyed provider answers instead of degrading to
+// needs_human.
 //
 // Falls back to ErrNoLLMAvailable if no LLM is reachable through
 // either mechanism.
@@ -134,11 +134,11 @@ func (o *Orchestrator) ensureLLMSelector() LLMSelector {
 	if o.selector != nil {
 		return o.selector
 	}
-	// Secondary: use the harness's LLM via env-var detection.
-	// If no key is set, the selector will return ErrNoLLMAvailable
-	// on Select — same behavior as the primary nil-injection path.
-	client, _ := NewSelfHarnessClient()
-	return NewOSINTSelector(client)
+	// Secondary: the default failover chain. If no key is set, the
+	// selector returns ErrNoLLMAvailable on Select — same behavior
+	// as the primary nil-injection path.
+	failover, _ := DefaultFailoverClient()
+	return NewOSINTSelector(failover)
 }
 
 // ensurePersonaRegistry lazily constructs the PersonaRegistry from

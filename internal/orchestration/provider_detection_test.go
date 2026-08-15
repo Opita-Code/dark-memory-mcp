@@ -17,7 +17,7 @@ func unsetAllLLMKeys(t *testing.T) {
 	for _, k := range []string{
 		"DARK_JUDGE_PROVIDER", "DARK_JUDGE_DIALECT",
 		"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY",
-		"DEEPSEEK_API_KEY", "MINIMAX_API_KEY", "MOONSHOT_API_KEY",
+		"DEEPSEEK_API_KEY", "MINIMAX_API_KEY", "MINIMAX_API_KEY_CN", "MOONSHOT_API_KEY",
 		"ZAI_API_KEY", "DASHSCOPE_API_KEY",
 		"DARK_DRIFT_JUDGE_DAEMON_URL", "DARK_SCRAPPER_URL",
 		"DARK_JUDGE_MODEL_DEEPSEEK", "DARK_JUDGE_MODEL_MINIMAX",
@@ -51,6 +51,7 @@ func TestNewSelfHarnessClient_DetectsEveryProvider(t *testing.T) {
 		{"GEMINI_API_KEY", "google", "openai", "gemini-3.6-flash"},
 		{"DEEPSEEK_API_KEY", "deepseek", "openai", "deepseek-v4-flash"},
 		{"MINIMAX_API_KEY", "minimax", "openai", "MiniMax-M3"},
+		{"MINIMAX_API_KEY_CN", "minimax-cn", "openai", "MiniMax-M3"},
 		{"MOONSHOT_API_KEY", "moonshot", "openai", "kimi-k3"},
 		{"ZAI_API_KEY", "zhipu", "openai", "glm-5.2"},
 		{"DASHSCOPE_API_KEY", "qwen", "openai", "qwen3.8-max"},

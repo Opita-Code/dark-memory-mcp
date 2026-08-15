@@ -55,6 +55,11 @@ func legacyMain() {
 	}
 	defer bootState.StopSweeper()
 	defer srv.Close()
+	// v2.20.0 (spec 1188): the default failover chain + background
+	// health registry start lazily on first judge call; ensure the
+	// OS-keyring migration + health loop are initialized at boot and
+	// torn down on exit.
+	defer orchestration.ShutdownDefaultLLM()
 
 	tools.SetRuntimeContext(tools.RuntimeContext{
 		BootedAt:         bootState.Config.BootedAt,
@@ -118,6 +123,14 @@ func legacyMain() {
 	}
 
 	runStartupRecoverLegacy(ctx, bootState.Orchestrator)
+
+	// v2.20.0 (spec 1188 T6): warm up the default failover chain at
+	// boot (migrates env keys into the OS keyring + starts the
+	// background health loop). Best-effort — a missing key is not a
+	// boot failure.
+	if _, llmErr := orchestration.DefaultFailoverClient(); llmErr != nil {
+		fmt.Fprintf(os.Stderr, "dark-mem-mcp: LLM failover init warning: %v\n", llmErr)
+	}
 
 	if err := srv.ServeStdio(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "dark-mem-mcp: ServeStdio failed: %v\n", err)

@@ -66,6 +66,9 @@ func main() {
 	}
 	defer srv.Close()
 	bootState := srv.BootState()
+	// v2.20.0 (spec 1188 T6): default failover chain + background
+	// health registry; torn down on exit.
+	defer orchestration.ShutdownDefaultLLM()
 
 	// Research backend (same wiring as the single-binary path).
 	if rb := orchestration.NewMCPResearchBackend(); rb != nil {
@@ -133,6 +136,12 @@ func main() {
 
 	if err := bootState.StartSweeper(ctx); err != nil {
 		log.Fatalf("dark-mem-mcp-daemon: sweeper start: %v", err)
+	}
+
+	// v2.20.0 (spec 1188 T6): warm up the failover chain (keyring
+	// migration + health loop). Best-effort.
+	if _, llmErr := orchestration.DefaultFailoverClient(); llmErr != nil {
+		fmt.Fprintf(os.Stderr, "dark-mem-mcp-daemon: LLM failover init warning: %v\n", llmErr)
 	}
 
 	// requestHandler bridges the line-delimited JSON protocol to the

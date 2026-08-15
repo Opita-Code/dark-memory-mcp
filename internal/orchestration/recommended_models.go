@@ -131,6 +131,21 @@ var RecommendedModels = []ModelRecommendation{
 		},
 	},
 	{
+		Provider: "minimax-cn",
+		Default:  "MiniMax-M3",
+		PerType: map[ssd.EvaluationType]string{
+			ssd.EvalBrandMatch:          "MiniMax-M3",
+			ssd.EvalComplianceCheck:     "MiniMax-M3",
+			ssd.EvalDriftJudge:          "MiniMax-M3",
+			ssd.EvalGroundingCheck:      "MiniMax-M3",
+			ssd.EvalPIIDetect:           "MiniMax-M3",
+			ssd.EvalPromptInjectionScan: "MiniMax-M3",
+			ssd.EvalConsensus:           "MiniMax-M3",
+			ssd.EvalMindsetCompose:      "MiniMax-M3",
+			ssd.EvalMindsetQuality:      "MiniMax-M3",
+		},
+	},
+	{
 		Provider: "zhipu",
 		Default:  "glm-5.2",
 		PerType: map[ssd.EvaluationType]string{

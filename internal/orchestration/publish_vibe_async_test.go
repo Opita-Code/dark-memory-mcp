@@ -69,11 +69,14 @@ func clearJudgeEnv(t *testing.T) {
 		"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY",
 		"DARK_DRIFT_JUDGE_DAEMON_URL", "DARK_JUDGE_MODEL_DRIFT_JUDGE_DAEMON",
 		"DARK_JUDGE_MODEL_ANTHROPIC", "DARK_JUDGE_MODEL_OPENAI", "DARK_JUDGE_MODEL_GEMINI",
-		"DEEPSEEK_API_KEY", "MINIMAX_API_KEY", "MOONSHOT_API_KEY",
+		"DEEPSEEK_API_KEY", "MINIMAX_API_KEY", "MINIMAX_API_KEY_CN", "MOONSHOT_API_KEY",
 		"ZAI_API_KEY", "DASHSCOPE_API_KEY", "DARK_JUDGE_PROVIDER",
 	} {
 		t.Setenv(k, "")
 	}
+	// v2.20.0 (spec 1188): force env-var-only keys — the OS keyring may
+	// hold a real migrated key, and this guard asserts the NO-LLM path.
+	t.Setenv("DARK_LLM_KEYRING", "0")
 }
 
 // TestPublishVibe_Async_ReturnsPendingImmediately verifies the core

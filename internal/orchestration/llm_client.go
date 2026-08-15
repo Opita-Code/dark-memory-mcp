@@ -32,6 +32,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/dark-agents/dark-memory-mcp/internal/llm"
 )
 
 // Judge call budget configuration (v2.11.0 update):
@@ -185,43 +187,21 @@ var judgeHTTPClient = &http.Client{
 	},
 }
 
-// JudgeRequest is the structured input to a Judge call. The
-// orchestrator fills it from the JudgeInput plus a per-eval_type
-// system prompt template. Model is a hint from the OSINT selector
-// (recommended for the eval_type); clients may ignore or use it.
-type JudgeRequest struct {
-	EvalType     string `json:"eval_type"`               // brand_match | compliance_check | drift_judge | grounding_check | pii_detect | prompt_injection_scan | consensus
-	Content      string `json:"content"`                 // the text to evaluate
-	TargetType   string `json:"target_type"`             // brand | artifact | spec | claim | code | ...
-	TargetID     string `json:"target_id"`               // brand_id | artifact_id | ...
-	Model        string `json:"model,omitempty"`         // recommended by OSINTSelector
-	SystemPrompt string `json:"system_prompt,omitempty"` // optional override
-	// VibeCase (v2.12.0) is the vibe-flow case of the artifact
-	// (C1=code, ..., C7=mixed). Empty = legacy generic prompt.
-	VibeCase string `json:"vibe_case,omitempty"`
-}
+// JudgeRequest / JudgeResponse / LLMClient / ErrNoLLMAvailable are
+// now defined in internal/llm/types.go (spec 1188 — single source for
+// the failover chain, keystore, health registry and probe). These
+// aliases keep every existing orchestration call site unchanged.
+type JudgeRequest = llm.JudgeRequest
 
-// JudgeResponse is the LLM's verdict.
-type JudgeResponse struct {
-	VerdictJSON string  `json:"verdict_json"` // JSON-encoded per eval_type schema
-	Confidence  float32 `json:"confidence"`   // 0..1
-	Model       string  `json:"model"`        // which model answered (e.g. "claude-opus-4-7", "gpt-5")
-	Provider    string  `json:"provider"`     // anthropic | openai | google | ...
-}
+// JudgeResponse is the LLM's verdict (alias).
+type JudgeResponse = llm.JudgeResponse
 
-// LLMClient is one judge endpoint.
-type LLMClient interface {
-	// Name returns a stable identifier (e.g. "self_harness_anthropic",
-	// "mock_v1").
-	Name() string
-	// Judge performs one LLM-as-judge call.
-	Judge(ctx context.Context, req JudgeRequest) (*JudgeResponse, error)
-}
+// LLMClient is one judge endpoint (alias of llm.JudgeClient).
+type LLMClient = llm.JudgeClient
 
 // ErrNoLLMAvailable is returned when no LLM key is detected AND no
-// fallback was configured. The orchestrator wraps this with a
-// user-facing hint.
-var ErrNoLLMAvailable = errors.New("no LLM available: harness has no API key (set ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, or DARK_DRIFT_JUDGE_DAEMON_URL), and no fallback was configured")
+// fallback was configured (alias of llm.ErrNoLLMAvailable).
+var ErrNoLLMAvailable = llm.ErrNoLLMAvailable
 
 // SelfHarnessClient delegates Judge calls to an LLM. Two supported
 // modes in this build:
@@ -251,12 +231,18 @@ var ErrNoLLMAvailable = errors.New("no LLM available: harness has no API key (se
 //  4. GEMINI_API_KEY       ÔåÆ google (OpenAI-compat)
 //  5. DEEPSEEK_API_KEY     ÔåÆ deepseek (OpenAI + /anthropic)
 //  6. MINIMAX_API_KEY      ÔåÆ minimax (OpenAI + /anthropic)
-//  7. MOONSHOT_API_KEY     ÔåÆ moonshot (OpenAI)
-//  8. ZAI_API_KEY          ÔåÆ zhipu (OpenAI)
-//  9. DASHSCOPE_API_KEY    ÔåÆ qwen (OpenAI + /anthropic)
-// 10. DARK_DRIFT_JUDGE_DAEMON_URL  ÔåÆ [drift-judge-daemon] pool
-// 11. legacy DARK_SCRAPPER_URL     ÔåÆ [drift-judge-daemon] (deprecated)
-// 12. none                ÔåÆ ErrNoLLMAvailable
+//  7. MINIMAX_API_KEY_CN   ÔåÆ minimax-cn (OpenAI + /anthropic)
+//  8. MOONSHOT_API_KEY     ÔåÆ moonshot (OpenAI)
+//  9. ZAI_API_KEY          ÔåÆ zhipu (OpenAI)
+// 10. DASHSCOPE_API_KEY    ÔåÆ qwen (OpenAI + /anthropic)
+// 11. DARK_DRIFT_JUDGE_DAEMON_URL  ÔåÆ [drift-judge-daemon] pool
+// 12. legacy DARK_SCRAPPER_URL     ÔåÆ [drift-judge-daemon] (deprecated)
+// 13. none                ÔåÆ ErrNoLLMAvailable
+//
+// NOTE (spec 1188 / v2.20.0): this legacy first-match-wins client is
+// kept for backwards compatibility (D9). New deployments should use
+// DefaultFailoverClient — the same detection but with health-aware
+// failover across ALL keyed providers instead of stopping at the first.
 //
 // The model is auto-picked via the OSINTSelector for the eval_type
 // (config-based today, real OSINT later ÔÇö see spec 173 O5).

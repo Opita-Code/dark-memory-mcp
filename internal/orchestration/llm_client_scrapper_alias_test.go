@@ -60,6 +60,7 @@ func TestNewSelfHarnessClient_LegacyScrapperURL_FallsThrough(t *testing.T) {
 		// v2.13.0: clear catalog keys too (see legacy alias test)
 		"DEEPSEEK_API_KEY":  "",
 		"MINIMAX_API_KEY":   "",
+		"MINIMAX_API_KEY_CN": "",
 		"MOONSHOT_API_KEY":  "",
 		"ZAI_API_KEY":       "",
 		"DASHSCOPE_API_KEY": "",
@@ -91,6 +92,7 @@ func TestNewSelfHarnessClient_BothEnvsSet_ModernWins(t *testing.T) {
 		// v2.13.0: clear catalog keys too (see legacy alias test)
 		"DEEPSEEK_API_KEY":  "",
 		"MINIMAX_API_KEY":   "",
+		"MINIMAX_API_KEY_CN": "",
 		"MOONSHOT_API_KEY":  "",
 		"ZAI_API_KEY":       "",
 		"DASHSCOPE_API_KEY": "",
@@ -119,6 +121,7 @@ func TestNewSelfHarnessClient_NeitherEnvSet_ReturnsErrNoLLMAvailable(t *testing.
 		// v2.13.0: clear catalog keys too (see legacy alias test)
 		"DEEPSEEK_API_KEY":  "",
 		"MINIMAX_API_KEY":   "",
+		"MINIMAX_API_KEY_CN": "",
 		"MOONSHOT_API_KEY":  "",
 		"ZAI_API_KEY":       "",
 		"DASHSCOPE_API_KEY": "",
@@ -155,6 +158,7 @@ func TestNewSelfHarnessClient_LegacyAlias_JudgeFailsFast(t *testing.T) {
 		// instead of localhost:1.
 		"DEEPSEEK_API_KEY":  "",
 		"MINIMAX_API_KEY":   "",
+		"MINIMAX_API_KEY_CN": "",
 		"MOONSHOT_API_KEY":  "",
 		"ZAI_API_KEY":       "",
 		"DASHSCOPE_API_KEY": "",

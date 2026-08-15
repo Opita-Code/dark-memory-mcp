@@ -1,17 +1,16 @@
 // ProviderCatalog is the data-driven registry of LLM providers that
-// dark-memory-mcp can use as judge. Every endpoint in this table was
-// verified against the provider's PRIMARY documentation on 2026-08-10
-// (see agent_memory row 587 for the source list). Nothing here is
-// invented — if a provider is not in this table, it is not supported.
+// dark-memory-mcp can use as judge.
 //
-// The catalog is the SINGLE source of truth for:
-//   - which env var carries the API key (EnvKey)
-//   - which HTTP dialect to use (Dialect: anthropic | openai)
-//   - which base URLs to hit (BaseURL for the primary dialect,
-//     AnthropicBaseURL for providers that also speak Anthropic
-//     Messages)
-//   - the default model to request when the operator does not pin
-//     one via DARK_JUDGE_MODEL_<PROVIDER>
+// Spec 1188 (v2.20.0): the catalog moved to internal/llm/catalog.go —
+// the SINGLE canonical source (endpoints + dialect + models + probe
+// config). This file keeps the orchestration-facing surface as type
+// aliases + derived helpers so existing call sites keep compiling for
+// one release cycle (backwards-compat decision D9). New code should
+// import internal/llm directly.
+//
+// Every endpoint in the canonical table was verified against the
+// provider's PRIMARY documentation on 2026-08-10 (agent_memory row
+// 587). Nothing here is invented.
 //
 // Dialect "anthropic" = Anthropic Messages API (POST /v1/messages,
 // x-api-key + anthropic-version headers).
@@ -19,183 +18,63 @@
 // Authorization: Bearer, choices[0].message.content).
 package orchestration
 
-import "os"
+import (
+	"os"
 
-// ProviderDialect is the wire dialect a provider speaks.
-type ProviderDialect string
+	"github.com/dark-agents/dark-memory-mcp/internal/llm"
+)
+
+// ProviderDialect is the wire dialect a provider speaks (alias of
+// llm.ProviderDialect).
+type ProviderDialect = llm.ProviderDialect
 
 const (
 	// DialectAnthropic = Anthropic Messages API (v1/messages).
-	DialectAnthropic ProviderDialect = "anthropic"
+	DialectAnthropic = llm.DialectAnthropic
 	// DialectOpenAI = OpenAI Chat Completions (chat/completions).
-	DialectOpenAI ProviderDialect = "openai"
+	DialectOpenAI = llm.DialectOpenAI
 )
 
-// ProviderRegion is the geo-classification of a provider.
-type ProviderRegion string
+// ProviderRegion is the geo-classification of a provider (alias).
+type ProviderRegion = llm.ProviderRegion
 
 const (
 	// RegionUS = US/EU primary.
-	RegionUS ProviderRegion = "us"
+	RegionUS = llm.RegionUS
 	// RegionChina = PRC primary.
-	RegionChina ProviderRegion = "china"
+	RegionChina = llm.RegionChina
 )
 
-// ProviderSpec describes one supported LLM provider.
-type ProviderSpec struct {
-	// ID is the canonical provider id used in ProviderFor(), audit
-	// rows, and DARK_JUDGE_PROVIDER.
-	ID string
-	// Region classifies the provider as us | china.
-	Region ProviderRegion
-	// Dialect is the wire dialect for BaseURL.
-	Dialect ProviderDialect
-	// BaseURL is the base URL for the primary dialect. For dialect
-	// openai it is the full OpenAI-compatible base (the client appends
-	// /chat/completions); for dialect anthropic it is the base the
-	// client appends /v1/messages to.
-	BaseURL string
-	// AnthropicBaseURL is optional; set for providers that ALSO speak
-	// Anthropic Messages (deepseek, minimax, qwen). When the operator
-	// pins DARK_JUDGE_DIALECT=anthropic for such a provider, this URL
-	// is used instead of BaseURL.
-	AnthropicBaseURL string
-	// EnvKey is the environment variable that carries the API key.
-	EnvKey string
-	// DefaultModel is the model requested when the operator does not
-	// set DARK_JUDGE_MODEL_<PROVIDER> and RecommendedModel() has no
-	// eval_type-specific pick.
-	DefaultModel string
-}
+// ProviderSpec describes one supported LLM provider (alias of the
+// canonical llm.ProviderSpec).
+type ProviderSpec = llm.ProviderSpec
 
-// providerCatalog is the authoritative list. Order matters for
-// DARK_JUDGE_PROVIDER resolution: the first provider whose EnvKey is
-// set wins (unless the operator pins DARK_JUDGE_PROVIDER explicitly).
-//
-// Sources (fetched 2026-08-10, primary docs):
-//
-//	anthropic  -> https://docs.anthropic.com/en/api/errors  (Messages API)
-//	openai     -> https://developers.openai.com/api/docs/guides/error-codes
-//	google     -> https://ai.google.dev/gemini-api/docs/openai  (OpenAI-compat)
-//	deepseek   -> https://api-docs.deepseek.com/  (OpenAI + /anthropic)
-//	minimax    -> https://platform.minimax.io/docs/api-reference/text-openai-api
-//	zhipu      -> https://docs.bigmodel.cn/cn/guide/develop/openai/introduction
-//	moonshot   -> https://platform.moonshot.cn/docs/guide/start-using-kimi-api
-//	qwen       -> https://help.aliyun.com/zh/model-studio/getting-started/models
-var providerCatalog = []ProviderSpec{
-	{
-		ID:          "anthropic",
-		Region:      RegionUS,
-		Dialect:     DialectAnthropic,
-		BaseURL:     "https://api.anthropic.com",
-		EnvKey:      "ANTHROPIC_API_KEY",
-		DefaultModel: "claude-sonnet-4-5",
-	},
-	{
-		ID:          "openai",
-		Region:      RegionUS,
-		Dialect:     DialectOpenAI,
-		BaseURL:     "https://api.openai.com/v1",
-		EnvKey:      "OPENAI_API_KEY",
-		DefaultModel: "gpt-5",
-	},
-	{
-		ID:          "google",
-		Region:      RegionUS,
-		Dialect:     DialectOpenAI,
-		BaseURL:     "https://generativelanguage.googleapis.com/v1beta/openai/",
-		EnvKey:      "GEMINI_API_KEY",
-		DefaultModel: "gemini-3.6-flash",
-	},
-	{
-		ID:               "deepseek",
-		Region:           RegionChina,
-		Dialect:          DialectOpenAI,
-		BaseURL:          "https://api.deepseek.com",
-		AnthropicBaseURL: "https://api.deepseek.com/anthropic",
-		EnvKey:           "DEEPSEEK_API_KEY",
-		DefaultModel:     "deepseek-v4-flash",
-	},
-	{
-		ID:               "minimax",
-		Region:           RegionChina,
-		Dialect:          DialectOpenAI,
-		// 2026-08-13 (operator directive): revert back to api.minimaxi.com (CN
-		// regional). The MINIMAX_API_KEY currently injected by opencode.jsonc is
-		// scoped to api.minimaxi.com only — it returned HTTP 401 when pointed at
-		// api.minimax.io. The .io endpoint requires a separate intl key (not yet
-		// available to this harness). opencode's chat LLM appears to be using
-		// a different routing path that we did NOT investigate in this batch.
-		// Drift judge quota exhaustion (HTTP 429) on .com.cn is the operator's
-		// separate concern to address by buying credits or switching provider.
-		// The catalog points at the only working endpoint for the available key.
-		BaseURL:          "https://api.minimaxi.com/v1",
-		AnthropicBaseURL: "https://api.minimaxi.com/anthropic",
-		EnvKey:           "MINIMAX_API_KEY",
-		DefaultModel:     "MiniMax-M3",
-	},
-	{
-		ID:           "zhipu",
-		Region:       RegionChina,
-		Dialect:      DialectOpenAI,
-		BaseURL:      "https://open.bigmodel.cn/api/paas/v4/",
-		EnvKey:       "ZAI_API_KEY",
-		DefaultModel: "glm-5.2",
-	},
-	{
-		ID:           "moonshot",
-		Region:       RegionChina,
-		Dialect:      DialectOpenAI,
-		BaseURL:      "https://api.moonshot.cn/v1",
-		EnvKey:       "MOONSHOT_API_KEY",
-		DefaultModel: "kimi-k3",
-	},
-	{
-		ID:               "qwen",
-		Region:           RegionChina,
-		Dialect:          DialectOpenAI,
-		BaseURL:          "https://dashscope.aliyuncs.com/compatible-mode/v1",
-		AnthropicBaseURL: "https://dashscope.aliyuncs.com/apps/anthropic",
-		EnvKey:           "DASHSCOPE_API_KEY",
-		DefaultModel:     "qwen3.8-max",
-	},
-}
+// providerCatalog is the authoritative list, in failover priority
+// order. It IS the canonical llm.Catalog (single source of truth).
+var providerCatalog = llm.Catalog
 
-// providerSpecByID returns the ProviderSpec for a canonical id, or nil.
+// providerSpecByID returns the ProviderSpec for a canonical or legacy
+// id (aliases z-ai→zhipu, dashscope→qwen resolved), or nil.
 func providerSpecByID(id string) *ProviderSpec {
-	for i := range providerCatalog {
-		if providerCatalog[i].ID == id {
-			return &providerCatalog[i]
-		}
-	}
-	return nil
+	return llm.SpecByID(id)
 }
 
 // providerSpecByEnvKey returns the ProviderSpec whose EnvKey matches,
 // or nil.
 func providerSpecByEnvKey(envKey string) *ProviderSpec {
-	for i := range providerCatalog {
-		if providerCatalog[i].EnvKey == envKey {
-			return &providerCatalog[i]
-		}
-	}
-	return nil
+	return llm.SpecByEnvKey(envKey)
 }
 
 // catalogProviderIDs returns the sorted-by-catalog-order list of
-// supported provider ids.
+// canonical provider ids.
 func catalogProviderIDs() []string {
-	out := make([]string, 0, len(providerCatalog))
-	for _, p := range providerCatalog {
-		out = append(out, p.ID)
-	}
-	return out
+	return llm.CanonicalIDs()
 }
 
 // ListSupportedProviders returns the human-readable list of providers
 // in the catalog (used in error hints so operators know what to set).
 func ListSupportedProviders() []string {
-	return catalogProviderIDs()
+	return llm.CanonicalIDs()
 }
 
 // providerDialect returns the effective dialect for a provider after

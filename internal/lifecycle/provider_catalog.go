@@ -1,13 +1,19 @@
 package lifecycle
 
-import "os"
+import (
+	"os"
+
+	"github.com/dark-agents/dark-memory-mcp/internal/llm"
+)
 
 // ProviderInfo describes one LLM provider and the env var that
-// carries its API key.
+// carries its API key. It is the harness-recommendation view of a
+// provider; the canonical source of provider data now lives in
+// internal/llm/catalog.go (spec 1188 — single source of truth).
 type ProviderInfo struct {
 	// ID is the provider's canonical identifier. Examples: "anthropic",
 	// "openai", "google", "deepseek", "minimax", "minimax-cn",
-	// "moonshot", "z-ai", "dashscope".
+	// "zhipu", "moonshot", "qwen".
 	ID string
 	// EnvKey is the env var that carries the API key. The key is
 	// considered "available" when os.Getenv(EnvKey) returns a non-empty
@@ -24,79 +30,39 @@ type ProviderInfo struct {
 	DefaultRung HarnessRung
 }
 
-// providerCatalog is the curated list of providers. The 9 entries
-// cover the 8 keys from v2.13.0 (ANTHROPIC / OPENAI / GEMINI / DEEPSEEK
-// / MINIMAX / MOONSHOT / ZAI / DASHSCOPE) plus the China variant
-// MINIMAX_API_KEY_CN (separate env var, separate endpoint, separate
-// model namespace).
-//
-// Adding a new provider means adding one entry here. The catalog is
-// iterated in order by DetectAvailableProviders so the order matters
-// for the recommendation algorithm (first match wins).
-var providerCatalog = []ProviderInfo{
-	{
-		ID:          "anthropic",
-		EnvKey:      "ANTHROPIC_API_KEY",
-		Family:      "anthropic",
-		Models:      []string{"claude-sonnet-4.5", "claude-opus-4.5", "claude-haiku-4.5"},
-		DefaultRung: RungMedium,
-	},
-	{
-		ID:          "openai",
-		EnvKey:      "OPENAI_API_KEY",
-		Family:      "openai",
-		Models:      []string{"gpt-5", "gpt-5.5", "gpt-5-mini"},
-		DefaultRung: RungMedium,
-	},
-	{
-		ID:          "google",
-		EnvKey:      "GEMINI_API_KEY",
-		Family:      "google",
-		Models:      []string{"gemini-3.0-pro", "gemini-2.5-flash"},
-		DefaultRung: RungMedium,
-	},
-	{
-		ID:          "deepseek",
-		EnvKey:      "DEEPSEEK_API_KEY",
-		Family:      "deepseek",
-		Models:      []string{"deepseek-v4", "deepseek-v3"},
-		DefaultRung: RungMedium,
-	},
-	{
-		ID:          "minimax",
-		EnvKey:      "MINIMAX_API_KEY",
-		Family:      "minimax",
-		Models:      []string{"MiniMax-M3", "minimax/M3"},
-		DefaultRung: RungHeavy,
-	},
-	{
-		ID:          "minimax-cn",
-		EnvKey:      "MINIMAX_API_KEY_CN",
-		Family:      "minimax-cn",
-		Models:      []string{"MiniMax-M3"},
-		DefaultRung: RungHeavy,
-	},
-	{
-		ID:          "moonshot",
-		EnvKey:      "MOONSHOT_API_KEY",
-		Family:      "moonshot",
-		Models:      []string{"moonshot-v1-128k", "moonshot-v1-32k"},
-		DefaultRung: RungMedium,
-	},
-	{
-		ID:          "z-ai",
-		EnvKey:      "ZAI_API_KEY",
-		Family:      "z-ai",
-		Models:      []string{"glm-4.6", "glm-4.5"},
-		DefaultRung: RungMedium,
-	},
-	{
-		ID:          "dashscope",
-		EnvKey:      "DASHSCOPE_API_KEY",
-		Family:      "dashscope",
-		Models:      []string{"qwen3-max", "qwen3-coder-plus"},
-		DefaultRung: RungMedium,
-	},
+// providerCatalog is the harness-recommendation view of the canonical
+// llm.Catalog (same order = failover priority). Derived once at init.
+var providerCatalog = deriveProviderCatalog()
+
+// deriveProviderCatalog maps the canonical llm.Catalog onto the
+// harness-recommendation ProviderInfo view.
+func deriveProviderCatalog() []ProviderInfo {
+	out := make([]ProviderInfo, 0, len(llm.Catalog))
+	for _, spec := range llm.Catalog {
+		out = append(out, ProviderInfo{
+			ID:          spec.ID,
+			EnvKey:      spec.EnvKey,
+			Family:      spec.Family,
+			Models:      spec.Models,
+			DefaultRung: rungFromString(spec.DefaultRung),
+		})
+	}
+	return out
+}
+
+// rungFromString maps the canonical llm.DefaultRung string to the
+// lifecycle HarnessRung enum.
+func rungFromString(s string) HarnessRung {
+	switch s {
+	case string(RungHeavy):
+		return RungHeavy
+	case string(RungMedium):
+		return RungMedium
+	case string(RungLight):
+		return RungLight
+	default:
+		return RungUnknown
+	}
 }
 
 // DetectAvailableProviders scans os.Getenv(EnvKey) for each provider

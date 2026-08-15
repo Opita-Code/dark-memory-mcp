@@ -69,11 +69,14 @@ func TestPublishVibe_NoLLM_NeedsHumanNotDrift(t *testing.T) {
 		// v2.13.0: catalog keys must be cleared too — otherwise a real
 		// key (e.g. DEEPSEEK_API_KEY) makes Judge succeed and this
 		// no-LLM regression fails.
-		"DEEPSEEK_API_KEY", "MINIMAX_API_KEY", "MOONSHOT_API_KEY",
+		"DEEPSEEK_API_KEY", "MINIMAX_API_KEY", "MINIMAX_API_KEY_CN", "MOONSHOT_API_KEY",
 		"ZAI_API_KEY", "DASHSCOPE_API_KEY", "DARK_JUDGE_PROVIDER",
 	} {
 		t.Setenv(k, "")
 	}
+	// v2.20.0 (spec 1188): force env-var-only keys — the OS keyring may
+	// hold a real migrated key, and this test asserts the NO-LLM path.
+	t.Setenv("DARK_LLM_KEYRING", "0")
 	ctx := context.Background()
 	orch, st := newErrorObsTestOrchestrator(t, ctx)
 

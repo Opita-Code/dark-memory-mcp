@@ -6,12 +6,13 @@ import (
 )
 
 // TestProviderCatalog_Completeness guards the provider catalog against
-// accidental truncation: all 8 providers from the 2026-08-10 primary-
-// source verification must be present with non-empty endpoints.
+// accidental truncation: all 9 canonical providers (2026-08-10 primary-
+// source verification + spec 1188 minimax-cn split) must be present
+// with non-empty endpoints.
 func TestProviderCatalog_Completeness(t *testing.T) {
 	expected := []string{
 		"anthropic", "openai", "google",
-		"deepseek", "minimax", "zhipu", "moonshot", "qwen",
+		"deepseek", "minimax", "minimax-cn", "zhipu", "moonshot", "qwen",
 	}
 	got := catalogProviderIDs()
 	if len(got) != len(expected) {
@@ -66,6 +67,7 @@ func TestProviderCatalog_EndpointsVerified(t *testing.T) {
 		{"google", "https://generativelanguage.googleapis.com/v1beta/openai/", "", "GEMINI_API_KEY", "gemini-3.6-flash", DialectOpenAI, RegionUS},
 		{"deepseek", "https://api.deepseek.com", "https://api.deepseek.com/anthropic", "DEEPSEEK_API_KEY", "deepseek-v4-flash", DialectOpenAI, RegionChina},
 		{"minimax", "https://api.minimaxi.com/v1", "https://api.minimaxi.com/anthropic", "MINIMAX_API_KEY", "MiniMax-M3", DialectOpenAI, RegionChina},
+		{"minimax-cn", "https://api.minimaxi.com/v1", "https://api.minimaxi.com/anthropic", "MINIMAX_API_KEY_CN", "MiniMax-M3", DialectOpenAI, RegionChina},
 		{"zhipu", "https://open.bigmodel.cn/api/paas/v4/", "", "ZAI_API_KEY", "glm-5.2", DialectOpenAI, RegionChina},
 		{"moonshot", "https://api.moonshot.cn/v1", "", "MOONSHOT_API_KEY", "kimi-k3", DialectOpenAI, RegionChina},
 		{"qwen", "https://dashscope.aliyuncs.com/compatible-mode/v1", "https://dashscope.aliyuncs.com/apps/anthropic", "DASHSCOPE_API_KEY", "qwen3.8-max", DialectOpenAI, RegionChina},

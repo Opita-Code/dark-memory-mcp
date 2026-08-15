@@ -94,6 +94,14 @@ func RegisterAll(reg *Registry, orch *orchestration.Orchestrator, st store.Store
 	// mindset_apply (MIND) + agent_memory_delegate (CURATE, C2
 	// binding). Gated by DARK_MEMORY_V280=1.
 	RegisterDelegation(reg, orch, st)
+	// LLM_CONFIG (4) — v2.20.0 (spec 1188 T7). llm_key_add /
+	// llm_key_list / llm_key_remove / llm_provider_status. Pure
+	// operators over the OS keystore + health registry + failover
+	// chain. Registered after DELEGATION and before JUDGE (the
+	// consumer of these providers). Needs no Store or Orchestrator
+	// directly — it uses orchestration.DefaultKeyStore() and
+	// DefaultFailoverClient() singletons at call time.
+	RegisterLLMConfig(reg)
 	// EMBEDDER (1) — v2.9.0-alpha PR-2. Hybrid retrieval consent gate.
 	// The handler casts st to an embedder-introspector interface so
 	// stores without the embedder field still register the tool with

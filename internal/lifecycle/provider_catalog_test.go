@@ -95,7 +95,7 @@ func TestDetectAvailableProviders_PreservesCatalogOrder(t *testing.T) {
 	setEnv("ANTHROPIC_API_KEY", "k")
 
 	got := DetectAvailableProviders()
-	wantOrder := []string{"anthropic", "openai", "deepseek", "moonshot", "z-ai", "dashscope"}
+	wantOrder := []string{"anthropic", "openai", "deepseek", "zhipu", "moonshot", "qwen"}
 	if len(got) != len(wantOrder) {
 		t.Fatalf("got %d entries, want %d", len(got), len(wantOrder))
 	}
