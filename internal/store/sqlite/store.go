@@ -1347,13 +1347,31 @@ func (s *Store) Recall(ctx context.Context, opts research.RecallOptions) ([]rese
 	if q == "" {
 		return nil, nil
 	}
-	like := "%" + strings.ToLower(q) + "%"
+	// Spec 1200 fix (2026-08-15): LIKE '%<full phrase>%' returns zero
+	// for any multi-word query — no research_item contains the exact
+	// phrase "daemon bridge arquitectura browser mcp". Tokenize to
+	// individual terms and OR the LIKE clauses so recall-first
+	// retrieval works. BM25-style ranking is not available on LIKE;
+	// ORDER BY id DESC gives freshness, which is the correct axis for
+	// a research store.
+	terms := recallQueryTerms(q)
+	if len(terms) == 0 {
+		return nil, nil
+	}
+	orClauses := make([]string, 0, len(terms)*3)
+	argsLike := make([]any, 0, len(terms)*3)
+	for _, term := range terms {
+		like := "%" + strings.ToLower(term) + "%"
+		orClauses = append(orClauses, "LOWER(i.title) LIKE ?", "LOWER(i.snippet) LIKE ?", "LOWER(i.source) LIKE ?")
+		argsLike = append(argsLike, like, like, like)
+	}
 	sqlStr := `SELECT i.id, i.run_id, i.title, i.url, i.snippet, i.source,
 	                  i.confidence, i.freshness_at, i.lang, i.raw, i.created_at
 	           FROM research_items i
 	           JOIN research_runs r ON r.id = i.run_id
-	           WHERE i.project_id = ? AND (LOWER(i.title) LIKE ? OR LOWER(i.snippet) LIKE ? OR LOWER(i.source) LIKE ?)`
-	args := []any{activeProject, like, like, like}
+	           WHERE i.project_id = ? AND (` + strings.Join(orClauses, " OR ") + `)`
+	args := []any{activeProject}
+	args = append(args, argsLike...)
 	if opts.Intent != "" {
 		sqlStr += ` AND r.intent = ?`
 		args = append(args, opts.Intent)
@@ -4722,6 +4740,166 @@ func (s *Store) SearchAgentMemory(ctx context.Context, f agentmemory.SearchFilte
 	}
 }
 
+// recallQueryTerms tokenizes a raw query into meaningful terms for
+// OR-based retrieval (research_items LIKE path). Mirrors the rules of
+// rewriteFTSQuery: split on whitespace (respecting quoted phrases),
+// drop stopwords + short + numeric-only tokens. Returns nil when
+// nothing meaningful remains.
+func recallQueryTerms(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	var terms []string
+	for _, tok := range splitQueryTokens(raw) {
+		if tok == "" {
+			continue
+		}
+		low := strings.ToLower(tok)
+		if ftsStopwords[low] {
+			continue
+		}
+		if len([]rune(tok)) < 2 {
+			continue
+		}
+		allDigits := true
+		for _, r := range tok {
+			if r < '0' || r > '9' {
+				allDigits = false
+				break
+			}
+		}
+		if allDigits {
+			continue
+		}
+		terms = append(terms, low)
+	}
+	return terms
+}
+
+
+// Extracted from the original SearchAgentMemory body when the Mode
+// dispatch landed in PR-2. Behavior unchanged: returns hits in rank
+// ASCENDING order (FTS5 bm25 is monotonic; -bm25() is negated in the
+// SELECT so callers see "higher rank = better match" intuitively).
+//
+// v2.9.0 PR-3 (agent_memory row 160): when f.Entities is non-empty,
+// the result is post-filtered by s.applyEntityFilter (AND semantics
+// across the entity list, case-insensitive). The post-filter
+// preserves the original BM25 ranking; the filter only prunes.
+
+// ftsStopwords is the recall query stopword set (spec 1200 fix,
+// 2026-08-15). FTS5 with `porter unicode61` tokenization treats
+// Spanish stopwords (de, la, que, por, ...) as ordinary terms, so a
+// natural-language query like "daemon bridge arquitectura por qué
+// existe spec 785" becomes AND of 8 terms — if ANY token misses, the
+// whole MATCH returns zero. We drop these from the rewritten OR query.
+var ftsStopwords = map[string]bool{
+	"de": true, "la": true, "el": true, "los": true, "las": true,
+	"del": true, "al": true, "un": true, "una": true, "unos": true, "unas": true,
+	"y": true, "o": true, "u": true, "ni": true, "que": true, "qué": true,
+	"quien": true, "quién": true,
+	"a": true, "ante": true, "bajo": true, "con": true, "contra": true,
+	"desde": true, "en": true, "entre": true, "hacia": true, "hasta": true,
+	"para": true, "por": true, "segun": true, "según": true, "sin": true, "sobre": true,
+	"tras": true, "no": true, "si": true, "sí": true, "es": true, "son": true, "fue": true,
+	"ser": true, "está": true, "esta": true, "estan": true, "están": true,
+	"existe": true, "existen": true, "hay": true, "tiene": true, "tienen": true,
+	"hace": true, "hacer": true, "puede": true, "pueden": true,
+	"the": true, "and": true, "of": true, "to": true, "in": true, "for": true,
+	"on": true, "with": true, "is": true, "are": true, "was": true, "be": true,
+	"it": true, "as": true, "at": true, "by": true, "from": true,
+}
+
+// rewriteFTSQuery converts a raw multi-word query into an OR-joined
+// FTS5 query so natural-language context queries return hits instead
+// of the all-terms-AND zero-result (spec 1200 fix, 2026-08-15).
+//
+// FTS5 semantics: `MATCH "a b c"` is AND of all three terms — if any
+// token has no match in a row, that row is excluded. With 6-8 tokens
+// (some stopwords, some accented, some numbers), the practical result
+// is zero hits for every query longer than ~3 words, which made
+// agent_memory_recall useless as a context-search ("nunca sirven para
+// query" — operator report). OR semantics give recall-first retrieval:
+// any token match returns the row, and BM25 ranks the best rows first.
+//
+// Rules:
+//   - Tokenize respecting double-quoted phrases (kept verbatim as FTS5
+//     phrase syntax: "opita market" stays one phrase token).
+//   - Drop tokens in ftsStopwords and tokens of length < 2.
+//   - Numeric-only tokens are dropped (rarely meaningful in recall).
+//   - Empty result (all stopwords) falls back to the raw query so the
+//     caller still gets FTS5's native behavior for single terms.
+func rewriteFTSQuery(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return raw
+	}
+	var tokens []string
+	for _, tok := range splitQueryTokens(raw) {
+		if tok == "" {
+			continue
+		}
+		// Preserve quoted phrases verbatim (FTS5 phrase syntax).
+		if strings.HasPrefix(tok, `"`) && strings.HasSuffix(tok, `"`) {
+			tokens = append(tokens, tok)
+			continue
+		}
+		low := strings.ToLower(tok)
+		if ftsStopwords[low] {
+			continue
+		}
+		if len([]rune(tok)) < 2 {
+			continue
+		}
+		allDigits := true
+		for _, r := range tok {
+			if r < '0' || r > '9' {
+				allDigits = false
+				break
+			}
+		}
+		if allDigits {
+			continue
+		}
+		tokens = append(tokens, tok)
+	}
+	if len(tokens) == 0 {
+		return raw
+	}
+	return strings.Join(tokens, " OR ")
+}
+
+// splitQueryTokens splits a raw query on whitespace but keeps
+// double-quoted phrases together as single tokens. "opita market"
+// daemon → ["\"opita market\"", "daemon"]. Unbalanced quotes fall
+// back to plain whitespace splitting so we never drop content.
+func splitQueryTokens(raw string) []string {
+	var out []string
+	var cur strings.Builder
+	inQuote := false
+	for _, r := range raw {
+		switch {
+		case r == '"':
+			inQuote = !inQuote
+			cur.WriteRune(r)
+		case r == ' ' || r == '\t' || r == '\n' || r == '\r':
+			if inQuote {
+				cur.WriteRune(r)
+			} else if cur.Len() > 0 {
+				out = append(out, cur.String())
+				cur.Reset()
+			}
+		default:
+			cur.WriteRune(r)
+		}
+	}
+	if cur.Len() > 0 {
+		out = append(out, cur.String())
+	}
+	return out
+}
+
 // searchByBM25 is the pre-PR-2 path: FTS5 BM25 over content+title+tags.
 // Extracted from the original SearchAgentMemory body when the Mode
 // dispatch landed in PR-2. Behavior unchanged: returns hits in rank
@@ -4732,6 +4910,10 @@ func (s *Store) SearchAgentMemory(ctx context.Context, f agentmemory.SearchFilte
 // the result is post-filtered by s.applyEntityFilter (AND semantics
 // across the entity list, case-insensitive). The post-filter
 // preserves the original BM25 ranking; the filter only prunes.
+//
+// v2.21.0 (spec 1200): the MATCH query is rewritten to OR-of-terms by
+// rewriteFTSQuery so multi-word natural-language queries return hits
+// (raw AND semantics returned zero for anything past ~3 tokens).
 func (s *Store) searchByBM25(ctx context.Context, f agentmemory.SearchFilters) ([]agentmemory.SearchHit, error) {
 	activeProject := s.ActiveProject()
 
@@ -4761,9 +4943,48 @@ func (s *Store) searchByBM25(ctx context.Context, f agentmemory.SearchFilters) (
 		where = append(where, "row.agent_id = ?")
 		args = append(args, f.AgentID)
 	}
-	if f.Operator != "" {
+	// v2.21.0 (spec 1200 T2): resolve scope like ListAgentMemory.
+	// The pre-fix behavior applied row.operator = f.Operator whenever
+	// Operator was non-empty, which made every recall return only the
+	// caller's own rows (the operator's human rows were invisible).
+	// Scope is the explicit opt-in: Operator only narrows with
+	// Scope=ScopeOperator, AgentID only with Scope=ScopeAgent.
+	scope := f.Scope
+	if scope == "" || scope == agentmemory.ScopeCurrent {
+		scope = agentmemory.ScopeProject
+	}
+	if !agentmemory.ValidScope(scope) {
+		return nil, fmt.Errorf("sqlite: SearchAgentMemory: invalid scope %q", scope)
+	}
+
+	switch scope {
+	case agentmemory.ScopeSession:
+		sid, _ := s.resolveActiveSessionID(ctx)
+		if sid == "" {
+			return nil, nil
+		}
+		where = append(where, "row.session_id = ?")
+		args = append(args, sid)
+	case agentmemory.ScopeOperator:
+		if f.Operator == "" {
+			return nil, nil
+		}
 		where = append(where, "row.operator = ?")
 		args = append(args, f.Operator)
+	case agentmemory.ScopeAgent:
+		if f.AgentID == "" {
+			return nil, nil
+		}
+		where = append(where, "row.agent_id = ?")
+		args = append(args, f.AgentID)
+	case agentmemory.ScopeProject, agentmemory.ScopeAll:
+		// No additional filter — already constrained by project.
+	}
+	// AgentID composes as an ADDITIONAL filter with any scope except
+	// ScopeAgent (where it is already applied above).
+	if f.AgentID != "" && scope != agentmemory.ScopeAgent {
+		where = append(where, "row.agent_id = ?")
+		args = append(args, f.AgentID)
 	}
 
 	query := `
@@ -4784,7 +5005,10 @@ func (s *Store) searchByBM25(ctx context.Context, f agentmemory.SearchFilters) (
 		   AND row.archived_at IS NULL
 	  ORDER BY rank DESC
 	     LIMIT ?`
-	args = append([]any{f.Query}, args...)
+	// ftsQuery: OR-rewritten FTS5 query (spec 1200 fix). Raw multi-word
+	// queries become OR-of-terms so recall-first retrieval works.
+	ftsQuery := rewriteFTSQuery(f.Query)
+	args = append([]any{ftsQuery}, args...)
 	args = append(args, limit)
 
 	rows, err := s.db.QueryContext(ctx, query, args...)

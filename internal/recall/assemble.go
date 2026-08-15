@@ -97,6 +97,7 @@ const DefaultToolGrants = "project_create," + // PROJECT (1)
 	"agent_memory_save,agent_memory_list,agent_memory_recall,agent_memory_get,agent_memory_update,agent_memory_archive,agent_memory_delegate,agent_memory_entities,subagent_register,subagent_unregister," + // AGENT_MEMORY (10) — v2.1.0 (5) + v2.3.0 (1: recall) + v2.8.0-alpha C2 (2: subagent register/unregister) + v2.9.0-alpha PR-3 (1: entities) + v2.9.3 (1: delegate)
 	"mindset_apply," + // MINDSET (1) — v2.7.0-alpha
 	"delegate_intent," + // DELEGATION (1) — Wave 5C (A1: handle/delegate/refuse)
+	"llm_key_add,llm_key_list,llm_key_remove,llm_provider_status," + // LLM_CONFIG (4) — v2.20.0 (spec 1188 T7: OS-keyring LLM key management + routing status)
 	"judge,consensus,judgment_history,judge_list_personas," + // JUDGE (4) — v2.17.0 (spec 1155: persona registry)
 	"active_policy,load_constitution," + // POLICY (2)
 	"memory_state,writes,anomalies,health_ping," + // OBSERVABILITY (4)
@@ -211,6 +212,16 @@ func (s *StoreSource) ScopeFrame(ctx context.Context, sessionID string) (*atomic
 	openSpecID := state.OpenSpecID
 	lastVerdict := state.LastVerdict
 	lastDriftAt := parseTimestamp(state.UpdatedAt)
+	// Contract fix (spec 1200): atomic.NewScopeFrame rejects a
+	// non-zero lastDriftAt paired with an empty lastDriftVerdict
+	// (ErrScopeVerdictWithoutTime). A session that just started (or
+	// never received a drift verdict) has last_verdict='' but a valid
+	// updated_at — passing both would make dark_memory_recall return
+	// ErrInternal for every fresh session. Zero the timestamp when
+	// there is no verdict so the frame composes cleanly.
+	if lastVerdict == "" {
+		lastDriftAt = time.Time{}
+	}
 	return atomic.NewScopeFrame(
 		sessionID,
 		openSpecID,
