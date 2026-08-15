@@ -59,7 +59,7 @@ func resolveLLMConfigFailover() (llmConfigFailoverer, error) {
 	if llmConfigFailover != nil {
 		return llmConfigFailover, nil
 	}
-	fc, err := resolveLLMConfigFailover()
+	fc, err := orchestration.DefaultFailoverClient()
 	if err != nil {
 		return nil, err
 	}

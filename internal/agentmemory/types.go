@@ -328,8 +328,22 @@ type SearchFilters struct {
 	// (episodic|semantic|procedural). Empty = any.
 	MemoryType string
 
-	// Operator narrows to rows where row.operator == filter.Operator.
-	// INV-7 + INV-10 compliance.
+	// Scope narrows the result set by ownership axis. Empty =
+	// ScopeProject (all operators/sessions in the active project).
+	// ScopeOperator additionally narrows by Operator; ScopeAgent by
+	// AgentID; ScopeSession by the active session. v2.21.0 audit fix
+	// (spec 1200 T2): previously the BM25 path applied
+	// row.operator = filter.Operator whenever Operator was non-empty,
+	// which made recall return only the caller's own rows — the
+	// operator's human rows were invisible. Scope is the explicit
+	// opt-in for ownership filtering; Operator alone (required for
+	// INV-1 audit) is NOT an ownership filter.
+	Scope string
+
+	// Operator is the caller identity for INV-1 audit + result
+	// attribution. It is NOT an implicit ownership filter: it only
+	// narrows the result set when Scope == ScopeOperator. INV-7 +
+	// INV-10 compliance.
 	Operator string
 
 	// AgentID narrows to rows where row.agent_id == filter.AgentID.

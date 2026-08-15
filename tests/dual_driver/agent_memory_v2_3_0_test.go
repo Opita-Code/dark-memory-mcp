@@ -303,7 +303,11 @@ func TestAgentMemory_Recall_BasicSmoke(t *testing.T) {
 		t.Errorf("recall no filter: got %d hits, want 2", len(hits))
 	}
 
-	// recall "postgres" + operator=alice: 1 hit (row2)
+	// recall "postgres" + operator=alice (no scope): 2 hits (row2 +
+	// row3). v2.21.0 (spec 1200 T2): Operator is audit identity, NOT
+	// an implicit ownership filter. The pre-fix behavior returned 1
+	// hit (row2 only) because SearchAgentMemory applied
+	// row.operator = f.Operator unconditionally — that was the bug.
 	hits, err = st.SearchAgentMemory(ctx, agentmemory.SearchFilters{
 		Query:    "postgres",
 		Operator: "alice",
@@ -311,8 +315,22 @@ func TestAgentMemory_Recall_BasicSmoke(t *testing.T) {
 	if err != nil {
 		t.Fatalf("recall op=alice: %v", err)
 	}
+	if len(hits) != 2 {
+		t.Errorf("recall op=alice (no scope): got %d hits, want 2 (operator is audit, not filter)", len(hits))
+	}
+
+	// recall "postgres" + operator=alice + scope=operator: 1 hit
+	// (row2) — the explicit opt-in ownership filter.
+	hits, err = st.SearchAgentMemory(ctx, agentmemory.SearchFilters{
+		Query:    "postgres",
+		Operator: "alice",
+		Scope:    agentmemory.ScopeOperator,
+	})
+	if err != nil {
+		t.Fatalf("recall op=alice scope=operator: %v", err)
+	}
 	if len(hits) != 1 || hits[0].Operator != "alice" {
-		t.Errorf("recall op=alice: got %d hits, want 1 from alice", len(hits))
+		t.Errorf("recall op=alice scope=operator: got %d hits, want 1 from alice", len(hits))
 	}
 
 	// recall "postgres" + agent_id=claude-haiku-3: 1 hit (row3)

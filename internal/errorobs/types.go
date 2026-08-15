@@ -199,6 +199,14 @@ func Classify(err error) (Domain, string, Severity) {
 		strings.Contains(lower, "judge error"):
 		return DomainLLM, "ErrNoLLMAvailable", SeverityError
 	case strings.Contains(lower, "gate:"),
+		strings.Contains(lower, "gate refusal"),
+		strings.Contains(lower, "errframestale"),
+		strings.Contains(lower, "errcapabilitynotgranted"),
+		strings.Contains(lower, "errscoperequired"),
+		strings.Contains(lower, "errcapabilitiesexpired"),
+		strings.Contains(lower, "errdriftatwrite"),
+		strings.Contains(lower, "errsessionnotfound"),
+		strings.Contains(lower, "errsessionnotresurrectable"),
 		strings.Contains(lower, "postcheck"),
 		strings.Contains(lower, "precheck"):
 		return DomainGate, "ErrGateRefusal", SeverityError

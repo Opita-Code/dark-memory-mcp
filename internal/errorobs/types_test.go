@@ -100,6 +100,16 @@ func TestClassify_HeuristicBranches(t *testing.T) {
 		{"gate_prefix", "gate: capability expired", DomainGate, "ErrGateRefusal"},
 		{"gate_postcheck", "postcheck refused: drift", DomainGate, "ErrGateRefusal"},
 		{"gate_precheck", "precheck: scope required", DomainGate, "ErrGateRefusal"},
+		// v2.21.0 (spec 1200 T3): the real gate refusal messages observed
+		// in error_events were NOT classified (62/78 clusters unknown).
+		// "gate refusal" has no colon; the sentinel names are the
+		// ErrorKind codes from policy/gate.go.
+		{"gate_refusal_no_colon", "gate refusal ErrFrameStaleTooFar: session or project not bound", DomainGate, "ErrGateRefusal"},
+		{"gate_refusal_identity", "gate refusal ErrFrameStaleTooFar: identity unavailable for this session", DomainGate, "ErrGateRefusal"},
+		{"gate_refusal_constitution", "gate refusal ErrFrameStaleTooFar: constitution mismatch: identity=dark-agent-default@v1.0, input=dark-agents/d", DomainGate, "ErrGateRefusal"},
+		{"gate_errframestale", "ErrFrameStaleTooFar: session or project not bound", DomainGate, "ErrGateRefusal"},
+		{"gate_errcapability", "ErrCapabilityNotGranted: tool not in DefaultToolGrants", DomainGate, "ErrGateRefusal"},
+		{"gate_errscope", "ErrScopeRequired: requires an active project", DomainGate, "ErrGateRefusal"},
 		{"sweeper", "sweeper: session close failed", DomainSweep, "ErrSweep"},
 		{"sweep_verb", "session sweep timed out", DomainSweep, "ErrSweep"},
 		{"validation_invalid_argument", "invalid argument: tasks", DomainValidation, "ErrInvalidArgument"},

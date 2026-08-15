@@ -99,7 +99,8 @@ func RegisterAgentMemory(reg *Registry, orch *orchestration.Orchestrator, st sto
 			"type":     "object",
 			"required": []string{"operator", "query"},
 			"properties": map[string]any{
-				"operator":    map[string]any{"type": "string", "description": "Operator id (caller identity for INV-1 audit + result attribution). Required."},
+				"operator":    map[string]any{"type": "string", "description": "Operator id (INV-1 audit + result attribution). NOT an ownership filter by default — recall searches the whole active project. Pass scope='operator' to narrow to this operator's rows. v2.21.0 (spec 1200 T2)."},
+				"scope":       map[string]any{"type": "string", "enum": []string{"current", "session", "project", "operator", "agent", "all"}, "description": "Ownership axis. Default 'project' (all operators/sessions). 'operator' narrows to the operator's rows; 'agent' to agent_id's rows; 'session' to the active session. v2.21.0 (spec 1200 T2)."},
 				"query":       map[string]any{"type": "string", "description": "FTS5 search query. Alphanumeric + . - _ / + * only; AND/OR/NOT/NEAR rejected."},
 				"agent_id":    map[string]any{"type": "string", "description": "Optional. Scopes results to rows where agent_id == this value (Mem0 agent_id). v2.3.0."},
 				"kind":        map[string]any{"type": "string", "description": "Optional. Filter to one operator-kind (note, observation, decision, ...)."},

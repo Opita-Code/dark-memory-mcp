@@ -448,6 +448,97 @@ func TestAgentMemory_Search_BM25(t *testing.T) {
 	}
 }
 
+// TestAgentMemory_Search_CrossOperator (v2.21.0, spec 1200 T2
+// regression): recall with Operator set for audit must NOT narrow the
+// result set by default — it searches the whole active project like
+// list does. Before the fix, SearchAgentMemory applied
+// row.operator = f.Operator whenever Operator was non-empty, so a
+// dark-agent recall never saw rows written by the human operator
+// (their most important rows). Scope=operator must opt back in.
+func TestAgentMemory_Search_CrossOperator(t *testing.T) {
+	st, cleanup := openAgentMemoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	// Two operators write rows about the same topic.
+	rows := []*agentmemory.AgentMemory{
+		makeRow("alice", "note", "allowlist enforcement OCAIS domain"),
+		makeRow("bob", "note", "allowlist mutation runner db"),
+	}
+	for _, r := range rows {
+		if _, err := st.SaveAgentMemory(ctx, wcFor("alice", "test"), r); err != nil {
+			t.Fatalf("save: %v", err)
+		}
+	}
+
+	// Default (no Scope): Operator present for audit but MUST NOT
+	// filter — both operators' rows surface.
+	hits, err := st.SearchAgentMemory(ctx, agentmemory.SearchFilters{
+		Query:    "allowlist",
+		Operator: "alice",
+	})
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(hits) != 2 {
+		t.Errorf("default scope: got %d hits, want 2 (both operators visible)", len(hits))
+	}
+
+	// Scope=operator: opt-in ownership filter — only alice's rows.
+	hits, err = st.SearchAgentMemory(ctx, agentmemory.SearchFilters{
+		Query:    "allowlist",
+		Operator: "alice",
+		Scope:    agentmemory.ScopeOperator,
+	})
+	if err != nil {
+		t.Fatalf("search scope=operator: %v", err)
+	}
+	if len(hits) != 1 {
+		t.Errorf("scope=operator: got %d hits, want 1 (only alice)", len(hits))
+	}
+	for _, h := range hits {
+		if h.Operator != "alice" {
+			t.Errorf("scope=operator returned row of operator %q, want alice", h.Operator)
+		}
+	}
+}
+
+// TestAgentMemory_Search_ScopeAgent (v2.21.0, spec 1200 T2): the
+// explicit Scope=agent axis narrows by agent_id, composing with the
+// project constraint, mirroring ListAgentMemory.
+func TestAgentMemory_Search_ScopeAgent(t *testing.T) {
+	st, cleanup := openAgentMemoryDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	rows := []*agentmemory.AgentMemory{
+		makeRow("alice", "note", "agent-specific grounding for recall"),
+		makeRow("bob", "note", "another agent grounding recall"),
+	}
+	rows[0].AgentID = "agent-x"
+	rows[1].AgentID = "agent-y"
+	for _, r := range rows {
+		if _, err := st.SaveAgentMemory(ctx, wcFor("alice", "test"), r); err != nil {
+			t.Fatalf("save: %v", err)
+		}
+	}
+
+	hits, err := st.SearchAgentMemory(ctx, agentmemory.SearchFilters{
+		Query:   "grounding",
+		AgentID: "agent-x",
+		Scope:   agentmemory.ScopeAgent,
+	})
+	if err != nil {
+		t.Fatalf("search scope=agent: %v", err)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("scope=agent: got %d hits, want 1", len(hits))
+	}
+	if hits[0].AgentID != "agent-x" {
+		t.Errorf("scope=agent returned agent %q, want agent-x", hits[0].AgentID)
+	}
+}
+
 // TestAgentMemory_Search_PorterStemming exercises the v22 porter
 // unicode61 tokenizer. Morphology-equivalent words ("running" ↔ "runs")
 // collapse to the same stem ("run") and both rows surface for the same

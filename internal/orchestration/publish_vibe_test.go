@@ -70,12 +70,15 @@ func TestParseDriftVerdict_LowConfidence(t *testing.T) {
 }
 
 // TestParseDriftVerdict_Malformed verifies the lenient fallback works
-// for JSON without verdict or aligned fields. Returns drift_detected
-// (the conservative default).
+// for JSON without verdict or aligned fields. v2.21.0 (spec 1200 P0):
+// returns needs_human — an unparseable verdict is parse/infra failure
+// (operator reviews), NOT semantic drift. The pre-fix default was
+// drift_detected, which turned every YAML/markdown verdict into a
+// spurious drift (root cause of the "judge degraded" era).
 func TestParseDriftVerdict_Malformed(t *testing.T) {
 	json := `{"garbage":"yes","nothing_useful":true}`
-	if got := parseDriftVerdict(json, 0.9); got != "drift_detected" {
-		t.Errorf("malformed: got %q, want %q (lenient default)", got, "drift_detected")
+	if got := parseDriftVerdict(json, 0.9); got != "needs_human" {
+		t.Errorf("malformed: got %q, want %q (fail-safe default)", got, "needs_human")
 	}
 }
 
@@ -106,12 +109,13 @@ func TestParseDriftVerdict_NormalizerDebug_Skip(t *testing.T) {
 }
 
 // TestParseDriftVerdict_UnknownStringValue — a verdict string we
-// don't recognize falls through to drift_detected (the conservative
-// fallback).
+// don't recognize falls through to needs_human (the fail-safe default
+// per v2.21.0 spec 1200 P0; unknown verdict = infra/parse failure,
+// not drift).
 func TestParseDriftVerdict_UnknownStringValue(t *testing.T) {
 	json := `{"verdict":"maybe_aligned","confidence":0.9}`
-	if got := parseDriftVerdict(json, 0.9); got != "drift_detected" {
-		t.Errorf("unknown verdict: got %q, want %q", got, "drift_detected")
+	if got := parseDriftVerdict(json, 0.9); got != "needs_human" {
+		t.Errorf("unknown verdict: got %q, want %q", got, "needs_human")
 	}
 }
 
@@ -219,6 +223,81 @@ func TestParseVerdict_DriftJudge_Aligned(t *testing.T) {
 	json := `{"verdict":"aligned","confidence":0.9,"reasoning":"ok"}`
 	if got := parseVerdict("drift_judge", json, 0.9); got != "aligned" {
 		t.Errorf("drift_judge aligned: got %q, want %q", got, "aligned")
+	}
+}
+
+// TestParseVerdict_YamlVerdicts (v2.21.0, spec 1200 P0 regression):
+// MiniMax-M3 with thinking adaptive answers in YAML (or markdown with
+// fenced yaml), not JSON. A valid `verdict: needs_human` YAML must map
+// to needs_human — the pre-fix parser fell through to the fail-open
+// drift_detected default, which turned every YAML verdict into a
+// spurious drift and is the root cause of the "judge degraded" era.
+func TestParseVerdict_YamlVerdicts(t *testing.T) {
+	cases := []struct {
+		name string
+		json string
+		want string
+	}{
+		{
+			"yaml_needs_human", // exact shape from eval 980
+			"```yaml\nverdict: needs_human\nreasoning: insufficient information to ground verdict\nevidence:\n  - file: <report markdown provided by operator>\n    line: 1\n```",
+			"needs_human",
+		},
+		{
+			"yaml_aligned",
+			"```yaml\nverdict: aligned\nconfidence: 0.9\nreasoning: implementation matches spec\n```",
+			"aligned",
+		},
+		{
+			"yaml_drift_detected",
+			"```yaml\nverdict: drift_detected\nreasoning: artifact omits spec section\n```",
+			"drift_detected",
+		},
+		{
+			"markdown_needs_human", // exact shape from eval 981
+			"# Logical Judge — Audit Verdict\n\n**verdict:** `needs_human`\n**reasoning:** insufficient information to ground verdict — no artifact text, no file path\n",
+			"needs_human",
+		},
+		{
+			"markdown_aligned",
+			"# Verdict\n\n**verdict:** `aligned`\n**confidence:** 0.92\n",
+			"aligned",
+		},
+		{
+			"yaml_quoted_verdict",
+			"```yaml\nverdict: \"drift_detected\"\nreasoning: no\n```",
+			"drift_detected",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := parseVerdict("drift_judge", tc.json, 0.7); got != tc.want {
+				t.Errorf("parseVerdict(%q): got %q, want %q", tc.name, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestParseVerdict_UnparseableFailsSafe (v2.21.0, spec 1200 P0): an
+// unparseable/empty verdict must surface as needs_human (operator
+// reviews), NOT drift_detected. Parse/infra failure ≠ semantic drift.
+func TestParseVerdict_UnparseableFailsSafe(t *testing.T) {
+	cases := []struct {
+		name string
+		json string
+	}{
+		{"empty", ""},
+		{"garbage", "not a verdict at all"},
+		{"empty_json_object", "{}"},
+		{"thinking_only", `{"type":"thinking","thinking":"let me reason about this..."}`},
+		{"partial", `{"reasoning":"no verdict field"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := parseVerdict("drift_judge", tc.json, 0.7); got != "needs_human" {
+				t.Errorf("parseVerdict(%q): got %q, want needs_human", tc.name, got)
+			}
+		})
 	}
 }
 

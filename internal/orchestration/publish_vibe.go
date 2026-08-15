@@ -802,15 +802,52 @@ func parseVerdict(evalType, verdictJSON string, confidence float32) string {
 	// Step 2: collapse whitespace around colons. The first ReplaceAll
 	// handles `: ` (colon followed by space, e.g. `"key": "value"`).
 	// The second handles ` :` (space followed by colon, e.g. `"key" : "value"`).
-	// Apply both to normalise pretty-printed JSON to the canonical compact form.
-	compact := strings.ReplaceAll(b.String(), `: `, `:`)
+	// Markdown backtick form (`verdict:`needs_human``) — strip
+	// backticks and `**` bold markers BEFORE the colon-collapse so the
+	// `: ` (colon+space) replacement can bind `verdict: aligned`.
+	// Otherwise `verdict:` `aligned`` has a backtick between the colon
+	// and the value and the `: ` pattern never matches.
+	b2 := strings.ReplaceAll(b.String(), "`", "")
+	b2 = strings.ReplaceAll(b2, "**", "")
+	compact := strings.ReplaceAll(b2, `: `, `:`)
 	compact = strings.ReplaceAll(compact, ` :`, `:`)
 	if strings.Contains(compact, `"verdict":"aligned"`) ||
 		strings.Contains(compact, `"aligned":true`) ||
-		strings.Contains(compact, `"drift":false`) {
+		strings.Contains(compact, `"drift":false`) ||
+		// v2.21.0 (spec 1200, P0 fix): MiniMax-M3 with thinking
+		// adaptive answers in YAML or markdown, not JSON. The
+		// canonical verdict values survive whitespace normalisation
+		// as `verdict:aligned` / `verdict:needs_human` /
+		// `verdict:drift_detected` (yaml) or markdown backtick
+		// forms. Match those too so a valid YAML/markdown verdict is
+		// never misread as drift.
+		strings.Contains(compact, `verdict:aligned`) ||
+		strings.Contains(compact, `verdict:needs_human`) ||
+		strings.Contains(compact, `verdict:drift_detected`) ||
+		strings.Contains(compact, `verdict:"aligned"`) ||
+		strings.Contains(compact, `verdict:"needs_human"`) ||
+		strings.Contains(compact, `verdict:"drift_detected"`) {
+		// Canonical values are unambiguous after normalisation.
+		switch {
+		case strings.Contains(compact, `verdict:aligned`),
+			strings.Contains(compact, `verdict:"aligned"`):
+			return "aligned"
+		case strings.Contains(compact, `verdict:needs_human`),
+			strings.Contains(compact, `verdict:"needs_human"`):
+			return "needs_human"
+		case strings.Contains(compact, `verdict:drift_detected`),
+			strings.Contains(compact, `verdict:"drift_detected"`):
+			return "drift_detected"
+		}
 		return "aligned"
 	}
-	return "drift_detected"
+	// v2.21.0 (spec 1200, P0 fix): fail-safe default is needs_human,
+	// NOT drift_detected. An unparseable verdict (wrong format, empty
+	// response, model change) means the judge could not form a
+	// verdict — that is infrastructure/parse failure, which per
+	// spec 757 T6 must surface as needs_human (operator reviews),
+	// never as a spurious drift_detected.
+	return "needs_human"
 }
 
 // numericBool reads a float field from a map[string]any (the shape

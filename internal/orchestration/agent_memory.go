@@ -238,11 +238,15 @@ func (o *Orchestrator) AgentMemoryList(ctx context.Context, in AgentMemoryListIn
 // memory data plane. Query is required (FTS5 escape is handled by
 // the tool layer). v2.3.0 NEW.
 //
-// Filter semantics mirror agent_memory_list: Operator scopes by
-// caller's identity, AgentID scopes by Mem0 agent_id, MemoryType
-// scopes by Mem0 three-class taxonomy, Kind scopes by operator's
-// 10-kind taxonomy. All filters are AND-combined.
+// Filter semantics mirror agent_memory_list: Scope defaults to
+// "project" (all operators/sessions in the active project); Operator
+// scopes by caller's identity ONLY when Scope=operator (it is always
+// required for INV-1 audit but is NOT an implicit ownership filter —
+// v2.21.0 fix, spec 1200 T2); AgentID scopes by Mem0 agent_id,
+// MemoryType scopes by Mem0 three-class taxonomy, Kind scopes by
+// operator's 10-kind taxonomy. All filters are AND-combined.
 type AgentMemoryRecallInput struct {
+	Scope      string `json:"scope,omitempty"`
 	Operator   string `json:"operator,omitempty"`
 	AgentID    string `json:"agent_id,omitempty"`
 	Query      string `json:"query"`
@@ -274,6 +278,7 @@ func (o *Orchestrator) AgentMemoryRecall(ctx context.Context, in AgentMemoryReca
 	}
 	hits, err := o.Store.SearchAgentMemory(ctx, agentmemory.SearchFilters{
 		Query:      in.Query,
+		Scope:      in.Scope,
 		Operator:   in.Operator,
 		AgentID:    in.AgentID,
 		Kind:       in.Kind,
