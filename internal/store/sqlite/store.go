@@ -4872,8 +4872,9 @@ func rewriteFTSQuery(raw string) string {
 
 // splitQueryTokens splits a raw query on whitespace but keeps
 // double-quoted phrases together as single tokens. "opita market"
-// daemon → ["\"opita market\"", "daemon"]. Unbalanced quotes fall
-// back to plain whitespace splitting so we never drop content.
+// daemon → ["\"opita market\"", "daemon"]. An unbalanced opening quote
+// conserves all content inside one token (never drops it); FTS5 treats
+// the unterminated phrase as a single term, which still matches.
 func splitQueryTokens(raw string) []string {
 	var out []string
 	var cur strings.Builder
