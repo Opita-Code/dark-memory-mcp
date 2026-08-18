@@ -134,6 +134,61 @@ catalog to that code path.
 
 ---
 
+## [2.15.4] — 2026-08-18 — test decouple: delegate_intent tests go mock-first (spec 1272)
+
+Backlog FIX A closes the "delegate_intent C7 tests depend on a live
+LLM" debt. The two `TestDelegateIntent_C7_*` tests now wire the
+LLM selector through `wireMockLLM()` — an `OSINTSelector` with two
+deterministic `MockLLMClient` overrides (one for `mindset_compose`,
+one for `mindset_quality`). Tests are offline: no API keys, no
+provider coupling, no shell env reads, no HTTP. The CI suite
+runs them in well under a second each (was 22-89 s with a live
+provider; was 1-2 s fail-fast with an invalid shell key).
+
+### Changed
+
+- **`internal/orchestration/delegate_intent_test.go`**
+  - New helper `wireMockLLM()` returns an `OSINTSelector` with two
+    `MockLLMClient` overrides. The compose mock returns a
+    canned `mindsetAttempt` (role + goal + backstory +
+    constraints + tools_recommended + model_recommended) that
+    parses cleanly into the struct the `mindsetCompose` consumer
+    expects. The quality mock returns `{"verdict":"aligned",
+    "confidence":0.95,...}` so `mindsetValidate` short-circuits
+    the composition loop on iteration 1.
+  - `wireLLM()` now delegates to `wireMockLLM()`. The harness-
+    injection / env-fallback comment is preserved for context
+    (production orchestrators still follow spec 173 O5).
+  - Test file header updated to document the mock-first contract
+    + the operator flag (2026-08-18 "hardcodear providers en
+    tests es antipatron") + the per-eval_type override
+    rationale.
+- **`internal/orchestration/delegate_intent.go`** — unchanged.
+  The mock routes through the same `o.Judge(ctx, ...)` →
+  `selector.Select(ctx, evalType)` path that the live LLM uses,
+  exercising the production orchestrator + composition loop end-to-end.
+
+### Not changed
+
+- `tests/wire/` (the live-LLM conformance suite) is unchanged.
+  It still expects the operator to run with harness-injected keys
+  and exercises the same selection / failover paths the production
+  orchestrator uses. Mock-first is for the orchestration-level
+  unit / acceptance tests, not for end-to-end wire conformance.
+- Spec 1270 freeze (57/17/26) is unchanged. Spec 1271 catalog
+  defaults (v2.15.3) are unchanged.
+- WIP errorobs preserved per operator policy.
+
+### No production runtime change
+
+The mock is only used by the test helper. The production
+orchestrator's `ensureLLMSelector` chain (primary harness
+injection → secondary DefaultFailoverClient → ErrNoLLMAvailable)
+is untouched. Production deployments keep the same
+spec-173-O5 contract.
+
+---
+
 ## [2.17.0] — 2026-08-14 — persona registry (specialized system prompts)
 
 **Cada eval_type tiene ahora su propio lens.** Esta versión completa

@@ -6,7 +6,7 @@
 // temp dir (the pattern used by tests/dual_driver), with a real
 // session so the active-project/active-session contract holds.
 //
-// LLM wiring (spec 173 O5, v2.11.1 fix):
+// LLM wiring (spec 173 O5, v2.11.1 fix, updated FIX A spec 1272):
 //   - Primary mechanism: harness injection via WithLLMSelector.
 //     The harness (opencode / Claude Desktop / etc.) wires its cloud
 //     LLM at boot time. This is the canonical path.
@@ -14,10 +14,17 @@
 //     LLM from env vars (ANTHROPIC_API_KEY / OPENAI_API_KEY / …).
 //     This is a bridge for operators who have not yet adopted the
 //     injection pattern.
-//   - Test contract: the test injects the LLM if NewSelfHarnessClient
-//     succeeds, and llmAvailable(orch) gates LLM-dependent assertions.
-//     When no LLM is available, the test skips or asserts the
-//     best-effort fallback (empty system_prompt).
+//   - Test contract (FIX A): wireLLM() returns wireMockLLM() — an
+//     in-memory OSINTSelector with deterministic mocks for
+//     mindset_compose + mindset_quality. Tests are deterministic
+//     and offline (no API keys, no provider coupling, no shell env
+//     read). llmAvailable(orch) is always true in this file. The
+//     live LLM contract is exercised in tests/wire/ — operator
+//     runs out of band with harness-injected key.
+//   - Per the operator flag 2026-08-18 ("hardcodear providers en
+//     tests es antipatron"): the test must NOT depend on a specific
+//     provider/dialect/key. The mock-first contract makes that
+//     explicit and stable across harness-side changes.
 package orchestration
 
 import (
@@ -26,20 +33,65 @@ import (
 	"testing"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/safety"
+	"github.com/dark-agents/dark-memory-mcp/internal/ssd"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 	"github.com/dark-agents/dark-memory-mcp/internal/store/sqlite"
 )
 
-// wireLLM constructs the LLM selector for an orchestrator following
-// the v2.11.1 injection-first pattern. Returns nil when no LLM is
-// available (env vars missing or invalid) — the orchestrator's
-// ensureLLMSelector will then apply the secondary fallback.
-func wireLLM() LLMSelector {
-	c, err := NewSelfHarnessClient()
-	if err != nil || c == nil {
-		return nil
+// wireMockLLM returns an OSINTSelector with deterministic mocks for
+// the mindset pipeline eval_types. The mocks return canned
+// VerdictJSON shapes that parse cleanly into the structs the
+// downstream code expects (mindsetAttempt for compose,
+// MindsetJudgeVerdict for validate). This decouples the tests from
+// a live LLM provider — CI runs without API keys, the deterministic
+// "aligned" verdict lets the C7 acceptance path complete in
+// milliseconds, and no shell env is read.
+//
+// Why mock-first (FIX A, spec 1272 / t8 backlog): per the operator
+// flag (2026-08-18) "hardcodear providers en tests es antipatron",
+// tests must not couple to a specific provider/dialect/key. The
+// live LLM contract is exercised in tests/wire/ (suite that the
+// operator runs out of band with the harness-injected key); the
+// orchestration tests here are deterministic + offline.
+func wireMockLLM() LLMSelector {
+	composeMock := &MockLLMClient{
+		Name_: "mock-compose",
+		VerdictJSON: `{
+			"role": "Senior direct-response campaign builder with 10y in conversion",
+			"goal": "Produce a landing page that converts visitors into trial signups",
+			"backstory": "Built 100+ landing pages for SaaS, e-commerce, lead-gen. Fluent in CRO, copywriting, and visual hierarchy.",
+			"constraints": ["no fabricated testimonials", "explicit offer before the fold", "single CTA per page"],
+			"tools_recommended": ["vibe_publish", "agent_memory_recall", "dark_research_web"],
+			"model_recommended": "MiniMax-M3"
+		}`,
+		Confidence: 0.95,
+		Model:      "MiniMax-M3",
 	}
-	return NewOSINTSelector(c)
+	qualityMock := &MockLLMClient{
+		Name_: "mock-quality",
+		VerdictJSON: `{
+			"verdict": "aligned",
+			"confidence": 0.95,
+			"reasoning": "composed mindset is well-formed: has role + goal + backstory + tools_recommended + constraints. The model_recommended field is concrete. Acceptable to cache and hand off."
+		}`,
+		Confidence: 0.95,
+		Model:      "MiniMax-M3",
+	}
+	sel := NewOSINTSelector(nil)
+	sel.WithOverride(string(ssd.EvalMindsetCompose), composeMock).
+		WithOverride(string(ssd.EvalMindsetQuality), qualityMock)
+	return sel
+}
+
+// wireLLM constructs the LLM selector for an orchestrator following
+// the v2.11.1 injection-first pattern. Tests are deterministic by
+// design — they use the in-memory mock (wireMockLLM). The live LLM
+// contract is exercised in tests/wire/ (operator runs out of band
+// with harness-injected key). When wireMockLLM is in use,
+// llmAvailable(orch) returns true and the LLM-dependent assertions
+// in the C7 tests run against the deterministic mocks.
+func wireLLM() LLMSelector {
+	return wireMockLLM()
 }
 
 // newDelegateTestOrchestrator builds an Orchestrator backed by a
