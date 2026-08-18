@@ -214,7 +214,7 @@ jobs:
           set -euo pipefail
           # Retry loop for npm-registry propagation race conditions.
           #
-          # Two trigger paths converge here:
+          # Three trigger paths converge here:
           # (a) push:tags: v* — fires in parallel with publish-npm.
           #     npm CDN may not have propagated yet when this fires.
           # (b) workflow_run on publish-npm completed — fires AFTER
@@ -222,17 +222,42 @@ jobs:
           #     propagated. First attempt usually succeeds.
           # (c) workflow_dispatch — manual operator rerun. Same as (a).
           #
-          # The retry budget covers path (a)/(c). Path (b) almost always
-          # succeeds on attempt 1; the retry is a no-op safety net.
+          # v2.20.0 (release-time fix): the idempotency re-check inside
+          # the retry loop handles the path (a)/(b) race. Without it,
+          # path (a) fires first, retries ~5min for npm propagation,
+          # but path (b) lands a publish mid-retry — path (a) then sees
+          # 'cannot publish duplicate version' on every subsequent
+          # attempt. Re-checking MCP Registry at the top of each retry
+          # short-circuits with exit 0 the moment path (b) succeeds.
+          #
+          # The retry budget covers path (a)/(c) npm-propagation races.
+          # Path (b) almost always succeeds on attempt 1; the retry is
+          # a no-op safety net for it too.
           #
           # v2.6.1 retry: 3 × 30s = 90s worst case. v2.7.1 bump per
           # agent_memory id=93 follow-up: 5 × 60s = 300s worst case,
           # which comfortably covers npm's 5-30s CDN propagation plus
           # the longest historical flake (~180s in v2.6.0 publish).
+          check_already_published() {
+            local v="$1"
+            curl -sf "https://registry.modelcontextprotocol.io/v0/servers?search=io.github.Opita-Code/dark-memory-mcp" 2>/dev/null | \
+              jq -e --arg v "$v" '(.servers // []) | map(.server.version) | index($v) != null' > /dev/null 2>&1
+          }
+
+          VERSION="${{ steps.version.outputs.VERSION }}"
           MAX_ATTEMPTS=5
           RETRY_DELAY=60
           for attempt in $(seq 1 $MAX_ATTEMPTS); do
             echo "::group::mcp-publisher publish (attempt $attempt/$MAX_ATTEMPTS, trigger=${{ github.event_name }})"
+            # Re-check idempotency at the top of each retry. The
+            # check-exists step ran ONCE at job start, but a parallel
+            # workflow_run trigger (path b) may have published the
+            # version during our 60s sleep. If so, exit 0 cleanly.
+            if check_already_published "$VERSION"; then
+              echo "::endgroup::"
+              echo "Version $VERSION already in MCP Registry (re-check during retry); exiting"
+              exit 0
+            fi
             if ./mcp-publisher publish; then
               echo "::endgroup::"
               echo "Published on attempt $attempt"
