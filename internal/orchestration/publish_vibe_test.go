@@ -529,3 +529,50 @@ func TestParseVerdict_LastOccurrence_LowConfidenceStillNeedsHuman(t *testing.T) 
 		t.Errorf("low confidence: got %q, want needs_human", got)
 	}
 }
+
+// TestParseVerdict_FencedJSON_TrustsStructuredVerdict is the drift
+// 1089 regression (TD-J4 v2). MiniMax-M3 wraps its structured verdict
+// in a ```json fence. The OLD flow unmarshalled the raw text (fails
+// due to the fence), fell to the last-occurrence scan, and found
+// "verdict":"drift_detected" tokens INSIDE the judge's own evidence
+// quote (the canonicalTokens list) LATER than the judge's real
+// top-level "verdict":"aligned" → FALSE drift_detected. The fix strips
+// the fence BEFORE Unmarshal so the top-level structured verdict wins.
+func TestParseVerdict_FencedJSON_TrustsStructuredVerdict(t *testing.T) {
+	raw := "```json\n" +
+		"{\n" +
+		"  \"verdict\": \"aligned\",\n" +
+		"  \"confidence\": 0.92,\n" +
+		"  \"evidence\": [\n" +
+		"    {\"file\": \"publish_vibe.go\", \"line\": 831, \"quote\": \"{`\\\"verdict\\\":\\\"drift_detected\\\"`, \\\"drift_detected\\\"}\"}\n" +
+		"  ]\n" +
+		"}\n" +
+		"```"
+	if got := parseDriftVerdict(raw, 0.92); got != "aligned" {
+		t.Errorf("fenced aligned + late drift token quote: got %q, want aligned (structured top-level verdict must win)", got)
+	}
+
+	// Same fence, but the judge's real verdict is needs_human and the
+	// evidence quotes an early "aligned" token.
+	raw2 := "```json\n" +
+		"{\n" +
+		"  \"verdict\": \"needs_human\",\n" +
+		"  \"confidence\": 0.7,\n" +
+		"  \"evidence\": [\n" +
+		"    {\"file\": \"x.go\", \"line\": 1, \"quote\": \"verdict: aligned\"}\n" +
+		"  ]\n" +
+		"}\n" +
+		"```"
+	if got := parseDriftVerdict(raw2, 0.7); got != "needs_human" {
+		t.Errorf("fenced needs_human + early aligned quote: got %q, want needs_human", got)
+	}
+}
+
+// TestParseVerdict_FencedYAML_StillFallsBack — a fenced YAML verdict
+// (not JSON) must still parse via the fallback (spec 1200 compat).
+func TestParseVerdict_FencedYAML_StillFallsBack(t *testing.T) {
+	raw := "```yaml\nverdict: drift_detected\nreasoning: ...\n```"
+	if got := parseDriftVerdict(raw, 0.9); got != "drift_detected" {
+		t.Errorf("fenced yaml: got %q, want drift_detected", got)
+	}
+}

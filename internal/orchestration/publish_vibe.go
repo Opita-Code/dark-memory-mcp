@@ -673,13 +673,43 @@ func parseDriftVerdict(verdictJSON string, confidence float32) string {
 //
 // confidence < 0.5 always returns "needs_human" regardless of the LLM's
 // verdict — that's the floor at which we trust the LLM-as-judge.
+//
+// stripCodeFence removes a ```json ``` (or ```yaml / ```markdown)
+// wrapper from the judge's raw output so the structured verdict inside
+// can be parsed as JSON. Returns the input unchanged when no fence is
+// present. TD-J4 evolution (drift 1089): without this, the fallback
+// scans the entire output including the judge's evidence quotes.
+func stripCodeFence(s string) string {
+	s = strings.TrimSpace(s)
+	if !strings.HasPrefix(s, "```") {
+		return s
+	}
+	// Drop the opening ```lang line.
+	if i := strings.Index(s, "\n"); i >= 0 {
+		s = s[i+1:]
+	}
+	// Drop the closing ``` (and any trailing newline before it).
+	if i := strings.LastIndex(s, "```"); i >= 0 {
+		s = s[:i]
+	}
+	return strings.TrimSpace(s)
+}
 func parseVerdict(evalType, verdictJSON string, confidence float32) string {
 	if confidence < 0.5 {
 		return "needs_human"
 	}
-	// Try to parse the JSON; check both shapes.
+	// Try to parse the JSON; check both shapes. TD-J4 evolution (v2,
+	// drift 1089): MiniMax-M3 wraps its structured verdict in a
+	// ```json fence. Unmarshalling the raw text fails because of the
+	// fence, and the lenient fallback then scans the WHOLE output —
+	// including the judge's OWN evidence quotes, which can contain
+	// the canonicalTokens list verbatim (with "verdict":"drift_detected"
+	// tokens LATER than the judge's real top-level "verdict":"aligned").
+	// Stripping the fence BEFORE Unmarshal lets the structured branch
+	// trust the top-level verdict field; the text-scan fallback is
+	// only reached when no structured verdict can be parsed at all.
 	var v map[string]any
-	if err := json.Unmarshal([]byte(verdictJSON), &v); err == nil {
+	if err := json.Unmarshal([]byte(stripCodeFence(verdictJSON)), &v); err == nil {
 		// eval_type-specific boolean shapes (non-verdict judges).
 		switch evalType {
 		case "grounding_check":
