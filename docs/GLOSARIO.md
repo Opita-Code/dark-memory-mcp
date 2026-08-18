@@ -243,18 +243,23 @@ no está atado a stdin de la sesión".
 
 **Véase**: [ARCHITECTURE.md](./ARCHITECTURE.md).
 
-### Dispatcher (despachador)
+### Dispatcher (despachador) — congelado t6
 
 **Inglés**: dispatcher.
 
-**Definición**: Componente que decide a qué handler enviar una
-petición. En este proyecto, `dark-mem-mcp` es el dispatcher: decide
-si arranca el bridge o el modo legacy.
+**Definición histórica (v2.19.0)**: Componente que decidía a qué
+handler enviar una petición. `dark-mem-mcp` decidía si arrancaba el
+bridge o el modo legacy single-binary.
 
-**Ejemplo**: "El dispatcher mira `DARK_MEM_BRIDGE=0` y arranca el
-modo legacy".
+**Estado actual (t6, 2026-08-18)**: el dispatcher está eliminado
+del código activo. El binario `dark-mem-mcp` arranca directamente
+la rama legacy single-binary (ver `cmd/dark-mem-mcp/main.go` +
+`legacy_main.go`). El split dispatcher→bridge→daemon vive en
+`cmd/dark-mem-mcp-bridge/` y `cmd/dark-mem-mcp-daemon/` solo como
+código archivado; spec 1176 §4.10 (daemon = `initialize` +
+`tools/call`) sigue pendiente para reactivación.
 
-**Véase**: [ARCHITECTURE.md](./ARCHITECTURE.md).
+**Véase**: [ARCHITECTURE.md §boot path](../ARCHITECTURE.md).
 
 ### Drift (deriva)
 

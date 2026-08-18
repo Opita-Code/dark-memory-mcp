@@ -314,8 +314,8 @@ eso usamos `consensus(n=3)` para claims de alta stake.
 | Auditoría forense de cada cambio | Overhead de 1 INSERT por Save |
 | Verificación automática con drift_judge | No-determinismo del judge |
 | Compatibilidad con cualquier cliente MCP | Limita a JSON-RPC 2.0 |
-| Backwards compat (DARK_MEM_BRIDGE=0) | Mantiene 2 code paths de boot |
-| Arquitectura split (v2.19.0) | 3 binarios + 1 socket + 1 ready-file |
+| Single-binary legacy boot (t6, 2026-08-18) | Bridge/daemon path congelado (spec 1176 §4.10) |
+| Arquitectura split (v2.19.0) | 3 binarios + 1 socket + 1 ready-file (archivados, no en uso) |
 
 ---
 

@@ -1,11 +1,14 @@
-// legacy_main.go — the pre-v2.19.0 single-binary dark-memory MCP
-// server. Invoked from main.go when DARK_MEM_BRIDGE=0.
+// legacy_main.go — the dark-mem-mcp single-binary MCP server boot.
+// Invoked from main.go. Pre-v2.19.0 this lived in main.go; the
+// v2.19.0 dispatcher→bridge→daemon split is removed from active
+// use (spec 1176 §4.10 not implemented; the daemon never wired
+// initialize/tools/call), so the legacy path is now the single
+// boot path.
 //
-// Identical to the v2.18.0 main.go body (preserved here verbatim
-// so the dispatcher can call it). Splits main.go (which is small
-// and only routes) from the heavy legacy server boot (which
-// imports the orchestrator + 49 tools).
-
+// Boot sequence: server.New → register MCP research backend →
+// set runtime context → wire tools + drift gate (M6) + federation
+// peer + sweeper → startup-recover → ServeStdio. See
+// ARCHITECTURE.md §boot path for the multi-bin timeline.
 package main
 
 import (

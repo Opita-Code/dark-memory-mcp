@@ -166,11 +166,29 @@ func (o *Orchestrator) Judge(ctx context.Context, in JudgeInput) (*JudgeOutput, 
 	// fall back to the legacy generic system prompt (composeAnchorText
 	// with persona=nil) so a malformed registry doesn't break the
 	// judge pipeline.
+	//
+	// v2.21.3 (spec 1242 t6): GENERATIVE eval_types (mindset_compose)
+	// bypass the persona registry entirely. The persona fall-back
+	// (composeAnchorText) is judge-style and forces the LLM into a
+	// verdict role, which OVERWRITES the generative schema defined in
+	// defaultSystemForEval("mindset_compose"). Without this bypass, the
+	// LLM returns {"verdict":"drift_detected","confidence":0.72,"evidence":[...]}
+	// instead of {"role":"...","goal":"...","backstory":"...","constraints":[...],...},
+	// and parseVerdict sees an empty role. Captured live 2026-08-18 in
+	// sess-b3dd062127196ff5 against MiniMax-M3 with thinking:adaptive.
 	builder, builderErr := o.ensurePersonaBuilder()
 	var systemPrompt string
 	var userPrompt string
 	var resolvedPersonaID string
-	if builderErr == nil {
+	if in.EvalType == string(ssd.EvalMindsetCompose) {
+		// Generative path — use defaultSystemForEval directly and pass
+		// the caller-supplied meta-prompt as user content (the LLM
+		// reads the meta-prompt to know the inputs it has to GENERATE
+		// the mindset from).
+		systemPrompt = defaultSystemForEval(in.EvalType)
+		userPrompt = in.Content
+		resolvedPersonaID = ""
+	} else if builderErr == nil {
 		prompt, err := builder.Build(in.EvalType, in.PersonaID, nil, in.SpecIntent)
 		if err != nil {
 			// PersonaID not found or registry error — fall back to

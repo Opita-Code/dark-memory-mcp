@@ -81,13 +81,11 @@ jobs:
           go build -o ./dark-mem-mcp ./
       - name: wire tests with DARK_MEM_MCP_BIN
         env:
-          # v2.19.0 (spec 1176): the dispatcher auto-falls-back to legacy
-          # mode if the bridge binary is not alongside (defensive). We
-          # also set DARK_MEM_BRIDGE=0 explicitly so the dispatcher
-          # routes to the legacy single-binary mode that the wire
-          # conformance tests target.
+          # t6 (spec 1242, 2026-08-18): the boot path is single-binary
+          # legacy (the only mode). The wire conformance suite talks
+          # MCP JSON-RPC directly to that path on stdio. There is no
+          # dispatcher routing or bridge binary involved.
           DARK_MEM_MCP_BIN: ${{ github.workspace }}/cmd/dark-mem-mcp/dark-mem-mcp
-          DARK_MEM_BRIDGE: "0"
         run: go test ./tests/wire/... -count=1 -timeout 90s -v
 
   lint:

@@ -68,11 +68,11 @@ func startWireSession(t *testing.T) *wireSession {
 	cmd.Env = append(cmd.Environ(),
 		"DARK_DB="+dbPath,
 		"DARK_DB_DRIVER=sqlite",
-		// Force legacy single-binary mode. The wire tests speak MCP
-		// JSON-RPC on stdio and expect the "serving stdio" boot
-		// marker; bridge mode delegates to the daemon over a named
-		// pipe and never prints it on the test's stdin channel.
-		"DARK_MEM_BRIDGE=0",
+		// The wire tests speak MCP JSON-RPC on stdio and expect the
+		// "serving stdio" boot marker. As of t6 (spec 1242) the
+		// single-binary legacy mode IS the only boot path, so no
+		// dispatcher routing is needed.
+		//
 		// Disable the OS keyring + background LLM health probes. Wire
 		// tests must be hermetic: no real provider probes, no real
 		// keyring migration, no network. The gate contract only needs
