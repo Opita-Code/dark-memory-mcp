@@ -85,9 +85,21 @@ type JudgeOutput struct {
 }
 
 // JudgeCaller is the minimal surface Checker needs from the orchestrator.
-// Both *orchestration.Orchestrator and test mocks satisfy this.
+// Both *orchestration.Orchestrator (via server.DriftJudgeFromOrchestrator)
+// and test mocks satisfy this.
 type JudgeCaller interface {
 	Judge(ctx context.Context, in JudgeInput) (*JudgeOutput, error)
+}
+
+// JudgeFunc adapts a plain function to JudgeCaller (t4, spec 1242).
+// Boot paths wrap *orchestration.Orchestrator.Judge with it — the
+// Orchestrator's own Judge signature uses orchestration.JudgeInput /
+// orchestration.JudgeOutput, so an explicit conversion is required.
+type JudgeFunc func(ctx context.Context, in JudgeInput) (*JudgeOutput, error)
+
+// Judge implements JudgeCaller.
+func (f JudgeFunc) Judge(ctx context.Context, in JudgeInput) (*JudgeOutput, error) {
+	return f(ctx, in)
 }
 
 // Checker is the drift-at-write interceptor. Construct with

@@ -16,6 +16,7 @@ import (
 	"runtime/debug"
 	"syscall"
 
+	"github.com/dark-agents/dark-memory-mcp/internal/drift"
 	"github.com/dark-agents/dark-memory-mcp/internal/errorobs"
 	"github.com/dark-agents/dark-memory-mcp/internal/federation"
 	"github.com/dark-agents/dark-memory-mcp/internal/orchestration"
@@ -86,11 +87,21 @@ func legacyMain() {
 	)
 	bootState.Orchestrator.OnActiveSessionChanged = activeSessionResolver.Invalidate
 
+	// t4 (spec 1242, M6): wire the drift-at-write interceptor.
+	// Resolution order: Project.DriftStrictness override, else
+	// DARK_DRIFT_STRICTNESS env, else StrictnessOff (skip —
+	// pre-wiring behavior preserved).
+	strictness := drift.StrictnessFromEnv()
+	if proj, err := bootState.Store.GetProject(ctx, bootState.Store.ActiveProject()); err == nil && proj != nil {
+		strictness = drift.ResolveStrictness(proj.DriftStrictness, strictness, nil)
+	}
+	driftChecker := drift.NewChecker(bootState.Store, server.DriftJudgeFromOrchestrator(bootState.Orchestrator), strictness)
+
 	bootState.Gate = &server.GateMiddleware{
-		FrameSource:   frameSrc,
-		DriftChecker:  nil,
-		ActiveSession: activeSessionResolver,
-		ActiveProject: bootState.Store.ActiveProject,
+		FrameSource:        frameSrc,
+		DriftChecker:       driftChecker,
+		ActiveSession:      activeSessionResolver,
+		ActiveProject:      bootState.Store.ActiveProject,
 		ActiveConstitution: func() (string, string) { return bootState.Config.ConstitutionID, bootState.Config.ConstitutionVer },
 		RecordRefusal: func(ctx context.Context, toolName, sessionID, code, message string) {
 			bootState.Orchestrator.RecordError(ctx, toolName, sessionID,
