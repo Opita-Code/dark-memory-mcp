@@ -124,7 +124,7 @@ graph LR
         N16[embedder_setup_prompt]
     end
 
-    N1 --> T["Total: 53 tools"]
+    N1 --> T["Total: 57 tools"]
     N2 --> T
     N3 --> T
     N4 --> T
@@ -145,9 +145,9 @@ graph LR
     class T totalNode
 ```
 
-**Lectura**: 16 namespaces → 53 tools.
+**Lectura**: 17 namespaces → 57 tools.
 
-**Usado en**: [ARCHITECTURE.md §2.2](./ARCHITECTURE.md#22-vista-lógica-los-53-nombres).
+**Usado en**: [ARCHITECTURE.md §2.2](./ARCHITECTURE.md#22-vista-lógica-los-57-nombres).
 
 ---
 
@@ -372,7 +372,7 @@ graph TD
     Start([Necesito hacer X]) --> Q1{X ya conocido?}
     Q1 -->|Sí| UseRecall[agent_memory_recall]
     Q1 -->|No| Q2{Sobre dark-memory?}
-    Q2 -->|Sí| UseTools[53 tools MCP]
+    Q2 -->|Sí| UseTools[57 tools MCP]
     Q2 -->|No| Q3{Necesito browser?}
     Q3 -->|Sí| UseCopilot[dark-copilot 35 tools]
     Q3 -->|No| Q4{Necesito OSINT?}
@@ -441,7 +441,7 @@ Para modificar un diagrama:
   dispatcher/bridge/daemon. Diagrama 6 (lifecycle del bridge) es
   nuevo.
 - **2026-08-13** (v2.18.0): sin cambios. Diagrama 2 actualizado
-  para incluir el nuevo `judge_list_personas` (53 → 53 tools,
-  sigue siendo 53).
+  para incluir el nuevo `judge_list_personas` (53 → 54 tools,
+  JUDGE ganó 1 tool).
 - **2026-08-11** (v2.15.0): diagramas 4, 7, 8 creados.
 - **2026-08-08** (v2.13.0): diagramas 1, 2, 3, 5, 9 originales.

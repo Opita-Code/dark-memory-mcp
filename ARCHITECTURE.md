@@ -96,10 +96,10 @@ graph TD
 - El **bridge** es un forwarder puro: lee de stdin, escribe al
   socket; lee del socket, escribe a stdout. No toca la DB.
 - El **daemon** es el proceso de larga duración. Posee la
-  conexión a la DB, mantiene las 53 herramientas registradas, y
+  conexión a la DB, mantiene las 57 herramientas registradas, y
   ejecuta la lógica del vibe-loop.
 
-### 2.2 Vista lógica (los 53 nombres)
+### 2.2 Vista lógica (los 57 nombres)
 
 ```mermaid
 graph LR
@@ -107,22 +107,23 @@ graph LR
         N1[PROJECT<br/>1 tool]
         N2[SESSION<br/>7 tools]
         N3[RESEARCH<br/>3 tools]
-        N4[BOOTSTRAP<br/>3 tools]
+        N4[AGENT_BOOTSTRAP<br/>3 tools]
         N5[VIBE<br/>4 tools]
         N6[CONTEXT<br/>4 tools]
         N7[AGENT_MEMORY<br/>10 tools]
         N8[MINDSET<br/>1 tool]
         N9[DELEGATION<br/>1 tool]
-        N10[JUDGE<br/>3 tools]
-        N11[POLICY<br/>2 tools]
-        N12[OBSERVABILITY<br/>4 tools]
-        N13[ERROR_OBS<br/>4 tools]
-        N14[ADMIN<br/>3 tools]
-        N15[L6-VLP<br/>1 tool]
-        N16[EMBEDDER<br/>1 tool]
+        N10[LLM_CONFIG<br/>4 tools]
+        N11[JUDGE<br/>4 tools]
+        N12[POLICY<br/>2 tools]
+        N13[OBSERVABILITY<br/>4 tools]
+        N14[ERROR_OBS<br/>4 tools]
+        N15[ADMIN<br/>3 tools]
+        N16[L6-VLP<br/>1 tool]
+        N17[EMBEDDER<br/>1 tool]
     end
 
-    N1 --> T[Total: 53 tools]
+    N1 --> T[Total: 57 tools]
     N2 --> T
     N3 --> T
     N4 --> T
@@ -138,14 +139,15 @@ graph LR
     N14 --> T
     N15 --> T
     N16 --> T
+    N17 --> T
 ```
 
 **Lectura del diagrama**:
 
-- 16 namespaces agrupan las 53 herramientas por función.
+- 17 namespaces agrupan las 57 herramientas por función.
 - Las herramientas de `AGENT_MEMORY` (10) son las más usadas.
 - Las de `SESSION` (7) son la columna vertebral de la auditoría.
-- Las de `JUDGE` (3) son la columna vertebral del vibe-loop.
+- Las de `JUDGE` (4) son la columna vertebral del vibe-loop.
 
 ### 2.3 Vista de datos (las 18 tablas)
 

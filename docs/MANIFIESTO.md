@@ -224,7 +224,7 @@ diagramas que no tienen estructura de flujo.
 
 - **Coma como separador decimal**: "3,14" (no "3.14").
 - **Punto como separador de miles**: "1.234" (no "1,234").
-- **Espacio entre número y unidad**: "53 herramientas", "30 MB"
+- **Espacio entre número y unidad**: "57 herramientas", "30 MB"
   (excepto "%" y "°").
 - **Rangos con guion**: "v2.6.0-v2.13.0", "1-10".
 

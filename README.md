@@ -22,12 +22,12 @@
 
 [![MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Go 1.25+](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go&logoColor=white)](go.mod)
-[![MCP tools](https://img.shields.io/badge/MCP-53%20canonical%20tools-blueviolet)](#las-53-herramientas)
+[![MCP tools](https://img.shields.io/badge/MCP-57%20canonical%20tools-blueviolet)](#las-57-herramientas)
 [![Schema](https://img.shields.io/badge/schema-v26-success)](#arquitectura)
 [![Install](https://img.shields.io/badge/install-npx%20%40opita--code%2Fdark--memory--mcp-cc3534)](docs/npm-install.md)
 [![Backends](https://img.shields.io/badge/backends-sqlite%20%7C%20postgres-blue)](#arquitectura)
 
-[¿Qué es esto?](#qué-es-esto) · [El problema que resuelve](#el-problema-que-resuelve) · [El vibe-loop](#el-vibe-loop-un-paradigma-nuevo) · [Conceptos clave](#conceptos-clave) · [Quickstart](#quickstart) · [Las 53 herramientas](#las-53-herramientas) · [Camino de aprendizaje](#camino-de-aprendizaje) · [Resolver problemas](#resolver-problemas) · [Contribuir](#contribuir)
+[¿Qué es esto?](#qué-es-esto) · [El problema que resuelve](#el-problema-que-resuelve) · [El vibe-loop](#el-vibe-loop-un-paradigma-nuevo) · [Conceptos clave](#conceptos-clave) · [Quickstart](#quickstart) · [Las 57 herramientas](#las-57-herramientas) · [Camino de aprendizaje](#camino-de-aprendizaje) · [Resolver problemas](#resolver-problemas) · [Contribuir](#contribuir)
 
 </div>
 
@@ -204,9 +204,9 @@ Debe mostrar algo como:
 
 ```json
 {
-  "server": { "version": "2.13.0", "name": "dark-memory-mcp" },
-  "db": { "live": true, "schema_version": 25 },
-  "registry": { "canonical_tools": 52 }
+  "server": { "version": "2.15.1-dev", "name": "dark-memory-mcp" },
+  "db": { "live": true, "schema_version": 26 },
+  "registry": { "canonical_tools": 57 }
 }
 ```
 
@@ -228,9 +228,9 @@ Debe mostrar algo como:
 
 ---
 
-## Las 53 herramientas
+## Las 57 herramientas
 
-Dark Memory expone **52 herramientas** (más 3 extras en modo investigación). El agente las invoca con el prefijo `dark_memory_`. Están agrupadas por 16 oficios:
+Dark Memory expone **57 herramientas** (más 3 extras en modo investigación). El agente las invoca con el prefijo `dark_memory_`. Están agrupadas por 17 oficios:
 
 ### Sesión (7 tools)
 `session_start` · `session_resume` · `session_heartbeat` · `session_status` · `session_close` · `session_recover` · `session_resurrect`
@@ -413,7 +413,7 @@ Agente (Claude / opencode / Cursor)
     │  MCP (JSON-RPC sobre stdin/stdout)
     │
     ▼
-dark-mem-mcp.exe  ←──  proceso local, 52+3 herramientas
+dark-mem-mcp.exe  ←──  proceso local, 57+3 herramientas
     │
     │  SQL (database/sql)
     │
@@ -421,8 +421,8 @@ dark-mem-mcp.exe  ←──  proceso local, 52+3 herramientas
 SQLite (archivo .db en tu disco)  ←── o Postgres si configuras DARK_DRIVER=postgres
 ```
 
-- **Versión actual:** v2.13.0
-- **Schema DB:** v25 (error_events, vibe-loop state, agent_memory con BM25)
+- **Versión actual:** v2.15.1-dev
+- **Schema DB:** v26 (error_events, vibe-loop state, agent_memory con BM25)
 - **Dependencias externas:** ninguna en runtime. Solo Go stdlib + SQLite embebido.
 - **Tests:** 29 suites de integración + 27 paquetes con test.
 

@@ -32,7 +32,7 @@ Los términos están en orden alfabético en español.
 
 **Definición**: Programa interactúa con el modelo de lenguaje (LLM) y
 con herramientas externas. En este proyecto, el "agente" es el
-cliente MCP (Claude Desktop, opencode, Cursor) que llama a las 53
+cliente MCP (Claude Desktop, opencode, Cursor) que llama a las 57
 herramientas de `dark-memory-mcp`.
 
 **Ejemplo**: "El agente quiere guardar una observación. Llama a
@@ -76,13 +76,13 @@ archivo row 859 en agent_memory (pinned).
 **Inglés**: API.
 
 **Definición**: Contrato de programación entre dos sistemas. En este
-proyecto, la API principal es la superficie MCP (53 herramientas
+proyecto, la API principal es la superficie MCP (57 herramientas
 expuestas como JSON-RPC sobre stdio).
 
 **Ejemplo**: "`dark_memory_save_agent_memory` es una API de escritura
 a `agent_memory` con auditoría obligatoria".
 
-**Véase**: [README.md](../README.md#las-53-herramientas).
+**Véase**: [README.md](../README.md#las-57-herramientas).
 
 ### Arbiter (ver `drift_judge`)
 
@@ -291,10 +291,10 @@ con confianza 0,97".
 **Inglés**: endpoint.
 
 **Definición**: URL o método expuesto por un servicio. En este
-proyecto, los "endpoints" son las 53 herramientas MCP.
+proyecto, los "endpoints" son las 57 herramientas MCP.
 
 **Ejemplo**: "El endpoint `agent_memory_save` está documentado en
-[README.md §Las 53 herramientas](../README.md#las-53-herramientas)".
+[README.md §Las 57 herramientas](../README.md#las-57-herramientas)".
 
 ### Estado (state)
 
@@ -364,7 +364,7 @@ pertenecen al proyecto activo".
 **Inglés**: handler.
 
 **Definición**: Función que procesa una petición específica. En este
-proyecto, cada una de las 53 herramientas tiene un handler.
+proyecto, cada una de las 57 herramientas tiene un handler.
 
 **Ejemplo**: "El handler de `agent_memory_save` invalida la caché
 de recall antes de retornar".
@@ -611,9 +611,9 @@ anidados".
 
 **Definición**: Tabla o estructura que mantiene un mapeo
 ordenado. En este proyecto, `CanonicalOrder()` define el orden
-de las 53 herramientas en el wire.
+de las 57 herramientas en el wire.
 
-**Ejemplo**: "`dark_mem_canonical_order()` retorna la lista de 53
+**Ejemplo**: "`dark_mem_canonical_order()` retorna la lista de 57
 herramientas en el orden canónico".
 
 **Véase**: [ARCHITECTURE.md §Registry canónico](./ARCHITECTURE.md).
@@ -721,7 +721,7 @@ sesión actual".
 **Inglés**: tool.
 
 **Definición**: Función invocable por el LLM. En este proyecto, las
-tools son las 53 funciones MCP.
+tools son las 57 funciones MCP.
 
 **Ejemplo**: "`agent_memory_save` es una tool".
 
