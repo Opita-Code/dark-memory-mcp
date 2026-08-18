@@ -204,7 +204,7 @@ Debe mostrar algo como:
 
 ```json
 {
-  "server": { "version": "2.15.1-dev", "name": "dark-memory-mcp" },
+  "server": { "version": "2.19.0", "name": "dark-memory-mcp" },
   "db": { "live": true, "schema_version": 26 },
   "registry": { "canonical_tools": 57 }
 }
@@ -421,7 +421,7 @@ dark-mem-mcp.exe  ←──  proceso local, 57+3 herramientas
 SQLite (archivo .db en tu disco)  ←── o Postgres si configuras DARK_DRIVER=postgres
 ```
 
-- **Versión actual:** v2.15.1-dev
+- **Versión actual:** v2.19.0
 - **Schema DB:** v26 (error_events, vibe-loop state, agent_memory con BM25)
 - **Dependencias externas:** ninguna en runtime. Solo Go stdlib + SQLite embebido.
 - **Tests:** 29 suites de integración + 27 paquetes con test.
