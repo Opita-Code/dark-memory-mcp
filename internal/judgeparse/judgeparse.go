@@ -118,9 +118,14 @@ func ParseHistoryVerdict(blob string) string {
 //  2. Confidence floor (when configured) → NeedsHuman.
 //  3. Structured JSON (fence-stripped) — eval_type-specific shapes,
 //     then generic canonical "verdict", then legacy "aligned" bool.
-//  4. Bare-word first line (drift gate only).
-//  5. Last-occurrence canonical-token scan over the raw text.
-//  6. UnknownVerdict (never a wrong verdict).
+//  4. Explicit "## Verdict:" header (TD-J4 v3) — case-insensitive,
+//     tolerant of markdown decorations. Closes the residual edge
+//     case where the judge puts the conclusion FIRST and a
+//     contradicting artifact quote LAST (last-occurrence picked the
+//     contradicting quote).
+//  5. Bare-word first line (drift gate only).
+//  6. Last-occurrence canonical-token scan over the raw text.
+//  7. UnknownVerdict (never a wrong verdict).
 func parse(blob string, confidence float32, opts Options) string {
 	trimmed := strings.TrimSpace(blob)
 	if trimmed == "" {
@@ -241,6 +246,19 @@ func parse(blob string, confidence float32, opts Options) string {
 		}
 	}
 
+	// Explicit "## Verdict:" header (TD-J4 v3). The header is the
+	// documented fallback the LLM produces when JSON output fails
+	// (judge_prompt_builder.go schema). Prefer the explicit header
+	// over inline mentions — closes the residual edge case where
+	// the judge puts the conclusion FIRST and a contradicting
+	// artifact quote LAST (last-occurrence alone would pick the
+	// contradicting quote). Returns "" when no header is found
+	// or the word after the header doesn't map to a canonical
+	// verdict.
+	if d := parseVerdictHeader(blob); d != "" {
+		return d
+	}
+
 	// Bare-word legacy (drift gate): first line of a non-JSON blob.
 	if opts.BareWord {
 		first := strings.SplitN(trimmed, "\n", 2)[0]
@@ -295,6 +313,57 @@ func stripCodeFence(s string) string {
 		s = s[:i]
 	}
 	return strings.TrimSpace(s)
+}
+
+// parseVerdictHeader extracts a verdict from an explicit markdown
+// header like "## Verdict: aligned" — case-insensitive, tolerant of
+// backticks / bold / trailing punctuation. Returns "" when no
+// header is found or the word after the header doesn't map to a
+// canonical verdict.
+//
+// TD-J4 v3 (2026-08-18, sess-f28534325d0f2496, commit pending):
+// closes the residual edge case where last-occurrence picks a
+// contradicting artifact quote when the judge puts the conclusion
+// FIRST. The pattern "## Verdict:" is the documented fallback the
+// LLM produces when JSON output fails (per judge_prompt_builder.go
+// schema — every judge prompt ends with the JSON schema inside a
+// markdown code fence, and MiniMax-M3 sometimes emits the verdict
+// as a "## Verdict: ..." header inline with reasoning prose).
+//
+// Without this step, inputs like
+//
+//	## Verdict: needs_human. The artifact mentions 'verdict: aligned'.
+//
+// return Aligned (last-occurrence of verdict:aligned wins).
+// With this step, the explicit header is preferred over inline
+// mentions and the parser returns the correct NeedsHuman.
+func parseVerdictHeader(blob string) string {
+	const header = "## verdict:"
+	lower := strings.ToLower(blob)
+	idx := strings.Index(lower, header)
+	if idx < 0 {
+		return ""
+	}
+	// Use len(header) on the original blob — idx is byte-aligned so
+	// the slice is identical regardless of case.
+	after := blob[idx+len(header):]
+	// Take the rest of the line (verdict is typically on the same
+	// line as the header).
+	if lineEnd := strings.Index(after, "\n"); lineEnd >= 0 {
+		after = after[:lineEnd]
+	}
+	after = strings.TrimSpace(after)
+	if after == "" {
+		return ""
+	}
+	// First word, stripped of markdown decorations (backticks, bold,
+	// trailing punctuation, semicolons, periods).
+	firstWord := strings.SplitN(after, " ", 2)[0]
+	firstWord = strings.Trim(firstWord, ",.;:`*\"")
+	if firstWord == "" {
+		return ""
+	}
+	return normalizeWord(firstWord)
 }
 
 // scanCanonicalTokens is the TD-J4 last-occurrence fallback: match the

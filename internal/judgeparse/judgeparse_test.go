@@ -173,6 +173,116 @@ func TestNormalizeWord(t *testing.T) {
 	}
 }
 
+// TestParsePipeline_TDJ4_v3_HeaderPrecedesLastOccurrence pins the
+// TD-J4 v3 heuristic: when the judge emits "## Verdict: <word>" the
+// verdict from the explicit header wins over any contradicting
+// artifact quote that appears LATER in the blob. Last-occurrence
+// alone (TD-J4 v1) would pick the contradicting quote in the
+// conclusion-first, contradicting-quote-last pattern; the explicit
+// header is more reliable than the heuristic.
+//
+// The header is the documented fallback the LLM produces when JSON
+// output fails (judge_prompt_builder.go schema). All three
+// directions must work (any verdict conclusion can be contradicted
+// by any later verdict-shaped substring).
+func TestParsePipeline_TDJ4_v3_HeaderPrecedesLastOccurrence(t *testing.T) {
+	cases := []struct {
+		name string
+		blob string
+		want string
+	}{
+		// Direction 1: needs_human conclusion, later "verdict: aligned" quote.
+		{
+			name: "v3_header_needs_human_later_aligned_quote",
+			blob: "## Verdict: needs_human. The artifact mentions 'verdict: aligned' as a hypothesis.",
+			want: NeedsHuman,
+		},
+		// Direction 2: aligned conclusion, later "verdict: drift_detected" quote.
+		{
+			name: "v3_header_aligned_later_drift_quote",
+			blob: "## Verdict: aligned. Looking at the artifact: 'verdict: drift_detected'.",
+			want: Aligned,
+		},
+		// Direction 3: drift_detected conclusion, later "verdict: needs_human" quote.
+		{
+			name: "v3_header_drift_later_needs_human_quote",
+			blob: "## Verdict: drift_detected. The artifact states 'verdict: needs_human'.",
+			want: DriftDetected,
+		},
+		// Backtick-wrapped value (markdown form).
+		{
+			name: "v3_header_backtick_needs_human_later_aligned_quote",
+			blob: "## Verdict: `needs_human`. The artifact mentions 'verdict: aligned'.",
+			want: NeedsHuman,
+		},
+		// Header in uppercase (case-insensitive).
+		{
+			name: "v3_header_uppercase_VERDICT_later_quote",
+			blob: "## VERDICT: aligned. The artifact mentions 'verdict: needs_human'.",
+			want: Aligned,
+		},
+		// Header followed by trailing punctuation.
+		{
+			name: "v3_header_trailing_period_later_quote",
+			blob: "## Verdict: needs_human. The artifact mentions 'verdict: aligned'.",
+			want: NeedsHuman,
+		},
+		// No header — fall back to last-occurrence (backward compat).
+		{
+			name: "v3_no_header_falls_back_to_last_occurrence",
+			blob: "The artifact mentions 'verdict: needs_human' as a hypothesis. Requirements R1-R6 are met. ## Verdict: aligned",
+			want: Aligned, // last-occurrence wins (this is the dir2 case from v1, still works)
+		},
+		// Header with unknown word — fall back to last-occurrence.
+		{
+			name: "v3_header_unknown_word_falls_back",
+			blob: "## Verdict: maybe. The artifact mentions 'verdict: aligned'.",
+			want: Aligned, // last-occurrence picks aligned
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ParsePipeline("drift_judge", tc.blob, 0.9); got != tc.want {
+				t.Errorf("ParsePipeline(%q) = %q, want %q", tc.blob, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestParseVerdictHeader covers the TD-J4 v3 helper directly so a
+// future regression in parse() ordering (e.g. moving the header
+// check AFTER last-occurrence) would be caught even if the
+// integration tests above stay green.
+func TestParseVerdictHeader(t *testing.T) {
+	cases := []struct {
+		name string
+		blob string
+		want string
+	}{
+		{"basic aligned", "## Verdict: aligned", Aligned},
+		{"basic drift_detected", "## Verdict: drift_detected", DriftDetected},
+		{"basic needs_human", "## Verdict: needs_human", NeedsHuman},
+		{"backtick needs_human", "## Verdict: `needs_human`", NeedsHuman},
+		{"backtick aligned", "## Verdict: `aligned`", Aligned},
+		{"uppercase", "## VERDICT: aligned", Aligned},
+		{"trailing period", "## Verdict: needs_human.", NeedsHuman},
+		{"trailing semicolon", "## Verdict: drift_detected;", DriftDetected},
+		{"bold markdown", "## Verdict: **aligned**", Aligned},
+		{"blank after colon", "## Verdict: ", ""},
+		{"unknown word", "## Verdict: maybe", ""},
+		{"no header", "some prose without a verdict header", ""},
+		{"header but no colon", "## Verdict aligned", ""},
+		{"header mid-text not at start", "intro prose ## Verdict: aligned", Aligned},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := parseVerdictHeader(tc.blob); got != tc.want {
+				t.Errorf("parseVerdictHeader(%q) = %q, want %q", tc.blob, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestStripCodeFence covers the fence-stripping helper (drift 1089).
 func TestStripCodeFence(t *testing.T) {
 	cases := []struct {
