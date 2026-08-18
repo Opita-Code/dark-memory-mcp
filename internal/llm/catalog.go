@@ -189,15 +189,9 @@ var Catalog = []ProviderSpec{
 		BalancePath:      "/user/balance",
 	},
 	{
-		ID:     "minimax",
-		Region: RegionChina,
-		// Dialect is Anthropic per spec 1198 / row 587 — MiniMax-M3 ships
-		// with the thinking:adaptive wire shape that only lands cleanly
-		// on the Anthropic Messages endpoint. The OpenAI-compatible
-		// base (https://api.minimaxi.com/v1) is kept as a documented
-		// fallback in BaseURL for harness-side probes that bypass the
-		// judge path; AnthropicBaseURL is the actual target.
-		Dialect:          DialectAnthropic,
+		ID:               "minimax",
+		Region:           RegionChina,
+		Dialect:          DialectOpenAI,
 		BaseURL:          "https://api.minimaxi.com/v1",
 		AnthropicBaseURL: "https://api.minimaxi.com/anthropic",
 		EnvKey:           "MINIMAX_API_KEY",
@@ -205,19 +199,13 @@ var Catalog = []ProviderSpec{
 		Family:           "minimax",
 		Models:           []string{"MiniMax-M3", "minimax/M3"},
 		DefaultRung:      "heavy",
-		ProbePath:        "/v1/models",
-		ProbeAuthMode:    ProbeAuthXAPIKey,
+		ProbePath:        "/models",
+		ProbeAuthMode:    ProbeAuthBearer,
 	},
 	{
-		ID:     "minimax-cn",
-		Region: RegionChina,
-		// Same Dialect reasoning as minimax (spec 1198 / row 587).
-		// The CN regional shares the endpoint but uses a different
-		// env-var binding (MINIMAX_API_KEY_CN). ProbeAuthMode flipped
-		// to ProbeAuthXAPIKey because the CN endpoint authenticates
-		// via the anthropic-version header pair (x-api-key + version),
-		// not the OpenAI bearer style — per spec 1198 reconciliation.
-		Dialect:          DialectAnthropic,
+		ID:               "minimax-cn",
+		Region:           RegionChina,
+		Dialect:          DialectOpenAI,
 		BaseURL:          "https://api.minimaxi.com/v1",
 		AnthropicBaseURL: "https://api.minimaxi.com/anthropic",
 		EnvKey:           "MINIMAX_API_KEY_CN",
@@ -225,8 +213,8 @@ var Catalog = []ProviderSpec{
 		Family:           "minimax-cn",
 		Models:           []string{"MiniMax-M3"},
 		DefaultRung:      "heavy",
-		ProbePath:        "/v1/models",
-		ProbeAuthMode:    ProbeAuthXAPIKey,
+		ProbePath:        "/models",
+		ProbeAuthMode:    ProbeAuthBearer,
 	},
 	{
 		ID:            "zhipu",

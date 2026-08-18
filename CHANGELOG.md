@@ -84,53 +84,33 @@ emission are identical to v2.15.1. The only runtime difference: the
 
 ## [2.15.3] — 2026-08-18 — catalog fix: minimax dialect default → Anthropic (spec 1271)
 
-Backlog FIX B: the `minimax` and `minimax-cn` entries in
-`internal/llm/catalog.go` now default to `DialectAnthropic` (was
-`DialectOpenAI`). Per spec 1198 / row 587, MiniMax-M3 ships with the
-`thinking:adaptive` wire shape, which only lands cleanly on the
-Anthropic Messages endpoint at `https://api.minimaxi.com/anthropic`.
-The override path `DARK_JUDGE_DIALECT=anthropic` was the legacy escape
-hatch; the catalog default now matches reality so harness-side probes
-that bypass the env-var still land on the right endpoint.
+**REVERTED by [2.15.5] / spec 1274.** The flip from
+`DialectOpenAI` → `DialectAnthropic` for `minimax` and `minimax-cn`
+broke the existing primary-source pinning in
+`TestProviderCatalog_EndpointsVerified` (which expected
+`DialectOpenAI` per row 587, 2026-08-10 verification) and
+`TestNewSelfHarnessClient_DetectsEveryProvider` (which expected
+`dialect: "openai"` in its sub-cases). spec 1198 (commit e97e854)
+was the *parser* fix for `thinking:adaptive` content blocks — not
+a dialect-default change — so the catalog flip was unfounded.
+The entry below documents the original (reverted) intent for the
+historical record; the live state of the catalog reverts to
+`DialectOpenAI` for both `minimax` providers, and the runtime
+override `DARK_JUDGE_DIALECT=anthropic` plus the `thinking:adaptive`
+parser in `judgeViaHTTP` (spec 1198) cover the Anthropic-endpoint
+use case.
 
-### Changed
-
-- **`internal/llm/catalog.go`** — `minimax` and `minimax-cn` provider
-  blocks: `Dialect: DialectOpenAI` → `Dialect: DialectAnthropic`. The
-  `BaseURL` (OpenAI-compatible) is preserved as a documented fallback
-  for harness-side probes that want to verify the OpenAI-shaped route
-  without going through the judge. `ProbePath` flipped from `/models`
-  to `/v1/models` (Anthropic Messages probe path). `ProbeAuthMode`
-  flipped from `ProbeAuthBearer` to `ProbeAuthXAPIKey` (Anthropic
-  Messages authenticates with the `x-api-key` + `anthropic-version`
-  header pair, not the OpenAI bearer style).
-- **`internal/llm/catalog_test.go`** — new
-  `TestCatalog_MiniMaxDialectAnthropic` pinning the defaults for both
-  `minimax` and `minimax-cn`: `Dialect == DialectAnthropic`,
-  `AnthropicBaseURL != ""`, `ProbeAuthMode == ProbeAuthXAPIKey`,
-  `ProbePath == "/v1/models"`. Cross-cuts so a future partial revert
-  (e.g. flipping only one of the two providers) fails loud.
-
-### Not changed
-
-- `qwen`, `deepseek`, `moonshot`, `zhipu`, `google` — all still
-  default to `DialectOpenAI`. They have `AnthropicBaseURL` configured
-  as a side-channel but their `thinking:adaptive` story is not on the
-  spec 1198 critical path. If a future model on those providers
-  requires the same dialect flip, it lands as its own patch.
-- The canonical surface freeze (spec 1270, v2.15.2) is unchanged —
-  this is a catalog-defaults patch, not a tool-surface change.
-
-### No runtime change
-
-Harnesses that already set `DARK_JUDGE_DIALECT=anthropic` saw no
-difference. Harnesses that relied on the implicit OpenAI dialect for
-`minimax` (none of the dark-agents ones do — they all run the harness
-with the override set) will start hitting the Anthropic endpoint.
-The judge path (`internal/orchestration/llm_client.go`) already
-differentiates `minimax` / `minimax-cn` from the OpenAI providers for
-`thinking:adaptive` parsing (spec 1198); this patch aligns the
-catalog to that code path.
+Backlog FIX B (as originally committed and now reverted): the
+`minimax` and `minimax-cn` entries in `internal/llm/catalog.go`
+were flipped to `DialectAnthropic` (was `DialectOpenAI`) per
+spec 1198 / row 587, MiniMax-M3 ships with the `thinking:adaptive`
+wire shape, which only lands cleanly on the Anthropic Messages
+endpoint at `https://api.minimaxi.com/anthropic`. The override
+path `DARK_JUDGE_DIALECT=anthropic` was the legacy escape hatch;
+the catalog default would have matched reality so harness-side
+probes that bypass the env-var still land on the right endpoint.
+Reality check: spec 1198 is the parser fix only. The original
+catalog default (OpenAI) was correct. Reverted in [2.15.5].
 
 ---
 
@@ -186,6 +166,101 @@ orchestrator's `ensureLLMSelector` chain (primary harness
 injection → secondary DefaultFailoverClient → ErrNoLLMAvailable)
 is untouched. Production deployments keep the same
 spec-173-O5 contract.
+
+---
+
+## [2.15.5] — 2026-08-18 — revert spec 1271: restore minimax catalog defaults (spec 1274)
+
+Backlog FIX C closes the **regression introduced by [2.15.3]**:
+flipping the `minimax` and `minimax-cn` catalog defaults to
+`DialectAnthropic` broke two pre-existing pinning tests:
+
+- `TestProviderCatalog_EndpointsVerified` (provider_catalog_test.go:69-70)
+  expected `DialectOpenAI` per the 2026-08-10 primary-source
+  verification (row 587).
+- `TestNewSelfHarnessClient_DetectsEveryProvider` (provider_detection_test.go:53-54)
+  expected `dialect: "openai"` in its sub-cases.
+
+### Diagnosis (root cause)
+
+spec 1198 (commit `e97e854` — another operator session) was the
+**parser** fix for `thinking:adaptive` content blocks in MiniMax-M3
+responses — not a catalog-default change. Reading spec 1198 as
+authorizing a `Dialect` flip was the operator-self-induced error
+that landed in [2.15.3]. The Anthropic-endpoint use case is
+already covered by two existing paths that need no catalog flip:
+
+1. **Runtime override**: `DARK_JUDGE_DIALECT=anthropic` (validated
+   by `TestProviderDialect_AnthropicOverride` for `deepseek`,
+   generalizes to any provider with `AnthropicBaseURL`).
+2. **Thinking-adaptive parser**: `judgeViaHTTP` (spec 1198) already
+   sends `thinking:{type:adaptive}` and picks the first
+   `type:text` block — works at any Anthropic-endpoint when the
+   harness sets the dialect override.
+
+### Reverted
+
+- **`internal/llm/catalog.go`** — `minimax` and `minimax-cn` blocks
+  restored to `Dialect: DialectOpenAI`, `ProbePath: "/models"`,
+  `ProbeAuthMode: ProbeAuthBearer`. The `AnthropicBaseURL` side-
+  channel field is preserved (the `DARK_JUDGE_DIALECT=anthropic`
+  override path still needs it).
+- **`internal/llm/catalog_test.go`** —
+  `TestCatalog_MiniMaxDialectAnthropic` removed (it pinned the
+  flipped defaults). The pre-existing `TestCatalog_Completeness`
+  + `TestCatalog_FieldsNoEmpty` tests still cover the providers.
+
+### New guard test (added)
+
+- **`internal/llm/catalog_test.go`** — new
+  `TestCatalog_MiniMaxDefaultsPreserveSpec1198` pins the four
+  invariants that the [2.15.3] flip would have violated:
+  - `minimax.Dialect == DialectOpenAI`
+  - `minimax-cn.Dialect == DialectOpenAI`
+  - `minimax.AnthropicBaseURL != ""` (override path still has
+    somewhere to land)
+  - `minimax-cn.AnthropicBaseURL != ""` (same)
+  
+  Cross-cuts so a future "let's flip it again" change fails loud
+  *before* the regression hits `TestProviderCatalog_EndpointsVerified`
+  and `TestNewSelfHarnessClient_DetectsEveryProvider`.
+
+### Not changed
+
+- `qwen`, `deepseek`, `moonshot`, `zhipu`, `google` — already
+  `DialectOpenAI` and untouched.
+- The runtime path: `judgeViaHTTP` spec 1198 parser is still
+  live and unchanged. The `DARK_JUDGE_DIALECT=anthropic` override
+  is still wired and tested.
+- Spec 1270 freeze (57/17/26) is unchanged.
+- Spec 1272 / v2.15.4 (FIX A: mock-first tests) is unchanged
+  and additive — it passes the same way pre- and post-revert.
+- WIP errorobs preserved per operator policy.
+
+### Test evidence (post-revert)
+
+```
+=== RUN   TestProviderCatalog_EndpointsVerified
+--- PASS: TestProviderCatalog_EndpointsVerified (0.00s)
+=== RUN   TestNewSelfHarnessClient_DetectsEveryProvider
+--- PASS: TestNewSelfHarnessClient_DetectsEveryProvider (0.00s)
+```
+
+All 9 provider sub-tests (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+`GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `MINIMAX_API_KEY`,
+`MINIMAX_API_KEY_CN`, `MOONSHOT_API_KEY`, `ZAI_API_KEY`,
+`DASHSCOPE_API_KEY`) PASS — including the two that the [2.15.3]
+flip had broken (`MINIMAX_API_KEY`, `MINIMAX_API_KEY_CN`).
+
+### Pre-existing failures still in flight (out of scope here)
+
+- `TestProviderCatalog_EndpointsVerified` was failing pre-revert
+  due to the catalog flip. Now PASS.
+- `TestNewSelfHarnessClient_DetectsEveryProvider/MINIMAX_API_KEY`
+  + `/MINIMAX_API_KEY_CN` were failing pre-revert for the same
+  reason. Now PASS.
+- No other pre-existing failures were masked by the [2.15.3]
+  regression; the suite that pre-FIX-B was red is now green.
 
 ---
 

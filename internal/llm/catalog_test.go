@@ -90,41 +90,17 @@ func TestCatalog_ProbeFieldsNoEmpty(t *testing.T) {
 	}
 }
 
-// TestCatalog_MiniMaxDialectAnthropic (FIX B, spec 1271): pins the
-// default Dialect of minimax and minimax-cn to Anthropic. MiniMax-M3
-// with thinking:adaptive requires the Anthropic Messages wire shape
-// (spec 1198 / row 587); an OpenAI-default would silently route the
-// LLM call through chat/completions and break verdict parsing. The
-// override path (DARK_JUDGE_DIALECT=anthropic) is the legacy escape
-// hatch — the catalog default should match reality so harness-side
-// probes that bypass the env-var still land on the right endpoint.
-func TestCatalog_MiniMaxDialectAnthropic(t *testing.T) {
-	cases := []struct {
-		id string
-	}{
-		{"minimax"},
-		{"minimax-cn"},
-	}
-	for _, c := range cases {
-		s := SpecByID(c.id)
-		if s == nil {
-			t.Fatalf("SpecByID(%q) returned nil — provider not in catalog", c.id)
+func TestCatalog_MiniMaxDefaultsPreserveSpec1198(t *testing.T) {
+	for _, id := range []string{"minimax", "minimax-cn"} {
+		p := SpecByID(id)
+		if p == nil {
+			t.Fatalf("provider %q missing from catalog", id)
 		}
-		if s.Dialect != DialectAnthropic {
-			t.Errorf("SpecByID(%q).Dialect = %q, want %q (FIX B, spec 1271 — MiniMax-M3 thinking:adaptive requires anthropic)",
-				c.id, s.Dialect, DialectAnthropic)
+		if p.Dialect != DialectOpenAI {
+			t.Errorf("provider %s: Dialect = %q, want DialectOpenAI (per spec 1274 revert; runtime override path covers anthropic)", p.ID, p.Dialect)
 		}
-		if s.AnthropicBaseURL == "" {
-			t.Errorf("SpecByID(%q).AnthropicBaseURL empty — provider flagged Anthropic-dialect but no anthropic endpoint configured",
-				c.id)
-		}
-		if s.ProbeAuthMode != ProbeAuthXAPIKey {
-			t.Errorf("SpecByID(%q).ProbeAuthMode = %q, want %q (Anthropic Messages authenticate with x-api-key + anthropic-version header pair)",
-				c.id, s.ProbeAuthMode, ProbeAuthXAPIKey)
-		}
-		if s.ProbePath != "/v1/models" {
-			t.Errorf("SpecByID(%q).ProbePath = %q, want \"/v1/models\" (Anthropic Messages probe path)",
-				c.id, s.ProbePath)
+		if p.AnthropicBaseURL == "" {
+			t.Errorf("provider %s: AnthropicBaseURL empty (override path DARK_JUDGE_DIALECT=anthropic would have nowhere to land)", p.ID)
 		}
 	}
 }
