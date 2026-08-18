@@ -49,7 +49,7 @@ You can also read it via the `read` tool if you have filesystem access (the boot
 
 ## 5. Install the harness skill (RECOMMENDED)
 
-dark-memory-mcp ships with a harness skill that teaches opencode **how and when** to use each of the 52 tools. Without it, the harness operates without guidance — drift is likely.
+dark-memory-mcp ships with a harness skill that teaches opencode **how and when** to use each of the 57 tools (per spec 1270, frozen 2026-08-18). Without it, the harness operates without guidance — drift is likely.
 
 ```bash
 # Create the skill directory

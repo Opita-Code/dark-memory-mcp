@@ -427,6 +427,41 @@ func WireName(bare string) string {
 	return WirePrefix + bare
 }
 
+// ------------------------------------------------------------------
+// Freeze marker (SPEC 1270, locked 2026-08-18)
+// ------------------------------------------------------------------
+//
+// The canonical tool surface (canonicalToolOrder, derived from
+// canonicalNamespaces above) is FROZEN as of v2.15.2 — the dates and
+// identifiers below are read by tooling; do not rename without
+// updating ARCHITECTURE.md §Tools surface + CHANGELOG.md + the
+// invariant test TestCanonicalOrder_Frozen_57_17_26 in
+// canonical_staleness_test.go.
+//
+// Freeze policy:
+//   - Any addition, removal, or rename of a canonical tool requires
+//     a breaking-change ADR + minor version bump.
+//   - Adding a NEW namespace follows the same policy — namespaces are
+//     part of the wire contract (groups are advertised in tools/list
+//     headers, and harness callers iterate the canonical list by
+//     position).
+//   - Extras (the L7-REDTEAM namespace when armed + any future
+//     env-gated surfaces) are NOT frozen here; they live behind
+//     env gates and have their own contract (alphabetical, opt-in).
+//   - Schema additions (sqlite migrations) follow normal semver
+//     backward-compat rules — NOT frozen by this marker.
+const (
+	FreezeDate    = "2026-08-18" // RFC 3339 calendar day; never a moving value
+	FreezeSpec    = "1270"       // SPEC 1242 t7 — pins the contract in docs/governance
+	FreezeVersion = "2.15.2"     // dark-memory-mcp version that locked the surface
+)
+
+// IsFrozen reports whether the canonical surface is under the SPEC
+// 1270 freeze. Always returns true from v2.15.2 onward; the bool is
+// here so callers can branch on the contract and so the flag can
+// flip in a future major without breaking call sites.
+func IsFrozen() bool { return true }
+
 // CanonicalPosition returns the index of wireName in the canonical
 // order, or -1 if not found. Used by tools/list filters that
 // need to re-sort the alphabetically-sorted output of mcp-go's

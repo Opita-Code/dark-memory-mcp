@@ -114,8 +114,9 @@ func e2eExpectResult(t *testing.T, line string, wantID any) map[string]any {
 }
 
 // TestDaemon_ServesNativeMCPWire over a real socket runs the full MCP
-// handshake against the real Server (53 tools registered) through the
-// daemon's MCP-over-socket path (spec 1176 §4.10).
+// handshake against the real Server (57 tools registered per spec 1270
+// freeze, was 53 at spec 1176 §4.10) through the daemon's
+// MCP-over-socket path.
 func TestDaemon_ServesNativeMCPWire(t *testing.T) {
 	ts := newTestServer(t)
 	defer ts.close()

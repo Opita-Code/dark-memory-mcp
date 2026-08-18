@@ -77,7 +77,12 @@ target_version: 2.13.0
 
 ---
 
-## 1. Tool taxonomy — 52 tools grouped by purpose
+## 1. Tool taxonomy — 57 canonical tools grouped by purpose
+
+> **Frozen 2026-08-18 (spec 1270, dark-mem v2.15.2).** Any addition,
+> removal, or rename of a canonical tool requires an ADR + minor version
+> bump. Extras (env-gated, e.g. red-team) are NOT frozen here. See
+> `internal/tools/registry.go` for the freeze marker.
 
 ### 1.1 Session lifecycle (7 tools)
 

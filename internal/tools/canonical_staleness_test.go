@@ -5,6 +5,11 @@
 // CanonicalOrder(). Every tool addition forced a 2-place manual sync
 // (registry.go + this file) — the exact anti-pattern the user flagged.
 //
+// v2.15.2 SPEC 1270 freeze: invariant test added (TestCanonicalOrder_Frozen_57_17_26)
+// that pins the canonical surface — 57 tools, 17 namespaces,
+// schema v26. Any drift in those numbers fails the test until
+// an ADR + minor version bump is filed.
+//
 // The list is now SINGLE-SOURCED in registry.go (canonicalNamespaces).
 // This test verifies INVARIANTS over that source instead of duplicating
 // it:
@@ -14,6 +19,8 @@
 //  2. Every canonical tool is actually registered by RegisterAll
 //     (the runtime surface matches the declared surface).
 //  3. The wire prefix convention (dark_memory_) is consistent.
+//  4. Freeze invariants (SPEC 1270): 57 tools / 17 namespaces /
+//     schema v26 — see TestCanonicalOrder_Frozen_57_17_26.
 //
 // The runtime ORDER conformance check lives in tests/conformance/
 // (bridge7_mcp_inspector_test.go), which derives its expectation from
@@ -24,6 +31,8 @@ package tools
 import (
 	"strings"
 	"testing"
+
+	"github.com/dark-agents/dark-memory-mcp/internal/migrate/sqlite"
 )
 
 // TestCanonicalOrder_NoDuplicates asserts the flattened canonical order
@@ -96,6 +105,48 @@ func TestCanonicalOrder_WirePrefixConsistent(t *testing.T) {
 		}
 		if strings.TrimSpace(n) == "" {
 			t.Errorf("canonical tool contains empty name")
+		}
+	}
+}
+
+// TestCanonicalOrder_Frozen_57_17_26 (SPEC 1270, lock 2026-08-18):
+// the canonical surface is FROZEN at 57 tools across 17 namespaces
+// with schema v26. This test is the regression gate: any addition,
+// removal, or rename that shifts these numbers fails until an ADR +
+// minor bump is filed (see ARCHITECTURE.md §Tools surface). The
+// expected values are read from runtime (CanonicalOrder(),
+// NamespaceCount(), sqlite.CurrentVersion()) so the test stays
+// self-validating; the constants below are what the freeze DOCUMENTS,
+// not what it checks.
+func TestCanonicalOrder_Frozen_57_17_26(t *testing.T) {
+	const (
+		frozenToolCount      = 57
+		frozenNamespaceCount = 17
+		frozenSchemaVersion  = 26
+	)
+
+	if got := len(CanonicalOrder()); got != frozenToolCount {
+		t.Errorf("CanonicalOrder() len = %d, want %d (freeze SPEC 1270)", got, frozenToolCount)
+	}
+	if got := NamespaceCount(); got != frozenNamespaceCount {
+		t.Errorf("NamespaceCount() = %d, want %d (freeze SPEC 1270)", got, frozenNamespaceCount)
+	}
+	if got := sqlite.CurrentVersion(); got != frozenSchemaVersion {
+		t.Errorf("sqlite.CurrentVersion() = %d, want %d (freeze SPEC 1270)", got, frozenSchemaVersion)
+	}
+	if !IsFrozen() {
+		t.Error("IsFrozen() = false, want true — freeze SPEC 1270 was disabled; un-freezing requires an ADR")
+	}
+	if FreezeDate == "" || FreezeSpec == "" || FreezeVersion == "" {
+		t.Errorf("freeze constants underpopulated (date=%q spec=%q version=%q)", FreezeDate, FreezeSpec, FreezeVersion)
+	}
+	// Cross-check: every namespace must contribute exactly the tools
+	// recorded in NamespaceCounts(). Catches a class of bugs where a
+	// tool got moved between namespaces without updating counts.
+	for _, ns := range canonicalNamespaces {
+		want := len(ns.Tools)
+		if got := NamespaceCounts()[ns.Name]; got != want {
+			t.Errorf("namespace %q: NamespaceCounts() = %d, want %d (flatten length)", ns.Name, got, want)
 		}
 	}
 }

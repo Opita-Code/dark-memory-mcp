@@ -441,7 +441,8 @@ Para modificar un diagrama:
   dispatcher/bridge/daemon. Diagrama 6 (lifecycle del bridge) es
   nuevo.
 - **2026-08-13** (v2.18.0): sin cambios. Diagrama 2 actualizado
-  para incluir el nuevo `judge_list_personas` (53 → 54 tools,
-  JUDGE ganó 1 tool).
+  para incluir el nuevo `judge_list_personas` (53 → 54 → 57 tools,
+  JUDGE ganó 1 tool, then later personas+llm_config+spec_test_alignment
+  additions lifted the surface to 57 — see spec 1270 freeze).
 - **2026-08-11** (v2.15.0): diagramas 4, 7, 8 creados.
 - **2026-08-08** (v2.13.0): diagramas 1, 2, 3, 5, 9 originales.

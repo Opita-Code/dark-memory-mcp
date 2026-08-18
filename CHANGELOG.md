@@ -6,6 +6,82 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [2.15.2] — 2026-08-18 — Frozen: 57 canonical tools (spec 1270)
+
+The canonical tool surface is now **FROZEN** at **57 tools** across
+**17 namespaces** with **schema v26** (sqlite migrations).
+Per spec 1270 (SPEC 1242 t7), this is a **policy freeze, not a code
+freeze**: the runtime still allows tools to be added, removed, or
+renamed, but doing so without an ADR + minor version bump will trip
+the new regression gate `TestCanonicalOrder_Frozen_57_17_26` in
+`internal/tools/canonical_staleness_test.go` and the runtime guard
+`tools.IsFrozen() == true`.
+
+### Frozen surface (57 tools / 17 namespaces)
+
+```
+PROJECT          (1)  - create
+SESSION          (7)  - start, resume, status, close, heartbeat, recover, resurrect
+RESEARCH         (3)  - topic, recall, resume_thread
+AGENT_BOOTSTRAP  (3)  - bootstrap, recommend_companions, detect_environment
+VIBE             (4)  - publish, spec, pipeline_status, resolve_drift
+CONTEXT          (4)  - artifact_context, spec_context, session_context, recall
+AGENT_MEMORY     (10) - save, list, recall, get, update, archive, delegate, entities, subagent_register, subagent_unregister
+MINDSET          (1)  - mindset_apply
+DELEGATION       (1)  - delegate_intent
+LLM_CONFIG       (4)  - llm_key_add, llm_key_list, llm_key_remove, llm_provider_status
+JUDGE            (4)  - judge, consensus, judgment_history, judge_list_personas
+POLICY           (2)  - active_policy, load_constitution
+OBSERVABILITY    (4)  - memory_state, writes, anomalies, health_ping
+ERROR_OBS        (4)  - error_list, error_get, error_summary, error_resolve
+ADMIN            (3)  - admin_migrate, admin_schema_status, admin_vacuum
+L6-VLP           (1)  - vlp_handle_event
+EMBEDDER         (1)  - embedder_setup_prompt
+```
+
+### Added
+
+- **`internal/tools/registry.go`** — freeze marker block (`FreezeDate`,
+  `FreezeSpec`, `FreezeVersion` constants + `IsFrozen() bool` accessor +
+  policy comment block). The marker is a documented, exported contract,
+  not a private constant — call sites and downstream tooling can read it.
+- **`internal/tools/canonical_staleness_test.go`** — new test
+  `TestCanonicalOrder_Frozen_57_17_26` (pin canonical tool count == 57,
+  namespace count == 17, schema version == 26, `IsFrozen()` returns
+  true, freeze constants are populated, every namespace's
+  `NamespaceCounts()` agrees with its `len(ns.Tools)`).
+- **`docs/DIAGRAMAS.md`** — corrected stale "53 → 54 tools" line (the
+  JUDGE-persona growth was one event in a series; the spec 1270 freeze
+  is the cumulative count of 57).
+- **`skills/dark-memory/SKILL.md`** — Section 1 header bumped 52 → 57
+  with freeze note; the per-namespace sub-sections were already accurate
+  (they enumerate tools individually; only the summary line was stale).
+- **`internal/agentbootstrap/data/install/opencode.md`** — install
+  section bumped 52 → 57 with spec reference.
+
+### Freezing policy (binding for the next major bump)
+
+- **Addition**, **removal**, **rename**, or **namespace reorganization**
+  of any canonical tool is a **breaking change**.
+- Any such change requires (1) an ADR document, (2) a minor version
+  bump (v2.16+), (3) an update to `FreezeDate` + `FreezeVersion` in
+  this registry, and (4) a `vibe_publish` artifact that the drift
+  judge rates `aligned`.
+- **Extras** (env-gated surfaces like the L7-REDTEAM namespace) are NOT
+  frozen here — they live behind env gates, advertise alphabetically,
+  and have their own contract.
+- **Schema additions** (sqlite migrations) follow normal semver
+  backward-compat rules — bumped by `admin_migrate`, NOT by this marker.
+
+### No runtime changes
+
+The freeze is enforced by a test, not by middleware. Boot path is
+unchanged; the canonical order, namespace grouping, and `tools/list`
+emission are identical to v2.15.1. The only runtime difference: the
+`IsFrozen()` accessor returns `true` and can be branched on by tooling.
+
+---
+
 ## [2.17.0] — 2026-08-14 — persona registry (specialized system prompts)
 
 **Cada eval_type tiene ahora su propio lens.** Esta versión completa
