@@ -1,7 +1,7 @@
 // Package daemon implements the bridge-daemon protocol for spec 1176
 // (Daemon-Bridge wrapper architecture). The bridge is a thin stdio
 // proxy; the daemon is the long-lived process that owns SQLite, the
-// constitution watchdog, and the 53-tool registry.
+// constitution watchdog, and the 57-tool registry.
 //
 // Spec 1176 (plan label "Spec 1150-equivalent") — v2.19.0 of dark-memory.
 //

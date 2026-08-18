@@ -77,13 +77,13 @@ $tasks1 = @"
 Create-Spec -Id "library-v1" -Case "C1" -SessionId "dark-memory-mcp-v1" -Constitution $constitutionJSON -SpecJSON $spec1 -TasksJSON $tasks1
 
 # ----------------------------------------------------------------------------
-# SPEC 2 — Dark Memory MCP server binary + 52 tools in dark_memory_* namespace
+# SPEC 2 — Dark Memory MCP server binary + 57 tools in dark_memory_* namespace
 # ----------------------------------------------------------------------------
 $spec2 = @"
 {
   "spec_id": "dark-memory-mcp-server-v1",
-  "title": "Dark Memory MCP — MCP server binary + 52 tools in dark_memory_* namespace",
-  "what": "cmd/dark-memory-mcp/main.go is the MCP server. It imports the library, instantiates the Store, registers 52 tools organized in 15 namespaces. Tools are split: standard tools (open to any MCP client), admin tools (driver-locked), redteam tools (gated by DARK_REDTEAM=armed — not in v1).",
+  "title": "Dark Memory MCP — MCP server binary + 57 tools in dark_memory_* namespace",
+  "what": "cmd/dark-memory-mcp/main.go is the MCP server. It imports the library, instantiates the Store, registers 57 tools organized in 17 namespaces. Tools are split: standard tools (open to any MCP client), admin tools (driver-locked), redteam tools (gated by DARK_REDTEAM=armed — not in v1).",
   "why": "The MCP server is the user-facing surface of Dark Memory MCP. Tool naming convention dark_memory_* keeps it collision-free with dark-research-mcp's dark_research_*/dark_mem_*. The deprecation shim (spec 4) handles the legacy tools.",
   "scope_in": ["cmd/dark-memory-mcp/main.go (MCP server boot)", "internal/server/server.go (server setup + tool registry)", "internal/tools/session.go (3 tools)", "internal/tools/research.go (6 tools)", "internal/tools/vibeflow.go (4 workflow + 21 primitives)", "internal/tools/ssd.go (9 judges)", "internal/tools/constitution.go (4 tools)", "internal/tools/mods.go (5 tools)", "internal/tools/economy.go (3 tools)", "internal/tools/observability.go (4 tools)", "internal/tools/admin.go (8 tools)", "tests/e2e/ (server up + 1000 calls)", "tests/stress/ (concurrency test)"],
   "scope_out": ["library code (spec 1)", "CLI admin (spec 3)", "deprecation shim (spec 4)", "threat model patches (spec 5)"]
@@ -106,7 +106,7 @@ $tasks2 = @"
   {"id": "2.12", "description": "internal/tools/economy.go: dark_memory_economize (Atlan 5-bucket pipeline), _estimate_buckets, _cache_key.", "depends_on": ["2.2"]},
   {"id": "2.13", "description": "internal/tools/observability.go: dark_memory_memory_state, _memory_audit, _anomaly_events, _canary_status.", "depends_on": ["2.2"]},
   {"id": "2.14", "description": "internal/tools/admin.go: dark_memory_admin_open, _close, _migrate, _schema_status, _vacuum, _set_driver, _set_session_scope, _inspect (read-only debug).", "depends_on": ["2.2"]},
-  {"id": "2.15", "description": "tests/e2e/server_test.go: start server, register all 52 tools, fire 1000 mixed calls, assert no deadlock, no panic, no row inconsistency.", "depends_on": ["2.14"]}
+  {"id": "2.15", "description": "tests/e2e/server_test.go: start server, register all 57 tools, fire 1000 mixed calls, assert no deadlock, no panic, no row inconsistency.", "depends_on": ["2.14"]}
 ]
 "@
 

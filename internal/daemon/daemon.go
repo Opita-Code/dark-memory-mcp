@@ -13,7 +13,7 @@ import (
 )
 
 // Daemon is the long-lived process that owns the dark-memory server
-// surface (SQLite connection, constitution watchdog, 53 tools).
+// surface (SQLite connection, constitution watchdog, 57 tools).
 //
 // Lifecycle FSM:
 //
@@ -39,12 +39,12 @@ type Daemon struct {
 
 // Config configures a Daemon.
 type Config struct {
-	SocketPath     string        // Unix socket / Windows named pipe
-	ReadyPath      string        // ready-file path
-	PIDPath        string        // PID file path (empty on Windows)
-	IdleTimeout    time.Duration // 30m default
-	Version        string        // for pong response
-	OnRequest      RequestHandler // injected handler (returns Frame response)
+	SocketPath  string         // Unix socket / Windows named pipe
+	ReadyPath   string         // ready-file path
+	PIDPath     string         // PID file path (empty on Windows)
+	IdleTimeout time.Duration  // 30m default
+	Version     string         // for pong response
+	OnRequest   RequestHandler // injected handler (returns Frame response)
 	// OnConn, when set, takes over connection handling (spec 1176
 	// §4.10 MCP-over-socket). The daemon accepts the connection and
 	// hands it to OnConn, which is responsible for speaking the
@@ -68,7 +68,7 @@ const (
 	StateNotRunning   State = "not_running"
 	StateStarting     State = "starting"
 	StateReady        State = "ready"
-	StateShuttingDown  State = "shutting_down"
+	StateShuttingDown State = "shutting_down"
 )
 
 // NewDaemon constructs a Daemon. Does not start it; call Run().
@@ -83,8 +83,8 @@ func NewDaemon(cfg Config) (*Daemon, error) {
 		cfg.IdleTimeout = 30 * time.Minute
 	}
 	return &Daemon{
-		cfg:    cfg,
-		state:  StateNotRunning,
+		cfg:     cfg,
+		state:   StateNotRunning,
 		pidPath: cfg.PIDPath,
 	}, nil
 }
