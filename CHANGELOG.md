@@ -6,261 +6,26 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
-## [2.15.2] — 2026-08-18 — Frozen: 57 canonical tools (spec 1270)
+## [2.19.0] — 2026-08-18 — catch-up release: daemon-bridge wrapper + 41 unreleased commits since v2.14.0 (spec 1176)
 
-The canonical tool surface is now **FROZEN** at **57 tools** across
-**17 namespaces** with **schema v26** (sqlite migrations).
-Per spec 1270 (SPEC 1242 t7), this is a **policy freeze, not a code
-freeze**: the runtime still allows tools to be added, removed, or
-renamed, but doing so without an ADR + minor version bump will trip
-the new regression gate `TestCanonicalOrder_Frozen_57_17_26` in
-`internal/tools/canonical_staleness_test.go` and the runtime guard
-`tools.IsFrozen() == true`.
+**Catch-up release consolidating everything in `main` since v2.14.0 (Aug 11).** The version number `2.19.0` reflects the highest semver in the batch (the `daemon-bridge wrapper` commit, spec 1176). Per-version entries below ([2.15.2-5], [2.17.0], [2.16.0]) are preserved verbatim for traceability — they were committed but never tagged.
 
-### Frozen surface (57 tools / 17 namespaces)
+### Highlights (5 themes)
 
-```
-PROJECT          (1)  - create
-SESSION          (7)  - start, resume, status, close, heartbeat, recover, resurrect
-RESEARCH         (3)  - topic, recall, resume_thread
-AGENT_BOOTSTRAP  (3)  - bootstrap, recommend_companions, detect_environment
-VIBE             (4)  - publish, spec, pipeline_status, resolve_drift
-CONTEXT          (4)  - artifact_context, spec_context, session_context, recall
-AGENT_MEMORY     (10) - save, list, recall, get, update, archive, delegate, entities, subagent_register, subagent_unregister
-MINDSET          (1)  - mindset_apply
-DELEGATION       (1)  - delegate_intent
-LLM_CONFIG       (4)  - llm_key_add, llm_key_list, llm_key_remove, llm_provider_status
-JUDGE            (4)  - judge, consensus, judgment_history, judge_list_personas
-POLICY           (2)  - active_policy, load_constitution
-OBSERVABILITY    (4)  - memory_state, writes, anomalies, health_ping
-ERROR_OBS        (4)  - error_list, error_get, error_summary, error_resolve
-ADMIN            (3)  - admin_migrate, admin_schema_status, admin_vacuum
-L6-VLP           (1)  - vlp_handle_event
-EMBEDDER         (1)  - embedder_setup_prompt
-```
-
-### Added
-
-- **`internal/tools/registry.go`** — freeze marker block (`FreezeDate`,
-  `FreezeSpec`, `FreezeVersion` constants + `IsFrozen() bool` accessor +
-  policy comment block). The marker is a documented, exported contract,
-  not a private constant — call sites and downstream tooling can read it.
-- **`internal/tools/canonical_staleness_test.go`** — new test
-  `TestCanonicalOrder_Frozen_57_17_26` (pin canonical tool count == 57,
-  namespace count == 17, schema version == 26, `IsFrozen()` returns
-  true, freeze constants are populated, every namespace's
-  `NamespaceCounts()` agrees with its `len(ns.Tools)`).
-- **`docs/DIAGRAMAS.md`** — corrected stale "53 → 54 tools" line (the
-  JUDGE-persona growth was one event in a series; the spec 1270 freeze
-  is the cumulative count of 57).
-- **`skills/dark-memory/SKILL.md`** — Section 1 header bumped 52 → 57
-  with freeze note; the per-namespace sub-sections were already accurate
-  (they enumerate tools individually; only the summary line was stale).
-- **`internal/agentbootstrap/data/install/opencode.md`** — install
-  section bumped 52 → 57 with spec reference.
-
-### Freezing policy (binding for the next major bump)
-
-- **Addition**, **removal**, **rename**, or **namespace reorganization**
-  of any canonical tool is a **breaking change**.
-- Any such change requires (1) an ADR document, (2) a minor version
-  bump (v2.16+), (3) an update to `FreezeDate` + `FreezeVersion` in
-  this registry, and (4) a `vibe_publish` artifact that the drift
-  judge rates `aligned`.
-- **Extras** (env-gated surfaces like the L7-REDTEAM namespace) are NOT
-  frozen here — they live behind env gates, advertise alphabetically,
-  and have their own contract.
-- **Schema additions** (sqlite migrations) follow normal semver
-  backward-compat rules — bumped by `admin_migrate`, NOT by this marker.
-
-### No runtime changes
-
-The freeze is enforced by a test, not by middleware. Boot path is
-unchanged; the canonical order, namespace grouping, and `tools/list`
-emission are identical to v2.15.1. The only runtime difference: the
-`IsFrozen()` accessor returns `true` and can be branched on by tooling.
-
----
-
-## [2.15.3] — 2026-08-18 — catalog fix: minimax dialect default → Anthropic (spec 1271)
-
-**REVERTED by [2.15.5] / spec 1274.** The flip from
-`DialectOpenAI` → `DialectAnthropic` for `minimax` and `minimax-cn`
-broke the existing primary-source pinning in
-`TestProviderCatalog_EndpointsVerified` (which expected
-`DialectOpenAI` per row 587, 2026-08-10 verification) and
-`TestNewSelfHarnessClient_DetectsEveryProvider` (which expected
-`dialect: "openai"` in its sub-cases). spec 1198 (commit e97e854)
-was the *parser* fix for `thinking:adaptive` content blocks — not
-a dialect-default change — so the catalog flip was unfounded.
-The entry below documents the original (reverted) intent for the
-historical record; the live state of the catalog reverts to
-`DialectOpenAI` for both `minimax` providers, and the runtime
-override `DARK_JUDGE_DIALECT=anthropic` plus the `thinking:adaptive`
-parser in `judgeViaHTTP` (spec 1198) cover the Anthropic-endpoint
-use case.
-
-Backlog FIX B (as originally committed and now reverted): the
-`minimax` and `minimax-cn` entries in `internal/llm/catalog.go`
-were flipped to `DialectAnthropic` (was `DialectOpenAI`) per
-spec 1198 / row 587, MiniMax-M3 ships with the `thinking:adaptive`
-wire shape, which only lands cleanly on the Anthropic Messages
-endpoint at `https://api.minimaxi.com/anthropic`. The override
-path `DARK_JUDGE_DIALECT=anthropic` was the legacy escape hatch;
-the catalog default would have matched reality so harness-side
-probes that bypass the env-var still land on the right endpoint.
-Reality check: spec 1198 is the parser fix only. The original
-catalog default (OpenAI) was correct. Reverted in [2.15.5].
-
----
-
-## [2.15.4] — 2026-08-18 — test decouple: delegate_intent tests go mock-first (spec 1272)
-
-Backlog FIX A closes the "delegate_intent C7 tests depend on a live
-LLM" debt. The two `TestDelegateIntent_C7_*` tests now wire the
-LLM selector through `wireMockLLM()` — an `OSINTSelector` with two
-deterministic `MockLLMClient` overrides (one for `mindset_compose`,
-one for `mindset_quality`). Tests are offline: no API keys, no
-provider coupling, no shell env reads, no HTTP. The CI suite
-runs them in well under a second each (was 22-89 s with a live
-provider; was 1-2 s fail-fast with an invalid shell key).
+1. **Schema freeze** ([2.15.2], spec 1270) — canonical surface pinned at **57 tools / 17 namespaces / schema v26**. New `TestCanonicalOrder_Frozen_57_17_26` regression gate plus runtime guard `tools.IsFrozen() == true`.
+2. **Judge reliability** ([2.15.3-5], [2.16.0], [2.17.0], spec 1198/1200/1205) — `parseVerdict` last-occurrence + thinking-adaptive parser, evidence contract with `file:line + quote` (anti-recap defense), persona registry (8 specialized system prompts, 30+ tests, `judge_list_personas` tool, `PersonaID`/`SpecIntent` fields).
+3. **LLM provider catalog** ([2.15.3-5], spec 1188/1198/1271/1274) — canonical catalog + OS keystore + hot probe + health-aware failover. `minimax`/`minimax-cn` defaults preserved (FIX C reverted the spec 1271 Anthropic dialect flip; new `TestCatalog_MiniMaxDefaultsPreserveSpec1198` guard).
+4. **Harness auto-detect + daemon-bridge** ([2.18.0], [2.19.0], spec 1171/1176) — MCP-over-socket via `ServeStream` (bridge mode), Windows named-pipe transport via `go-winio`, auto-fallback to legacy when bridge is unavailable.
+5. **Operator tooling** (spec 1268) — new `tests/decision-criteria/check.sh` (162-line TDD checker, 32 assertions) pins governance decision-criteria derived from the spec 1268 gap-analysis. Currently RED→GREEN 32/0; serves as regression net for the harness skill updates.
 
 ### Changed
 
-- **`internal/orchestration/delegate_intent_test.go`**
-  - New helper `wireMockLLM()` returns an `OSINTSelector` with two
-    `MockLLMClient` overrides. The compose mock returns a
-    canned `mindsetAttempt` (role + goal + backstory +
-    constraints + tools_recommended + model_recommended) that
-    parses cleanly into the struct the `mindsetCompose` consumer
-    expects. The quality mock returns `{"verdict":"aligned",
-    "confidence":0.95,...}` so `mindsetValidate` short-circuits
-    the composition loop on iteration 1.
-  - `wireLLM()` now delegates to `wireMockLLM()`. The harness-
-    injection / env-fallback comment is preserved for context
-    (production orchestrators still follow spec 173 O5).
-  - Test file header updated to document the mock-first contract
-    + the operator flag (2026-08-18 "hardcodear providers en
-    tests es antipatron") + the per-eval_type override
-    rationale.
-- **`internal/orchestration/delegate_intent.go`** — unchanged.
-  The mock routes through the same `o.Judge(ctx, ...)` →
-  `selector.Select(ctx, evalType)` path that the live LLM uses,
-  exercising the production orchestrator + composition loop end-to-end.
+- `npm/wrapper/package.json` + 6 platform packages + `server.json` bumped to `2.19.0` (via `scripts/bump-version.sh 2.19.0`).
+- `README.md` version references synced (L207 JSON example, L424 summary line).
 
-### Not changed
+### Not in this release
 
-- `tests/wire/` (the live-LLM conformance suite) is unchanged.
-  It still expects the operator to run with harness-injected keys
-  and exercises the same selection / failover paths the production
-  orchestrator uses. Mock-first is for the orchestration-level
-  unit / acceptance tests, not for end-to-end wire conformance.
-- Spec 1270 freeze (57/17/26) is unchanged. Spec 1271 catalog
-  defaults (v2.15.3) are unchanged.
-- WIP errorobs preserved per operator policy.
-
-### No production runtime change
-
-The mock is only used by the test helper. The production
-orchestrator's `ensureLLMSelector` chain (primary harness
-injection → secondary DefaultFailoverClient → ErrNoLLMAvailable)
-is untouched. Production deployments keep the same
-spec-173-O5 contract.
-
----
-
-## [2.15.5] — 2026-08-18 — revert spec 1271: restore minimax catalog defaults (spec 1274)
-
-Backlog FIX C closes the **regression introduced by [2.15.3]**:
-flipping the `minimax` and `minimax-cn` catalog defaults to
-`DialectAnthropic` broke two pre-existing pinning tests:
-
-- `TestProviderCatalog_EndpointsVerified` (provider_catalog_test.go:69-70)
-  expected `DialectOpenAI` per the 2026-08-10 primary-source
-  verification (row 587).
-- `TestNewSelfHarnessClient_DetectsEveryProvider` (provider_detection_test.go:53-54)
-  expected `dialect: "openai"` in its sub-cases.
-
-### Diagnosis (root cause)
-
-spec 1198 (commit `e97e854` — another operator session) was the
-**parser** fix for `thinking:adaptive` content blocks in MiniMax-M3
-responses — not a catalog-default change. Reading spec 1198 as
-authorizing a `Dialect` flip was the operator-self-induced error
-that landed in [2.15.3]. The Anthropic-endpoint use case is
-already covered by two existing paths that need no catalog flip:
-
-1. **Runtime override**: `DARK_JUDGE_DIALECT=anthropic` (validated
-   by `TestProviderDialect_AnthropicOverride` for `deepseek`,
-   generalizes to any provider with `AnthropicBaseURL`).
-2. **Thinking-adaptive parser**: `judgeViaHTTP` (spec 1198) already
-   sends `thinking:{type:adaptive}` and picks the first
-   `type:text` block — works at any Anthropic-endpoint when the
-   harness sets the dialect override.
-
-### Reverted
-
-- **`internal/llm/catalog.go`** — `minimax` and `minimax-cn` blocks
-  restored to `Dialect: DialectOpenAI`, `ProbePath: "/models"`,
-  `ProbeAuthMode: ProbeAuthBearer`. The `AnthropicBaseURL` side-
-  channel field is preserved (the `DARK_JUDGE_DIALECT=anthropic`
-  override path still needs it).
-- **`internal/llm/catalog_test.go`** —
-  `TestCatalog_MiniMaxDialectAnthropic` removed (it pinned the
-  flipped defaults). The pre-existing `TestCatalog_Completeness`
-  + `TestCatalog_FieldsNoEmpty` tests still cover the providers.
-
-### New guard test (added)
-
-- **`internal/llm/catalog_test.go`** — new
-  `TestCatalog_MiniMaxDefaultsPreserveSpec1198` pins the four
-  invariants that the [2.15.3] flip would have violated:
-  - `minimax.Dialect == DialectOpenAI`
-  - `minimax-cn.Dialect == DialectOpenAI`
-  - `minimax.AnthropicBaseURL != ""` (override path still has
-    somewhere to land)
-  - `minimax-cn.AnthropicBaseURL != ""` (same)
-  
-  Cross-cuts so a future "let's flip it again" change fails loud
-  *before* the regression hits `TestProviderCatalog_EndpointsVerified`
-  and `TestNewSelfHarnessClient_DetectsEveryProvider`.
-
-### Not changed
-
-- `qwen`, `deepseek`, `moonshot`, `zhipu`, `google` — already
-  `DialectOpenAI` and untouched.
-- The runtime path: `judgeViaHTTP` spec 1198 parser is still
-  live and unchanged. The `DARK_JUDGE_DIALECT=anthropic` override
-  is still wired and tested.
-- Spec 1270 freeze (57/17/26) is unchanged.
-- Spec 1272 / v2.15.4 (FIX A: mock-first tests) is unchanged
-  and additive — it passes the same way pre- and post-revert.
-- WIP errorobs preserved per operator policy.
-
-### Test evidence (post-revert)
-
-```
-=== RUN   TestProviderCatalog_EndpointsVerified
---- PASS: TestProviderCatalog_EndpointsVerified (0.00s)
-=== RUN   TestNewSelfHarnessClient_DetectsEveryProvider
---- PASS: TestNewSelfHarnessClient_DetectsEveryProvider (0.00s)
-```
-
-All 9 provider sub-tests (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
-`GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `MINIMAX_API_KEY`,
-`MINIMAX_API_KEY_CN`, `MOONSHOT_API_KEY`, `ZAI_API_KEY`,
-`DASHSCOPE_API_KEY`) PASS — including the two that the [2.15.3]
-flip had broken (`MINIMAX_API_KEY`, `MINIMAX_API_KEY_CN`).
-
-### Pre-existing failures still in flight (out of scope here)
-
-- `TestProviderCatalog_EndpointsVerified` was failing pre-revert
-  due to the catalog flip. Now PASS.
-- `TestNewSelfHarnessClient_DetectsEveryProvider/MINIMAX_API_KEY`
-  + `/MINIMAX_API_KEY_CN` were failing pre-revert for the same
-  reason. Now PASS.
-- No other pre-existing failures were masked by the [2.15.3]
-  regression; the suite that pre-FIX-B was red is now green.
+WIP `errorobs` files (6 modified + 2 untracked) preserved in the working tree per operator policy. They will land in a future spec when the operator decides.
 
 ---
 
@@ -432,6 +197,264 @@ componentes lo hacen cumplir:
 - Pre-existing test failure unrelated to v2.16.0:
   `TestProviderCatalog_EndpointsVerified` (MiniMax endpoint — decisión
   pendiente entre `api.minimax.io` y `api.minimaxi.com`).
+
+---
+
+## [2.15.5] — 2026-08-18 — revert spec 1271: restore minimax catalog defaults (spec 1274)
+
+Backlog FIX C closes the **regression introduced by [2.15.3]**:
+flipping the `minimax` and `minimax-cn` catalog defaults to
+`DialectAnthropic` broke two pre-existing pinning tests:
+
+- `TestProviderCatalog_EndpointsVerified` (provider_catalog_test.go:69-70)
+  expected `DialectOpenAI` per the 2026-08-10 primary-source
+  verification (row 587).
+- `TestNewSelfHarnessClient_DetectsEveryProvider` (provider_detection_test.go:53-54)
+  expected `dialect: "openai"` in its sub-cases.
+
+### Diagnosis (root cause)
+
+spec 1198 (commit `e97e854` — another operator session) was the
+**parser** fix for `thinking:adaptive` content blocks in MiniMax-M3
+responses — not a catalog-default change. Reading spec 1198 as
+authorizing a `Dialect` flip was the operator-self-induced error
+that landed in [2.15.3]. The Anthropic-endpoint use case is
+already covered by two existing paths that need no catalog flip:
+
+1. **Runtime override**: `DARK_JUDGE_DIALECT=anthropic` (validated
+   by `TestProviderDialect_AnthropicOverride` for `deepseek`,
+   generalizes to any provider with `AnthropicBaseURL`).
+2. **Thinking-adaptive parser**: `judgeViaHTTP` (spec 1198) already
+   sends `thinking:{type:adaptive}` and picks the first
+   `type:text` block — works at any Anthropic-endpoint when the
+   harness sets the dialect override.
+
+### Reverted
+
+- **`internal/llm/catalog.go`** — `minimax` and `minimax-cn` blocks
+  restored to `Dialect: DialectOpenAI`, `ProbePath: "/models"`,
+  `ProbeAuthMode: ProbeAuthBearer`. The `AnthropicBaseURL` side-
+  channel field is preserved (the `DARK_JUDGE_DIALECT=anthropic`
+  override path still needs it).
+- **`internal/llm/catalog_test.go`** —
+  `TestCatalog_MiniMaxDialectAnthropic` removed (it pinned the
+  flipped defaults). The pre-existing `TestCatalog_Completeness`
+  + `TestCatalog_FieldsNoEmpty` tests still cover the providers.
+
+### New guard test (added)
+
+- **`internal/llm/catalog_test.go`** — new
+  `TestCatalog_MiniMaxDefaultsPreserveSpec1198` pins the four
+  invariants that the [2.15.3] flip would have violated:
+  - `minimax.Dialect == DialectOpenAI`
+  - `minimax-cn.Dialect == DialectOpenAI`
+  - `minimax.AnthropicBaseURL != ""` (override path still has
+    somewhere to land)
+  - `minimax-cn.AnthropicBaseURL != ""` (same)
+  
+  Cross-cuts so a future "let's flip it again" change fails loud
+  *before* the regression hits `TestProviderCatalog_EndpointsVerified`
+  and `TestNewSelfHarnessClient_DetectsEveryProvider`.
+
+### Not changed
+
+- `qwen`, `deepseek`, `moonshot`, `zhipu`, `google` — already
+  `DialectOpenAI` and untouched.
+- The runtime path: `judgeViaHTTP` spec 1198 parser is still
+  live and unchanged. The `DARK_JUDGE_DIALECT=anthropic` override
+  is still wired and tested.
+- Spec 1270 freeze (57/17/26) is unchanged.
+- Spec 1272 / v2.15.4 (FIX A: mock-first tests) is unchanged
+  and additive — it passes the same way pre- and post-revert.
+- WIP errorobs preserved per operator policy.
+
+### Test evidence (post-revert)
+
+```
+=== RUN   TestProviderCatalog_EndpointsVerified
+--- PASS: TestProviderCatalog_EndpointsVerified (0.00s)
+=== RUN   TestNewSelfHarnessClient_DetectsEveryProvider
+--- PASS: TestNewSelfHarnessClient_DetectsEveryProvider (0.00s)
+```
+
+All 9 provider sub-tests (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+`GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `MINIMAX_API_KEY`,
+`MINIMAX_API_KEY_CN`, `MOONSHOT_API_KEY`, `ZAI_API_KEY`,
+`DASHSCOPE_API_KEY`) PASS — including the two that the [2.15.3]
+flip had broken (`MINIMAX_API_KEY`, `MINIMAX_API_KEY_CN`).
+
+### Pre-existing failures still in flight (out of scope here)
+
+- `TestProviderCatalog_EndpointsVerified` was failing pre-revert
+  due to the catalog flip. Now PASS.
+- `TestNewSelfHarnessClient_DetectsEveryProvider/MINIMAX_API_KEY`
+  + `/MINIMAX_API_KEY_CN` were failing pre-revert for the same
+  reason. Now PASS.
+- No other pre-existing failures were masked by the [2.15.3]
+  regression; the suite that pre-FIX-B was red is now green.
+
+---
+
+## [2.15.4] — 2026-08-18 — test decouple: delegate_intent tests go mock-first (spec 1272)
+
+Backlog FIX A closes the "delegate_intent C7 tests depend on a live
+LLM" debt. The two `TestDelegateIntent_C7_*` tests now wire the
+LLM selector through `wireMockLLM()` — an `OSINTSelector` with two
+deterministic `MockLLMClient` overrides (one for `mindset_compose`,
+one for `mindset_quality`). Tests are offline: no API keys, no
+provider coupling, no shell env reads, no HTTP. The CI suite
+runs them in well under a second each (was 22-89 s with a live
+provider; was 1-2 s fail-fast with an invalid shell key).
+
+### Changed
+
+- **`internal/orchestration/delegate_intent_test.go`**
+  - New helper `wireMockLLM()` returns an `OSINTSelector` with two
+    `MockLLMClient` overrides. The compose mock returns a
+    canned `mindsetAttempt` (role + goal + backstory +
+    constraints + tools_recommended + model_recommended) that
+    parses cleanly into the struct the `mindsetCompose` consumer
+    expects. The quality mock returns `{"verdict":"aligned",
+    "confidence":0.95,...}` so `mindsetValidate` short-circuits
+    the composition loop on iteration 1.
+  - `wireLLM()` now delegates to `wireMockLLM()`. The harness-
+    injection / env-fallback comment is preserved for context
+    (production orchestrators still follow spec 173 O5).
+  - Test file header updated to document the mock-first contract
+    + the operator flag (2026-08-18 "hardcodear providers en
+    tests es antipatron") + the per-eval_type override
+    rationale.
+- **`internal/orchestration/delegate_intent.go`** — unchanged.
+  The mock routes through the same `o.Judge(ctx, ...)` →
+  `selector.Select(ctx, evalType)` path that the live LLM uses,
+  exercising the production orchestrator + composition loop end-to-end.
+
+### Not changed
+
+- `tests/wire/` (the live-LLM conformance suite) is unchanged.
+  It still expects the operator to run with harness-injected keys
+  and exercises the same selection / failover paths the production
+  orchestrator uses. Mock-first is for the orchestration-level
+  unit / acceptance tests, not for end-to-end wire conformance.
+- Spec 1270 freeze (57/17/26) is unchanged. Spec 1271 catalog
+  defaults (v2.15.3) are unchanged.
+- WIP errorobs preserved per operator policy.
+
+### No production runtime change
+
+The mock is only used by the test helper. The production
+orchestrator's `ensureLLMSelector` chain (primary harness
+injection → secondary DefaultFailoverClient → ErrNoLLMAvailable)
+is untouched. Production deployments keep the same
+spec-173-O5 contract.
+
+---
+
+## [2.15.3] — 2026-08-18 — catalog fix: minimax dialect default → Anthropic (spec 1271)
+
+**REVERTED by [2.15.5] / spec 1274.** The flip from
+`DialectOpenAI` → `DialectAnthropic` for `minimax` and `minimax-cn`
+broke the existing primary-source pinning in
+`TestProviderCatalog_EndpointsVerified` (which expected
+`DialectOpenAI` per row 587, 2026-08-10 verification) and
+`TestNewSelfHarnessClient_DetectsEveryProvider` (which expected
+`dialect: "openai"` in its sub-cases). spec 1198 (commit e97e854)
+was the *parser* fix for `thinking:adaptive` content blocks — not
+a dialect-default change — so the catalog flip was unfounded.
+The entry below documents the original (reverted) intent for the
+historical record; the live state of the catalog reverts to
+`DialectOpenAI` for both `minimax` providers, and the runtime
+override `DARK_JUDGE_DIALECT=anthropic` plus the `thinking:adaptive`
+parser in `judgeViaHTTP` (spec 1198) cover the Anthropic-endpoint
+use case.
+
+Backlog FIX B (as originally committed and now reverted): the
+`minimax` and `minimax-cn` entries in `internal/llm/catalog.go`
+were flipped to `DialectAnthropic` (was `DialectOpenAI`) per
+spec 1198 / row 587, MiniMax-M3 ships with the `thinking:adaptive`
+wire shape, which only lands cleanly on the Anthropic Messages
+endpoint at `https://api.minimaxi.com/anthropic`. The override
+path `DARK_JUDGE_DIALECT=anthropic` was the legacy escape hatch;
+the catalog default would have matched reality so harness-side
+probes that bypass the env-var still land on the right endpoint.
+Reality check: spec 1198 is the parser fix only. The original
+catalog default (OpenAI) was correct. Reverted in [2.15.5].
+
+---
+
+## [2.15.2] — 2026-08-18 — Frozen: 57 canonical tools (spec 1270)
+
+The canonical tool surface is now **FROZEN** at **57 tools** across
+**17 namespaces** with **schema v26** (sqlite migrations).
+Per spec 1270 (SPEC 1242 t7), this is a **policy freeze, not a code
+freeze**: the runtime still allows tools to be added, removed, or
+renamed, but doing so without an ADR + minor version bump will trip
+the new regression gate `TestCanonicalOrder_Frozen_57_17_26` in
+`internal/tools/canonical_staleness_test.go` and the runtime guard
+`tools.IsFrozen() == true`.
+
+### Frozen surface (57 tools / 17 namespaces)
+
+```
+PROJECT          (1)  - create
+SESSION          (7)  - start, resume, status, close, heartbeat, recover, resurrect
+RESEARCH         (3)  - topic, recall, resume_thread
+AGENT_BOOTSTRAP  (3)  - bootstrap, recommend_companions, detect_environment
+VIBE             (4)  - publish, spec, pipeline_status, resolve_drift
+CONTEXT          (4)  - artifact_context, spec_context, session_context, recall
+AGENT_MEMORY     (10) - save, list, recall, get, update, archive, delegate, entities, subagent_register, subagent_unregister
+MINDSET          (1)  - mindset_apply
+DELEGATION       (1)  - delegate_intent
+LLM_CONFIG       (4)  - llm_key_add, llm_key_list, llm_key_remove, llm_provider_status
+JUDGE            (4)  - judge, consensus, judgment_history, judge_list_personas
+POLICY           (2)  - active_policy, load_constitution
+OBSERVABILITY    (4)  - memory_state, writes, anomalies, health_ping
+ERROR_OBS        (4)  - error_list, error_get, error_summary, error_resolve
+ADMIN            (3)  - admin_migrate, admin_schema_status, admin_vacuum
+L6-VLP           (1)  - vlp_handle_event
+EMBEDDER         (1)  - embedder_setup_prompt
+```
+
+### Added
+
+- **`internal/tools/registry.go`** — freeze marker block (`FreezeDate`,
+  `FreezeSpec`, `FreezeVersion` constants + `IsFrozen() bool` accessor +
+  policy comment block). The marker is a documented, exported contract,
+  not a private constant — call sites and downstream tooling can read it.
+- **`internal/tools/canonical_staleness_test.go`** — new test
+  `TestCanonicalOrder_Frozen_57_17_26` (pin canonical tool count == 57,
+  namespace count == 17, schema version == 26, `IsFrozen()` returns
+  true, freeze constants are populated, every namespace's
+  `NamespaceCounts()` agrees with its `len(ns.Tools)`).
+- **`docs/DIAGRAMAS.md`** — corrected stale "53 → 54 tools" line (the
+  JUDGE-persona growth was one event in a series; the spec 1270 freeze
+  is the cumulative count of 57).
+- **`skills/dark-memory/SKILL.md`** — Section 1 header bumped 52 → 57
+  with freeze note; the per-namespace sub-sections were already accurate
+  (they enumerate tools individually; only the summary line was stale).
+- **`internal/agentbootstrap/data/install/opencode.md`** — install
+  section bumped 52 → 57 with spec reference.
+
+### Freezing policy (binding for the next major bump)
+
+- **Addition**, **removal**, **rename**, or **namespace reorganization**
+  of any canonical tool is a **breaking change**.
+- Any such change requires (1) an ADR document, (2) a minor version
+  bump (v2.16+), (3) an update to `FreezeDate` + `FreezeVersion` in
+  this registry, and (4) a `vibe_publish` artifact that the drift
+  judge rates `aligned`.
+- **Extras** (env-gated surfaces like the L7-REDTEAM namespace) are NOT
+  frozen here — they live behind env gates, advertise alphabetically,
+  and have their own contract.
+- **Schema additions** (sqlite migrations) follow normal semver
+  backward-compat rules — bumped by `admin_migrate`, NOT by this marker.
+
+### No runtime changes
+
+The freeze is enforced by a test, not by middleware. Boot path is
+unchanged; the canonical order, namespace grouping, and `tools/list`
+emission are identical to v2.15.1. The only runtime difference: the
+`IsFrozen()` accessor returns `true` and can be branched on by tooling.
 
 ---
 
