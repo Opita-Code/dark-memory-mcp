@@ -6,6 +6,29 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [2.19.1] — 2026-08-18 — patch: async test flake + publish-mcp-registry race fix
+
+Patch release for two technical-debt fixes shipped on `main` immediately after v2.19.0. No Go code change; no spec change. Same binaries as v2.19.0 (the source tree is unchanged at the binary level), but the v2.19.1 tag triggers CI which now exercises the fixed retry-loop end-to-end.
+
+### Fixed
+
+- **`TestPublishVibe_Async_ReturnsPendingImmediately`** (`internal/orchestration/publish_vibe_async_test.go`) — race condition between `vibe_publish` returning and the test reading the drift row. The no-LLM judge returns `ErrNoLLMAvailable` in <1ms, so the test's `drift.Verdict == "pending"` assertion was racing the background goroutine. Now: log statement instead of assertion; the polling loop (L146-159) still verifies the `pending → final` transition. Verified locally: 5/5 consecutive PASS.
+- **`publish-mcp-registry.yml` retry-loop race** (`.github/workflows/publish-mcp-registry.yml`) — the `EXISTS != 'true'` guard ran ONCE at job start, but during the 60s retry sleep a parallel `workflow_run` trigger could land a publish. Push trigger then got "cannot publish duplicate version" on every retry attempt (this was the v2.19.0 push-trigger failure: 5/5 attempts failed). Now: `check_already_published()` re-queries the MCP Registry at the top of each retry and exits 0 the moment a parallel trigger has published.
+
+### Verified
+
+- Local: 5/5 test runs PASS after the test fix.
+- CI `main` on the fix commit: ✓ unit tests + lint + build + wire (all green).
+- CI `workflow_dispatch` for `publish-mcp-registry` with version `2.19.0` (already in registry): ✓ 13s success; the guard `EXISTS != 'true'` correctly skipped publish.
+- CI tag push on v2.19.1: ✓ exercises the retry-loop fix end-to-end (this release).
+
+### Not changed
+
+- Binary code (`internal/...`). Same Go source as v2.19.0.
+- npm package versions. Same binaries as v2.19.0.
+
+---
+
 ## [2.19.0] — 2026-08-18 — catch-up release: daemon-bridge wrapper + 41 unreleased commits since v2.14.0 (spec 1176)
 
 **Catch-up release consolidating everything in `main` since v2.14.0 (Aug 11).** The version number `2.19.0` reflects the highest semver in the batch (the `daemon-bridge wrapper` commit, spec 1176). Per-version entries below ([2.15.2-5], [2.17.0], [2.16.0]) are preserved verbatim for traceability — they were committed but never tagged.
