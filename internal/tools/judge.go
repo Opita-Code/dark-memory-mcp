@@ -13,10 +13,9 @@ package tools
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"strings"
 
+	"github.com/dark-agents/dark-memory-mcp/internal/judgeparse"
 	"github.com/dark-agents/dark-memory-mcp/internal/orchestration"
 	"github.com/dark-agents/dark-memory-mcp/internal/ssd"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
@@ -198,68 +197,14 @@ type JudgmentHistoryEntry struct {
 
 // parseVerdictJSON returns the canonical verdict (aligned |
 // drift_detected | needs_human | unknown) from an SDDEvaluation
-// verdict JSON blob. Uses encoding/json so we get accurate parsing
-// even for nested structures.
-//
-// v2.21.1 (spec 1205 P0): MiniMax-M3 with thinking adaptive answers
-// in YAML or markdown (```yaml\nverdict: needs_human\n...```), NOT
-// JSON. The old parser returned "unknown" for any non-JSON blob,
-// which made the judgment_history lie (a rich needs_human reasoning
-// was recorded as "unknown") and hid real drift decisions. This
-// parser now shares the same whitespace-normalised YAML/markdown
-// fallback as publish_vibe.parseVerdict, so the recorded verdict
-// matches the pipeline's drift decision.
+// verdict JSON blob. t3 (spec 1242): delegates to the shared
+// judgeparse package — the single canonical verdict parser used by the
+// vibe pipeline, the M6 drift gate, and this read-only history view.
+// Contract preserved: empty → unknown; verbatim pass-through for
+// non-canonical verdict values; YAML/markdown fallback; unknown
+// default. The TD-J4 last-occurrence scan also fixes the old
+// Contains-ordered fallback, which could record a verdict token QUOTED
+// in the judge's reasoning as the actual verdict.
 func parseVerdictJSON(blob string) string {
-	if blob == "" {
-		return "unknown"
-	}
-	var v map[string]any
-	if err := json.Unmarshal([]byte(blob), &v); err == nil {
-		if aligned, ok := v["aligned"].(bool); ok {
-			if aligned {
-				return "aligned"
-			}
-			return "drift_detected"
-		}
-		// Some judge verdicts use "verdict": "needs_human" directly.
-		if verdict, ok := v["verdict"].(string); ok && verdict != "" {
-			return verdict
-		}
-	}
-	// YAML / markdown fallback (MiniMax-M3 with thinking adaptive).
-	// Collapse whitespace, strip backticks/bold, compact colons, then
-	// match the canonical verdict values. Mirrors
-	// orchestration.parseVerdict's lenient path (v2.21.0, spec 1200).
-	normalized := strings.ToLower(blob)
-	var b strings.Builder
-	b.Grow(len(normalized))
-	prevSpace := false
-	for _, r := range normalized {
-		isSpace := r == ' ' || r == '\t' || r == '\n' || r == '\r'
-		if isSpace {
-			if !prevSpace {
-				b.WriteRune(' ')
-			}
-			prevSpace = true
-			continue
-		}
-		prevSpace = false
-		b.WriteRune(r)
-	}
-	b2 := strings.ReplaceAll(b.String(), "`", "")
-	b2 = strings.ReplaceAll(b2, "**", "")
-	compact := strings.ReplaceAll(b2, ": ", ":")
-	compact = strings.ReplaceAll(compact, " :", ":")
-	switch {
-	case strings.Contains(compact, "verdict:aligned"),
-		strings.Contains(compact, `verdict:"aligned"`):
-		return "aligned"
-	case strings.Contains(compact, "verdict:needs_human"),
-		strings.Contains(compact, `verdict:"needs_human"`):
-		return "needs_human"
-	case strings.Contains(compact, "verdict:drift_detected"),
-		strings.Contains(compact, `verdict:"drift_detected"`):
-		return "drift_detected"
-	}
-	return "unknown"
+	return judgeparse.ParseHistoryVerdict(blob)
 }

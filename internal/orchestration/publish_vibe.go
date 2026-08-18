@@ -27,7 +27,6 @@ package orchestration
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
@@ -35,6 +34,7 @@ import (
 
 	"github.com/dark-agents/dark-memory-mcp/internal/agentmemory"
 	"github.com/dark-agents/dark-memory-mcp/internal/errorobs"
+	"github.com/dark-agents/dark-memory-mcp/internal/judgeparse"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 	"github.com/dark-agents/dark-memory-mcp/internal/vibecase"
 	"github.com/dark-agents/dark-memory-mcp/internal/vibeflow"
@@ -82,7 +82,7 @@ type PublishVibeInput struct {
 	// true — run drift_judge) from "explicitly false" (skip). The
 	// bool zero value would otherwise default to false and surprise
 	// callers who don't set the field.
-	AutoDriftCheck *bool  `json:"auto_drift_check,omitempty"`
+	AutoDriftCheck *bool `json:"auto_drift_check,omitempty"`
 	// AsyncDriftCheck (v2.14.0, spec 998 p1): when true, drift_judge
 	// (and brand_match + compliance_check) run in a BACKGROUND goroutine
 	// and PublishVibe returns immediately with verdict="pending" +
@@ -91,8 +91,8 @@ type PublishVibeInput struct {
 	// blocked 10-30s+ on the LLM judge (the root reason we raised the
 	// opencode MCP timeout to 120s). Default false = legacy synchronous
 	// behavior (backward compatible).
-	AsyncDriftCheck bool `json:"async_drift_check,omitempty"`
-	SessionID      string `json:"session_id,omitempty"` // recorded on the artifact for INV-2
+	AsyncDriftCheck bool   `json:"async_drift_check,omitempty"`
+	SessionID       string `json:"session_id,omitempty"` // recorded on the artifact for INV-2
 	// AgentID (v2.4.1) is the Mem0 agent_id (LLM identity) that
 	// owns this artifact. Optional; resolved with priority
 	// (caller input > projects.default_agent_id > ""). When set,
@@ -493,12 +493,12 @@ func (o *Orchestrator) runAsyncJudgePipeline(
 		if v280Enabled() && v == "aligned" {
 			// Rebuild a result with the final verdict for the hooks.
 			hooked := &PublishResult{
-				Verdict:     v,
-				Confidence:  conf,
-				Reasoning:   reasoning,
-				SpecID:      specID,
-				ArtifactID:  artifactID,
-				DriftID:     pendingDriftID,
+				Verdict:       v,
+				Confidence:    conf,
+				Reasoning:     reasoning,
+				SpecID:        specID,
+				ArtifactID:    artifactID,
+				DriftID:       pendingDriftID,
 				ActiveAgentID: activeAgentID,
 			}
 			if in.Artifact.AutoSaveDecision {
@@ -612,40 +612,12 @@ func (o *Orchestrator) autoArchiveSpecTodosOnAligned(
 	}
 }
 
-// parseDriftVerdict maps an LLM Judge verdict JSON to one of the
-// canonical drift verdicts: aligned | drift_detected | needs_human.
-//
-// Two JSON shapes are accepted:
-//
-//	Modern (post-v1.4.0 dark_memory_judge):
-//	  {"verdict":"aligned"|"drift_detected"|"needs_human",
-//	   "confidence":0.92, "reasoning":"..."}
-//
-//	Legacy:
-//	  {"aligned":true, "confidence":0.92, "issues":[]}
-//	  {"aligned":false, "drift_items":["..."], "confidence":0.85}
-//
-// confidence < 0.5 always returns "needs_human" regardless of the LLM's
-// verdict — that's the floor at which we trust the LLM-as-judge.
-//
-// INFRA-001 fix: pre-fix version only recognized the legacy {"aligned":bool}
-// shape and silently returned "drift_detected" for modern output, causing
-// every VibePublish to be misclassified. The fix checks the modern shape
-// first (canonical v1.4.0+), then falls back to legacy, then to a
-// whitespace/case-tolerant substring match.
-//
-// v2.13.0 fix (OPITA-006): parseDriftVerdict was EVAL_TYPE-BLIND. The
-// drift_judge/brand_match/compliance_check/mindset_quality shapes use a
-// `verdict` key with TYPE-SPECIFIC values ("match", "compliant", ...),
-// while grounding_check/pii_detect/prompt_injection_scan emit boolean
-// keys ("grounded", "pii_found", "injection_found"). The old parser only
-// understood the drift_judge value set, so every non-drift_judge verdict
-// fell through to the "drift_detected" default — consensus(grounding_check)
-// returned drift_detected even when the LLM said grounded:true. The fix
-// delegates to parseVerdict with an explicit eval_type so each judge
-// shape maps to the canonical three-state verdict.
+// parseDriftVerdict maps a drift_judge verdict blob to the canonical
+// three-state verdict. t3 (spec 1242): delegates to the shared
+// judgeparse package — the full eval_type-aware logic, stripCodeFence,
+// and TD-J4 last-occurrence scan live there (were inline here).
 func parseDriftVerdict(verdictJSON string, confidence float32) string {
-	return parseVerdict("drift_judge", verdictJSON, confidence)
+	return judgeparse.ParsePipeline("drift_judge", verdictJSON, confidence)
 }
 
 // parseVerdict maps an LLM Judge verdict JSON to one of the canonical
@@ -655,270 +627,15 @@ func parseDriftVerdict(verdictJSON string, confidence float32) string {
 // each shape's semantics into the canonical three-state verdict used by
 // drift reports and consensus aggregation.
 //
-// Semantics per eval_type (what "aligned" means for each judge):
-//
-//	drift_judge            {"verdict":"aligned"|"drift_detected"|"needs_human"}  → verbatim
-//	brand_match            {"verdict":"match"|"drift_detected"}                  → match=aligned
-//	compliance_check       {"verdict":"compliant"|"non_compliant"}               → compliant=aligned
-//	mindset_quality        {"verdict":"aligned"|"drift_detected"|"needs_human"}  → verbatim
-//	grounding_check        {"grounded":true|false}                               → true=aligned
-//	pii_detect             {"pii_found":true|false}                              → false=aligned
-//	prompt_injection_scan  {"injection_found":true|false}                        → false=aligned
-//	spec_test_alignment    {"alignment":0.0-1.0}                                 → >=0.7=aligned (M6)
-//	mutation_score_check   {"pass":true|false}                                   → true=aligned (M1)
-//	security_coverage      {"coverage":0.0-1.0}                                  → >=0.8=aligned (M7)
-//	resilience_check       {"passed":true|false}                                 → true=aligned (M8)
-//	test_quality_review    {"verdict":"aligned"|"drift_detected"|"needs_human"}  → verbatim
-//	oracle_quality         {"verdict":"aligned"|"drift_detected"|"needs_human"}  → verbatim
-//
-// confidence < 0.5 always returns "needs_human" regardless of the LLM's
-// verdict — that's the floor at which we trust the LLM-as-judge.
-//
-// stripCodeFence removes a ```json ``` (or ```yaml / ```markdown)
-// wrapper from the judge's raw output so the structured verdict inside
-// can be parsed as JSON. Returns the input unchanged when no fence is
-// present. TD-J4 evolution (drift 1089): without this, the fallback
-// scans the entire output including the judge's evidence quotes.
-func stripCodeFence(s string) string {
-	s = strings.TrimSpace(s)
-	if !strings.HasPrefix(s, "```") {
-		return s
-	}
-	// Drop the opening ```lang line.
-	if i := strings.Index(s, "\n"); i >= 0 {
-		s = s[i+1:]
-	}
-	// Drop the closing ``` (and any trailing newline before it).
-	if i := strings.LastIndex(s, "```"); i >= 0 {
-		s = s[:i]
-	}
-	return strings.TrimSpace(s)
-}
+// t3 (spec 1242): delegates to judgeparse.ParsePipeline — the single
+// canonical verdict parser shared by the vibe pipeline, the M6 drift
+// gate, and judgment_history. Semantic history preserved: eval_type
+// shapes, confidence floor 0.5 → needs_human, stripCodeFence before
+// structured Unmarshal (drift 1089), TD-J4 last-occurrence scan, and
+// the v2.21.0 fail-safe default (needs_human — a parse/infra failure
+// must surface for operator review, never as a silent drift_detected).
 func parseVerdict(evalType, verdictJSON string, confidence float32) string {
-	if confidence < 0.5 {
-		return "needs_human"
-	}
-	// Try to parse the JSON; check both shapes. TD-J4 evolution (v2,
-	// drift 1089): MiniMax-M3 wraps its structured verdict in a
-	// ```json fence. Unmarshalling the raw text fails because of the
-	// fence, and the lenient fallback then scans the WHOLE output —
-	// including the judge's OWN evidence quotes, which can contain
-	// the canonicalTokens list verbatim (with "verdict":"drift_detected"
-	// tokens LATER than the judge's real top-level "verdict":"aligned").
-	// Stripping the fence BEFORE Unmarshal lets the structured branch
-	// trust the top-level verdict field; the text-scan fallback is
-	// only reached when no structured verdict can be parsed at all.
-	var v map[string]any
-	if err := json.Unmarshal([]byte(stripCodeFence(verdictJSON)), &v); err == nil {
-		// eval_type-specific boolean shapes (non-verdict judges).
-		switch evalType {
-		case "grounding_check":
-			if grounded, ok := v["grounded"].(bool); ok {
-				if grounded {
-					return "aligned"
-				}
-				return "drift_detected"
-			}
-		case "pii_detect":
-			if found, ok := v["pii_found"].(bool); ok {
-				if found {
-					// PII present = the content fails the check.
-					return "drift_detected"
-				}
-				return "aligned"
-			}
-		case "prompt_injection_scan":
-			if found, ok := v["injection_found"].(bool); ok {
-				if found {
-					return "drift_detected"
-				}
-				return "aligned"
-			}
-		case "brand_match":
-			// brand_match emits {"verdict":"match"|"drift_detected"}.
-			if verdict, ok := v["verdict"].(string); ok {
-				switch verdict {
-				case "match":
-					return "aligned"
-				case "drift_detected":
-					return "drift_detected"
-				}
-			}
-		case "compliance_check":
-			// compliance_check emits {"verdict":"compliant"|"non_compliant"}.
-			if verdict, ok := v["verdict"].(string); ok {
-				switch verdict {
-				case "compliant":
-					return "aligned"
-				case "non_compliant":
-					return "drift_detected"
-				}
-			}
-		case "spec_test_alignment":
-			// M6 — alignment = tests_verifying_spec_claims / spec_claims.
-			// >= 0.7 passes (target 1.0 for published artifacts; the
-			// judge reports missing claims so a 0.85 with one missing
-			// claim surfaces as drift, not aligned).
-			if a, ok := numericBool(v, "alignment"); ok {
-				if a >= 0.7 {
-					return "aligned"
-				}
-				return "drift_detected"
-			}
-		case "mutation_score_check":
-			// M1 — mutation_score = mutants_killed / total_mutants.
-			// The judge emits "pass" (score >= threshold). pass=true → aligned.
-			if pass, ok := v["pass"].(bool); ok {
-				if pass {
-					return "aligned"
-				}
-				return "drift_detected"
-			}
-		case "security_coverage":
-			// M7 — security_coverage = owasp_vectors_with_tests / total.
-			// >= 0.8 passes (target 1.0 for all applicable vectors).
-			if c, ok := numericBool(v, "coverage"); ok {
-				if c >= 0.8 {
-					return "aligned"
-				}
-				return "drift_detected"
-			}
-		case "resilience_check":
-			// M8 — resilience_score = chaos_experiments_passed / run.
-			// passed=true → aligned (target >= 0.90).
-			if passed, ok := v["passed"].(bool); ok {
-				if passed {
-					return "aligned"
-				}
-				return "drift_detected"
-			}
-		}
-		// Generic `verdict` string shape (drift_judge, mindset_quality,
-		// and anything else that speaks the canonical values).
-		if verdict, ok := v["verdict"].(string); ok {
-			switch verdict {
-			case "aligned":
-				return "aligned"
-			case "drift_detected":
-				return "drift_detected"
-			case "needs_human":
-				return "needs_human"
-			}
-		}
-		// Legacy shape: boolean `aligned` field.
-		if aligned, ok := v["aligned"].(bool); ok {
-			if aligned {
-				return "aligned"
-			}
-			return "drift_detected"
-		}
-	}
-	// Lenient fallback: substring match on a whitespace-collapsed,
-	// lowercased copy of the raw JSON. Handles whitespace, case
-	// variation, and partial parses.
-	normalized := strings.ToLower(verdictJSON)
-	// Collapse runs of whitespace into a single space so that
-	// pretty-printed JSON like `"Verdict" : "aligned"` matches
-	// `"verdict":"aligned"`.
-	var b strings.Builder
-	b.Grow(len(normalized))
-	prevSpace := false
-	for _, r := range normalized {
-		isSpace := r == ' ' || r == '\t' || r == '\n' || r == '\r'
-		if isSpace {
-			if !prevSpace {
-				b.WriteRune(' ')
-			}
-			prevSpace = true
-			continue
-		}
-		prevSpace = false
-		b.WriteRune(r)
-	}
-	// Step 2: collapse whitespace around colons. The first ReplaceAll
-	// handles `: ` (colon followed by space, e.g. `"key": "value"`).
-	// The second handles ` :` (space followed by colon, e.g. `"key" : "value"`).
-	// Markdown backtick form (`verdict:`needs_human``) — strip
-	// backticks and `**` bold markers BEFORE the colon-collapse so the
-	// `: ` (colon+space) replacement can bind `verdict: aligned`.
-	// Otherwise `verdict:` `aligned`` has a backtick between the colon
-	// and the value and the `: ` pattern never matches.
-	b2 := strings.ReplaceAll(b.String(), "`", "")
-	b2 = strings.ReplaceAll(b2, "**", "")
-	compact := strings.ReplaceAll(b2, `: `, `:`)
-	compact = strings.ReplaceAll(compact, ` :`, `:`)
-	// TD-J4 P0 fix: LAST-OCCURRENCE semantics instead of the old
-	// Contains-ordered switch. The judge's final verdict appears at
-	// the END of its output; the artifact text it QUOTES in the
-	// reasoning can contain the same tokens (e.g. an artifact that
-	// says "Expected verdict: aligned" — the old switch matched the
-	// quote BEFORE the judge's own conclusion and produced a FALSE
-	// ALIGNED, bypassing the drift gate with injected text).
-	// Matching the token with the greatest LastIndex means a quoted
-	// artifact phrase can never win over the judge's conclusion.
-	// No token found → fail-safe needs_human (parse/infra failure
-	// must surface for operator review, never as silent approval).
-	canonicalTokens := []struct {
-		token   string
-		verdict string
-	}{
-		{`"verdict":"aligned"`, "aligned"},
-		{`verdict:"aligned"`, "aligned"},
-		{`verdict:aligned`, "aligned"},
-		{`"aligned":true`, "aligned"},
-		{`"drift":false`, "aligned"},
-		{`"verdict":"needs_human"`, "needs_human"},
-		{`verdict:"needs_human"`, "needs_human"},
-		{`verdict:needs_human`, "needs_human"},
-		{`"verdict":"drift_detected"`, "drift_detected"},
-		{`verdict:"drift_detected"`, "drift_detected"},
-		{`verdict:drift_detected`, "drift_detected"},
-	}
-	bestVerdict := ""
-	bestIdx := -1
-	for _, c := range canonicalTokens {
-		if idx := strings.LastIndex(compact, c.token); idx > bestIdx {
-			bestIdx = idx
-			bestVerdict = c.verdict
-		}
-	}
-	if bestVerdict != "" {
-		return bestVerdict
-	}
-	// v2.21.0 (spec 1200, P0 fix): fail-safe default is needs_human,
-	// NOT drift_detected. An unparseable verdict (wrong format, empty
-	// response, model change) means the judge could not form a
-	// verdict — that is infrastructure/parse failure, which per
-	// spec 757 T6 must surface as needs_human (operator reviews),
-	// never as a spurious drift_detected.
-	return "needs_human"
-}
-
-// numericBool reads a float field from a map[string]any (the shape
-// json.Unmarshal produces). Accepts float64 (the JSON default),
-// json.Number, and int (for tests constructing the map by hand).
-// Returns ok=false when the field is absent or not numeric.
-func numericBool(v map[string]any, key string) (float64, bool) {
-	raw, ok := v[key]
-	if !ok {
-		return 0, false
-	}
-	switch n := raw.(type) {
-	case float64:
-		return n, true
-	case json.Number:
-		f, err := n.Float64()
-		if err != nil {
-			return 0, false
-		}
-		return f, true
-	case int:
-		return float64(n), true
-	case int64:
-		return float64(n), true
-	default:
-		return 0, false
-	}
+	return judgeparse.ParsePipeline(evalType, verdictJSON, confidence)
 }
 
 // nextActionForVerdict maps a verdict to a NextAction string the

@@ -19,12 +19,12 @@ package drift
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
 	"time"
 
+	"github.com/dark-agents/dark-memory-mcp/internal/judgeparse"
 	"github.com/dark-agents/dark-memory-mcp/internal/safety"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 )
@@ -237,58 +237,16 @@ func buildJudgeContent(in ArtifactInput) string {
 }
 
 // parseDecisionFromJudgeJSON extracts the verdict string from the
-// judge's structured response. Mirrors orchestration.parseDriftVerdict
-// (kept private here to avoid coupling).
-//
-// Accepted verdict shapes (in priority order):
-//
-//	{"verdict":"aligned","confidence":0.92,...}
-//	{"verdict":"drift_detected","confidence":0.85,...}
-//	{"verdict":"needs_human","confidence":0.7,...}
-//
-// Falls back to the legacy "ok" string and the bare "aligned" /
-// "drift_detected" / "needs_human" for backward compat.
+// judge's structured response. t3 (spec 1242): delegates to the shared
+// judgeparse package — the single canonical verdict parser used by the
+// vibe pipeline, this gate, and judgment_history. Contract preserved:
+// empty → skipped; structured JSON; bare-word legacy aliases
+// (aligned/ok/pass/match → aligned, drift/fail/mismatch →
+// drift_detected, human/review/uncertain → needs_human); conservative
+// drift_detected on unknown (a misinterpreted verdict is more
+// dangerous than a false positive); confidence floor 0.3.
 func parseDecisionFromJudgeJSON(verdictJSON string, confidence float32) string {
-	raw := strings.TrimSpace(verdictJSON)
-	if raw == "" {
-		return "skipped"
-	}
-
-	// Try the structured {"verdict":"...","reasoning":"..."} form.
-	var structured struct {
-		Verdict string `json:"verdict"`
-	}
-	if err := json.Unmarshal([]byte(raw), &structured); err == nil && structured.Verdict != "" {
-		return normalizeDecision(structured.Verdict, confidence)
-	}
-
-	// Try the legacy bare-word form ("aligned\n...").
-	first := strings.SplitN(raw, "\n", 2)[0]
-	first = strings.TrimSpace(strings.TrimRight(first, ",.;:"))
-	return normalizeDecision(first, confidence)
-}
-
-// normalizeDecision maps a free-text verdict word to one of the 3
-// canonical decisions. Unknown values fall through to "drift_detected"
-// (conservative — drift_detected is harder to clear than aligned, and
-// a misinterpreted "looks OK" verdict is more dangerous than a false
-// positive).
-func normalizeDecision(s string, confidence float32) string {
-	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "aligned", "ok", "pass", "match":
-		if confidence < 0.3 {
-			// Very low confidence on an "aligned" verdict — treat as
-			// needs_human so the operator reviews rather than auto-accept.
-			return "needs_human"
-		}
-		return "aligned"
-	case "drift_detected", "drift", "fail", "mismatch":
-		return "drift_detected"
-	case "needs_human", "human", "review", "uncertain":
-		return "needs_human"
-	default:
-		return "drift_detected"
-	}
+	return judgeparse.ParseDecision(verdictJSON, confidence)
 }
 
 // Void-import guards. safety is imported so future strictness
