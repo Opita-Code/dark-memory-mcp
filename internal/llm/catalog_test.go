@@ -21,7 +21,10 @@ func TestCatalog_CanonicalIDs(t *testing.T) {
 
 // TestCatalog_ResolveAliases pins the legacy-id mapping.
 func TestCatalog_ResolveAliases(t *testing.T) {
-	cases := []struct{ in, want string; wasAlias bool }{
+	cases := []struct {
+		in, want string
+		wasAlias bool
+	}{
 		{"zhipu", "zhipu", false},
 		{"z-ai", "zhipu", true},
 		{"dashscope", "qwen", true},
@@ -56,15 +59,15 @@ func TestCatalog_SpecByID(t *testing.T) {
 // migration + detection depend on it).
 func TestCatalog_EnvKeysPinned(t *testing.T) {
 	want := map[string]string{
-		"anthropic":   "ANTHROPIC_API_KEY",
-		"openai":      "OPENAI_API_KEY",
-		"google":      "GEMINI_API_KEY",
-		"deepseek":    "DEEPSEEK_API_KEY",
-		"minimax":     "MINIMAX_API_KEY",
-		"minimax-cn":  "MINIMAX_API_KEY_CN",
-		"zhipu":       "ZAI_API_KEY",
-		"moonshot":    "MOONSHOT_API_KEY",
-		"qwen":        "DASHSCOPE_API_KEY",
+		"anthropic":  "ANTHROPIC_API_KEY",
+		"openai":     "OPENAI_API_KEY",
+		"google":     "GEMINI_API_KEY",
+		"deepseek":   "DEEPSEEK_API_KEY",
+		"minimax":    "MINIMAX_API_KEY",
+		"minimax-cn": "MINIMAX_API_KEY_CN",
+		"zhipu":      "ZAI_API_KEY",
+		"moonshot":   "MOONSHOT_API_KEY",
+		"qwen":       "DASHSCOPE_API_KEY",
 	}
 	for id, envKey := range want {
 		if got := EnvKeyForProvider(id); got != envKey {
@@ -83,6 +86,45 @@ func TestCatalog_ProbeFieldsNoEmpty(t *testing.T) {
 		}
 		if p.ProbeAuthMode != ProbeAuthBearer && p.ProbeAuthMode != ProbeAuthXAPIKey {
 			t.Errorf("provider %s: ProbeAuthMode %q invalid", p.ID, p.ProbeAuthMode)
+		}
+	}
+}
+
+// TestCatalog_MiniMaxDialectAnthropic (FIX B, spec 1271): pins the
+// default Dialect of minimax and minimax-cn to Anthropic. MiniMax-M3
+// with thinking:adaptive requires the Anthropic Messages wire shape
+// (spec 1198 / row 587); an OpenAI-default would silently route the
+// LLM call through chat/completions and break verdict parsing. The
+// override path (DARK_JUDGE_DIALECT=anthropic) is the legacy escape
+// hatch — the catalog default should match reality so harness-side
+// probes that bypass the env-var still land on the right endpoint.
+func TestCatalog_MiniMaxDialectAnthropic(t *testing.T) {
+	cases := []struct {
+		id string
+	}{
+		{"minimax"},
+		{"minimax-cn"},
+	}
+	for _, c := range cases {
+		s := SpecByID(c.id)
+		if s == nil {
+			t.Fatalf("SpecByID(%q) returned nil — provider not in catalog", c.id)
+		}
+		if s.Dialect != DialectAnthropic {
+			t.Errorf("SpecByID(%q).Dialect = %q, want %q (FIX B, spec 1271 — MiniMax-M3 thinking:adaptive requires anthropic)",
+				c.id, s.Dialect, DialectAnthropic)
+		}
+		if s.AnthropicBaseURL == "" {
+			t.Errorf("SpecByID(%q).AnthropicBaseURL empty — provider flagged Anthropic-dialect but no anthropic endpoint configured",
+				c.id)
+		}
+		if s.ProbeAuthMode != ProbeAuthXAPIKey {
+			t.Errorf("SpecByID(%q).ProbeAuthMode = %q, want %q (Anthropic Messages authenticate with x-api-key + anthropic-version header pair)",
+				c.id, s.ProbeAuthMode, ProbeAuthXAPIKey)
+		}
+		if s.ProbePath != "/v1/models" {
+			t.Errorf("SpecByID(%q).ProbePath = %q, want \"/v1/models\" (Anthropic Messages probe path)",
+				c.id, s.ProbePath)
 		}
 	}
 }

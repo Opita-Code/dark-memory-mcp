@@ -82,6 +82,58 @@ emission are identical to v2.15.1. The only runtime difference: the
 
 ---
 
+## [2.15.3] — 2026-08-18 — catalog fix: minimax dialect default → Anthropic (spec 1271)
+
+Backlog FIX B: the `minimax` and `minimax-cn` entries in
+`internal/llm/catalog.go` now default to `DialectAnthropic` (was
+`DialectOpenAI`). Per spec 1198 / row 587, MiniMax-M3 ships with the
+`thinking:adaptive` wire shape, which only lands cleanly on the
+Anthropic Messages endpoint at `https://api.minimaxi.com/anthropic`.
+The override path `DARK_JUDGE_DIALECT=anthropic` was the legacy escape
+hatch; the catalog default now matches reality so harness-side probes
+that bypass the env-var still land on the right endpoint.
+
+### Changed
+
+- **`internal/llm/catalog.go`** — `minimax` and `minimax-cn` provider
+  blocks: `Dialect: DialectOpenAI` → `Dialect: DialectAnthropic`. The
+  `BaseURL` (OpenAI-compatible) is preserved as a documented fallback
+  for harness-side probes that want to verify the OpenAI-shaped route
+  without going through the judge. `ProbePath` flipped from `/models`
+  to `/v1/models` (Anthropic Messages probe path). `ProbeAuthMode`
+  flipped from `ProbeAuthBearer` to `ProbeAuthXAPIKey` (Anthropic
+  Messages authenticates with the `x-api-key` + `anthropic-version`
+  header pair, not the OpenAI bearer style).
+- **`internal/llm/catalog_test.go`** — new
+  `TestCatalog_MiniMaxDialectAnthropic` pinning the defaults for both
+  `minimax` and `minimax-cn`: `Dialect == DialectAnthropic`,
+  `AnthropicBaseURL != ""`, `ProbeAuthMode == ProbeAuthXAPIKey`,
+  `ProbePath == "/v1/models"`. Cross-cuts so a future partial revert
+  (e.g. flipping only one of the two providers) fails loud.
+
+### Not changed
+
+- `qwen`, `deepseek`, `moonshot`, `zhipu`, `google` — all still
+  default to `DialectOpenAI`. They have `AnthropicBaseURL` configured
+  as a side-channel but their `thinking:adaptive` story is not on the
+  spec 1198 critical path. If a future model on those providers
+  requires the same dialect flip, it lands as its own patch.
+- The canonical surface freeze (spec 1270, v2.15.2) is unchanged —
+  this is a catalog-defaults patch, not a tool-surface change.
+
+### No runtime change
+
+Harnesses that already set `DARK_JUDGE_DIALECT=anthropic` saw no
+difference. Harnesses that relied on the implicit OpenAI dialect for
+`minimax` (none of the dark-agents ones do — they all run the harness
+with the override set) will start hitting the Anthropic endpoint.
+The judge path (`internal/orchestration/llm_client.go`) already
+differentiates `minimax` / `minimax-cn` from the OpenAI providers for
+`thinking:adaptive` parsing (spec 1198); this patch aligns the
+catalog to that code path.
+
+---
+
 ## [2.17.0] — 2026-08-14 — persona registry (specialized system prompts)
 
 **Cada eval_type tiene ahora su propio lens.** Esta versión completa
