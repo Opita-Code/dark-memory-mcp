@@ -24,6 +24,12 @@ type JudgeRequest struct {
 	TargetID     string `json:"target_id"`               // brand_id | artifact_id | ...
 	Model        string `json:"model,omitempty"`         // recommended by OSINTSelector
 	SystemPrompt string `json:"system_prompt,omitempty"` // optional override
+	// UserPrompt (TD-J6 P0 fix) is the composed user-side prompt
+	// from the JudgePromptBuilder (spec intent + required output
+	// schema). When non-empty, LLM clients send it BEFORE the raw
+	// Content section so the judge receives both halves of the
+	// spec-vs-artifact pair. Empty = legacy behavior (content only).
+	UserPrompt string `json:"user_prompt,omitempty"`
 	// VibeCase (v2.12.0) is the vibe-flow case of the artifact
 	// (C1=code, ..., C7=mixed). Empty = legacy generic prompt.
 	VibeCase string `json:"vibe_case,omitempty"`
@@ -35,6 +41,18 @@ type JudgeResponse struct {
 	Confidence  float32 `json:"confidence"`   // 0..1
 	Model       string  `json:"model"`        // which model answered (e.g. "claude-sonnet-4-5", "gpt-5")
 	Provider    string  `json:"provider"`     // anthropic | openai | google | ...
+}
+
+// ComposeUserContent builds the user-role message content sent to the
+// LLM. When the composed UserPrompt is present (spec intent + output
+// schema from the JudgePromptBuilder), it precedes the raw content so
+// the judge receives both halves of the spec-vs-artifact pair. Empty
+// UserPrompt = legacy behavior (content only). TD-J6 P0 fix.
+func (r JudgeRequest) ComposeUserContent() string {
+	if r.UserPrompt == "" {
+		return r.Content
+	}
+	return r.UserPrompt + "\n\n## Content (verbatim)\n\n" + r.Content
 }
 
 // JudgeClient is one judge endpoint. Implementations: SelfHarnessClient

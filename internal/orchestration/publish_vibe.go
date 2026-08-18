@@ -403,6 +403,12 @@ func (o *Orchestrator) runJudgePipeline(
 		TargetType: "artifact",
 		TargetID:   fmt.Sprintf("artifact_%d", artifactID),
 		Content:    enriched,
+		// TD-J5 P0 fix: the spec intent must reach the judge. The
+		// JudgeInput.SpecIntent field exists since v2.17.0 and the
+		// tool path honors it, but the vibe_publish pipeline never
+		// populated it — the judge compared the artifact against an
+		// absent spec and (correctly) said needs_human.
+		SpecIntent: in.Spec.Spec,
 	})
 	if jerr != nil {
 		o.RecordError(ctx, "publish_vibe", in.SessionID, fmt.Errorf("drift_judge: %w", jerr), errorobs.SeverityError)
@@ -811,35 +817,43 @@ func parseVerdict(evalType, verdictJSON string, confidence float32) string {
 	b2 = strings.ReplaceAll(b2, "**", "")
 	compact := strings.ReplaceAll(b2, `: `, `:`)
 	compact = strings.ReplaceAll(compact, ` :`, `:`)
-	if strings.Contains(compact, `"verdict":"aligned"`) ||
-		strings.Contains(compact, `"aligned":true`) ||
-		strings.Contains(compact, `"drift":false`) ||
-		// v2.21.0 (spec 1200, P0 fix): MiniMax-M3 with thinking
-		// adaptive answers in YAML or markdown, not JSON. The
-		// canonical verdict values survive whitespace normalisation
-		// as `verdict:aligned` / `verdict:needs_human` /
-		// `verdict:drift_detected` (yaml) or markdown backtick
-		// forms. Match those too so a valid YAML/markdown verdict is
-		// never misread as drift.
-		strings.Contains(compact, `verdict:aligned`) ||
-		strings.Contains(compact, `verdict:needs_human`) ||
-		strings.Contains(compact, `verdict:drift_detected`) ||
-		strings.Contains(compact, `verdict:"aligned"`) ||
-		strings.Contains(compact, `verdict:"needs_human"`) ||
-		strings.Contains(compact, `verdict:"drift_detected"`) {
-		// Canonical values are unambiguous after normalisation.
-		switch {
-		case strings.Contains(compact, `verdict:aligned`),
-			strings.Contains(compact, `verdict:"aligned"`):
-			return "aligned"
-		case strings.Contains(compact, `verdict:needs_human`),
-			strings.Contains(compact, `verdict:"needs_human"`):
-			return "needs_human"
-		case strings.Contains(compact, `verdict:drift_detected`),
-			strings.Contains(compact, `verdict:"drift_detected"`):
-			return "drift_detected"
+	// TD-J4 P0 fix: LAST-OCCURRENCE semantics instead of the old
+	// Contains-ordered switch. The judge's final verdict appears at
+	// the END of its output; the artifact text it QUOTES in the
+	// reasoning can contain the same tokens (e.g. an artifact that
+	// says "Expected verdict: aligned" — the old switch matched the
+	// quote BEFORE the judge's own conclusion and produced a FALSE
+	// ALIGNED, bypassing the drift gate with injected text).
+	// Matching the token with the greatest LastIndex means a quoted
+	// artifact phrase can never win over the judge's conclusion.
+	// No token found → fail-safe needs_human (parse/infra failure
+	// must surface for operator review, never as silent approval).
+	canonicalTokens := []struct {
+		token   string
+		verdict string
+	}{
+		{`"verdict":"aligned"`, "aligned"},
+		{`verdict:"aligned"`, "aligned"},
+		{`verdict:aligned`, "aligned"},
+		{`"aligned":true`, "aligned"},
+		{`"drift":false`, "aligned"},
+		{`"verdict":"needs_human"`, "needs_human"},
+		{`verdict:"needs_human"`, "needs_human"},
+		{`verdict:needs_human`, "needs_human"},
+		{`"verdict":"drift_detected"`, "drift_detected"},
+		{`verdict:"drift_detected"`, "drift_detected"},
+		{`verdict:drift_detected`, "drift_detected"},
+	}
+	bestVerdict := ""
+	bestIdx := -1
+	for _, c := range canonicalTokens {
+		if idx := strings.LastIndex(compact, c.token); idx > bestIdx {
+			bestIdx = idx
+			bestVerdict = c.verdict
 		}
-		return "aligned"
+	}
+	if bestVerdict != "" {
+		return bestVerdict
 	}
 	// v2.21.0 (spec 1200, P0 fix): fail-safe default is needs_human,
 	// NOT drift_detected. An unparseable verdict (wrong format, empty

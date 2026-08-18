@@ -168,6 +168,7 @@ func (o *Orchestrator) Judge(ctx context.Context, in JudgeInput) (*JudgeOutput, 
 	// judge pipeline.
 	builder, builderErr := o.ensurePersonaBuilder()
 	var systemPrompt string
+	var userPrompt string
 	var resolvedPersonaID string
 	if builderErr == nil {
 		prompt, err := builder.Build(in.EvalType, in.PersonaID, nil, in.SpecIntent)
@@ -179,6 +180,7 @@ func (o *Orchestrator) Judge(ctx context.Context, in JudgeInput) (*JudgeOutput, 
 			systemPrompt = composeAnchorText(nil)
 		} else {
 			systemPrompt = prompt.SystemPrompt
+			userPrompt = prompt.UserPrompt
 			resolvedPersonaID = prompt.PersonaID
 		}
 	} else {
@@ -188,7 +190,11 @@ func (o *Orchestrator) Judge(ctx context.Context, in JudgeInput) (*JudgeOutput, 
 		systemPrompt = composeAnchorText(nil)
 	}
 
-	// Build the judge request.
+	// Build the judge request. UserPrompt carries the composed
+	// user-side prompt (spec intent + output schema); the clients
+	// prepend it to the raw Content so the spec reaches the LLM
+	// (TD-J5/TD-J6 P0 fix — previously prompt.UserPrompt was
+	// composed and then silently discarded).
 	req := JudgeRequest{
 		EvalType:     in.EvalType,
 		TargetType:   in.TargetType,
@@ -197,6 +203,7 @@ func (o *Orchestrator) Judge(ctx context.Context, in JudgeInput) (*JudgeOutput, 
 		Model:        model,
 		VibeCase:     in.VibeCase,
 		SystemPrompt: systemPrompt,
+		UserPrompt:   userPrompt,
 	}
 
 	resp, err := client.Judge(ctx, req)

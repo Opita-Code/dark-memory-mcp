@@ -459,7 +459,7 @@ func (s *SelfHarnessClient) judgeViaHTTP(ctx context.Context, req JudgeRequest, 
 		"max_tokens": maxTokens,
 		"system":     system,
 		"messages": []map[string]string{
-			{"role": "user", "content": req.Content},
+			{"role": "user", "content": req.ComposeUserContent()},
 		},
 	}
 	// m3-thinking (spec 1198, 2026-08-15): MiniMax-M3 via the
@@ -680,7 +680,7 @@ func (s *SelfHarnessClient) judgeViaOpenAIHTTP(ctx context.Context, req JudgeReq
 	// Chat Completions shape. The system prompt goes in as the first
 	// system-role message (OpenAI dialect has no top-level "system"
 	// field).
-	messages := []map[string]string{{"role": "user", "content": req.Content}}
+	messages := []map[string]string{{"role": "user", "content": req.ComposeUserContent()}}
 	if system != "" {
 		messages = append([]map[string]string{{"role": "system", "content": system}}, messages...)
 	}
