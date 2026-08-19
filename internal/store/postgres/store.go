@@ -53,6 +53,7 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/constitution"
 	"github.com/dark-agents/dark-memory-mcp/internal/embedder"
 	"github.com/dark-agents/dark-memory-mcp/internal/errorobs"
+	"github.com/dark-agents/dark-memory-mcp/internal/merkle"
 	"github.com/dark-agents/dark-memory-mcp/internal/migrate"
 	migratepostgres "github.com/dark-agents/dark-memory-mcp/internal/migrate/postgres"
 	"github.com/dark-agents/dark-memory-mcp/internal/mods"
@@ -1531,6 +1532,9 @@ func (s *Store) SetArtifactValidation(ctx context.Context, wc store.WriteContext
 func (s *Store) SaveDriftReport(ctx context.Context, wc store.WriteContext, d *vibeflow.DriftReport) (int64, error) {
 	return 0, notImpl("SaveDriftReport")
 }
+func (s *Store) VerifyDriftChain(ctx context.Context, wc store.WriteContext) (merkle.VerifyResult, error) {
+	return merkle.VerifyResult{}, notImpl("VerifyDriftChain")
+}
 func (s *Store) UpdateDriftReportVerdict(ctx context.Context, wc store.WriteContext, driftID int64, verdict, judgeReasoning string) error {
 	return notImpl("UpdateDriftReportVerdict")
 }
@@ -2544,6 +2548,20 @@ func (s *Store) GetErrorEvent(ctx context.Context, id int64) (*errorobs.ErrorEve
 
 func (s *Store) ResolveErrorEvent(ctx context.Context, wc store.WriteContext, id int64, note string) error {
 	return notImpl("ResolveErrorEvent")
+}
+
+// GetErrorEventCrossProject returns one row by id ignoring the
+// active project. Admin-elevation READ path (see internal/store/store.go
+// for the contract; SQLite impl honors it, Postgres stub for now).
+func (s *Store) GetErrorEventCrossProject(ctx context.Context, id int64) (*errorobs.ErrorEvent, error) {
+	return nil, notImpl("GetErrorEventCrossProject")
+}
+
+// ResolveErrorEventCrossProject marks a cluster resolved across the
+// project boundary. Admin-elevation WRITE path; emits an audit row
+// with wc.Actor distinguishing admin vs override modes.
+func (s *Store) ResolveErrorEventCrossProject(ctx context.Context, wc store.WriteContext, id int64, note string) error {
+	return notImpl("ResolveErrorEventCrossProject")
 }
 
 func (s *Store) ErrorSummary(ctx context.Context, hours int) (*errorobs.ErrorSummary, error) {

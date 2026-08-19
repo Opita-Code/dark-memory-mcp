@@ -702,4 +702,14 @@ CREATE INDEX IF NOT EXISTS idx_error_events_resolved   ON error_events (resolved
 CREATE INDEX IF NOT EXISTS idx_error_events_dedup      ON error_events (domain, code, message_hash, tool_name, session_id, resolved);
 `,
 	},
+	{
+		// v27 — Merkle chain for vibe_drift_reports (spec 1276, T04).
+		// Mirrors the sqlite v27 migration. Postgres uses ADD COLUMN IF NOT EXISTS
+		// (idempotent; F37 tolerance also covers the duplicate-column case).
+		Version: 27,
+		Name:    "drift_reports_merkle_root",
+		Up: `
+ALTER TABLE vibe_drift_reports ADD COLUMN IF NOT EXISTS merkle_root TEXT;
+`,
+	},
 }

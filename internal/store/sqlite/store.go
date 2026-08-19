@@ -29,6 +29,7 @@ _ "modernc.org/sqlite"
 	"github.com/dark-agents/dark-memory-mcp/internal/audit"
 	"github.com/dark-agents/dark-memory-mcp/internal/constitution"
 	"github.com/dark-agents/dark-memory-mcp/internal/embedder"
+	"github.com/dark-agents/dark-memory-mcp/internal/merkle"
 	"github.com/dark-agents/dark-memory-mcp/internal/migrate"
 	migratesqlite "github.com/dark-agents/dark-memory-mcp/internal/migrate/sqlite"
 	"github.com/dark-agents/dark-memory-mcp/internal/mods"
@@ -2346,11 +2347,38 @@ func (s *Store) SaveDriftReport(ctx context.Context, wc store.WriteContext, d *v
 	}
 	var id int64
 	err := s.runInTx(ctx, func(tx *sql.Tx) error {
+		// Merkle chain (v2.20.0, T04/spec 1276): compute the new
+		// row's merkle_root from the previous row's merkle_root
+		// (or GenesisRoot if this is the first row in the chain).
+		// The SELECT + INSERT runs in the same transaction so
+		// prev_root lookup is race-free with concurrent writers.
+		var prevRoot string
+		row := tx.QueryRowContext(ctx,
+			`SELECT COALESCE(merkle_root, ?) FROM vibe_drift_reports ORDER BY id DESC LIMIT 1`,
+			merkle.GenesisRoot)
+		switch err := row.Scan(&prevRoot); {
+		case err == sql.ErrNoRows:
+			prevRoot = merkle.GenesisRoot
+		case err != nil:
+			return fmt.Errorf("drift: prev_root lookup: %w", err)
+		}
+		canonical := merkle.CanonicalInput{
+			ArtifactID:     d.ArtifactID,
+			SpecID:         d.SpecID,
+			Verdict:        d.Verdict,
+			SpecDiff:       d.SpecDiff,
+			JudgeReasoning: d.JudgeReasoning,
+			CreatedAt:      d.CreatedAt,
+		}
+		newRoot, err := merkle.ComputeRoot(prevRoot, canonical)
+		if err != nil {
+			return fmt.Errorf("drift: merkle compute: %w", err)
+		}
 		res, err := tx.ExecContext(ctx,
-			`INSERT INTO vibe_drift_reports (artifact_id, spec_id, verdict, spec_diff_json, judge_reasoning, reconciled_at, created_at, project_id)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			`INSERT INTO vibe_drift_reports (artifact_id, spec_id, verdict, spec_diff_json, judge_reasoning, reconciled_at, created_at, project_id, merkle_root)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			d.ArtifactID, nullInt(d.SpecID), d.Verdict, nullStr(d.SpecDiff), nullStr(d.JudgeReasoning),
-			nullStr(d.ReconciledAt), d.CreatedAt, projectID)
+			nullStr(d.ReconciledAt), d.CreatedAt, projectID, newRoot)
 		if err != nil {
 			return err
 		}
@@ -2427,6 +2455,44 @@ func (s *Store) LatestDriftForArtifact(ctx context.Context, artifactID int64) (*
 		 WHERE artifact_id = ? AND project_id = ?
 		 ORDER BY id DESC LIMIT 1`, artifactID, activeProject)
 	return scanDriftReport(row)
+}
+
+// VerifyDriftChain walks the active project's vibe_drift_reports
+// rows in id-ascending order, recomputes each row's merkle_root from
+// the previous row's RECOMPUTED root, and returns the result. See
+// internal/merkle.VerifyChain for the full semantics.
+//
+// Returns ErrProjectRequired if no project is active (mirrors the
+// rest of the drift report API). INV-7 scoping: rows from other
+// projects are excluded.
+func (s *Store) VerifyDriftChain(ctx context.Context, wc store.WriteContext) (merkle.VerifyResult, error) {
+	if err := s.requireProject(); err != nil {
+		return merkle.VerifyResult{}, err
+	}
+	projectID := projectIDOrActive(wc.ProjectID, s.ActiveProject()) // capture before locking
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, artifact_id, COALESCE(spec_id, 0), verdict, COALESCE(spec_diff_json, ''), COALESCE(judge_reasoning, ''), created_at, COALESCE(merkle_root, '')
+		 FROM vibe_drift_reports WHERE project_id = ? ORDER BY id ASC`, projectID)
+	if err != nil {
+		return merkle.VerifyResult{}, err
+	}
+	defer rows.Close()
+	var reports []merkle.Report
+	for rows.Next() {
+		var r merkle.Report
+		var canonical merkle.CanonicalInput
+		if err := rows.Scan(&r.ID, &canonical.ArtifactID, &canonical.SpecID, &canonical.Verdict, &canonical.SpecDiff, &canonical.JudgeReasoning, &canonical.CreatedAt, &r.MerkleRoot); err != nil {
+			return merkle.VerifyResult{}, err
+		}
+		r.Canonical = canonical
+		reports = append(reports, r)
+	}
+	if err := rows.Err(); err != nil {
+		return merkle.VerifyResult{}, err
+	}
+	return merkle.VerifyChain(reports), nil
 }
 
 func (s *Store) ListDriftReports(ctx context.Context, artifactID int64, verdict string, limit int) ([]vibeflow.DriftReport, error) {

@@ -19,6 +19,7 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/constitution"
 	"github.com/dark-agents/dark-memory-mcp/internal/embedder"
 	"github.com/dark-agents/dark-memory-mcp/internal/errorobs"
+	"github.com/dark-agents/dark-memory-mcp/internal/merkle"
 	"github.com/dark-agents/dark-memory-mcp/internal/mods"
 	"github.com/dark-agents/dark-memory-mcp/internal/project"
 	"github.com/dark-agents/dark-memory-mcp/internal/research"
@@ -436,6 +437,12 @@ type Store interface {
 	UpdateDriftReportVerdict(ctx context.Context, wc WriteContext, driftID int64, verdict, judgeReasoning string) error
 	LatestDriftForArtifact(ctx context.Context, artifactID int64) (*vibeflow.DriftReport, error)
 	ListDriftReports(ctx context.Context, artifactID int64, verdict string, limit int) ([]vibeflow.DriftReport, error)
+	// VerifyDriftChain (v2.20.0, T04/spec 1276): walks the active
+	// project's vibe_drift_reports rows in id ASC order, recomputes
+	// each merkle_root from the previous row's RECOMPUTED root, and
+	// returns the result. Detects tampering (insert/delete/modify)
+	// within the chain. INV-7 scoped to the active project.
+	VerifyDriftChain(ctx context.Context, wc WriteContext) (merkle.VerifyResult, error)
 
 	// --- SSD ---
 	SaveSDDEvaluation(ctx context.Context, wc WriteContext, e *ssd.SDDEvaluation) (int64, error)
@@ -696,6 +703,50 @@ type Store interface {
 	// nil (note is updated). Returns ErrNotFound when the id does
 	// not exist or belongs to another project.
 	ResolveErrorEvent(ctx context.Context, wc WriteContext, id int64, note string) error
+
+	// --- Error Observatory cross-project opt-in (admin elevation) ---
+	//
+	// The 3 methods below are the OPERATOR TRIAGE escape hatch from
+	// the project-scoped (INV-7) default. They exist to support the
+	// real operational pattern: a single operator with N projects
+	// (e.g. opita-os-engine, opita-growth, opita-account-ui) needs
+	// to triage the cross-project error backlog without N session
+	// switches. Mirrors the Sentry Org Owner / Datadog Admin
+	// Standard pattern (org-wide visibility for the admin role).
+	//
+	// The tools layer (internal/tools/error_observatory.go) is the
+	// policy gate. Before invoking these methods, the handler MUST
+	// verify one of:
+	//
+	//   1. DARK_ERROR_OBS_OPERATOR_OVERRIDE=armed (bypass flag,
+	//      process-lifetime — set at boot, requires restart to
+	//      disable). Audit Actor=error_observatory_override.
+	//   2. DARK_ERROR_OBS_ADMIN_OPERATORS contains the caller
+	//      operator id (allow-list — read at handler time, can be
+	//      changed via env without restart). Audit
+	//      Actor=error_observatory_admin.
+	//
+	// Without one of those, the handler MUST return
+	// store.ErrInvalidArgument. The Store methods trust the caller
+	// (they are internal-only); the audit row + the INV-7 escape
+	// path are the operator's accountability trail.
+
+	// GetErrorEventCrossProject returns one row by id, ignoring the
+	// active project_id. Cross-project READ is intentional: this is
+	// the admin-elevation path that an operator uses to inspect a
+	// cluster before deciding to resolve it. Returns (nil, nil) when
+	// no row with that id exists anywhere — same existence-leak
+	// parity as GetErrorEvent, but with no project filter.
+	GetErrorEventCrossProject(ctx context.Context, id int64) (*errorobs.ErrorEvent, error)
+
+	// ResolveErrorEventCrossProject marks a cluster resolved across
+	// the project boundary. INV-1: emits a write_audit row
+	// ATOMICALLY with the UPDATE — the audit Actor is the caller's
+	// wc.Actor (the tools layer distinguishes "admin" vs
+	// "override" via the Actor string). Returns ErrNotFound only
+	// when the id does not exist anywhere; success on cross-project
+	// resolution is the contract.
+	ResolveErrorEventCrossProject(ctx context.Context, wc WriteContext, id int64, note string) error
 
 	// ErrorSummary returns aggregate error metrics. GLOBAL scope (like
 	// Stats) so operators see cross-project health. hours controls the

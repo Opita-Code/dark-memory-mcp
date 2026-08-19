@@ -1147,4 +1147,20 @@ ALTER TABLE research_items ADD COLUMN write_path TEXT;
 ALTER TABLE research_items ADD COLUMN content_sha256 TEXT;
 `,
 	},
+	{
+		// v27 — Merkle chain for vibe_drift_reports (spec 1276, T04).
+		// Additive: one nullable TEXT column. Pre-v27 rows have NULL
+		// merkle_root and are treated as a legacy boundary by the
+		// verifier (see internal/merkle.VerifyChain). New rows from
+		// SaveDriftReport compute merkle_root atomically:
+		//   SELECT last merkle_root → ComputeRoot(prev, canonical)
+		//   → INSERT (..., merkle_root).
+		// Tampering (insert/delete/modify) anywhere in the chain is
+		// detected by VerifyChain. External anchoring is T12+.
+		Version: 27,
+		Name:    "drift_reports_merkle_root",
+		Up: `
+ALTER TABLE vibe_drift_reports ADD COLUMN merkle_root TEXT;
+`,
+	},
 }
