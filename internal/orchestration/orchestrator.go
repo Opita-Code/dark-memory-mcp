@@ -32,6 +32,7 @@ package orchestration
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"time"
 
@@ -73,6 +74,20 @@ type Orchestrator struct {
 	// resolver surfaces this). Wired by the harness via
 	// WithURLFetcher; default no-op for file/git_sha/spec_id kinds.
 	urlFetcher artifact.URLFetcher
+
+	// v2.20.0 T11 (spec 1276): Materializer for the publish_vibe
+	// Content → ArtifactRef migration. When callers supply
+	// in.Artifact.Text, the orchestrator materializes the text to a
+	// content-addressed file (SHA-256 anchored) BEFORE forwarding to
+	// the LLM-judge. The Materialized ArtifactRef is the audit-trail
+	// pointer; the LLM-judge still receives Content (Phase 1
+	// contract — at v2.22.0 Content is removed for these judges).
+	//
+	// nil → the helper falls back to artifact.MaterializeFromText
+	// (env-driven BaseDir: DARK_MATERIALIZE_DIR / UserCacheDir /
+	// TempDir). Wiring in production main.go uses WithMaterializer
+	// to inject a stable BaseDir.
+	materializer *artifact.Materializer
 
 	// OnActiveSessionChanged (v2.1.3 cache-invalidation fix) is invoked
 	// after every successful SetActiveSession / ClearActiveSession write
@@ -204,6 +219,51 @@ func (o *Orchestrator) EnsureNLIRouter(ctx context.Context) (nli.Provider, error
 func (o *Orchestrator) WithURLFetcher(u artifact.URLFetcher) *Orchestrator {
 	o.urlFetcher = u
 	return o
+}
+
+// WithMaterializer injects the Materializer used by the publish_vibe
+// Content → ArtifactRef migration (T11, spec 1276). Production
+// wiring uses a stable BaseDir (e.g. $DARK_DATA_DIR/materialized/);
+// tests inject a temp dir. nil → materializeForPublish falls back
+// to artifact.MaterializeFromText (env-driven).
+func (o *Orchestrator) WithMaterializer(m *artifact.Materializer) *Orchestrator {
+	o.materializer = m
+	return o
+}
+
+// materializeForPublish is the T11 bridge that converts caller-
+// supplied text into a content-addressed ArtifactRef. It is the
+// central audit-trail fix for the publish_vibe judge pipeline:
+//
+//   1. If a Materializer is injected → use it (stable BaseDir).
+//   2. Otherwise → fall back to artifact.MaterializeFromText
+//      (env-driven: DARK_MATERIALIZE_DIR / UserCacheDir / TempDir).
+//   3. Idempotent: same text + sourceTag → same ArtifactRef.
+//   4. Atomic write: readers never see partial bytes (T03 contract).
+//   5. HardMaxBytes (4 MiB) enforced at entry.
+//
+// Returns:
+//   - ArtifactRef{Kind: KindFile, Path: <sha256>.txt} on success.
+//   - ErrMaterializeTooLarge if text > HardMaxBytes (4 MiB).
+//   - Other errors wrapped: "publish_vibe: materialize: %w".
+//
+// Phase 1 (v2.20.0): the artifact_anchored path runs alongside the
+// existing Content path. The LLM-judge still sees Content (Phase 1
+// backward compat). At v2.22.0 (Phase 2) the Content param is removed
+// for these judges and only ArtifactRef is accepted.
+func (o *Orchestrator) materializeForPublish(ctx context.Context, text, sourceTag string) (artifact.ArtifactRef, error) {
+	if o.materializer != nil {
+		ref, err := o.materializer.Materialize(ctx, text, sourceTag)
+		if err != nil {
+			return artifact.ArtifactRef{}, fmt.Errorf("publish_vibe: materialize: %w", err)
+		}
+		return ref, nil
+	}
+	ref, err := artifact.MaterializeFromText(ctx, text, sourceTag)
+	if err != nil {
+		return artifact.ArtifactRef{}, fmt.Errorf("publish_vibe: materialize: %w", err)
+	}
+	return ref, nil
 }
 
 // defaultDriftJudgeProvider builds the fallback NLI Provider used

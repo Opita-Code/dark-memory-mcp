@@ -365,6 +365,15 @@ func (o *Orchestrator) PublishVibe(ctx context.Context, in PublishVibeInput) (*P
 //   - no artifact text → skipped (drift_judge requires text).
 //   - LLM failure → needs_human (infra, not drift) + Error Observatory.
 //   - low confidence (<0.5) from any judge → needs_human fallback.
+//
+// v2.20.0 T11 (spec 1276): the 3 callsites that consume caller-
+// controlled Content (brand_match, compliance_check, drift_judge
+// legacy) are routed through materializeForPublish BEFORE the LLM
+// judge runs. The Materialize shim writes the text to a content-
+// addressed file (SHA-256 anchored) so the audit trail records WHICH
+// bytes the LLM-judge saw. The LLM-judge still receives Content
+// (Phase 1 backward compat); at v2.22.0 Content is removed and only
+// ArtifactRef is accepted.
 func (o *Orchestrator) runJudgePipeline(
 	ctx context.Context,
 	wc store.WriteContext,
@@ -375,38 +384,71 @@ func (o *Orchestrator) runJudgePipeline(
 ) (verdict string, confidence float32, reasoning string, brandEvalID, compEvalID int64) {
 	reasoning = "drift check pending"
 
+	// T11 (spec 1276): shared sourceTag for the 3 callsites. The
+	// caller-supplied text is SHA-256-anchored via Materialize; the
+	// sourceTag identifies the artifact in the audit trail.
+	sourceTag := fmt.Sprintf("publish_vibe_artifact_%d", artifactID)
+
 	// Optional brand_match.
 	if in.Artifact.BrandID != "" && in.Artifact.Text != "" {
-		out, err := o.Judge(ctx, JudgeInput{
-			EvalType:   "brand_match",
-			TargetType: "artifact",
-			TargetID:   fmt.Sprintf("artifact_%d", artifactID),
-			Content:    in.Artifact.Text,
-		})
-		if err != nil {
-			reasoning = fmt.Sprintf("brand_match failed: %v", err)
-			o.RecordError(ctx, "publish_vibe", in.SessionID, fmt.Errorf("brand_match: %w", err), errorobs.SeverityWarn)
+		// T11: route caller-controlled Text through Materialize. The
+		// LLM-judge still receives Content (Phase 1) — the
+		// Materialized ArtifactRef is the audit-trail pointer.
+		brandRef, matErr := o.materializeForPublish(ctx, in.Artifact.Text, sourceTag)
+		if matErr != nil {
+			// Materialize failure → the judge cannot proceed because
+			// the audit trail would be missing. Mark as needs_human.
+			o.RecordError(ctx, "publish_vibe", in.SessionID,
+				fmt.Errorf("brand_match: materialize: %w", matErr), errorobs.SeverityWarn)
+			reasoning = fmt.Sprintf("brand_match materialize failed: %v", matErr)
 		} else {
-			brandEvalID = out.EvaluationID
-			if out.Confidence < 0.5 {
-				reasoning = fmt.Sprintf("brand_match low confidence (%f); drift_verdict will fall back to needs_human", out.Confidence)
+			_ = brandRef // anchored artifact; the LLM-judge still sees Content
+			o.RecordError(ctx, "publish_vibe", in.SessionID,
+				fmt.Errorf("brand_match via Text is deprecated (spec 1276 T11); text material anchored to %s. v2.22.0 requires ArtifactRef.", brandRef.Path),
+				errorobs.SeverityWarn)
+			out, err := o.Judge(ctx, JudgeInput{
+				EvalType:   "brand_match",
+				TargetType: "artifact",
+				TargetID:   fmt.Sprintf("artifact_%d", artifactID),
+				Content:    in.Artifact.Text,
+			})
+			if err != nil {
+				reasoning = fmt.Sprintf("brand_match failed: %v", err)
+				o.RecordError(ctx, "publish_vibe", in.SessionID, fmt.Errorf("brand_match: %w", err), errorobs.SeverityWarn)
+			} else {
+				brandEvalID = out.EvaluationID
+				if out.Confidence < 0.5 {
+					reasoning = fmt.Sprintf("brand_match low confidence (%f); drift_verdict will fall back to needs_human", out.Confidence)
+				}
 			}
 		}
 	}
 
 	// Optional compliance_check.
 	if in.Artifact.Jurisdiction != "" && in.Artifact.Text != "" {
-		out, err := o.Judge(ctx, JudgeInput{
-			EvalType:   "compliance_check",
-			TargetType: "artifact",
-			TargetID:   fmt.Sprintf("artifact_%d", artifactID),
-			Content:    in.Artifact.Text,
-		})
-		if err != nil {
-			reasoning = reasoning + "; compliance_check failed: " + err.Error()
-			o.RecordError(ctx, "publish_vibe", in.SessionID, fmt.Errorf("compliance_check: %w", err), errorobs.SeverityWarn)
+		// T11: same Materialize routing as brand_match above.
+		compRef, matErr := o.materializeForPublish(ctx, in.Artifact.Text, sourceTag)
+		if matErr != nil {
+			o.RecordError(ctx, "publish_vibe", in.SessionID,
+				fmt.Errorf("compliance_check: materialize: %w", matErr), errorobs.SeverityWarn)
+			reasoning = reasoning + "; compliance_check materialize failed: " + matErr.Error()
 		} else {
-			compEvalID = out.EvaluationID
+			_ = compRef
+			o.RecordError(ctx, "publish_vibe", in.SessionID,
+				fmt.Errorf("compliance_check via Text is deprecated (spec 1276 T11); text material anchored to %s. v2.22.0 requires ArtifactRef.", compRef.Path),
+				errorobs.SeverityWarn)
+			out, err := o.Judge(ctx, JudgeInput{
+				EvalType:   "compliance_check",
+				TargetType: "artifact",
+				TargetID:   fmt.Sprintf("artifact_%d", artifactID),
+				Content:    in.Artifact.Text,
+			})
+			if err != nil {
+				reasoning = reasoning + "; compliance_check failed: " + err.Error()
+				o.RecordError(ctx, "publish_vibe", in.SessionID, fmt.Errorf("compliance_check: %w", err), errorobs.SeverityWarn)
+			} else {
+				compEvalID = out.EvaluationID
+			}
 		}
 	}
 
@@ -453,8 +495,18 @@ func (o *Orchestrator) runJudgePipeline(
 	if in.Artifact.Text == "" {
 		return "skipped", 0, "no artifact text and no artifact_ref; drift_judge requires one of them", brandEvalID, compEvalID
 	}
+	// T11 (spec 1276): route the enriched text through Materialize.
+	// The legacy Content path still runs (Phase 1 backward compat)
+	// but the audit trail records the SHA-256 materialized file.
+	driftRef, matErr := o.materializeForPublish(ctx, in.Artifact.Text, sourceTag)
+	if matErr != nil {
+		o.RecordError(ctx, "publish_vibe", in.SessionID,
+			fmt.Errorf("drift_judge: materialize: %w", matErr), errorobs.SeverityError)
+		return "needs_human", 0, fmt.Sprintf("drift_judge materialize failed: %v", matErr), brandEvalID, compEvalID
+	}
+	_ = driftRef
 	o.RecordError(ctx, "publish_vibe", in.SessionID,
-		fmt.Errorf("drift_judge via Content is deprecated (spec 1276 H1); supply ArtifactRef to anchor to the artifact. v2.22.0 removes the Content path."),
+		fmt.Errorf("drift_judge via Content is deprecated (spec 1276 H1); text material anchored to %s. v2.22.0 removes the Content path; supply ArtifactRef.", driftRef.Path),
 		errorobs.SeverityWarn)
 	enriched := o.enrichWithAgentMemory(ctx, in.Artifact.Text, []string{"decision", "finding"}, activeAgentID, 5)
 	judgeOut, jerr := o.Judge(ctx, JudgeInput{
