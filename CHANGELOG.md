@@ -6,6 +6,163 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [2.20.0] — 2026-08-20 — artifact-anchored drift_judge (spec 1276, T01-T12)
+
+**The drift_judge no longer accepts caller-controlled text.** v2.20.0 fixes the
+last architectural flaw in the v2.19.x judge pipeline: callers could submit
+arbitrary `content` and the LLM would echo back a `verdict` against that
+content. The new pipeline requires an `ArtifactRef` (file/git_sha/url/spec_id/
+artifact_id), resolves the artifact through `artifact.Resolver`, computes a
+SHA-256 over what the resolver actually read, and scores the (premise, hypothesis)
+tuple through an NLI provider (DeBERTa or MiniCheck). The verdict is bound to
+the artifact's SHA-256 via v29 audit columns (`ArtifactSource`, `ArtifactSHA256`,
+`ArtifactPath`, `ArtifactSize`, `ChunkIndex`, `ChunkTotal`, `NLIProviderID`).
+
+This is the visible-by-default shipping of the spec 1276 work that landed as
+12 commits (`9ba802f` T01 through `2bd173d` T12) on `feat/v2.20.0-artifact-resolver`.
+
+### Highlights (5 themes)
+
+1. **Artifact resolver** (T01, `internal/artifact/resolver.go`) — 5 canonical
+   `ArtifactRefKind` (`file`, `git_sha`, `url`, `spec_id`, `artifact_id`).
+   `Resolve(ctx, ref) → (bytes, sha256, source_meta, error)`. Size caps:
+   `DefaultMaxBytes = 256 KiB` (soft), `HardMaxBytes = 4 MiB` (hard ceiling).
+   Hard invariants: **H2** NLI happens AFTER Resolve (never on caller-supplied
+   bytes); **H4** materialized paths must live inside `$DARK_DATA_DIR`;
+   **H5** URL fetching is SSRF-guarded (T02 `internal/artifact/ssrf.go`,
+   blocks RFC1918, loopback, link-local, IPv6 ULA).
+2. **Materialize shim** (T03, `internal/artifact/materialize.go`) — bridges the
+   caller-passes-`content` deprecation ladder: **v2.20.0** content still works
+   via `MaterializeFromText` (writes to a content-addressed file, returns
+   `ArtifactRef{Kind: KindFile}`); **v2.21.0** content → verdict `needs_human`;
+   **v2.22.0** content field removed entirely. The caller cannot tamper
+   after the atomic rename (temp + `os.Rename`, file mode 0600, dir mode 0700,
+   `sourceTag` sanitized against path traversal).
+3. **Merkle chain** (T04, `internal/merkle/chain.go`) — every `vibe_drift_reports`
+   row carries a `merkle_root = SHA-256(prev_root || canonical_json(row))`.
+   `CanonicalInput` projects 6 audit-relevant columns (artifact_id, spec_id,
+   verdict, spec_diff, judge_reasoning, created_at). `VerifyChain` walks rows
+   in id ASC, recomputes the chain from the previous row's recomputed root,
+   returns the first mismatch. `GenesisRoot = "0…0"` (64 zeros) seeds the
+   sentinel. The chain detects in-DB tampering; it does NOT provide external
+   anchoring (no signed manifest, no WORM log).
+4. **NLI provider** (T05/T06, `internal/nli/`) — `nli.Provider` interface
+   with `Score(ctx, premise, hypothesis) (Score, error)`. Two production
+   backends: `DeBERTaProvider` (HuggingFace Inference;
+   `microsoft/deberta-v3-large-mnli`) and `MiniCheckProvider` (self-hosted
+   MiniCheck; binary classifier mapped to 3-label via two thresholds). LRU
+   cache keyed by `(premise_sha256, hypothesis_sha256)` with `Project.NLICacheTTL`
+   (default 1h). Sealed error set: `ErrProviderUnavailable`, `ErrProviderTimeout`,
+   `ErrProviderRateLimited`, `ErrProviderBadResponse`, `ErrInputTooLarge`,
+   `ErrInputEmpty`, `ErrInvalidConfig`, `ErrNoProvider`. Use `errors.Is`;
+   do not match strings.
+5. **Judge rewrite** (T08/T09/T12, `internal/orchestration/`) — the
+   artifact-anchored `drift_judge` pipeline replaced the v2.19.x
+   caller-controlled `Content` path. `drift_judge + ArtifactRef` →
+   `Resolver.Resolve` → canary check → NLI `Score` → verdict mapping
+   (`entailment → aligned`, `contradiction → drift_detected`,
+   `neutral → needs_human`). The MCP `dark_memory_judge` and
+   `dark_memory_consensus` tools now accept `artifact_ref` (T12); the legacy
+   `content` field is preserved as a deprecation path with an Error Observatory
+   Warn row. The single-shot `Judge` routes `drift_judge + ArtifactRef` to
+   `DriftJudge` internally (sealed invariant #1 in `judge.go:141-149`).
+
+### Migration path
+
+| Caller today | v2.20.0 (this release) | v2.21.0 (next minor) | v2.22.0 (next major) |
+|---|---|---|---|
+| `dark_memory_judge(eval_type="drift_judge", content="...")` | **DEPRECATED** — runs legacy path, emits Error Observatory Warn row | LEGACY RETURNS `needs_human` | LEGACY FIELD REMOVED |
+| `dark_memory_judge(eval_type="drift_judge", artifact_ref={...}, spec_intent="...")` | **NEW** — artifact-anchored NLI path; verdict bound to artifact SHA-256 | Same | Same |
+| `dark_memory_judge(eval_type="brand_match", content="...")` | Same as v2.19.x (no change) | Same | Same |
+| `dark_memory_consensus(eval_type="drift_judge", artifact_ref={...}, spec_intent="...")` | **NEW** — N-shot on the resolved artifact | Same | Same |
+
+### Schema (v26 → v29 app schema; canonical surface unchanged)
+
+- **App schema** (`internal/store/sqlite/ddl.go`): v26 → v29 via three migrations.
+  - **v27** (T04 merkle chain) — adds `merkle_root TEXT` to `vibe_drift_reports`
+    (legacy boundary: pre-v27 rows have NULL).
+  - **v28** (T07 constitution) — adds `nli_config_json TEXT` to `projects`
+    (per-project NLI config keys).
+  - **v29** (T10 sdd_evaluations audit anchor) — adds 7 audit columns to
+    `judgment_history`: `merkle_root BLOB(32)`, `artifact_source TEXT`,
+    `artifact_sha256 BLOB(32)`, `artifact_ref_json TEXT`, `verdict_reason TEXT`,
+    `evidence_json TEXT`, `nli_model TEXT`. Plus `drift_chunks` table for
+    consensus N-shot drift runs. Operators audit "which bytes were evaluated"
+    and "which chunk of which consensus run" without parsing the `VerdictJSON`
+    blob. Postgres parity: `internal/migrate/postgres/ddl.go` v29.
+- **Canonical surface** (`internal/tools/registry.go`): **unchanged** at
+  57 tools / 17 namespaces / schema v26. New `TestCanonicalOrder_Frozen_57_17_26`
+  regression gate (`internal/tools/canonical_staleness_test.go`) keeps the
+  surface frozen for v2.20.0. `tools.IsFrozen() == true` (`registry.go:463`).
+- **Surface deltas that are NOT surface changes**: the existing `judge` and
+  `consensus` tools gained the `artifact_ref` field (T12). The `content`
+  field became OPTIONAL on `drift_judge` (was required before v2.20.0).
+
+### Eight needs_human reasons (operator-facing taxonomy)
+
+The drift_judge pipeline emits `verdict="needs_human"` for exactly eight
+distinct events. Every operator escalation must map to one of these, not a
+free-form string:
+
+| # | Source | Operator action |
+|---|---|---|
+| 1. `ErrInputTooLarge` (`nli.ErrInputTooLarge`) | Artifact too big for NLI | Shrink artifact (range, max_bytes) |
+| 2. `ErrProviderTimeout` (`nli.ErrProviderTimeout`) | Model slow | Retry; or enable fallback |
+| 3. `ErrProviderUnavailable` (`nli.ErrProviderUnavailable`) | Model down | Retry; check provider status |
+| 4. `ErrProviderRateLimited` (`nli.ErrProviderRateLimited`) | Rate limit | Retry; backoff |
+| 5. `ErrProviderBadResponse` (`nli.ErrProviderBadResponse`) | Model contract bug | **Do not retry** — escalate |
+| 6. `ErrNoProvider` (`nli.ErrNoProvider`) | Router exhausted (primary + fallback) | Escalate |
+| 7. `unknown` (default) | Catch-all | Operator review; check verbose logs |
+| 8. `insufficient information to ground verdict` | LLM cannot quote a verbatim line from the artifact | Anti-hallucination anchor (Anthropic Jan 2026) |
+
+Source: `internal/orchestration/drift_judge.go:222-228` (7 NLI error classes)
++ `internal/orchestration/judge_evidence_anchors.go:39-54` (1 LLM-side anchor).
+
+### Changed
+
+- **8 npm/JSON files** bumped from `2.19.1` → `2.20.0` via `scripts/bump-version.sh 2.20.0`:
+  `npm/wrapper/package.json`, `npm/platform-{darwin,linux,win32}-{x64,arm64}/package.json`
+  (6 files), `server.json`. `precheck-version.yml` verifies the same 8 files
+  match the git tag at tag-push time.
+- **`README.md`**: version refs synced (L207 JSON example, L424 summary line).
+  Tool surface count stays at 57 (no new tools in v2.20.0; canonical surface
+  frozen at v2.15.2 spec 1270).
+- **`scripts/bump-version.sh`**: unchanged. The v2.20.0 release uses the same
+  script that has shipped since v2.7.0 — operator ritual preserved.
+- **Skill docs** (`~/.config/opencode/skills/dark-memory/SKILL.md`): new §3.8
+  Judge v2.20.0 technical reference (spec 1276 — T08-T12). 7 subsections
+  covering 5 ArtifactRef kinds, NLI post-validation invariant, Merkle chain,
+  Materialize shim, 8 needs_human reasons, Judge schema post-T12, and the
+  16-task spec 1276 reference. Drift verdict: aligned (auto-accepted).
+
+### Operator verification (T16 final drift check)
+
+T16 will run a final end-to-end `vibe_publish` against an artifact with both
+URL and Text, verify both routes produce aligned verdicts with `merkle_root`
+populated in `judgment_history`, verify the Content route logs the
+deprecation WARN and emits `source=materialized_inline`, and verify the
+Artifact route emits `source=url`. Until T16: callers can self-verify with
+`dark_memory_judge(eval_type="drift_judge", artifact_ref={kind:"file",path:"..."}, spec_intent="...")`.
+
+### Not in this release
+
+- **Go code drift between T13 and this release**: skill docs (T13) describe
+  v2.20.0 reality; the v2.20.0 binaries match those docs. No code change
+  is pending.
+- **External anchoring** (`internal/merkle/chain.go` does NOT provide a
+  signed manifest or WORM log). Defense in depth only; for higher-stakes
+  chains, switch to SHA-3 or BLAKE3 + external anchoring.
+- **`scripts/bump-version.sh` does NOT bump the version refs in
+  `CHANGELOG.md`, `README.md`, `SKILL.md`, or any .yml/.sh stamp file.**
+  The 8 version-stamped files the script writes are the npm wrapper +
+  6 platforms + server.json. Operators must manually update doc stamps
+  in lockstep with the script run (this release did so).
+- **Tag push, GitHub release, npm publish** (T15 scope). Local commit
+  only for v2.20.0; the huérfano rule (2026-08-11) means no remote push
+  until the operator explicitly authorizes.
+
+---
+
 ## [2.19.1] — 2026-08-18 — patch: async test flake + publish-mcp-registry race fix
 
 Patch release for two technical-debt fixes shipped on `main` immediately after v2.19.0. No Go code change; no spec change. Same binaries as v2.19.0 (the source tree is unchanged at the binary level), but the v2.19.1 tag triggers CI which now exercises the fixed retry-loop end-to-end.
