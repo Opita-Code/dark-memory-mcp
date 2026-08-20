@@ -1163,4 +1163,28 @@ ALTER TABLE research_items ADD COLUMN content_sha256 TEXT;
 ALTER TABLE vibe_drift_reports ADD COLUMN merkle_root TEXT;
 `,
 	},
+	{
+		// v28 — projects.nli_config_json (spec 1276, T07).
+		// Per-project NLI configuration for the drift_judge pipeline.
+		// Stored as one JSON-encoded TEXT column (not 8 separate
+		// columns) so:
+		//   - adding a tunable in T08+ doesn't need a new migration
+		//   - the structure matches the nli.Config wire format
+		//   - validation lives in project.NLIConfig.Validate() (Go),
+		//     not in CHECK constraints (SQLite/Postgres portability).
+		//
+		// Nullable: existing projects have NULL nli_config_json and
+		// fall through to nli.Config{}.DefaultsFor() at T08 wiring.
+		// Reads: parse failures on GetProject log + return nil
+		// (graceful degradation — same posture as drift_strictness
+		// and default_agent_id defaults).
+		//
+		// Idempotent: applyOne tolerates F37 "duplicate column name"
+		// so re-running on a fresh schema is a no-op.
+		Version: 28,
+		Name:    "projects_nli_config",
+		Up: `
+ALTER TABLE projects ADD COLUMN nli_config_json TEXT;
+`,
+	},
 }

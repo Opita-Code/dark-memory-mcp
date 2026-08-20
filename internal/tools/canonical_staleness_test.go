@@ -118,24 +118,24 @@ func TestCanonicalOrder_WirePrefixConsistent(t *testing.T) {
 // NamespaceCount(), sqlite.CurrentVersion()) so the test stays
 // self-validating; the constants below are what the freeze DOCUMENTS,
 // not what it checks.
-func TestCanonicalOrder_Frozen_57_17_26(t *testing.T) {
+func TestCanonicalOrder_Frozen_57_17_28(t *testing.T) {
 	const (
 		frozenToolCount      = 57
 		frozenNamespaceCount = 17
-		frozenSchemaVersion  = 26
+		frozenSchemaVersion  = 28 // v28 = projects.nli_config_json (T07)
 	)
 
 	if got := len(CanonicalOrder()); got != frozenToolCount {
-		t.Errorf("CanonicalOrder() len = %d, want %d (freeze SPEC 1270)", got, frozenToolCount)
+		t.Errorf("CanonicalOrder() len = %d, want %d (freeze SPEC 1276)", got, frozenToolCount)
 	}
 	if got := NamespaceCount(); got != frozenNamespaceCount {
-		t.Errorf("NamespaceCount() = %d, want %d (freeze SPEC 1270)", got, frozenNamespaceCount)
+		t.Errorf("NamespaceCount() = %d, want %d (freeze SPEC 1276)", got, frozenNamespaceCount)
 	}
 	if got := sqlite.CurrentVersion(); got != frozenSchemaVersion {
-		t.Errorf("sqlite.CurrentVersion() = %d, want %d (freeze SPEC 1270)", got, frozenSchemaVersion)
+		t.Errorf("sqlite.CurrentVersion() = %d, want %d (freeze SPEC 1276)", got, frozenSchemaVersion)
 	}
 	if !IsFrozen() {
-		t.Error("IsFrozen() = false, want true — freeze SPEC 1270 was disabled; un-freezing requires an ADR")
+		t.Error("IsFrozen() = false, want true — freeze SPEC 1276 was disabled; un-freezing requires an ADR")
 	}
 	if FreezeDate == "" || FreezeSpec == "" || FreezeVersion == "" {
 		t.Errorf("freeze constants underpopulated (date=%q spec=%q version=%q)", FreezeDate, FreezeSpec, FreezeVersion)

@@ -703,13 +703,24 @@ CREATE INDEX IF NOT EXISTS idx_error_events_dedup      ON error_events (domain, 
 `,
 	},
 	{
-		// v27 — Merkle chain for vibe_drift_reports (spec 1276, T04).
-		// Mirrors the sqlite v27 migration. Postgres uses ADD COLUMN IF NOT EXISTS
-		// (idempotent; F37 tolerance also covers the duplicate-column case).
+// v27 — Merkle chain for vibe_drift_reports (spec 1276, T04).
+		// Mirror of sqlite v27. Postgres parity with IF NOT EXISTS
+		// so a pre-existing column on legacy DBs doesn't fail.
 		Version: 27,
 		Name:    "drift_reports_merkle_root",
 		Up: `
 ALTER TABLE vibe_drift_reports ADD COLUMN IF NOT EXISTS merkle_root TEXT;
+`,
+	},
+	{
+		// v28 — projects.nli_config_json (spec 1276, T07).
+		// Mirror of sqlite v28. Nullable TEXT column for per-project
+		// NLI config (JSON-encoded project.NLIConfig). See sqlite
+		// migration v28 for the rationale and reading semantics.
+		Version: 28,
+		Name:    "projects_nli_config",
+		Up: `
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS nli_config_json TEXT;
 `,
 	},
 }

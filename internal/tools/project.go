@@ -28,6 +28,7 @@ package tools
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -53,6 +54,13 @@ import (
 // project default > empty). Multi-agent projects should set this to
 // the primary agent_id; per-call overrides are accepted on session_start
 // and publish_vibe.
+//
+// v2.20.0 T07: gained `nli_config` (optional, JSON object). When
+// set, the project's drift_judge uses the configured primary (and
+// optional fallback) NLI provider instead of falling through to
+// nli.Config{}.DefaultsFor(). See project.NLIConfig.Validate() for
+// the hard invariants. AuthToken is never echoed back in the
+// ProjectCreateResult (the Store layer strips it on read).
 func RegisterProject(reg *Registry, orch *orchestration.Orchestrator, st store.Store) {
 	reg.Add(BindStore("project_create",
 		"Create a new project (INV-7 tenant primitive). Idempotent on project_id — re-creating an existing project returns the existing row. The 'default' project is seeded on Open and cannot be re-created (returns ErrAlreadyExists).",
@@ -90,6 +98,34 @@ func RegisterProject(reg *Registry, orch *orchestration.Orchestrator, st store.S
 					"maxLength":   128,
 					"description": "Optional v2.4.1 Mem0 agent_id (LLM identity) that owns the project. session_start and publish_vibe resolve agent_id with priority (caller input > this default > empty). Empty = no default agent (v2.4.0 behavior). Set this for multi-agent projects so each LLM's ContextRecap and drift_judge enrichment filter to its own memories.",
 				},
+				"nli_config": map[string]any{
+					"type":        "object",
+					"description": "Optional v2.20.0 T07 per-project NLI configuration. When enabled, the project's drift_judge uses the configured primary (and optional fallback) NLI provider instead of falling through to nli.Config{}.DefaultsFor().",
+					"properties": map[string]any{
+						"enabled":             map[string]any{"type": "boolean"},
+						"primary":             map[string]any{"$ref": "#/$defs/nli_primary"},
+						"fallback":            map[string]any{"$ref": "#/$defs/nli_primary"},
+						"fallback_enabled":    map[string]any{"type": "boolean"},
+						"latency_budget_ms":   map[string]any{"type": "integer", "minimum": 1},
+						"max_premise_bytes":   map[string]any{"type": "integer", "minimum": 64},
+						"max_hypothesis_bytes": map[string]any{"type": "integer", "minimum": 16},
+						"max_cache_entries":   map[string]any{"type": "integer", "minimum": 100},
+						"cache_ttl_seconds":   map[string]any{"type": "integer", "minimum": 1},
+					},
+				},
+			},
+			"$defs": map[string]any{
+				"nli_primary": map[string]any{
+					"type":     "object",
+					"required": []string{"provider_id", "endpoint"},
+					"properties": map[string]any{
+						"provider_id": map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
+						"endpoint":    map[string]any{"type": "string", "format": "uri"},
+						"auth_token":  map[string]any{"type": "string", "maxLength": 4096, "description": "Bearer token; never echoed in tool results."},
+						"timeout_ms":  map[string]any{"type": "integer", "minimum": 1},
+						"model_rev":   map[string]any{"type": "string", "maxLength": 128},
+					},
+				},
 			},
 		}),
 		st,
@@ -109,6 +145,12 @@ type ProjectCreateInput struct {
 	// that owns the project. See internal/project/types.go for the
 	// resolution priority. Optional; empty = no default agent.
 	DefaultAgentID string `json:"default_agent_id,omitempty"`
+	// NLIConfig (v2.20.0 T07) is the per-project NLI configuration
+	// for the drift_judge pipeline. nil = no project-level override
+	// (router falls through to nli.Config{}.DefaultsFor()). Set
+	// Enabled=true to take effect. AuthToken is preserved on input
+	// but stripped on output (see ProjectCreateResult.NLIConfig).
+	NLIConfig *project.NLIConfig `json:"nli_config,omitempty"`
 }
 
 // ProjectCreateResult is the output for project_create. On idempotent
@@ -127,6 +169,11 @@ type ProjectCreateResult struct {
 	// row's value (the caller's input is treated as "leave unchanged"
 	// when empty per the Store impl).
 	DefaultAgentID string `json:"default_agent_id,omitempty"`
+	// NLIConfig (v2.20.0 T07) echoes the resolved project-level
+	// NLIConfig with AuthToken fields REDACTED. On idempotent
+	// replay, this is the existing row's value (preserves the
+	// "leave unchanged on empty" rule). nil = no config.
+	NLIConfig *project.NLIConfig `json:"nli_config,omitempty"`
 }
 
 // runProjectCreate validates input, dispatches to Store.CreateProject,
@@ -145,6 +192,7 @@ func runProjectCreate(ctx context.Context, s store.Store, in ProjectCreateInput)
 		ConstitutionID:  in.ConstitutionID,
 		ConstitutionVer: in.ConstitutionVer,
 		DefaultAgentID:  in.DefaultAgentID,
+		NLIConfig:       in.NLIConfig,
 		CreatedAt:       now,
 	}
 
@@ -154,7 +202,9 @@ func runProjectCreate(ctx context.Context, s store.Store, in ProjectCreateInput)
 	// the unique index), so this read-before-write is purely a UX
 	// concern, not a correctness one. v2.4.1: also surface the
 	// existing default_agent_id on idempotent replay so callers can
-	// verify what was already configured.
+	// verify what was already configured. v2.20.0 T07: also surface
+	// the existing NLIConfig (with AuthToken redacted — the Store
+	// layer strips it on read).
 	if existing, err := s.GetProject(ctx, in.ProjectID); err == nil && existing != nil {
 		return &ProjectCreateResult{
 			ProjectID:        existing.ProjectID,
@@ -163,6 +213,7 @@ func runProjectCreate(ctx context.Context, s store.Store, in ProjectCreateInput)
 			ConstitutionID:   existing.ConstitutionID,
 			ConstitutionVer:  existing.ConstitutionVer,
 			DefaultAgentID:   existing.DefaultAgentID,
+			NLIConfig:        existing.NLIConfig,
 			CreatedAt:        existing.CreatedAt,
 			IdempotentReplay: true,
 		}, nil
@@ -171,6 +222,10 @@ func runProjectCreate(ctx context.Context, s store.Store, in ProjectCreateInput)
 	if err := s.CreateProject(ctx, p); err != nil {
 		return nil, err
 	}
+	// Strip AuthToken from the in-memory p before returning. The DB
+	// keeps the token (encrypted-at-rest is the operator's job);
+	// the tool result never echoes it.
+	p.NLIConfig = p.NLIConfig.Redacted()
 	return &ProjectCreateResult{
 		ProjectID:        p.ProjectID,
 		DisplayName:      p.DisplayName,
@@ -178,6 +233,7 @@ func runProjectCreate(ctx context.Context, s store.Store, in ProjectCreateInput)
 		ConstitutionID:   p.ConstitutionID,
 		ConstitutionVer:  p.ConstitutionVer,
 		DefaultAgentID:   p.DefaultAgentID,
+		NLIConfig:        p.NLIConfig,
 		CreatedAt:        p.CreatedAt,
 		IdempotentReplay: false,
 	}, nil
@@ -188,6 +244,9 @@ func runProjectCreate(ctx context.Context, s store.Store, in ProjectCreateInput)
 // alnum + hyphen, must start and end with alnum). Returning the
 // ErrInvalidArgument directly keeps the ToolError mapping in
 // errors.go unchanged.
+//
+// v2.20.0 T07: also delegates to project.NLIConfig.Validate() when
+// nli_config is non-nil. nil = no project-level override.
 func validateProjectCreateInput(in ProjectCreateInput) error {
 	if strings.TrimSpace(in.ProjectID) == "" {
 		return store.ErrInvalidArgument
@@ -211,6 +270,14 @@ func validateProjectCreateInput(in ProjectCreateInput) error {
 	// "gpt-4o-2024-08-06").
 	if len(in.DefaultAgentID) > 128 {
 		return store.ErrInvalidArgument
+	}
+	// v2.20.0 T07: NLIConfig validation. nil = no override (allowed).
+	// Non-nil with Enabled=true requires the full ProviderID+Endpoint
+	// + positive tunables — see project.NLIConfig.Validate().
+	if in.NLIConfig != nil {
+		if err := in.NLIConfig.Validate(); err != nil {
+			return fmt.Errorf("%w: %v", store.ErrInvalidArgument, err)
+		}
 	}
 	// The JSON Schema's `pattern` is the primary validator; this is
 	// a defensive second-line check for callers that bypass the
