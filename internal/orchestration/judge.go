@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/agentmemory"
+	"github.com/dark-agents/dark-memory-mcp/internal/artifact"
 	"github.com/dark-agents/dark-memory-mcp/internal/errorobs"
 	"github.com/dark-agents/dark-memory-mcp/internal/safety"
 	"github.com/dark-agents/dark-memory-mcp/internal/ssd"
@@ -54,8 +55,8 @@ type JudgeInput struct {
 	// prompt_injection_scan + grounding_check the Content field is
 	// still the canonical input (those judges enrich with prior
 	// agent_memory and reason over the caller's text).
-	Content    string `json:"content"`         // the text to evaluate
-	Model      string `json:"model,omitempty"` // optional override of the selector's pick	// AgentID (v2.4.2) is the Mem0 agent_id (LLM identity) that owns
+	Content string `json:"content"`         // the text to evaluate
+	Model   string `json:"model,omitempty"` // optional override of the selector's pick	// AgentID (v2.4.2) is the Mem0 agent_id (LLM identity) that owns
 	// this judgment. Optional; resolved with priority (caller input >
 	// projects.default_agent_id > ""). When set, brand_match and
 	// compliance_check consult prior agent_memory rows authored by
@@ -91,6 +92,18 @@ type JudgeInput struct {
 	// compose the user_prompt. Empty = omit the "Spec intent"
 	// section.
 	SpecIntent string `json:"spec_intent,omitempty"`
+	// ArtifactRef (v2.20.0 T12, spec 1276): artifact-anchored path
+	// for drift_judge. When EvalType=drift_judge AND ArtifactRef !=
+	// nil, Judge routes to DriftJudge internally. The Content field
+	// is ignored on this branch. Caller must also supply SpecIntent
+	// (the hypothesis). For other eval_types (brand_match,
+	// compliance_check, pii_detect, prompt_injection_scan,
+	// grounding_check, mindset_*, spec_test_alignment, mutation_*,
+	// etc.) this field is ignored — Content remains the canonical
+	// input. At v2.22.0 (spec 1276 H1 phase 2) the Content field is
+	// removed for drift_judge and drift_judge via Judge returns
+	// ErrInvalidArgument.
+	ArtifactRef *artifact.ArtifactRef `json:"artifact_ref,omitempty"`
 }
 
 // JudgeOutput is the result of a Judge call.
@@ -121,11 +134,22 @@ type JudgeOutput struct {
 //   - ErrNoLLMAvailable if no LLM client is available.
 //   - The underlying error from the LLM client otherwise.
 func (o *Orchestrator) Judge(ctx context.Context, in JudgeInput) (*JudgeOutput, error) {
-	if strings.TrimSpace(in.Content) == "" {
-		return nil, errMissingField("content")
-	}
 	if strings.TrimSpace(in.EvalType) == "" {
 		return nil, errMissingField("eval_type")
+	}
+
+	// v2.20.0 T12 (spec 1276): drift_judge + ArtifactRef → DriftJudge.
+	// Artifact-anchored path. Content is ignored on this branch (the
+	// hard constraint is H1: caller-controlled Content cannot influence
+	// the verdict). driftToJudge() validates the ref, calls DriftJudge,
+	// and persists an SDDEvaluation row with v29 audit columns so
+	// judgment_history sees the single-shot drift_judge row.
+	if in.EvalType == "drift_judge" && in.ArtifactRef != nil {
+		return o.driftToJudge(ctx, in)
+	}
+
+	if strings.TrimSpace(in.Content) == "" {
+		return nil, errMissingField("content")
 	}
 
 	// Canary check (INV-3). Refuse payload with canary token even
@@ -222,10 +246,9 @@ func (o *Orchestrator) Judge(ctx context.Context, in JudgeInput) (*JudgeOutput, 
 			o.RecordError(ctx, "judge", "", fmt.Errorf("persona lookup eval=%s persona=%s: %w", in.EvalType, in.PersonaID, err), errorobs.SeverityWarn)
 			systemPrompt = composeAnchorText(nil)
 		} else {
-			systemPrompt = prompt.SystemPrompt
-			userPrompt = prompt.UserPrompt
-			resolvedPersonaID = prompt.PersonaID
+			_, _, _, _, _, _ = systemPrompt, prompt.SystemPrompt, userPrompt, prompt.UserPrompt, resolvedPersonaID, prompt.PersonaID
 		}
+
 	} else {
 		// Registry construction failed — fall back to the generic
 		// anchor. This is the v2.16.0 behavior.
@@ -290,6 +313,96 @@ func (o *Orchestrator) Judge(ctx context.Context, in JudgeInput) (*JudgeOutput, 
 		Confidence:   resp.Confidence,
 		Model:        resp.Model,
 		Provider:     resp.Provider,
+	}, nil
+}
+
+// driftToJudge bridges the artifact-anchored DriftJudge to the
+// wire-compatible JudgeOutput. Called from Judge when
+// EvalType=drift_judge AND ArtifactRef != nil (v2.20.0 T12, spec
+// 1276). The Content field is ignored on this branch.
+//
+// The conversion:
+//   - DriftJudgeInput is built from JudgeInput (TLS fields forwarded).
+//   - DriftJudgeOutput maps directly to JudgeOutput: VerdictJSON,
+//     Confidence, ProviderID, etc. The Model field is populated with
+//     the NLI ProviderID (the drift path doesn't use an LLM client —
+//     Model is the NLI model in this case, like the consensus path).
+//   - DriftJudge itself does NOT persist an SDDEvaluation row (T08
+//     design — the artifact-anchored path defers persistence to the
+//     caller). driftToJudge persists one with v29 audit columns so
+//     judgment_history sees the single-shot drift_judge row. If
+//     persistence fails, the error is propagated (same fail-closed
+//     contract as the consensus path's persistDriftChunkRow).
+//
+// Returns errMissingField for invalid ArtifactRef, missing
+// ArtifactRef, or missing SpecIntent (the hypothesis).
+func (o *Orchestrator) driftToJudge(ctx context.Context, in JudgeInput) (*JudgeOutput, error) {
+	if in.ArtifactRef == nil {
+		return nil, errMissingField("artifact_ref")
+	}
+	if err := in.ArtifactRef.Validate(); err != nil {
+		return nil, errMissingField("artifact_ref")
+	}
+	if strings.TrimSpace(in.SpecIntent) == "" {
+		return nil, errMissingField("spec_intent")
+	}
+	if in.TargetType == "" {
+		in.TargetType = "artifact"
+	}
+	if in.TargetID == "" {
+		in.TargetID = "artifact"
+	}
+
+	driftOut, err := o.DriftJudge(ctx, DriftJudgeInput{
+		ArtifactRef: *in.ArtifactRef,
+		SpecIntent:  in.SpecIntent,
+		EvalType:    "drift_judge",
+		TargetType:  in.TargetType,
+		TargetID:    in.TargetID,
+		VibeCase:    in.VibeCase,
+		PersonaID:   in.PersonaID,
+		AgentID:     in.AgentID,
+		NoEnrich:    in.NoEnrich,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Persist SDDEvaluation with v29 audit columns (T10). TargetID is
+	// the caller's grouping key (no chunk suffix because this is the
+	// single-shot path — ChunkIndex/ChunkTotal stay 0).
+	now := o.now().Format(time.RFC3339Nano)
+	wc := store.WriteContext{
+		Actor:     "orchestrator_judge_drift",
+		WritePath: "Judge(DriftJudge)",
+	}
+	eval := &ssd.SDDEvaluation{
+		EvalType:       "drift_judge",
+		TargetType:     in.TargetType,
+		TargetID:       in.TargetID,
+		VerdictJSON:    normalizeVerdictJSON(driftOut.VerdictJSON),
+		Confidence:     driftOut.Confidence,
+		Model:          driftOut.ProviderID,
+		ConstitutionID: wc.ConstitutionID,
+		CreatedAt:      now,
+		// v29 anchor + audit columns (T10).
+		ArtifactSource: driftOut.ArtifactSource,
+		ArtifactSHA256: driftOut.ArtifactSHA256,
+		ArtifactPath:   driftOut.ArtifactPath,
+		ArtifactSize:   driftOut.ArtifactSize,
+		NLIProviderID:  driftOut.ProviderID,
+	}
+	evalID, err := o.Store.SaveSDDEvaluation(ctx, wc, eval)
+	if err != nil {
+		return nil, fmt.Errorf("judge.drift: save sdd evaluation: %w", err)
+	}
+
+	return &JudgeOutput{
+		EvaluationID: evalID,
+		VerdictJSON:  driftOut.VerdictJSON,
+		Confidence:   driftOut.Confidence,
+		Model:        driftOut.ProviderID,
+		Provider:     driftOut.ProviderID,
 	}, nil
 }
 
