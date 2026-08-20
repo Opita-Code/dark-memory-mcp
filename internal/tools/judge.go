@@ -152,16 +152,24 @@ func RegisterJudge(reg *Registry, orch *orchestration.Orchestrator, st store.Sto
 					filteredOut++
 					continue
 				}
-				out = append(out, JudgmentHistoryEntry{
-					ID:         e.ID,
-					EvalType:   e.EvalType,
-					TargetType: e.TargetType,
-					TargetID:   e.TargetID,
-					Confidence: e.Confidence,
-					Verdict:    parseVerdictJSON(e.VerdictJSON),
-					Model:      e.Model,
-					CreatedAt:  e.CreatedAt,
-				})
+			out = append(out, JudgmentHistoryEntry{
+				ID:            e.ID,
+				EvalType:      e.EvalType,
+				TargetType:    e.TargetType,
+				TargetID:      e.TargetID,
+				Confidence:    e.Confidence,
+				Verdict:       parseVerdictJSON(e.VerdictJSON),
+				Model:         e.Model,
+				CreatedAt:     e.CreatedAt,
+				MerkleRoot:    e.MerkleRoot,
+				ArtifactSource: e.ArtifactSource,
+				ArtifactSHA256: e.ArtifactSHA256,
+				ArtifactPath:   e.ArtifactPath,
+				ArtifactSize:   e.ArtifactSize,
+				ChunkIndex:     e.ChunkIndex,
+				ChunkTotal:     e.ChunkTotal,
+				NLIProviderID:  e.NLIProviderID,
+			})
 			}
 			return &JudgmentHistoryResult{Evaluations: out, Count: len(out), FilteredOut: filteredOut}, nil
 		}))
@@ -231,6 +239,12 @@ type JudgmentHistoryResult struct {
 }
 
 // JudgmentHistoryEntry is one row in the judgment history.
+//
+// v29 (spec 1276, T10) added the v29 audit + anchor columns to the
+// entry so the operator can audit "which bytes were evaluated" and
+// "which chunk of which consensus run" without parsing the
+// VerdictJSON blob. The fields are populated only by drift_judge +
+// drift_judge_consensus; non-drift evaluations leave them empty.
 type JudgmentHistoryEntry struct {
 	ID         int64   `json:"id"`
 	EvalType   string  `json:"eval_type"`
@@ -240,6 +254,21 @@ type JudgmentHistoryEntry struct {
 	Verdict    string  `json:"verdict"`
 	Model      string  `json:"model,omitempty"`
 	CreatedAt  string  `json:"created_at"`
+	// v29 anchor + audit columns (spec 1276 T10). Empty for
+	// non-drift evaluations and pre-v29 rows.
+	MerkleRoot     string `json:"merkle_root,omitempty"`
+	ArtifactSource string `json:"artifact_source,omitempty"`
+	ArtifactSHA256 string `json:"artifact_sha256,omitempty"`
+	ArtifactPath   string `json:"artifact_path,omitempty"`
+	ArtifactSize   int64  `json:"artifact_size,omitempty"`
+	// ChunkIndex is 0 for non-consensus rows and for the consensus
+	// row itself; N (>= 1) for the N-th chunk of a consensus run.
+	ChunkIndex int `json:"chunk_index,omitempty"`
+	// ChunkTotal is 0 for non-consensus; N (>= 1) for any row in a
+	// consensus run (including the consensus row itself).
+	ChunkTotal int `json:"chunk_total,omitempty"`
+	// NLIProviderID is the nli.Provider.ID() that scored the verdict.
+	NLIProviderID string `json:"nli_provider_id,omitempty"`
 }
 
 // parseVerdictJSON returns the canonical verdict (aligned |

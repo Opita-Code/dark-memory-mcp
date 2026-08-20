@@ -92,6 +92,7 @@ type DriftJudgeOutput struct {
 	ArtifactSource string  // artifact.Source.String()
 	ArtifactSHA256 string  // hex
 	ArtifactPath   string  // canonical identifier
+	ArtifactSize   int64   // resolved body size in bytes (v29, T10)
 	ArtifactTrunc  bool    // true if Range or MaxBytes cut off content
 	Reasoning      string  // human-readable explanation
 }
@@ -205,6 +206,7 @@ func (o *Orchestrator) DriftJudge(ctx context.Context, in DriftJudgeInput) (*Dri
 		ArtifactSource: string(resolved.Source),
 		ArtifactSHA256: hexBytes(resolved.ContentSHA256),
 		ArtifactPath:   resolved.Path,
+		ArtifactSize:   int64(len(resolved.Bytes)),
 		ArtifactTrunc:  resolved.Truncated,
 		Reasoning: fmt.Sprintf("nli=%s conf=%.3f prov=%s sha=%s",
 			score.Label, score.Confidence, score.ProviderID, hexBytes(resolved.ContentSHA256)),

@@ -2598,12 +2598,18 @@ func (s *Store) SaveSDDEvaluation(ctx context.Context, wc store.WriteContext, e 
 			 (eval_type, target_type, target_id, verdict_json, confidence,
 			  prompt_version, model, created_at,
 			  constitution_id, constitution_version, active_mods_json,
-			  refused_attempts, refusal_pattern, project_id)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			  refused_attempts, refusal_pattern, project_id,
+			  merkle_root, artifact_source, artifact_sha256, artifact_path,
+			  artifact_size, chunk_index, chunk_total, nli_provider_id)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+			         ?, ?, ?, ?, ?, ?, ?, ?)`,
 			e.EvalType, e.TargetType, e.TargetID, e.VerdictJSON, e.Confidence,
 			nullStr(e.PromptVersion), nullStr(e.Model), e.CreatedAt,
 			nullStr(e.ConstitutionID), nullStr(e.ConstitutionVersion), nullStr(e.ActiveModsJSON),
-			e.RefusedAttempts, nullStr(e.RefusalPattern), projectID)
+			e.RefusedAttempts, nullStr(e.RefusalPattern), projectID,
+			nullStr(e.MerkleRoot), nullStr(e.ArtifactSource), nullStr(e.ArtifactSHA256),
+			nullStr(e.ArtifactPath), e.ArtifactSize, e.ChunkIndex, e.ChunkTotal,
+			nullStr(e.NLIProviderID))
 		if err != nil {
 			return err
 		}
@@ -2635,7 +2641,9 @@ func (s *Store) LatestSDDEvaluation(ctx context.Context, evalType, targetType, t
 		`SELECT id, eval_type, target_type, target_id, verdict_json, confidence,
 		        prompt_version, model, created_at,
 		        constitution_id, constitution_version, active_mods_json,
-		        refused_attempts, refusal_pattern
+		        refused_attempts, refusal_pattern,
+		        merkle_root, artifact_source, artifact_sha256, artifact_path,
+		        artifact_size, chunk_index, chunk_total, nli_provider_id
 		 FROM sdd_evaluations
 		 WHERE eval_type = ? AND target_type = ? AND target_id = ? AND project_id = ?
 		 ORDER BY id DESC LIMIT 1`, evalType, targetType, targetID, activeProject)
@@ -2655,7 +2663,9 @@ func (s *Store) ListSDDEvaluations(ctx context.Context, f ssd.ListFilters) ([]ss
 	q := `SELECT id, eval_type, target_type, target_id, verdict_json, confidence,
 	             prompt_version, model, created_at,
 	             constitution_id, constitution_version, active_mods_json,
-	             refused_attempts, refusal_pattern
+	             refused_attempts, refusal_pattern,
+	             merkle_root, artifact_source, artifact_sha256, artifact_path,
+	             artifact_size, chunk_index, chunk_total, nli_provider_id
 	      FROM sdd_evaluations WHERE project_id = ?`
 	args := []any{activeProject}
 	if f.EvalType != "" {
@@ -2691,9 +2701,13 @@ func (s *Store) ListSDDEvaluations(ctx context.Context, f ssd.ListFilters) ([]ss
 func scanSDDEval(row *sql.Row) (*ssd.SDDEvaluation, error) {
 	var e ssd.SDDEvaluation
 	var promptVersion, model, consID, consVer, activeModsJSON, refusalPattern sql.NullString
+	var merkleRoot, artifactSource, artifactSHA256, artifactPath, nliProviderID sql.NullString
+	var artifactSize, chunkIndex, chunkTotal sql.NullInt64
 	if err := row.Scan(&e.ID, &e.EvalType, &e.TargetType, &e.TargetID, &e.VerdictJSON, &e.Confidence,
 		&promptVersion, &model, &e.CreatedAt,
-		&consID, &consVer, &activeModsJSON, &e.RefusedAttempts, &refusalPattern); err != nil {
+		&consID, &consVer, &activeModsJSON, &e.RefusedAttempts, &refusalPattern,
+		&merkleRoot, &artifactSource, &artifactSHA256, &artifactPath,
+		&artifactSize, &chunkIndex, &chunkTotal, &nliProviderID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
@@ -2717,15 +2731,43 @@ func scanSDDEval(row *sql.Row) (*ssd.SDDEvaluation, error) {
 	if refusalPattern.Valid {
 		e.RefusalPattern = refusalPattern.String
 	}
+	if merkleRoot.Valid {
+		e.MerkleRoot = merkleRoot.String
+	}
+	if artifactSource.Valid {
+		e.ArtifactSource = artifactSource.String
+	}
+	if artifactSHA256.Valid {
+		e.ArtifactSHA256 = artifactSHA256.String
+	}
+	if artifactPath.Valid {
+		e.ArtifactPath = artifactPath.String
+	}
+	if artifactSize.Valid {
+		e.ArtifactSize = artifactSize.Int64
+	}
+	if chunkIndex.Valid {
+		e.ChunkIndex = int(chunkIndex.Int64)
+	}
+	if chunkTotal.Valid {
+		e.ChunkTotal = int(chunkTotal.Int64)
+	}
+	if nliProviderID.Valid {
+		e.NLIProviderID = nliProviderID.String
+	}
 	return &e, nil
 }
 
 func scanSDDEvalRows(rows *sql.Rows) (*ssd.SDDEvaluation, error) {
 	var e ssd.SDDEvaluation
 	var promptVersion, model, consID, consVer, activeModsJSON, refusalPattern sql.NullString
+	var merkleRoot, artifactSource, artifactSHA256, artifactPath, nliProviderID sql.NullString
+	var artifactSize, chunkIndex, chunkTotal sql.NullInt64
 	if err := rows.Scan(&e.ID, &e.EvalType, &e.TargetType, &e.TargetID, &e.VerdictJSON, &e.Confidence,
 		&promptVersion, &model, &e.CreatedAt,
-		&consID, &consVer, &activeModsJSON, &e.RefusedAttempts, &refusalPattern); err != nil {
+		&consID, &consVer, &activeModsJSON, &e.RefusedAttempts, &refusalPattern,
+		&merkleRoot, &artifactSource, &artifactSHA256, &artifactPath,
+		&artifactSize, &chunkIndex, &chunkTotal, &nliProviderID); err != nil {
 		return nil, err
 	}
 	if promptVersion.Valid {
@@ -2745,6 +2787,30 @@ func scanSDDEvalRows(rows *sql.Rows) (*ssd.SDDEvaluation, error) {
 	}
 	if refusalPattern.Valid {
 		e.RefusalPattern = refusalPattern.String
+	}
+	if merkleRoot.Valid {
+		e.MerkleRoot = merkleRoot.String
+	}
+	if artifactSource.Valid {
+		e.ArtifactSource = artifactSource.String
+	}
+	if artifactSHA256.Valid {
+		e.ArtifactSHA256 = artifactSHA256.String
+	}
+	if artifactPath.Valid {
+		e.ArtifactPath = artifactPath.String
+	}
+	if artifactSize.Valid {
+		e.ArtifactSize = artifactSize.Int64
+	}
+	if chunkIndex.Valid {
+		e.ChunkIndex = int(chunkIndex.Int64)
+	}
+	if chunkTotal.Valid {
+		e.ChunkTotal = int(chunkTotal.Int64)
+	}
+	if nliProviderID.Valid {
+		e.NLIProviderID = nliProviderID.String
 	}
 	return &e, nil
 }

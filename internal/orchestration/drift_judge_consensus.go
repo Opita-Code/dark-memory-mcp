@@ -207,10 +207,13 @@ type DriftJudgeConsensusResult struct {
 	ArtifactSource   string                         `json:"artifact_source"`
 	ArtifactSHA256   string                         `json:"artifact_sha256"`   // whole artifact hash
 	ArtifactPath     string                         `json:"artifact_path"`
-	Samples          []DriftJudgeConsensusSample    `json:"samples"`
-	Reasoning        string                         `json:"reasoning"`
-	Degraded         bool                           `json:"degraded"`
-	FailedSampleIndices []int                       `json:"failed_sample_indices,omitempty"`
+	// ArtifactSize is the resolved body size in bytes (v29, T10).
+	// Persisted to sdd_evaluations.artifact_size for audit.
+	ArtifactSize int64 `json:"artifact_size"`
+	Samples      []DriftJudgeConsensusSample `json:"samples"`
+	Reasoning    string                     `json:"reasoning"`
+	Degraded     bool                       `json:"degraded"`
+	FailedSampleIndices []int               `json:"failed_sample_indices,omitempty"`
 }
 
 // DriftJudgeConsensus is the artifact-anchored N-shot drift_judge
@@ -317,6 +320,7 @@ func (o *Orchestrator) DriftJudgeConsensus(ctx context.Context, in DriftJudgeCon
 			ArtifactSource:      string(resolved.Source),
 			ArtifactSHA256:      hexBytes(resolved.ContentSHA256),
 			ArtifactPath:        resolved.Path,
+			ArtifactSize:        0,
 			Reasoning:           "resolved artifact is empty (0 bytes)",
 			Degraded:            true,
 			FailedSampleIndices: allIndices(n),
@@ -374,7 +378,7 @@ func (o *Orchestrator) DriftJudgeConsensus(ctx context.Context, in DriftJudgeCon
 		go func(i int) {
 			defer wg.Done()
 			chunkIdx := i % len(chunks)
-			outcomes[i] = o.runDriftChunk(ctx, in, provider, resolved, chunks[chunkIdx], chunkIdx, i, now)
+			outcomes[i] = o.runDriftChunk(ctx, in, provider, resolved, chunks[chunkIdx], chunkIdx, len(chunks), i, now)
 		}(i)
 	}
 	wg.Wait()
@@ -450,6 +454,7 @@ func (o *Orchestrator) DriftJudgeConsensus(ctx context.Context, in DriftJudgeCon
 		ArtifactSource:      string(resolved.Source),
 		ArtifactSHA256:      hexBytes(resolved.ContentSHA256),
 		ArtifactPath:        resolved.Path,
+		ArtifactSize:        int64(len(resolved.Bytes)),
 		Samples:             samples,
 		Degraded:            len(failed) > 0,
 		FailedSampleIndices: failed,
@@ -481,6 +486,13 @@ func (o *Orchestrator) DriftJudgeConsensus(ctx context.Context, in DriftJudgeCon
 // shotIndex is the 0-based shot number (0..N-1). chunkIndex is the
 // chunk the score was applied to (0..len(chunks)-1). For
 // len(chunks) < N, multiple shots may share the same chunkIndex.
+//
+// chunkTotal is the total number of chunks in this consensus run
+// (len(chunks), not N). The v29 (T10) anchor + audit columns
+// (ArtifactSource, ArtifactSHA256, ArtifactPath, ArtifactSize,
+// ChunkIndex, ChunkTotal, NLIProviderID) are populated from the
+// resolved artifact + provider so the persisted row, not just the
+// VerdictJSON blob, carries the provenance.
 func (o *Orchestrator) runDriftChunk(
 	ctx context.Context,
 	in DriftJudgeConsensusInput,
@@ -488,6 +500,7 @@ func (o *Orchestrator) runDriftChunk(
 	resolved *artifact.Resolved,
 	chunk chunkRange,
 	chunkIndex int,
+	chunkTotal int,
 	shotIndex int,
 	now string,
 ) driftChunkSample {
@@ -523,7 +536,7 @@ func (o *Orchestrator) runDriftChunk(
 		// (so duplicate-shot rows share the same TargetID — that's
 		// fine; the chunk SHA + shot index in VerdictJSON gives
 		// uniqueness).
-		evalID, perr := o.persistDriftChunkRow(ctx, in, chunkIndex, chunk, sample, scoreErr, now)
+		evalID, perr := o.persistDriftChunkRow(ctx, in, resolved, chunkIndex, chunk, chunkTotal, sample, provider.ID(), scoreErr, now)
 		if perr == nil {
 			sample.EvaluationID = evalID
 		}
@@ -540,7 +553,7 @@ func (o *Orchestrator) runDriftChunk(
 	sample.VerdictJSON = formatDriftChunkVerdictJSON(chunkIndex, chunk, chunkSHA, score, nil)
 
 	// Persist the per-chunk SDDEvaluation row.
-	evalID, perr := o.persistDriftChunkRow(ctx, in, chunkIndex, chunk, sample, nil, now)
+	evalID, perr := o.persistDriftChunkRow(ctx, in, resolved, chunkIndex, chunk, chunkTotal, sample, provider.ID(), nil, now)
 	if perr == nil {
 		sample.EvaluationID = evalID
 	}
@@ -691,14 +704,20 @@ func mostCommonProviderID(samples []DriftJudgeConsensusSample) string {
 
 // persistDriftChunkRow persists one chunk's score as an
 // SDDEvaluation row. TargetID is suffixed with ":chunk:N" so
-// callers can filter the audit trail by chunk index. Returns 0 if
-// persistence fails (the caller continues).
+// callers can filter the audit trail by chunk index. The v29 (T10)
+// anchor + audit columns are populated from the resolved artifact
+// + chunk metadata so the SQL row, not just the VerdictJSON blob,
+// carries the provenance. Returns 0 if persistence fails (the
+// caller continues).
 func (o *Orchestrator) persistDriftChunkRow(
 	ctx context.Context,
 	in DriftJudgeConsensusInput,
+	resolved *artifact.Resolved,
 	chunkIndex int,
 	chunk chunkRange,
+	chunkTotal int,
 	sample DriftJudgeConsensusSample,
+	providerID string,
 	scoreErr error,
 	now string,
 ) (int64, error) {
@@ -716,6 +735,14 @@ func (o *Orchestrator) persistDriftChunkRow(
 		ConstitutionID: wc.ConstitutionID,
 		CreatedAt:      now,
 		PersonaID:      in.PersonaID,
+		// v29 anchor + audit columns (spec 1276 T10).
+		ArtifactSource: string(resolved.Source),
+		ArtifactSHA256: hexBytes(resolved.ContentSHA256),
+		ArtifactPath:   resolved.Path,
+		ArtifactSize:   int64(len(resolved.Bytes)),
+		ChunkIndex:     chunkIndex,
+		ChunkTotal:     chunkTotal,
+		NLIProviderID:  providerID,
 	}
 	if scoreErr != nil {
 		// failure path: lower confidence, provenance in the JSON
@@ -726,7 +753,13 @@ func (o *Orchestrator) persistDriftChunkRow(
 
 // persistDriftConsensusRow persists the consensus row with the
 // ":consensus" suffix on TargetID. The VerdictJSON is the canonical
-// drift-consensus shape (includes chunk stats + artifact provenance).
+// drift-consensus shape (includes chunk stats + artifact provenance);
+// the v29 audit columns (ArtifactSource, ArtifactSHA256, ArtifactPath,
+// ArtifactSize, ChunkTotal, NLIProviderID) are populated as first-
+// class columns so a reader can filter consensus rows without
+// parsing the JSON blob. ChunkIndex for the consensus row is 0
+// (the consensus row itself is not a chunk — the disambiguator is
+// ChunkTotal > 0).
 func (o *Orchestrator) persistDriftConsensusRow(
 	ctx context.Context,
 	in DriftJudgeConsensusInput,
@@ -747,6 +780,14 @@ func (o *Orchestrator) persistDriftConsensusRow(
 		ConstitutionID: wc.ConstitutionID,
 		CreatedAt:      now,
 		PersonaID:      in.PersonaID,
+		// v29 anchor + audit columns (spec 1276 T10).
+		ArtifactSource: result.ArtifactSource,
+		ArtifactSHA256: result.ArtifactSHA256,
+		ArtifactPath:   result.ArtifactPath,
+		ArtifactSize:   result.ArtifactSize,
+		ChunkIndex:     0,                         // consensus row is not a chunk
+		ChunkTotal:     result.NumChunks,          // 0 if no chunks were scored
+		NLIProviderID:  result.ProviderID,
 	}
 	return o.Store.SaveSDDEvaluation(ctx, wc, eval)
 }
