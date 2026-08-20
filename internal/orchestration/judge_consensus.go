@@ -24,6 +24,19 @@
 // reported via Degraded + FailedSampleIndices and the modal fraction
 // is computed against the requested N (survivors never overstate
 // agreement).
+//
+// v2.20.0 T09 (spec 1276): artifact-anchored consensus path.
+// When EvalType=drift_judge AND ArtifactRef is set, JudgeConsensus
+// routes to DriftJudgeConsensus (drift_judge_consensus.go). The
+// result is converted to JudgeConsensusResult so the wire protocol
+// for the consensus tool is unchanged — existing callers see the
+// same fields (modal_verdict, fraction, samples, etc.) but the
+// samples are now chunk-scored artifacts instead of caller-text
+// LLM samples. The Content field is DEPRECATED for drift_judge
+// (deprecation Warn row in Error Observatory).
+//
+// At v2.22.0 (H1 phase 2): drift_judge via Content returns
+// ErrInvalidArgument. Compile-time interface check enforces this.
 package orchestration
 
 import (
@@ -35,13 +48,15 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dark-agents/dark-memory-mcp/internal/artifact"
+	"github.com/dark-agents/dark-memory-mcp/internal/errorobs"
 	"github.com/dark-agents/dark-memory-mcp/internal/ssd"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 )
 
 // JudgeConsensusInput is the request to run a consensus Judge.
 type JudgeConsensusInput struct {
-	EvalType   string `json:"eval_type"`       // brand_match | compliance_check | drift_judge (DEPRECATED — use DriftJudge) | grounding_check | pii_detect | prompt_injection_scan
+	EvalType   string `json:"eval_type"`       // brand_match | compliance_check | drift_judge (see ArtifactRef) | grounding_check | pii_detect | prompt_injection_scan
 	TargetType string `json:"target_type"`     // brand | artifact | spec | claim | code | ...
 	TargetID   string `json:"target_id"`       // brand_id | artifact_id | ...
 	// Content is the text to evaluate.
@@ -49,9 +64,11 @@ type JudgeConsensusInput struct {
 	// v2.20.0 T08 (spec 1276 H1 phase 1): drift_judge via Content is
 	// DEPRECATED, same as JudgeInput.Content. For drift_judge with
 	// n-shot consensus, callers should switch to DriftJudgeConsensus
-	// (T09, future). At v2.22.0 (H1 phase 2) the Content field is
-	// removed for drift_judge. Other eval_types (brand_match,
-	// compliance_check) still use Content.
+	// (T09) via ArtifactRef. When ArtifactRef is nil for drift_judge,
+	// JudgeConsensus emits a deprecation Warn and runs the legacy path.
+	// At v2.22.0 (H1 phase 2) the Content field is removed for
+	// drift_judge. Other eval_types (brand_match, compliance_check)
+	// still use Content.
 	Content    string `json:"content"`         // the text to evaluate
 	N          int    `json:"n,omitempty"`     // sample count; default 3, clamped to [1, 7]
 	Model      string `json:"model,omitempty"` // optional override
@@ -77,6 +94,15 @@ type JudgeConsensusInput struct {
 	// SpecIntent (v2.17.0, spec 1155) forwarded to every Judge sample
 	// so all N samples see the same spec intent in the user prompt.
 	SpecIntent string `json:"spec_intent,omitempty"`
+	// ArtifactRef (v2.20.0 T09, spec 1276) anchors the drift_judge
+	// consensus path to a resolved artifact. When EvalType=drift_judge
+	// AND ArtifactRef != nil, JudgeConsensus routes to
+	// DriftJudgeConsensus internally. The Content field is ignored
+	// in that branch. Caller must also supply SpecIntent (the
+	// hypothesis). For other eval_types (brand_match, compliance_check,
+	// pii_detect, prompt_injection_scan, grounding_check) this field
+	// is ignored — Content remains the canonical input.
+	ArtifactRef *artifact.ArtifactRef `json:"artifact_ref,omitempty"`
 }
 
 // JudgeConsensusSample is one Judge call's result inside a consensus run.
@@ -115,11 +141,24 @@ type JudgeConsensusResult struct {
 // JudgeConsensus runs the Judge N times and aggregates. See package
 // doc for cost + persistence model.
 //
+// v2.20.0 T09 (spec 1276): for drift_judge with ArtifactRef set,
+// routes to DriftJudgeConsensus (artifact-anchored N-shot). The
+// returned JudgeConsensusResult matches the wire format callers
+// already expect.
+//
 // Returns ErrInvalidArgument if Content is empty or N is invalid
 // (negative, zero, or > 7). Returns ErrSessionRequired if no
 // active project. Returns ErrCanaryInPayload if Content contains
 // the active canary (same as Judge).
 func (o *Orchestrator) JudgeConsensus(ctx context.Context, in JudgeConsensusInput) (*JudgeConsensusResult, error) {
+	// 0. v2.20.0 T09 (spec 1276) routing: drift_judge + ArtifactRef
+	// → DriftJudgeConsensus. The Content field is ignored on this
+	// branch (artifact-anchored path). The result is converted to
+	// JudgeConsensusResult so the wire protocol is unchanged.
+	if in.EvalType == "drift_judge" && in.ArtifactRef != nil {
+		return o.driftConsensusToJudgeConsensus(ctx, in)
+	}
+
 	// 1. Validate.
 	if strings.TrimSpace(in.Content) == "" {
 		return nil, errMissingField("content")
@@ -127,6 +166,14 @@ func (o *Orchestrator) JudgeConsensus(ctx context.Context, in JudgeConsensusInpu
 	if strings.TrimSpace(in.EvalType) == "" {
 		return nil, errMissingField("eval_type")
 	}
+
+	// v2.20.0 T09 (spec 1276 H1 phase 1): drift_judge via Content
+	// is DEPRECATED. Emit a deprecation Warn so the operator can
+	// audit callers that haven't migrated to ArtifactRef yet.
+	if in.EvalType == "drift_judge" {
+		o.RecordError(ctx, "judge_consensus", "", fmt.Errorf("drift_judge via JudgeConsensus(Content) is deprecated; use ArtifactRef (spec 1276 H1)"), errorobs.SeverityWarn)
+	}
+
 	n := in.N
 	if n <= 0 {
 		n = 3
@@ -458,4 +505,139 @@ func writeFloat(b *strings.Builder, key string, v float32) {
 	b.WriteString(`":`)
 	b.WriteString(fmt.Sprintf("%.4f", v))
 	b.WriteString(",")
+}
+
+// driftConsensusToJudgeConsensus bridges the artifact-anchored
+// DriftJudgeConsensus to the wire-compatible JudgeConsensusResult.
+// Called from JudgeConsensus when EvalType=drift_judge AND
+// ArtifactRef != nil (v2.20.0 T09, spec 1276).
+//
+// The conversion:
+//   - Each chunk's verdict becomes a JudgeConsensusSample.
+//   - VerdictJSON for each sample is concise (verdict + confidence +
+//     nli_label) — the chunk-specific provenance is in the per-chunk
+//     SDDEvaluation rows (TargetID = ":chunk:N").
+//   - The consensus row's VerdictJSON is the drift-consensus shape
+//     (carries artifact_source, artifact_sha256, provider_id, etc.)
+//     so downstream readers can disambiguate legacy LLM consensus
+//     from artifact-anchored consensus.
+func (o *Orchestrator) driftConsensusToJudgeConsensus(ctx context.Context, in JudgeConsensusInput) (*JudgeConsensusResult, error) {
+	if in.EvalType == "" {
+		return nil, errMissingField("eval_type")
+	}
+	if in.ArtifactRef == nil {
+		return nil, errMissingField("artifact_ref")
+	}
+	if in.TargetType == "" {
+		in.TargetType = "artifact"
+	}
+	if in.TargetID == "" {
+		in.TargetID = "artifact"
+	}
+
+	// Call DriftJudgeConsensus.
+	driftOut, err := o.DriftJudgeConsensus(ctx, DriftJudgeConsensusInput{
+		ArtifactRef: *in.ArtifactRef,
+		SpecIntent:  in.SpecIntent,
+		TargetType:  in.TargetType,
+		TargetID:    in.TargetID,
+		VibeCase:    in.VibeCase,
+		PersonaID:   in.PersonaID,
+		AgentID:     in.AgentID,
+		NoEnrich:    in.NoEnrich,
+		N:           in.N,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert DriftJudgeConsensusSample → JudgeConsensusSample.
+	samples := make([]JudgeConsensusSample, 0, len(driftOut.Samples))
+	for _, s := range driftOut.Samples {
+		// VerdictJSON for the wire-format sample: a concise summary
+		// (verdict + confidence + nli_label). The chunk's full
+		// provenance is in the per-chunk SDDEvaluation row.
+		samples = append(samples, JudgeConsensusSample{
+			SampleIndex:  s.SampleIndex,
+			EvaluationID: s.EvaluationID,
+			Verdict:      s.Verdict,
+			Confidence:   s.Confidence,
+			VerdictJSON:  consensusSampleVerdictJSON(s),
+		})
+	}
+
+	return &JudgeConsensusResult{
+		EvaluationID:        driftOut.EvaluationID,
+		ModalVerdict:        driftOut.ModalVerdict,
+		ModalCount:          driftOut.ModalCount,
+		ModalFraction:       driftOut.ModalFraction,
+		AvgConfidence:       driftOut.AvgConfidence,
+		StdDevConfidence:    driftOut.StdDevConfidence,
+		ConfidenceLow:       driftOut.ConfidenceLow,
+		ConfidenceHigh:      driftOut.ConfidenceHigh,
+		Verdict:             driftOut.Verdict,
+		NextAction:          driftOut.NextAction,
+		Samples:             samples,
+		Reasoning:           driftOut.Reasoning,
+		Degraded:            driftOut.Degraded,
+		FailedSampleIndices: driftOut.FailedSampleIndices,
+	}, nil
+}
+
+// consensusSampleVerdictJSON formats the per-sample verdict JSON
+// for the wire-format JudgeConsensusSample. The artifact-anchored
+// round-trip caries (verdict, confidence, nli_label, sample_index).
+// The chunk's full provenance (chunk_start, chunk_end, chunk_sha256,
+// provider_id, model_rev) is in the per-chunk SDDEvaluation row.
+func consensusSampleVerdictJSON(s DriftJudgeConsensusSample) string {
+	var b strings.Builder
+	b.WriteString("{")
+	b.WriteString(fmt.Sprintf(`"sample_index":%d,`, s.SampleIndex))
+	b.WriteString(`"verdict":`)
+	verdictJSONString(&b, s.Verdict)
+	b.WriteString(",")
+	writeFloat(&b, "confidence", s.Confidence)
+	if s.NLILabel != "" {
+		b.WriteString(`"nli_label":`)
+		verdictJSONString(&b, s.NLILabel)
+		b.WriteString(",")
+	}
+	if s.LatencyMS > 0 {
+		b.WriteString(fmt.Sprintf(`"latency_ms":%d`, s.LatencyMS))
+	}
+	// Strip trailing comma.
+	out := b.String()
+	if strings.HasSuffix(out, ",") {
+		out = out[:len(out)-1]
+	}
+	return out + "}"
+}
+
+// verdictJSONString writes a JSON-escaped string value (no trailing
+// comma). Mirrors writeJSONStringField in drift_judge_consensus.go
+// but lives here to keep the wire-format helpers colocated with the
+// consensus VerdictJSON serializer.
+func verdictJSONString(b *strings.Builder, s string) {
+	b.WriteString(`"`)
+	for _, r := range s {
+		switch r {
+		case '"':
+			b.WriteString(`\"`)
+		case '\\':
+			b.WriteString(`\\`)
+		case '\n':
+			b.WriteString(`\n`)
+		case '\r':
+			b.WriteString(`\r`)
+		case '\t':
+			b.WriteString(`\t`)
+		default:
+			if r < 0x20 {
+				fmt.Fprintf(b, `\u%04x`, r)
+			} else {
+				b.WriteRune(r)
+			}
+		}
+	}
+	b.WriteString(`"`)
 }

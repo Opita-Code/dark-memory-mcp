@@ -49,23 +49,70 @@ func RegisterJudge(reg *Registry, orch *orchestration.Orchestrator, st store.Sto
 		}))
 
 	// consensus — wraps O8 JudgeConsensus orchestrator (N-shot).
+	//
+	// v2.20.0 T09 (spec 1276): artifact_ref is the artifact-anchored
+	// path for drift_judge. When EvalType=drift_judge AND
+	// artifact_ref is set, the consensus path runs against the
+	// resolved artifact (file/git_sha/url/spec_id/artifact_id) and
+	// the result is bound to the artifact's SHA-256. The Content
+	// field is ignored on this branch. For other eval_types, Content
+	// remains the canonical input.
 	reg.Add(BindOrchestrator("consensus",
-		"Run N-shot LLM-as-judge and return modal verdict + confidence interval. N clamped to [1, 7]. v2.4.2: forwards agent_id + no_enrich to all N samples so each gets the same agent-scoped enrichment. v2.17.0: forwards persona_id and spec_intent to all N samples so each uses the same persona.",
+		"Run N-shot LLM-as-judge and return modal verdict + confidence interval. N clamped to [1, 7]. v2.4.2: forwards agent_id + no_enrich to all N samples so each gets the same agent-scoped enrichment. v2.17.0: forwards persona_id and spec_intent to all N samples so each uses the same persona. v2.20.0 T09 (spec 1276): for drift_judge, supply artifact_ref to anchor consensus to a resolved artifact (recommended). The Content field is then ignored.",
 		MustJSONSchema(map[string]any{
 			"type":     "object",
-			"required": []string{"eval_type", "content"},
+			"required": []string{"eval_type"},
 			"properties": map[string]any{
 				"eval_type":   map[string]any{"type": "string"},
 				"target_type": map[string]any{"type": "string"},
 				"target_id":   map[string]any{"type": "string"},
-				"content":     map[string]any{"type": "string"},
-				"n":           map[string]any{"type": "integer", "description": "Sample count. Default 3, clamped to [1, 7]."},
-				"model":       map[string]any{"type": "string"},
+				// content is required for non-drift_judge eval_types;
+				// for drift_judge, supply artifact_ref instead.
+				"content": map[string]any{"type": "string", "description": "Text to evaluate. Required for non-drift_judge eval_types. For drift_judge, supply artifact_ref instead — the Content field is ignored when artifact_ref is set."},
+				"n":       map[string]any{"type": "integer", "description": "Sample count. Default 3, clamped to [1, 7]."},
+				"model":   map[string]any{"type": "string"},
 				"agent_id":    map[string]any{"type": "string", "description": "v2.4.2: forwarded to all N Judge samples for consistent agent-scoped enrichment."},
 				"no_enrich":   map[string]any{"type": "boolean", "description": "v2.4.2: forwarded to all N Judge samples for consistent opt-out semantics. Default false."},
 				"vibe_case":   map[string]any{"type": "string", "enum": []string{"C1", "C2", "C3", "C4", "C5", "C6", "C7"}, "description": "v2.12.0: vibe-flow case (C1=code, C2=text, ...). Forwarded to all N samples so each uses the same G-Eval rubric. Empty = legacy."},
 				"persona_id":  map[string]any{"type": "string", "description": "v2.17.0 (spec 1155): explicit persona id; forwarded to all N samples."},
-				"spec_intent": map[string]any{"type": "string", "description": "v2.17.0 (spec 1155): spec intent; forwarded to all N samples."},
+				"spec_intent": map[string]any{"type": "string", "description": "v2.17.0 (spec 1155): spec intent; forwarded to all N samples. Required for drift_judge with artifact_ref."},
+				// v2.20.0 T09 (spec 1276): artifact_ref anchors the
+				// drift_judge consensus path to a resolved artifact.
+				// The judge resolves the artifact via
+				// artifact.Resolver (T01), chunks the resolved bytes
+				// into N pieces, scores each chunk independently
+				// via nli.Provider (T05), and returns the modal
+				// verdict across chunks. The caller cannot influence
+				// the verdict by submitting arbitrary text.
+				//
+				// Supply exactly one of: file.path, git_sha.path +
+				// git_sha, url, spec_id, artifact_id. The resolved
+				// SHA-256 is bound to the verdict for audit.
+				"artifact_ref": map[string]any{
+					"type":        "object",
+					"description": "v2.20.0 T09 (spec 1276): artifact reference for drift_judge consensus. Required for the artifact-anchored path (recommended for drift_judge). Ignored for other eval_types.",
+					"properties": map[string]any{
+						"kind": map[string]any{
+							"type": "string",
+							"enum": []string{"file", "git_sha", "url", "spec_id", "artifact_id"},
+						},
+						"path":        map[string]any{"type": "string", "description": "Kind=file or git_sha: filesystem path."},
+						"git_repo":    map[string]any{"type": "string", "description": "Kind=git_sha: working dir for git cat-file."},
+						"git_sha":     map[string]any{"type": "string", "description": "Kind=git_sha: pinned commit hash."},
+						"url":         map[string]any{"type": "string", "description": "Kind=url: URL (SSRF-guarded at resolve time)."},
+						"spec_id":     map[string]any{"type": "integer", "description": "Kind=spec_id: vibe_specs.id."},
+						"artifact_id": map[string]any{"type": "integer", "description": "Kind=artifact_id: vibe_artifacts.id."},
+						"range": map[string]any{
+							"type":        "object",
+							"description": "Optional byte window [start, end].",
+							"properties": map[string]any{
+								"start": map[string]any{"type": "integer"},
+								"end":   map[string]any{"type": "integer"},
+							},
+						},
+						"max_bytes": map[string]any{"type": "integer", "description": "Cap on resolved bytes; default 256 KiB, hard cap 4 MiB."},
+					},
+				},
 			},
 		}),
 		func(ctx context.Context, in orchestration.JudgeConsensusInput) (*orchestration.JudgeConsensusResult, error) {

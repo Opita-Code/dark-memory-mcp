@@ -27,6 +27,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/artifact"
@@ -533,32 +534,46 @@ func TestDriftJudge_VerifyCallerCannotInfluence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if prov.capturedPremise != expectedBody {
+	if prov.LastPremise() != expectedBody {
 		t.Errorf("premise: got %q, want %q (the FILE body, not the caller's words)",
-			prov.capturedPremise, expectedBody)
+			prov.LastPremise(), expectedBody)
 	}
-	if prov.capturedHypothesis != "caller-controlled intent that should NOT be the premise" {
-		t.Errorf("hypothesis: got %q, want caller-supplied spec intent", prov.capturedHypothesis)
+	if prov.LastHypothesis() != "caller-controlled intent that should NOT be the premise" {
+		t.Errorf("hypothesis: got %q, want caller-supplied spec intent", prov.LastHypothesis())
 	}
 }
 
 // controllableProvider is a controllable nli.Provider for tests. It
 // returns a fixed score OR a fixed error, and captures the inputs.
+//
+// v2.20.0 T09: added a mutex for the captured fields. T08's
+// DriftJudge is single-shot, so the existing tests didn't race.
+// T09's DriftJudgeConsensus runs N goroutines concurrently against
+// the same provider, so all mutable fields must be guarded.
 type controllableProvider struct {
-	score            nli.Score
-	err              error
-	capturedPremise  string
-	capturedHypothesis string
-	id_              string
+	mu                  sync.Mutex
+	score               nli.Score
+	err                 error
+	capturedPremises    []string // T09: slice for multi-shot capture
+	capturedHypotheses  []string
+	capturedPremise     string   // legacy (T08): single-shot capture
+	capturedHypothesis  string   // legacy (T08)
+	id_                 string
 }
 
 func (c *controllableProvider) Score(ctx context.Context, premise, hypothesis string) (nli.Score, error) {
+	c.mu.Lock()
 	c.capturedPremise = premise
 	c.capturedHypothesis = hypothesis
-	if c.err != nil {
-		return nli.Score{ProviderID: c.idOrDefault()}, c.err
+	c.capturedPremises = append(c.capturedPremises, premise)
+	c.capturedHypotheses = append(c.capturedHypotheses, hypothesis)
+	err := c.err
+	score := c.score
+	c.mu.Unlock()
+	if err != nil {
+		return nli.Score{ProviderID: c.idOrDefault()}, err
 	}
-	return c.score, nil
+	return score, nil
 }
 
 func (c *controllableProvider) ID() string { return c.idOrDefault() }
@@ -571,6 +586,20 @@ func (c *controllableProvider) idOrDefault() string {
 		return c.score.ProviderID
 	}
 	return "stub"
+}
+
+// LastPremise returns the last captured premise (T08 API preserved).
+// Use lastPremiseLock for thread-safe access.
+func (c *controllableProvider) LastPremise() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.capturedPremise
+}
+
+func (c *controllableProvider) LastHypothesis() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.capturedHypothesis
 }
 
 // helpers for the spec/artifact fixtures.
