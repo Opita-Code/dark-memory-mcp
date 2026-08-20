@@ -36,9 +36,24 @@ import (
 
 // JudgeInput is the request to run an LLM-as-judge call.
 type JudgeInput struct {
-	EvalType   string `json:"eval_type"`   // brand_match | compliance_check | drift_judge | grounding_check | pii_detect | prompt_injection_scan | consensus
+	EvalType   string `json:"eval_type"`   // brand_match | compliance_check | drift_judge (DEPRECATED use DriftJudge) | grounding_check | pii_detect | prompt_injection_scan | consensus
 	TargetType string `json:"target_type"` // brand | artifact | spec | claim | code | ...
 	TargetID   string `json:"target_id"`
+	// Content is the text to evaluate.
+	//
+	// v2.20.0 T08 (spec 1276 H1 phase 1): drift_judge via Content is
+	// DEPRECATED. The drift_judge now anchors to a resolved artifact
+	// via DriftJudgeInput.ArtifactRef, eliminating caller-controlled
+	// verdict inputs. Callers passing EvalType="drift_judge" through
+	// Judge receive a deprecation WARNING (Error Observatory) and the
+	// legacy path runs. At v2.22.0 (spec 1276 H1 phase 2) the Content
+	// field is REMOVED for drift_judge and drift_judge through Judge
+	// returns ErrInvalidArgument.
+	//
+	// For brand_match + compliance_check + pii_detect +
+	// prompt_injection_scan + grounding_check the Content field is
+	// still the canonical input (those judges enrich with prior
+	// agent_memory and reason over the caller's text).
 	Content    string `json:"content"`         // the text to evaluate
 	Model      string `json:"model,omitempty"` // optional override of the selector's pick	// AgentID (v2.4.2) is the Mem0 agent_id (LLM identity) that owns
 	// this judgment. Optional; resolved with priority (caller input >
@@ -134,6 +149,16 @@ func (o *Orchestrator) Judge(ctx context.Context, in JudgeInput) (*JudgeOutput, 
 	// predictable, curated context. Drift_judge keeps BM25 in
 	// PublishVibe (different code path) because drift detection
 	// benefits from SPEC-relevant context.
+	//
+	// v2.20.0 T08 (spec 1276 H1 phase 1): drift_judge via Content is
+	// DEPRECATED. PublishVibe now routes drift_judge through the
+	// artifact-anchored DriftJudge pipeline. If a caller still hits
+	// Judge with EvalType="drift_judge", we log a deprecation warning
+	// and run the legacy path (for backward compat). At v2.22.0
+	// (H1 phase 2) the Content param is removed for drift_judge.
+	if in.EvalType == "drift_judge" {
+		o.RecordError(ctx, "judge", "", fmt.Errorf("drift_judge via Judge is deprecated; use DriftJudge with ArtifactRef (spec 1276 H1)"), errorobs.SeverityWarn)
+	}
 	if !in.NoEnrich {
 		if kinds := kindsForEnrichment(in.EvalType); len(kinds) > 0 {
 			activeAgentID := o.resolveActiveAgentID(ctx, in.AgentID)

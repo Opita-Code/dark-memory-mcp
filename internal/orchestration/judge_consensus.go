@@ -41,9 +41,17 @@ import (
 
 // JudgeConsensusInput is the request to run a consensus Judge.
 type JudgeConsensusInput struct {
-	EvalType   string `json:"eval_type"`       // brand_match | compliance_check | drift_judge | grounding_check | pii_detect | prompt_injection_scan
+	EvalType   string `json:"eval_type"`       // brand_match | compliance_check | drift_judge (DEPRECATED — use DriftJudge) | grounding_check | pii_detect | prompt_injection_scan
 	TargetType string `json:"target_type"`     // brand | artifact | spec | claim | code | ...
 	TargetID   string `json:"target_id"`       // brand_id | artifact_id | ...
+	// Content is the text to evaluate.
+	//
+	// v2.20.0 T08 (spec 1276 H1 phase 1): drift_judge via Content is
+	// DEPRECATED, same as JudgeInput.Content. For drift_judge with
+	// n-shot consensus, callers should switch to DriftJudgeConsensus
+	// (T09, future). At v2.22.0 (H1 phase 2) the Content field is
+	// removed for drift_judge. Other eval_types (brand_match,
+	// compliance_check) still use Content.
 	Content    string `json:"content"`         // the text to evaluate
 	N          int    `json:"n,omitempty"`     // sample count; default 3, clamped to [1, 7]
 	Model      string `json:"model,omitempty"` // optional override

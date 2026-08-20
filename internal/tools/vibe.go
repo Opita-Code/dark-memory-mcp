@@ -95,10 +95,48 @@ func RegisterVibe(reg *Registry, orch *orchestration.Orchestrator, st store.Stor
 					"properties": map[string]any{
 						"artifact_url":   map[string]any{"type": "string"},
 						"artifact_type":  map[string]any{"type": "string", "enum": []string{"code", "text", "image", "video", "audio", "multi"}},
-						"text":           map[string]any{"type": "string", "description": "Artifact body (required for drift_judge)."},
+						"text":           map[string]any{"type": "string", "description": "Artifact body (legacy; used by brand_match + compliance_check + legacy drift_judge). DEPRECATED for drift_judge — supply artifact_ref instead."},
 						"brand_id":       map[string]any{"type": "string"},
 						"jurisdiction":   map[string]any{"type": "string"},
 						"has_disclosure": map[string]any{"type": "boolean"},
+						// v2.20.0 T08 (spec 1276): artifact_ref anchors
+						// the drift_judge pipeline to a resolved artifact
+						// (file/git_sha/url/spec_id/artifact_id). The
+						// judge evaluates the resolved bytes against the
+						// spec intent — the caller cannot influence the
+						// verdict by submitting arbitrary text.
+						//
+						// Supply exactly one of: file.path, git_sha.path +
+						// git_sha, url, spec_id, artifact_id. The
+						// artifact_ref is reconciled via artifact.Resolver
+						// (T01) and the SHA-256 is bound to the verdict
+						// for audit.
+						"artifact_ref": map[string]any{
+							"type":        "object",
+							"description": "Artifact reference for drift_judge. Required for the artifact-anchored path (recommended).",
+							"properties": map[string]any{
+								"kind": map[string]any{
+									"type": "string",
+									"enum": []string{"file", "git_sha", "url", "spec_id", "artifact_id"},
+								},
+								"path":        map[string]any{"type": "string", "description": "Kind=file or git_sha: filesystem path."},
+								"git_repo":    map[string]any{"type": "string", "description": "Kind=git_sha: working dir for git cat-file."},
+								"git_sha":     map[string]any{"type": "string", "description": "Kind=git_sha: pinned commit hash."},
+								"url":         map[string]any{"type": "string", "description": "Kind=url: URL (SSRF-guarded at resolve time)."},
+								"spec_id":     map[string]any{"type": "integer", "description": "Kind=spec_id: vibe_specs.id."},
+								"artifact_id": map[string]any{"type": "integer", "description": "Kind=artifact_id: vibe_artifacts.id."},
+								"range": map[string]any{
+									"type":        "object",
+									"description": "Optional byte window [start, end].",
+									"properties": map[string]any{
+										"start": map[string]any{"type": "integer"},
+										"end":   map[string]any{"type": "integer"},
+									},
+								},
+								"max_bytes": map[string]any{"type": "integer", "description": "Cap on resolved bytes; default 256 KiB, hard cap 4 MiB."},
+							},
+						},
+						"auto_save_decision": map[string]any{"type": "boolean", "description": "Default true (when DARK_MEMORY_V280=1). When true AND verdict=aligned, auto-create a kind=decision agent_memory row."},
 					},
 				},
 				"auto_drift_check": map[string]any{"type": "boolean", "description": "Default true. Set false to skip drift_judge."},

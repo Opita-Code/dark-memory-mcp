@@ -35,6 +35,8 @@ import (
 	"log"
 	"time"
 
+	"github.com/dark-agents/dark-memory-mcp/internal/artifact"
+	"github.com/dark-agents/dark-memory-mcp/internal/nli"
 	"github.com/dark-agents/dark-memory-mcp/internal/safety"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 	"github.com/dark-agents/dark-memory-mcp/internal/vlp"
@@ -52,6 +54,25 @@ type Orchestrator struct {
 	// v2.17.0 (spec 1155): Persona registry + prompt builder.
 	personaRegistry *PersonaRegistry    // lazy-initialized
 	personaBuilder  *JudgePromptBuilder // lazy-initialized, depends on registry
+
+	// v2.20.0 T08 (spec 1276): NLI Router for drift_judge artifact
+	// pipeline. Lazy-initialized via EnsureNLIRouter from
+	// Project.NLIConfig (added in T07). When nil, DriftJudge uses the
+	// nli.Provider returned by httptest or http.DefaultClient-backed
+	// factories with Project.NLIConfig defaults (DeBERTa, no cache,
+	// no fallback). Wiring:
+	//
+	//   DefaultFailoverClient's NLI variant will be wired here in a
+	//   follow-up. For T08, we expose the setter so the harness can
+	//   inject the production chain.
+	nliProvider   nli.Provider
+	nliHTTPClient nli.HFInferenceClient // injectable for tests
+
+	// v2.20.0 T08: URLFetcher for the artifact resolver. nil →
+	// URL/artifact_id resolution returns ErrNotConfigured (the
+	// resolver surfaces this). Wired by the harness via
+	// WithURLFetcher; default no-op for file/git_sha/spec_id kinds.
+	urlFetcher artifact.URLFetcher
 
 	// OnActiveSessionChanged (v2.1.3 cache-invalidation fix) is invoked
 	// after every successful SetActiveSession / ClearActiveSession write
@@ -116,6 +137,92 @@ func (o *Orchestrator) WithVLP(uc *vlp.UseCase) *Orchestrator {
 func (o *Orchestrator) WithLLMSelector(s LLMSelector) *Orchestrator {
 	o.selector = s
 	return o
+}
+
+// WithNLIRouter attaches an nli.Provider to the orchestrator. Used
+// by O8 DriftJudge (v2.20.0 T08, spec 1276) — the artifact-anchored
+// drift_judge pipeline resolves the artifact via artifact.Resolver
+// and scores the (premise, hypothesis) pair through this Provider.
+//
+// When no Provider is injected, EnsureNLIRouter falls back to
+// construction from Project.NLIConfig (T07). The fallback path
+// reads the active project's NLIConfig, builds the Router + Cache +
+// Provider chain, and caches the result. nil nliHTTPClient means
+// the chain uses http.DefaultClient.
+func (o *Orchestrator) WithNLIRouter(p nli.Provider) *Orchestrator {
+	o.nliProvider = p
+	return o
+}
+
+// WithNLIHTTPClient injects the HTTP client used by the NLI Provider
+// factories (DeBERTaProvider, MiniCheckProvider). nil →
+// http.DefaultClient. For tests, pass an httptest.Server-bound client.
+func (o *Orchestrator) WithNLIHTTPClient(hc nli.HFInferenceClient) *Orchestrator {
+	o.nliHTTPClient = hc
+	return o
+}
+
+// EnsureNLIRouter returns the orchestrator's NLI Provider. When the
+// orchestrator was bootstrapped with WithNLIRouter, the injected
+// Provider is returned unconditionally. Otherwise, the Provider is
+// built lazily from the active project's NLIConfig (T07).
+//
+// Returns (nil, nil) when the project has no NLIConfig or the config
+// is disabled — DriftJudge uses the defaults over its own
+// constructed chain (deberta-v3-large-mnli, no cache, no fallback).
+//
+// Returns an error when the project's NLIConfig is enabled but
+// Provider construction fails (unknown provider_id, invalid endpoint,
+// etc.). The orchestrator records the error in the Error Observatory.
+func (o *Orchestrator) EnsureNLIRouter(ctx context.Context) (nli.Provider, error) {
+	if o.nliProvider != nil {
+		return o.nliProvider, nil
+	}
+	activeProject := o.Store.ActiveProject()
+	if activeProject == "" {
+		return nil, nil
+	}
+	proj, err := o.Store.GetProject(ctx, activeProject)
+	if err != nil {
+		return nil, err
+	}
+	if proj == nil || proj.NLIConfig == nil || !proj.NLIConfig.Enabled {
+		return nil, nil
+	}
+	p, err := nliProviderForConfig(ctx, proj.NLIConfig, o.nliHTTPClient)
+	if err != nil {
+		return nil, err
+	}
+	o.nliProvider = p
+	return p, nil
+}
+
+// WithURLFetcher injects the URLFetcher used by the artifact
+// resolver (T08). Production wiring is the T02 SSRFGuard-backed
+// fetcher; tests can inject a stub. nil → URL/artifact_id kinds
+// return ErrNotConfigured (the resolver surfaces this).
+func (o *Orchestrator) WithURLFetcher(u artifact.URLFetcher) *Orchestrator {
+	o.urlFetcher = u
+	return o
+}
+
+// defaultDriftJudgeProvider builds the fallback NLI Provider used
+// when the project has no NLIConfig (or NLIConfig.Enabled=false).
+// Returns a DeBERTa-only chain with package defaults. The HF API
+// endpoint is read from HUGGINGFACE_TOKEN env var (the operator
+// must supply it for the chain to work).
+//
+// Returns ErrNoLLMAvailable (wrapped) when no token is set — the
+// drift_judge will surface this as verdict=needs_human per the
+// DriftJudge contract.
+func (o *Orchestrator) defaultDriftJudgeProvider(ctx context.Context) (nli.Provider, error) {
+	// The default is DeBERTa-v3-large-mnli via the public HF Inference
+	// endpoint. AuthToken is read from the operator's env (HUGGINGFACE_TOKEN
+	// or the canonical alias).
+	// T08 default: no endpoint, no auth token means ErrNoLLMAvailable
+	// which surfaces as verdict=needs_human. The operator can configure
+	// Project.NLIConfig.Primary with a real endpoint to go live.
+	return nil, errMissingField("project.nli_config — no project NLI override registered; configure Project.NLIConfig.Primary.Endpoint + AuthToken")
 }
 
 // ensureLLMSelector lazily returns the LLM selector.

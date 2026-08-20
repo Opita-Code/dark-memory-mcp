@@ -89,6 +89,14 @@ func (r *Router) Stats() RouterStats {
 	}
 }
 
+// ID returns the primary provider's ID. The Router is a transparent
+// policy gate around the primary Provider; provenance flows to the
+// underlying provider (T05 invariant). When the primary is wrapped in
+// a CachedProvider (T06), ID() passes through to the inner provider.
+func (r *Router) ID() string {
+	return r.primary.ID()
+}
+
 // Reset clears the counters. Tests use this between cases; production
 // never resets.
 func (r *Router) Reset() {
