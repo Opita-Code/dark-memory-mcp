@@ -98,22 +98,21 @@ func TestRegisterRedTeam_SucceedsWhenArmed(t *testing.T) {
 	}
 }
 
-func TestScanRedTeamMods_ReturnsOurThreeMods(t *testing.T) {
+func TestScanRedTeamMods_ReturnsOurTwoMods(t *testing.T) {
 	t.Setenv("DARK_REDTEAM", "armed")
 	t.Setenv("DARK_REDTEAM_MODS_PATH", redteamModsAbsPath(t))
-	t.Setenv("DARK_MOD_WHITELIST", "redteam/prompt-injection-lab,redteam/jailbreak-taxonomy,redteam/llm-refusal-analysis")
+	t.Setenv("DARK_MOD_WHITELIST", "user/red-team-jailbreak-arsenal,user/osint-cve-deepdive")
 
 	mods, err := scanRedTeamMods(RedTeamModsPath())
 	if err != nil {
 		t.Fatalf("scanRedTeamMods: %v", err)
 	}
-	if len(mods) < 3 {
-		t.Fatalf("expected at least 3 redteam mods, got %d", len(mods))
+	if len(mods) < 2 {
+		t.Fatalf("expected at least 2 redteam mods, got %d", len(mods))
 	}
 	want := map[string]bool{
-		"redteam/prompt-injection-lab": false,
-		"redteam/jailbreak-taxonomy":   false,
-		"redteam/llm-refusal-analysis": false,
+		"user/red-team-jailbreak-arsenal": false,
+		"user/osint-cve-deepdive":         false,
 	}
 	for _, m := range mods {
 		if _, ok := want[m.ModID]; ok {
@@ -130,7 +129,7 @@ func TestScanRedTeamMods_ReturnsOurThreeMods(t *testing.T) {
 func TestRedteamListModsHandler_Success(t *testing.T) {
 	t.Setenv("DARK_REDTEAM", "armed")
 	t.Setenv("DARK_REDTEAM_MODS_PATH", redteamModsAbsPath(t))
-	t.Setenv("DARK_MOD_WHITELIST", "redteam/prompt-injection-lab,redteam/jailbreak-taxonomy,redteam/llm-refusal-analysis")
+	t.Setenv("DARK_MOD_WHITELIST", "user/red-team-jailbreak-arsenal,user/osint-cve-deepdive")
 
 	h := redteamListModsHandler()
 	resp, err := h(context.Background(), json.RawMessage(`{}`))
@@ -159,8 +158,8 @@ func TestRedteamListModsHandler_Success(t *testing.T) {
 	default:
 		t.Fatalf("count has unexpected type %T", data["count"])
 	}
-	if count < 3 {
-		t.Errorf("expected count >= 3, got %d", count)
+	if count < 2 {
+		t.Errorf("expected count >= 2, got %d", count)
 	}
 }
 
@@ -184,9 +183,10 @@ func TestRedteamGetPromptsHandler_RequiresModID(t *testing.T) {
 func TestRedteamGetPromptsHandler_ReturnsCuratedDataset(t *testing.T) {
 	t.Setenv("DARK_REDTEAM", "armed")
 	t.Setenv("DARK_REDTEAM_MODS_PATH", redteamModsAbsPath(t))
+	t.Setenv("DARK_MOD_WHITELIST", "user/red-team-jailbreak-arsenal,user/osint-cve-deepdive")
 
 	h := redteamGetPromptsHandler()
-	resp, err := h(context.Background(), json.RawMessage(`{"mod_id": "redteam/prompt-injection-lab"}`))
+	resp, err := h(context.Background(), json.RawMessage(`{"mod_id": "user/red-team-jailbreak-arsenal"}`))
 	if err != nil {
 		t.Fatalf("handler: %v", err)
 	}
@@ -196,7 +196,7 @@ func TestRedteamGetPromptsHandler_ReturnsCuratedDataset(t *testing.T) {
 	data := resp.Data.(map[string]any)
 	prompts, _ := data["prompts"].([]map[string]any)
 	if len(prompts) == 0 {
-		t.Fatalf("expected prompts from redteam/prompt-injection-lab, got 0")
+		t.Fatalf("expected prompts from user/red-team-jailbreak-arsenal, got 0")
 	}
 	// Verify at least one known id is present.
 	foundGH001 := false
@@ -207,16 +207,17 @@ func TestRedteamGetPromptsHandler_ReturnsCuratedDataset(t *testing.T) {
 		}
 	}
 	if !foundGH001 {
-		t.Errorf("expected GH-001 in redteam/prompt-injection-lab dataset, not found")
+		t.Errorf("expected GH-001 in user/red-team-jailbreak-arsenal dataset, not found")
 	}
 }
 
 func TestRedteamGetPromptsHandler_FamilyFilter(t *testing.T) {
 	t.Setenv("DARK_REDTEAM", "armed")
 	t.Setenv("DARK_REDTEAM_MODS_PATH", redteamModsAbsPath(t))
+	t.Setenv("DARK_MOD_WHITELIST", "user/red-team-jailbreak-arsenal,user/osint-cve-deepdive")
 
 	h := redteamGetPromptsHandler()
-	resp, _ := h(context.Background(), json.RawMessage(`{"mod_id": "redteam/jailbreak-taxonomy", "family": "encoding"}`))
+	resp, _ := h(context.Background(), json.RawMessage(`{"mod_id": "user/red-team-jailbreak-arsenal", "family": "encoding"}`))
 	if resp.Error != nil {
 		t.Fatalf("unexpected error: %+v", resp.Error)
 	}
@@ -247,7 +248,7 @@ func TestRedteamLogAttemptHandler_Success(t *testing.T) {
 
 	h := redteamLogAttemptHandler(nil)
 	resp, err := h(context.Background(), json.RawMessage(`{
-		"mod_id": "redteam/jailbreak-taxonomy",
+		"mod_id": "user/red-team-jailbreak-arsenal",
 		"prompt_id": "JB-C-001",
 		"target_model": "gpt-4o",
 		"observed_label": "REFUSAL",
@@ -274,7 +275,7 @@ func TestRedteamLogAttemptHandler_ClampsExcerpt(t *testing.T) {
 	longExcerpt := strings.Repeat("x", 1000)
 	h := redteamLogAttemptHandler(nil)
 	payload, _ := json.Marshal(map[string]any{
-		"mod_id":                    "redteam/jailbreak-taxonomy",
+		"mod_id":                    "user/red-team-jailbreak-arsenal",
 		"prompt_id":                 "JB-C-001",
 		"target_model":              "gpt-4o",
 		"observed_label":            "REFUSAL",
@@ -291,21 +292,22 @@ func TestRedteamLogAttemptHandler_ClampsExcerpt(t *testing.T) {
 
 // --- loader bypass tests (the IsRedTeamArmed gate) ---
 
-func TestLoader_ActiveProbingBypassesSafetyCheck(t *testing.T) {
-	// The redteam/prompt-injection-lab mod has risk_class =
-	// "active-probing", which is one of the bypass classes. Loading
-	// should succeed even though its content contains injection
-	// markers.
-	wd, _ := os.Getwd()
-	modDir := filepath.Join(wd, "..", "..", "mods", "redteam", "prompt-injection-lab")
+func TestLoader_ResearchOnlyModLoadsWithArmed(t *testing.T) {
+	// The user/red-team-jailbreak-arsenal mod has risk_class =
+	// "research-only". Loading should succeed when DARK_REDTEAM=armed
+	// and the mod is whitelisted.
+	modRoot := redteamModsAbsPath(t)
+	modDir := filepath.Join(modRoot, "red-team-jailbreak-arsenal")
 	if _, err := os.Stat(filepath.Join(modDir, "mod.toml")); err != nil {
-		t.Skipf("redteam/prompt-injection-lab not present at %s: %v", modDir, err)
+		t.Skipf("user/red-team-jailbreak-arsenal not present at %s: %v", modDir, err)
 	}
+	t.Setenv("DARK_REDTEAM", "armed")
+	t.Setenv("DARK_MOD_WHITELIST", "user/red-team-jailbreak-arsenal")
 	loaded, err := mods.Load(modDir)
 	if err != nil {
-		t.Fatalf("Load should succeed for active-probing mod: %v", err)
+		t.Fatalf("Load should succeed for whitelisted research-only mod: %v", err)
 	}
-	if loaded.Manifest.Meta.ID != "redteam/prompt-injection-lab" {
+	if loaded.Manifest.Meta.ID != "user/red-team-jailbreak-arsenal" {
 		t.Errorf("unexpected mod id: %q", loaded.Manifest.Meta.ID)
 	}
 	if len(loaded.Knowledge) == 0 {

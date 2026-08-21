@@ -202,16 +202,29 @@ func (s *Store) SaveErrorEvent(ctx context.Context, e *errorobs.ErrorEvent) erro
 
 // ListErrorEvents returns error_events rows matching the filters,
 // newest-first (last_seen_at DESC). INV-7: scoped to active project.
+//
+// CrossProject opt-in (admin elevation): when f.CrossProject is true,
+// the Store skips the project_id filter and returns rows from ALL
+// projects. The tools layer is the policy gate — it MUST have
+// verified the caller's operator id against DARK_ERROR_OBS_ADMIN_OPERATORS
+// or DARK_ERROR_OBS_OPERATOR_OVERRIDE before setting this flag.
+// Reads are not data writes; the Store does NOT emit an audit row
+// here (the audit happens at the resolve layer, when the operator
+// takes a triage action).
 func (s *Store) ListErrorEvents(ctx context.Context, f errorobs.ErrorListFilters) ([]errorobs.ErrorEvent, error) {
-	if err := s.requireProject(); err != nil {
-		return nil, err
+	if !f.CrossProject {
+		// Project-scoped path (INV-7 default): require an active project.
+		if err := s.requireProject(); err != nil {
+			return nil, err
+		}
 	}
-	projectID := s.activeProject
 
 	var clauses []string
 	var args []any
-	clauses = append(clauses, "project_id = ?")
-	args = append(args, projectID)
+	if !f.CrossProject {
+		clauses = append(clauses, "project_id = ?")
+		args = append(args, s.activeProject)
+	}
 
 	if f.Domain != "" {
 		clauses = append(clauses, "domain = ?")
@@ -241,8 +254,11 @@ func (s *Store) ListErrorEvents(ctx context.Context, f errorobs.ErrorListFilters
 	query := "SELECT id, project_id, COALESCE(session_id, ''), COALESCE(tool_name, ''), domain, code, message, " +
 		"COALESCE(context_json, ''), severity, count, first_seen_at, last_seen_at, " +
 		"resolved, COALESCE(resolved_at, ''), COALESCE(resolution_note, ''), created_at " +
-		"FROM error_events WHERE " + strings.Join(clauses, " AND ") +
-		" ORDER BY last_seen_at DESC"
+		"FROM error_events"
+	if len(clauses) > 0 {
+		query += " WHERE " + strings.Join(clauses, " AND ")
+	}
+	query += " ORDER BY last_seen_at DESC"
 	if f.Limit > 0 {
 		query += " LIMIT ?"
 		args = append(args, f.Limit)
@@ -343,6 +359,139 @@ func (s *Store) ResolveErrorEvent(ctx context.Context, wc store.WriteContext, id
 	}
 	if n == 0 {
 		return store.ErrNotFound
+	}
+	return nil
+}
+
+// GetErrorEventCrossProject returns one row by id, ignoring the
+// active project_id. This is the admin-elevation READ path: an
+// operator in the allow-list (or with override=armed) can inspect a
+// cluster in another project before deciding to resolve it.
+//
+// Existence-leak parity is preserved: returns (nil, nil) when the id
+// does not exist anywhere. Distinct from GetErrorEvent (project-
+// scoped) — this method intentionally crosses the INV-7 boundary.
+// The tools layer enforces the operator allow-list / override flag
+// before reaching this code; the Store trusts the caller.
+//
+// No audit row is emitted (reads are not data writes). The audit
+// trail lives in ResolveErrorEventCrossProject where the operator
+// takes the triage action.
+func (s *Store) GetErrorEventCrossProject(ctx context.Context, id int64) (*errorobs.ErrorEvent, error) {
+	if id <= 0 {
+		return nil, nil
+	}
+
+	var e errorobs.ErrorEvent
+	var resolved int
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, project_id, COALESCE(session_id, ''), COALESCE(tool_name, ''), domain, code, message,
+		       COALESCE(context_json, ''), severity, count, first_seen_at,
+		       last_seen_at, resolved, COALESCE(resolved_at, ''),
+		       COALESCE(resolution_note, ''), created_at
+		FROM error_events
+		WHERE id = ?`,
+		id,
+	).Scan(
+		&e.ID, &e.ProjectID, &e.SessionID, &e.ToolName, &e.Domain, &e.Code,
+		&e.Message, &e.ContextJSON, &e.Severity, &e.Count,
+		&e.FirstSeenAt, &e.LastSeenAt, &resolved, &e.ResolvedAt,
+		&e.ResolutionNote, &e.CreatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("sqlite: GetErrorEventCrossProject: %w", err)
+	}
+	e.Resolved = resolved != 0
+	return &e, nil
+}
+
+// ResolveErrorEventCrossProject marks a cluster resolved across the
+// project boundary. Admin-elevation WRITE path. Tools layer MUST
+// have verified the caller is in DARK_ERROR_OBS_ADMIN_OPERATORS
+// allow-list OR DARK_ERROR_OBS_OPERATOR_OVERRIDE=armed is set
+// (process-lifetime).
+//
+// INV-1: emits a write_audit row atomically with the UPDATE.
+// The audit Actor is the caller's wc.Actor — the tools layer
+// distinguishes the two elevation modes:
+//
+//   - "error_resolve_cross_project_admin"   — allow-list elevation
+//   - "error_resolve_cross_project_override" — bypass-flag elevation
+//
+// so an auditor can tell at a glance whether a cross-project
+// resolve was an authenticated admin action or a bypass.
+//
+// Returns store.ErrNotFound only when the id does not exist
+// anywhere. Success on cross-project resolution is the contract.
+func (s *Store) ResolveErrorEventCrossProject(ctx context.Context, wc store.WriteContext, id int64, note string) error {
+	if id <= 0 {
+		return store.ErrNotFound
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// First fetch the row to get its project_id — we need it for
+	// the audit row's ProjectID field (INV-7 audit), even though
+	// the UPDATE itself crosses the project boundary.
+	var rowProjectID string
+	err := s.db.QueryRowContext(ctx, `SELECT project_id FROM error_events WHERE id = ?`, id).Scan(&rowProjectID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return store.ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("sqlite: ResolveErrorEventCrossProject (lookup): %w", err)
+	}
+
+	err = s.runInTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, `
+			UPDATE error_events
+			SET resolved = 1, resolved_at = COALESCE(resolved_at, ?), resolution_note = ?
+			WHERE id = ?`,
+			now, nullString(note), id,
+		)
+		if err != nil {
+			return fmt.Errorf("sqlite: ResolveErrorEventCrossProject update: %w", err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("sqlite: ResolveErrorEventCrossProject rows affected: %w", err)
+		}
+		if n == 0 {
+			// Race: row was deleted between the lookup and the update.
+			return store.ErrNotFound
+		}
+
+		// INV-1 audit row — atomic with the UPDATE. Actor carries
+		// the elevation mode (admin vs override) so the audit trail
+		// is distinguishable. ProjectID is the row's actual project
+		// (not the active project) because that's the project that
+		// was affected by the cross-project action.
+		ev := audit.WriteEvent{
+			TableName: "error_events",
+			RowID:     id,
+			ProjectID: rowProjectID,
+			Actor:     wc.Actor,
+			SessionID: wc.SessionID,
+			WritePath: "ResolveErrorEventCrossProject",
+			Notes:     note,
+		}
+		if wc.Actor == "" {
+			// Defensive default — caller should always set the
+			// Actor to one of the elevation-mode strings.
+			ev.Actor = "error_resolve_cross_project"
+		}
+		if err := s.recordWriteLockedTx(ctx, tx, ev, ""); err != nil {
+			return fmt.Errorf("sqlite: ResolveErrorEventCrossProject audit: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 	return nil
 }

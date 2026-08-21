@@ -362,7 +362,7 @@ func scanRedTeamMods(root string) ([]RedTeamModSummary, error) {
 		if _, err := os.Stat(manifestPath); err != nil {
 			continue // not a mod dir, skip
 		}
-		loaded, err := mods.LoadWithWhitelist(modRoot, nil)
+		loaded, err := mods.LoadWithWhitelist(modRoot, readWhitelist())
 		if err != nil {
 			// Skip mods that fail to load (e.g. INV-6 refused). The
 			// caller sees only the loadable ones — matches the
@@ -414,7 +414,7 @@ func loadPromptsFromMod(modID, family string, severityMin, maxResults int) ([]ma
 	if _, err := os.Stat(modRoot); err != nil {
 		return nil, fmt.Errorf("mod %q not found at %s", modID, modRoot)
 	}
-	loaded, err := mods.LoadWithWhitelist(modRoot, nil)
+	loaded, err := mods.LoadWithWhitelist(modRoot, readWhitelist())
 	if err != nil {
 		return nil, fmt.Errorf("load mod %q: %w", modID, err)
 	}
@@ -504,6 +504,26 @@ func extractMarkdownPayloads(path, body string) []map[string]any {
 		if inFence {
 			fence.WriteString(line)
 			fence.WriteString("\n")
+		}
+	}
+	return out
+}
+
+// readWhitelist reads the DARK_MOD_WHITELIST environment variable and
+// returns its comma-separated entries as a slice. Returns nil when the
+// variable is unset. Used by the redteam handler to honor the operator's
+// whitelist when loading mods (so sanitization can be bypassed for
+// explicitly approved research-only mods).
+func readWhitelist() []string {
+	w := os.Getenv("DARK_MOD_WHITELIST")
+	if w == "" {
+		return nil
+	}
+	parts := strings.Split(w, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
 		}
 	}
 	return out

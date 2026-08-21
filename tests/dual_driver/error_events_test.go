@@ -408,6 +408,276 @@ func TestErrorEvents_CrossProject_Invisible(t *testing.T) {
 
 func boolP(b bool) *bool { return &b }
 
+// --- Cross-project opt-in (admin elevation, 2026-08-18) ---
+//
+// The 4 tests below pin the contract for the error_events
+// cross-project escape hatch. INV-7's default is preserved
+// (TestErrorEvents_CrossProject_Invisible above); these tests
+// verify the explicit opt-in path (filters.CrossProject +
+// GetErrorEventCrossProject + ResolveErrorEventCrossProject)
+// returns rows from any project. The tools-layer policy gate
+// (DARK_ERROR_OBS_OPERATOR_OVERRIDE / DARK_ERROR_OBS_ADMIN_OPERATORS)
+// is exercised at the integration layer (T10); the Store layer
+// just trusts the caller.
+//
+// NOTE on SaveErrorEvent semantics: projectID is taken from
+// e.ProjectID when non-empty (the caller's explicit value),
+// else from s.activeProject. sampleEvent() returns an event
+// with ProjectID="default" — that's the project's effective
+// origin, but for these tests we want explicit project_id so
+// we build the events directly with errorobs.New(projectID, ...).
+
+func TestErrorEvents_List_CrossProject_ReturnsAllProjects(t *testing.T) {
+	ctx := context.Background()
+	st, cleanup := openErrorDB(t)
+	defer cleanup()
+
+	// Two projects, one cluster each.
+	if err := st.CreateProject(ctx, projectForCreate(projectAlias{ProjectID: "proj-a", DisplayName: "A"})); err != nil {
+		t.Fatalf("CreateProject A: %v", err)
+	}
+	if err := st.CreateProject(ctx, projectForCreate(projectAlias{ProjectID: "proj-b", DisplayName: "B"})); err != nil {
+		t.Fatalf("CreateProject B: %v", err)
+	}
+
+	// Save one cluster per project, with project_id explicit on
+	// the event (sampleEvent's ProjectID="default" would not pin
+	// to the active project — SaveErrorEvent honors e.ProjectID).
+	eA := errorobs.New("proj-a", "sess-xp-a", "tool_a", fmt.Errorf("GetSpec: %w", store.ErrNotFound))
+	if err := st.SaveErrorEvent(ctx, eA); err != nil {
+		t.Fatalf("Save A: %v", err)
+	}
+	if eA.ProjectID != "proj-a" {
+		t.Fatalf("eA.ProjectID = %q, want proj-a (SaveErrorEvent honors e.ProjectID)", eA.ProjectID)
+	}
+
+	eB := errorobs.New("proj-b", "sess-xp-b", "tool_b", fmt.Errorf("GetSpec: %w", store.ErrNotFound))
+	if err := st.SaveErrorEvent(ctx, eB); err != nil {
+		t.Fatalf("Save B: %v", err)
+	}
+	if eB.ProjectID != "proj-b" {
+		t.Fatalf("eB.ProjectID = %q, want proj-b", eB.ProjectID)
+	}
+
+	// INV-7 default (CrossProject=false): only B's row visible
+	// (active project is "default", which has no rows).
+	scoped, err := st.ListErrorEvents(ctx, errorobs.ErrorListFilters{})
+	if err != nil {
+		t.Fatalf("ListErrorEvents scoped: %v", err)
+	}
+	if len(scoped) != 0 {
+		t.Fatalf("scoped list: got %d rows, want 0 (default project has no clusters)", len(scoped))
+	}
+
+	// Switch active to proj-b and verify the INV-7 default shows
+	// only proj-b's cluster.
+	if err := st.SetActiveProject(ctx, "proj-b"); err != nil {
+		t.Fatalf("SetActiveProject proj-b: %v", err)
+	}
+	scopedB, err := st.ListErrorEvents(ctx, errorobs.ErrorListFilters{})
+	if err != nil {
+		t.Fatalf("ListErrorEvents scoped (proj-b active): %v", err)
+	}
+	if len(scopedB) != 1 || scopedB[0].ProjectID != "proj-b" {
+		t.Fatalf("scoped list (proj-b active): got %d rows, want 1 from proj-b (INV-7)", len(scopedB))
+	}
+
+	// CrossProject=true: both rows visible (regardless of active project).
+	cross, err := st.ListErrorEvents(ctx, errorobs.ErrorListFilters{CrossProject: true})
+	if err != nil {
+		t.Fatalf("ListErrorEvents cross: %v", err)
+	}
+	if len(cross) != 2 {
+		t.Fatalf("cross list: got %d rows, want 2", len(cross))
+	}
+	gotProjects := map[string]bool{}
+	for _, r := range cross {
+		gotProjects[r.ProjectID] = true
+	}
+	if !gotProjects["proj-a"] || !gotProjects["proj-b"] {
+		t.Errorf("cross list missing projects: got %v", gotProjects)
+	}
+}
+
+func TestErrorEvents_Get_CrossProject_IgnoresActiveProject(t *testing.T) {
+	ctx := context.Background()
+	st, cleanup := openErrorDB(t)
+	defer cleanup()
+
+	if err := st.CreateProject(ctx, projectForCreate(projectAlias{ProjectID: "proj-a", DisplayName: "A"})); err != nil {
+		t.Fatalf("CreateProject A: %v", err)
+	}
+	if err := st.CreateProject(ctx, projectForCreate(projectAlias{ProjectID: "proj-b", DisplayName: "B"})); err != nil {
+		t.Fatalf("CreateProject B: %v", err)
+	}
+
+	eA := errorobs.New("proj-a", "sess-get-xp", "tool_a", fmt.Errorf("GetSpec: %w", store.ErrNotFound))
+	if err := st.SaveErrorEvent(ctx, eA); err != nil {
+		t.Fatalf("Save A: %v", err)
+	}
+
+	// Switch to project B; INV-7 default hides A's row.
+	if err := st.SetActiveProject(ctx, "proj-b"); err != nil {
+		t.Fatalf("SetActiveProject B: %v", err)
+	}
+	hidden, err := st.GetErrorEvent(ctx, eA.ID)
+	if err != nil {
+		t.Fatalf("GetErrorEvent scoped: %v", err)
+	}
+	if hidden != nil {
+		t.Errorf("scoped GetErrorEvent returned row from proj-a while active=proj-b (INV-7)")
+	}
+
+	// Cross-project variant returns it.
+	cross, err := st.GetErrorEventCrossProject(ctx, eA.ID)
+	if err != nil {
+		t.Fatalf("GetErrorEventCrossProject: %v", err)
+	}
+	if cross == nil {
+		t.Fatal("cross-project GetErrorEvent returned nil for existing row")
+	}
+	if cross.ProjectID != "proj-a" {
+		t.Errorf("cross-project row project_id = %q, want proj-a", cross.ProjectID)
+	}
+
+	// Non-existent id still returns (nil, nil) — existence-leak parity.
+	missing, err := st.GetErrorEventCrossProject(ctx, 999999)
+	if err != nil {
+		t.Fatalf("GetErrorEventCrossProject missing: %v", err)
+	}
+	if missing != nil {
+		t.Errorf("cross-project GetErrorEvent for missing id returned %+v, want nil", missing)
+	}
+}
+
+func TestErrorEvents_Resolve_CrossProject_MarksResolved(t *testing.T) {
+	ctx := context.Background()
+	st, cleanup := openErrorDB(t)
+	defer cleanup()
+
+	if err := st.CreateProject(ctx, projectForCreate(projectAlias{ProjectID: "proj-a", DisplayName: "A"})); err != nil {
+		t.Fatalf("CreateProject A: %v", err)
+	}
+	if err := st.CreateProject(ctx, projectForCreate(projectAlias{ProjectID: "proj-b", DisplayName: "B"})); err != nil {
+		t.Fatalf("CreateProject B: %v", err)
+	}
+
+	eA := errorobs.New("proj-a", "sess-resolve-xp", "tool_a", fmt.Errorf("GetSpec: %w", store.ErrNotFound))
+	if err := st.SaveErrorEvent(ctx, eA); err != nil {
+		t.Fatalf("Save A: %v", err)
+	}
+
+	// Switch to B; cross-project resolve A's row from B's session.
+	if err := st.SetActiveProject(ctx, "proj-b"); err != nil {
+		t.Fatalf("SetActiveProject B: %v", err)
+	}
+
+	wc := store.WriteContext{
+		Actor:     "error_resolve_cross_project_admin",
+		WritePath: "ResolveErrorEventCrossProject",
+	}
+	if err := st.ResolveErrorEventCrossProject(ctx, wc, eA.ID, "triage from proj-b session"); err != nil {
+		t.Fatalf("ResolveErrorEventCrossProject: %v", err)
+	}
+
+	// Confirm the row is resolved, regardless of which project is active.
+	got, err := st.GetErrorEventCrossProject(ctx, eA.ID)
+	if err != nil {
+		t.Fatalf("GetErrorEventCrossProject: %v", err)
+	}
+	if got == nil {
+		t.Fatal("row vanished after cross-project resolve")
+	}
+	if !got.Resolved {
+		t.Errorf("resolved = false after cross-project resolve")
+	}
+	if got.ResolutionNote != "triage from proj-b session" {
+		t.Errorf("resolution_note = %q", got.ResolutionNote)
+	}
+	if got.ProjectID != "proj-a" {
+		t.Errorf("row project_id = %q, want proj-a", got.ProjectID)
+	}
+
+	// Idempotency: second resolve is nil.
+	if err := st.ResolveErrorEventCrossProject(ctx, wc, eA.ID, "redundant"); err != nil {
+		t.Errorf("second cross-project resolve: %v, want nil (idempotent)", err)
+	}
+
+	// Non-existent id returns ErrNotFound.
+	err = st.ResolveErrorEventCrossProject(ctx, wc, 999999, "nope")
+	if !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("cross-project resolve missing: %v, want ErrNotFound", err)
+	}
+}
+
+func TestErrorEvents_Resolve_CrossProject_EmitsAuditRow(t *testing.T) {
+	ctx := context.Background()
+	st, cleanup := openErrorDB(t)
+	defer cleanup()
+
+	if err := st.CreateProject(ctx, projectForCreate(projectAlias{ProjectID: "proj-a", DisplayName: "A"})); err != nil {
+		t.Fatalf("CreateProject A: %v", err)
+	}
+	if err := st.CreateProject(ctx, projectForCreate(projectAlias{ProjectID: "proj-b", DisplayName: "B"})); err != nil {
+		t.Fatalf("CreateProject B: %v", err)
+	}
+
+	eA := errorobs.New("proj-a", "sess-audit-xp", "tool_a", fmt.Errorf("GetSpec: %w", store.ErrNotFound))
+	if err := st.SaveErrorEvent(ctx, eA); err != nil {
+		t.Fatalf("Save A: %v", err)
+	}
+	// Audit row from the SaveErrorEvent (1 row).
+	saveAudits, err := st.ListWrites(ctx, audit.ListFilters{TableName: "error_events", RowID: eA.ID, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListWrites after save: %v", err)
+	}
+	if len(saveAudits) != 1 {
+		t.Fatalf("audit rows after save: got %d, want 1", len(saveAudits))
+	}
+
+	if err := st.SetActiveProject(ctx, "proj-b"); err != nil {
+		t.Fatalf("SetActiveProject B: %v", err)
+	}
+	wc := store.WriteContext{
+		Actor:     "error_resolve_cross_project_admin",
+		WritePath: "ResolveErrorEventCrossProject",
+		SessionID: "sess-b-for-audit",
+	}
+	if err := st.ResolveErrorEventCrossProject(ctx, wc, eA.ID, "audit-trail test"); err != nil {
+		t.Fatalf("ResolveErrorEventCrossProject: %v", err)
+	}
+
+	// 2 audit rows now: the save + the cross-project resolve.
+	allAudits, err := st.ListWrites(ctx, audit.ListFilters{TableName: "error_events", RowID: eA.ID, Limit: 10})
+	if err != nil {
+		t.Fatalf("ListWrites after cross resolve: %v", err)
+	}
+	if len(allAudits) != 2 {
+		t.Fatalf("audit rows after cross resolve: got %d, want 2 (save + resolve)", len(allAudits))
+	}
+
+	// The cross-project audit row has Actor=error_resolve_cross_project_admin
+	// and WritePath=ResolveErrorEventCrossProject (distinguishable from the save).
+	var resolveAudit *audit.WriteEvent
+	for i := range allAudits {
+		if allAudits[i].WritePath == "ResolveErrorEventCrossProject" {
+			resolveAudit = &allAudits[i]
+		}
+	}
+	if resolveAudit == nil {
+		t.Fatal("no audit row with WritePath=ResolveErrorEventCrossProject")
+	}
+	if resolveAudit.Actor != "error_resolve_cross_project_admin" {
+		t.Errorf("audit Actor = %q, want error_resolve_cross_project_admin", resolveAudit.Actor)
+	}
+	if resolveAudit.ProjectID != "proj-a" {
+		t.Errorf("audit ProjectID = %q, want proj-a (the affected project, not active)", resolveAudit.ProjectID)
+	}
+	if resolveAudit.Notes != "audit-trail test" {
+		t.Errorf("audit Notes = %q, want the resolution note", resolveAudit.Notes)
+	}
+}
+
 // TestErrorEvents_NullSession_NullTool pins the NULL-column tolerance:
 // a gate-refusal event saved with NO session and NO tool (exactly what
 // RecordRefusal produces when the gate refuses before a session is

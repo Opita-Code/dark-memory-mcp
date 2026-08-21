@@ -121,6 +121,26 @@ type ErrorEvent struct {
 // ErrorListFilters narrows ListErrorEvents. Zero-valued fields mean
 // "no filter on this dimension". ProjectID is enforced by the Store
 // impl (INV-7); the caller does not set it.
+//
+// CrossProject is the opt-in escape hatch for operator triage across
+// the project boundary (admin elevation — Sentry Org Owner / Datadog
+// Admin Standard pattern). When true:
+//   - the Store skips the `project_id = ?` WHERE filter
+//   - the tools layer MUST have pre-validated the caller's operator
+//     id against DARK_ERROR_OBS_ADMIN_OPERATORS allow-list or
+//     DARK_ERROR_OBS_OPERATOR_OVERRIDE=armed bypass flag
+//   - every list/get/resolve that uses this path emits a write_audit
+//     row with Actor="error_observatory_cross_project" so the
+//     action is auditable end-to-end
+//
+// Default (false) preserves INV-7 strictly: rows from other projects
+// are filtered out at the SQL layer (existence-leak parity).
+//
+// This is NOT a bypass of INV-7 — it is a deliberate, auditable
+// exception to the default scoping policy. The constitution
+// (SECURITY.md:54) treats INV-7 as a defense-in-depth control; this
+// field makes the exception explicit and traceable rather than
+// hidden in a config flag.
 type ErrorListFilters struct {
 	Domain    Domain
 	Severity  Severity
@@ -129,6 +149,12 @@ type ErrorListFilters struct {
 	ToolName  string
 	Since     string // RFC3339: only events with last_seen_at >= Since
 	Limit     int    // <= 0 means no limit
+
+	// CrossProject (opt-in, default false): when true, the Store
+	// returns rows from ALL projects instead of filtering by the
+	// active project_id. Tools layer enforces the operator allow-
+	// list / bypass flag before setting this to true.
+	CrossProject bool
 }
 
 // ErrorSummary is the aggregate health snapshot returned by

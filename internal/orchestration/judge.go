@@ -55,8 +55,8 @@ type JudgeInput struct {
 	// prompt_injection_scan + grounding_check the Content field is
 	// still the canonical input (those judges enrich with prior
 	// agent_memory and reason over the caller's text).
-	Content string `json:"content"`         // the text to evaluate
-	Model   string `json:"model,omitempty"` // optional override of the selector's pick	// AgentID (v2.4.2) is the Mem0 agent_id (LLM identity) that owns
+	Content    string `json:"content"`         // the text to evaluate
+	Model      string `json:"model,omitempty"` // optional override of the selector's pick	// AgentID (v2.4.2) is the Mem0 agent_id (LLM identity) that owns
 	// this judgment. Optional; resolved with priority (caller input >
 	// projects.default_agent_id > ""). When set, brand_match and
 	// compliance_check consult prior agent_memory rows authored by
@@ -246,9 +246,10 @@ func (o *Orchestrator) Judge(ctx context.Context, in JudgeInput) (*JudgeOutput, 
 			o.RecordError(ctx, "judge", "", fmt.Errorf("persona lookup eval=%s persona=%s: %w", in.EvalType, in.PersonaID, err), errorobs.SeverityWarn)
 			systemPrompt = composeAnchorText(nil)
 		} else {
-			_, _, _, _, _, _ = systemPrompt, prompt.SystemPrompt, userPrompt, prompt.UserPrompt, resolvedPersonaID, prompt.PersonaID
+			systemPrompt = prompt.SystemPrompt
+			userPrompt = prompt.UserPrompt
+			resolvedPersonaID = prompt.PersonaID
 		}
-
 	} else {
 		// Registry construction failed — fall back to the generic
 		// anchor. This is the v2.16.0 behavior.

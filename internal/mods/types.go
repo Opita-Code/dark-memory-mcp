@@ -5,38 +5,61 @@
 package mods
 
 // Manifest is the parsed mod.toml. Field tags follow go-toml/v2 conventions.
+// Schema is aligned with the dark-research-mcp mod format (v1.0.0) so
+// dark-memory can load the same peer mods (e.g. user/red-team-jailbreak-arsenal,
+// user/osint-cve-deepdive) without duplication. Optional fields use
+// omitempty so older mods that lack them still parse.
 type Manifest struct {
-	Meta         Meta          `toml:"meta"`
-	Risk         Risk          `toml:"risk"`
-	Knowledge    KnowledgeRefs `toml:"knowledge"`
-	Directives   DirectiveRefs `toml:"directives"`
-	Capabilities Capabilities  `toml:"capabilities"`
+	Meta         Meta          `toml:"meta"          json:"meta"`
+	Requirements Requirements  `toml:"requirements"  json:"requirements"`
+	Capabilities Capabilities  `toml:"capabilities"  json:"capabilities"`
+	Knowledge    KnowledgeRefs `toml:"knowledge"     json:"knowledge"`
+	Directives   DirectiveRefs `toml:"directives"    json:"directives"`
+	Activation   Activation    `toml:"activation"    json:"activation"`
+	Risk         Risk          `toml:"risk"          json:"risk"`
 }
 
 type Meta struct {
-	ID      string `toml:"id"`
-	Version string `toml:"version"`
-	Name    string `toml:"name"`
+	ID          string   `toml:"id"          json:"mod_id"`
+	Name        string   `toml:"name"        json:"name"`
+	Version     string   `toml:"version"     json:"version"`
+	Author      string   `toml:"author"      json:"author,omitempty"`
+	License     string   `toml:"license"     json:"license,omitempty"`
+	Description string   `toml:"description" json:"description,omitempty"`
+	Homepage    string   `toml:"homepage"    json:"homepage,omitempty"`
+	Tags        []string `toml:"tags"        json:"tags,omitempty"`
 }
 
-type Risk struct {
-	Class       string `toml:"risk_class"`
-	TargetScope string `toml:"target_scope"`
-}
-
-type KnowledgeRefs struct {
-	PromptInjections []string `toml:"prompt_injections"`
-	DataSources      []string `toml:"data_sources"`
-}
-
-type DirectiveRefs struct {
-	PromptFragments []string `toml:"prompt_fragments"`
+type Requirements struct {
+	DarkResearchVersion       string   `toml:"dark_research_version"       json:"dark_research_version,omitempty"`
+	ConstitutionCompatibility []string `toml:"constitution_compatibility"  json:"constitution_compatibility,omitempty"`
+	Mods                      []string `toml:"mods"                         json:"mods,omitempty"`
 }
 
 type Capabilities struct {
-	Tools    []string `toml:"tools"`
-	Parsers  []string `toml:"parsers"`
-	Backends []string `toml:"backends"`
+	Tools    []string `toml:"tools"    json:"tools,omitempty"`
+	Parsers  []string `toml:"parsers"  json:"parsers,omitempty"`
+	Backends []string `toml:"backends" json:"backends,omitempty"`
+}
+
+type KnowledgeRefs struct {
+	PromptInjections []string `toml:"prompt_injections" json:"prompt_injections,omitempty"`
+	DataSources      []string `toml:"data_sources"      json:"data_sources,omitempty"`
+}
+
+type DirectiveRefs struct {
+	PromptFragments []string `toml:"prompt_fragments" json:"prompt_fragments,omitempty"`
+}
+
+type Activation struct {
+	AutoLoad bool `toml:"auto_load" json:"auto_load"`
+}
+
+type Risk struct {
+	Class        string   `toml:"risk_class"    json:"risk_class"`
+	TargetScope  string   `toml:"target_scope"  json:"target_scope"`
+	RequiresTor  bool     `toml:"requires_tor"  json:"requires_tor"`
+	RequiresAuth []string `toml:"requires_auth" json:"requires_auth,omitempty"`
 }
 
 // RiskClass is the declared risk envelope for a mod.
