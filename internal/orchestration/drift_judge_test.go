@@ -156,13 +156,16 @@ func TestDriftJudge_ResolveFile_Contradiction(t *testing.T) {
 
 	out, err := o.DriftJudge(context.Background(), DriftJudgeInput{
 		ArtifactRef: artifact.ArtifactRef{Kind: artifact.KindFile, Path: path},
-		SpecIntent:  "y",
+		SpecIntent:  "this spec is long enough to pass principle 5 of self critique",
 	})
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	if out.Verdict != "drift_detected" {
-		t.Errorf("verdict: got %q, want %q", out.Verdict, "drift_detected")
+	if out.Verdict != "needs_human" {
+		t.Errorf("verdict: got %q, want %q (H6 principle 3 override: contradiction → needs_human, not drift_detected)", out.Verdict, "needs_human")
+	}
+	if !strings.Contains(out.CritiqueReason, "principle 3") {
+		t.Errorf("expected CritiqueReason to mention 'principle 3'; got %q", out.CritiqueReason)
 	}
 }
 
@@ -439,7 +442,7 @@ func TestDriftJudge_VerdictJSONShape(t *testing.T) {
 	})
 	out, err := o.DriftJudge(context.Background(), DriftJudgeInput{
 		ArtifactRef: artifact.ArtifactRef{Kind: artifact.KindFile, Path: path},
-		SpecIntent:  "y",
+		SpecIntent:  "this spec is long enough to pass principle 5 of self critique",
 	})
 	if err != nil {
 		t.Fatalf("err: %v", err)

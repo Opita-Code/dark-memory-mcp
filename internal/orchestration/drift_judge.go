@@ -56,6 +56,7 @@ import (
 	"time"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/artifact"
+	"github.com/dark-agents/dark-memory-mcp/internal/constitution"
 	"github.com/dark-agents/dark-memory-mcp/internal/errorobs"
 	"github.com/dark-agents/dark-memory-mcp/internal/nli"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
@@ -95,6 +96,7 @@ type DriftJudgeOutput struct {
 	ArtifactSize   int64   // resolved body size in bytes (v29, T10)
 	ArtifactTrunc  bool    // true if Range or MaxBytes cut off content
 	Reasoning      string  // human-readable explanation
+	CritiqueReason string  // H6 (spec 1276 T07): reason from SelfCritique if verdict was overridden
 }
 
 // DriftJudge is the artifact-anchored drift_judge pipeline. See
@@ -194,6 +196,46 @@ func (o *Orchestrator) DriftJudge(ctx context.Context, in DriftJudgeInput) (*Dri
 	// 7. Map NLI label → canonical verdict.
 	verdict := nliLabelToDriftVerdict(score.Label)
 	confidence := float32(score.Confidence)
+
+	// 8. v2.20.0 H6 invariant (spec 1276 T07): constitutional self-critique
+	// MUST run AFTER NLI validation (constitution_after_nli). If SelfCritique
+	// fails any of the 5 principles, the verdict is overridden to
+	// "needs_human" so the operator reviews the constitutional concern.
+	// SelfCritique is a pure function (no I/O), so it cannot fail at
+	// runtime — only the input determines Passed.
+	critique := constitution.SelfCritique(constitution.SelfCritiqueInput{
+		Verdict:        verdict,
+		NLILabel:       string(score.Label),
+		NLIConfidence:  score.Confidence,
+		SpecIntent:     in.SpecIntent,
+		ArtifactBody:   string(resolved.Bytes),
+		ArtifactSHA:    hexBytes(resolved.ContentSHA256),
+		ArtifactSource: string(resolved.Source),
+		ArtifactPath:   resolved.Path,
+		ArtifactSize:   int64(len(resolved.Bytes)),
+	})
+	if !critique.Passed {
+		verdict = "needs_human"
+		out := &DriftJudgeOutput{
+			Verdict:        verdict,
+			Confidence:     confidence,
+			Reasoning:      fmt.Sprintf("self_critique_override: %s (was %s)", critique.Reason, nliLabelToDriftVerdict(score.Label)),
+			CritiqueReason: critique.Reason,
+		}
+		// Populate the artifact provenance fields for the audit trail.
+		out.ProviderID = score.ProviderID
+		out.ModelRev = score.ModelRev
+		out.NLILabel = string(score.Label)
+		out.NLIConfidence = score.Confidence
+		out.LatencyMS = scoreLatency
+		out.ArtifactSource = string(resolved.Source)
+		out.ArtifactSHA256 = hexBytes(resolved.ContentSHA256)
+		out.ArtifactPath = resolved.Path
+		out.ArtifactSize = int64(len(resolved.Bytes))
+		out.ArtifactTrunc = resolved.Truncated
+		out.VerdictJSON = formatDriftJudgeVerdictJSON(out, resolved)
+		return out, nil
+	}
 
 	out := &DriftJudgeOutput{
 		Verdict:        verdict,
