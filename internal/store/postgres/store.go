@@ -53,6 +53,7 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/constitution"
 	"github.com/dark-agents/dark-memory-mcp/internal/embedder"
 	"github.com/dark-agents/dark-memory-mcp/internal/errorobs"
+	"github.com/dark-agents/dark-memory-mcp/internal/merkle"
 	"github.com/dark-agents/dark-memory-mcp/internal/migrate"
 	migratepostgres "github.com/dark-agents/dark-memory-mcp/internal/migrate/postgres"
 	"github.com/dark-agents/dark-memory-mcp/internal/mods"
@@ -1531,6 +1532,9 @@ func (s *Store) SetArtifactValidation(ctx context.Context, wc store.WriteContext
 func (s *Store) SaveDriftReport(ctx context.Context, wc store.WriteContext, d *vibeflow.DriftReport) (int64, error) {
 	return 0, notImpl("SaveDriftReport")
 }
+func (s *Store) VerifyDriftChain(ctx context.Context, wc store.WriteContext) (merkle.VerifyResult, error) {
+	return merkle.VerifyResult{}, notImpl("VerifyDriftChain")
+}
 func (s *Store) UpdateDriftReportVerdict(ctx context.Context, wc store.WriteContext, driftID int64, verdict, judgeReasoning string) error {
 	return notImpl("UpdateDriftReportVerdict")
 }
@@ -1606,6 +1610,9 @@ func (s *Store) CreateProject(ctx context.Context, p *project.Project) error {
 	if p == nil || p.ProjectID == "" || p.DisplayName == "" {
 		return fmt.Errorf("%w: project_id and display_name required", store.ErrInvalidArgument)
 	}
+	if err := p.NLIConfig.Validate(); err != nil && !errors.Is(err, project.ErrNLIConfigInvalid) {
+		return fmt.Errorf("%w: %v", store.ErrInvalidArgument, err)
+	}
 	if p.CreatedAt == "" {
 		p.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
@@ -1613,9 +1620,22 @@ func (s *Store) CreateProject(ctx context.Context, p *project.Project) error {
 	// NULLIF($10, '') maps empty string -> NULL so the COALESCE
 	// below preserves the existing value on idempotent re-create.
 	defaultAgent := p.DefaultAgentID
+	// v2.20.0 T07: nli_config_json (migration v28). NULLIF($11, '')
+	// mirrors the default_agent_id pattern — empty string means
+	// "don't change" on idempotent replay.
+	var nliJSON any
+	if p.NLIConfig != nil && p.NLIConfig.Enabled {
+		b, err := json.Marshal(p.NLIConfig)
+		if err != nil {
+			return fmt.Errorf("%w: nli_config_json marshal: %v", store.ErrInvalidArgument, err)
+		}
+		nliJSON = string(b)
+	} else {
+		nliJSON = ""
+	}
 	_, err := s.pool.Exec(ctx,
-		`INSERT INTO projects (project_id, display_name, description, constitution_id, constitution_ver, created_at, archived_at, parent_project_id, drift_strictness, default_agent_id)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULLIF($10, ''))
+		`INSERT INTO projects (project_id, display_name, description, constitution_id, constitution_ver, created_at, archived_at, parent_project_id, drift_strictness, default_agent_id, nli_config_json)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULLIF($10, ''), NULLIF($11, ''))
 		 ON CONFLICT(project_id) DO UPDATE SET
 		   display_name = EXCLUDED.display_name,
 		   description = EXCLUDED.description,
@@ -1624,9 +1644,10 @@ func (s *Store) CreateProject(ctx context.Context, p *project.Project) error {
 		   parent_project_id = EXCLUDED.parent_project_id,
 		   drift_strictness = EXCLUDED.drift_strictness,
 		   default_agent_id = COALESCE(EXCLUDED.default_agent_id, projects.default_agent_id),
+		   nli_config_json = COALESCE(NULLIF(EXCLUDED.nli_config_json, ''), projects.nli_config_json),
 		   archived_at = NULL`,
 		p.ProjectID, p.DisplayName, p.Description, p.ConstitutionID, p.ConstitutionVer,
-		p.CreatedAt, p.ArchivedAt, p.ParentProjectID, driftStrictnessOrDefault(p.DriftStrictness), defaultAgent)
+		p.CreatedAt, p.ArchivedAt, p.ParentProjectID, driftStrictnessOrDefault(p.DriftStrictness), defaultAgent, nliJSON)
 	if err != nil {
 		return err
 	}
@@ -1646,11 +1667,11 @@ func (s *Store) CreateProject(ctx context.Context, p *project.Project) error {
 
 func (s *Store) GetProject(ctx context.Context, projectID string) (*project.Project, error) {
 	var p project.Project
-	var desc, consID, consVer, archived, parent, drift, defaultAgent *string
+	var desc, consID, consVer, archived, parent, drift, defaultAgent, nliJSON *string
 	err := s.pool.QueryRow(ctx,
-		`SELECT id, project_id, display_name, description, constitution_id, constitution_ver, created_at, archived_at, parent_project_id, drift_strictness, default_agent_id
+		`SELECT id, project_id, display_name, description, constitution_id, constitution_ver, created_at, archived_at, parent_project_id, drift_strictness, default_agent_id, nli_config_json
 		 FROM projects WHERE project_id = $1`, projectID).Scan(
-		&p.ID, &p.ProjectID, &p.DisplayName, &desc, &consID, &consVer, &p.CreatedAt, &archived, &parent, &drift, &defaultAgent)
+		&p.ID, &p.ProjectID, &p.DisplayName, &desc, &consID, &consVer, &p.CreatedAt, &archived, &parent, &drift, &defaultAgent, &nliJSON)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil
@@ -1678,6 +1699,17 @@ func (s *Store) GetProject(ctx context.Context, projectID string) (*project.Proj
 	if defaultAgent != nil {
 		p.DefaultAgentID = *defaultAgent
 	}
+	// v2.20.0 T07: parse nli_config_json. Parse failures are logged
+	// + treated as no-config (graceful degradation). AuthToken is
+	// stripped on read — never echoed in tool results.
+	if nliJSON != nil && *nliJSON != "" {
+		var cfg project.NLIConfig
+		if err := json.Unmarshal([]byte(*nliJSON), &cfg); err != nil {
+			fmt.Fprintf(os.Stderr, "dark-memory: projects[%s].nli_config_json parse failed: %v\n", projectID, err)
+		} else {
+			p.NLIConfig = cfg.Redacted()
+		}
+	}
 	return &p, nil
 }
 
@@ -1686,7 +1718,7 @@ func (s *Store) ListProjects(ctx context.Context, limit int) ([]project.Project,
 		limit = 100
 	}
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, project_id, display_name, description, constitution_id, constitution_ver, created_at, archived_at, parent_project_id, drift_strictness, default_agent_id
+		`SELECT id, project_id, display_name, description, constitution_id, constitution_ver, created_at, archived_at, parent_project_id, drift_strictness, default_agent_id, nli_config_json
 		 FROM projects
 		 WHERE archived_at IS NULL
 		 ORDER BY created_at DESC, project_id ASC
@@ -1698,8 +1730,8 @@ func (s *Store) ListProjects(ctx context.Context, limit int) ([]project.Project,
 	out := []project.Project{}
 	for rows.Next() {
 		var p project.Project
-		var desc, consID, consVer, archived, parent, drift, defaultAgent *string
-		if err := rows.Scan(&p.ID, &p.ProjectID, &p.DisplayName, &desc, &consID, &consVer, &p.CreatedAt, &archived, &parent, &drift, &defaultAgent); err != nil {
+		var desc, consID, consVer, archived, parent, drift, defaultAgent, nliJSON *string
+		if err := rows.Scan(&p.ID, &p.ProjectID, &p.DisplayName, &desc, &consID, &consVer, &p.CreatedAt, &archived, &parent, &drift, &defaultAgent, &nliJSON); err != nil {
 			return nil, err
 		}
 		if desc != nil {
@@ -1722,6 +1754,15 @@ func (s *Store) ListProjects(ctx context.Context, limit int) ([]project.Project,
 		}
 		if defaultAgent != nil {
 			p.DefaultAgentID = *defaultAgent
+		}
+		// v2.20.0 T07: parse nli_config_json; same posture as sqlite.
+		if nliJSON != nil && *nliJSON != "" {
+			var cfg project.NLIConfig
+			if err := json.Unmarshal([]byte(*nliJSON), &cfg); err != nil {
+				fmt.Fprintf(os.Stderr, "dark-memory: projects[%s].nli_config_json parse failed: %v\n", p.ProjectID, err)
+			} else {
+				p.NLIConfig = cfg.Redacted()
+			}
 		}
 		out = append(out, p)
 	}
@@ -2544,6 +2585,20 @@ func (s *Store) GetErrorEvent(ctx context.Context, id int64) (*errorobs.ErrorEve
 
 func (s *Store) ResolveErrorEvent(ctx context.Context, wc store.WriteContext, id int64, note string) error {
 	return notImpl("ResolveErrorEvent")
+}
+
+// GetErrorEventCrossProject returns one row by id ignoring the
+// active project. Admin-elevation READ path (see internal/store/store.go
+// for the contract; SQLite impl honors it, Postgres stub for now).
+func (s *Store) GetErrorEventCrossProject(ctx context.Context, id int64) (*errorobs.ErrorEvent, error) {
+	return nil, notImpl("GetErrorEventCrossProject")
+}
+
+// ResolveErrorEventCrossProject marks a cluster resolved across the
+// project boundary. Admin-elevation WRITE path; emits an audit row
+// with wc.Actor distinguishing admin vs override modes.
+func (s *Store) ResolveErrorEventCrossProject(ctx context.Context, wc store.WriteContext, id int64, note string) error {
+	return notImpl("ResolveErrorEventCrossProject")
 }
 
 func (s *Store) ErrorSummary(ctx context.Context, hours int) (*errorobs.ErrorSummary, error) {

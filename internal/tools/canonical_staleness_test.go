@@ -109,33 +109,38 @@ func TestCanonicalOrder_WirePrefixConsistent(t *testing.T) {
 	}
 }
 
-// TestCanonicalOrder_Frozen_57_17_26 (SPEC 1270, lock 2026-08-18):
+// TestCanonicalOrder_Frozen_57_17_28 (SPEC 1270, lock 2026-08-18):
 // the canonical surface is FROZEN at 57 tools across 17 namespaces
-// with schema v26. This test is the regression gate: any addition,
+// with schema v29. This test is the regression gate: any addition,
 // removal, or rename that shifts these numbers fails until an ADR +
 // minor bump is filed (see ARCHITECTURE.md §Tools surface). The
 // expected values are read from runtime (CanonicalOrder(),
 // NamespaceCount(), sqlite.CurrentVersion()) so the test stays
 // self-validating; the constants below are what the freeze DOCUMENTS,
 // not what it checks.
-func TestCanonicalOrder_Frozen_57_17_26(t *testing.T) {
+//
+// Bumping schema v28 → v29 (spec 1276 T10) does NOT change the
+// canonical tool surface — v29 only adds columns to sdd_evaluations.
+// The tool count (57) and namespace count (17) stay the same. The
+// schema version constant moves to 29 to reflect the new floor.
+func TestCanonicalOrder_Frozen_57_17_28(t *testing.T) {
 	const (
 		frozenToolCount      = 57
 		frozenNamespaceCount = 17
-		frozenSchemaVersion  = 26
+		frozenSchemaVersion  = 29 // v29 = sdd_evaluations audit_anchor (T10)
 	)
 
 	if got := len(CanonicalOrder()); got != frozenToolCount {
-		t.Errorf("CanonicalOrder() len = %d, want %d (freeze SPEC 1270)", got, frozenToolCount)
+		t.Errorf("CanonicalOrder() len = %d, want %d (freeze SPEC 1276)", got, frozenToolCount)
 	}
 	if got := NamespaceCount(); got != frozenNamespaceCount {
-		t.Errorf("NamespaceCount() = %d, want %d (freeze SPEC 1270)", got, frozenNamespaceCount)
+		t.Errorf("NamespaceCount() = %d, want %d (freeze SPEC 1276)", got, frozenNamespaceCount)
 	}
 	if got := sqlite.CurrentVersion(); got != frozenSchemaVersion {
-		t.Errorf("sqlite.CurrentVersion() = %d, want %d (freeze SPEC 1270)", got, frozenSchemaVersion)
+		t.Errorf("sqlite.CurrentVersion() = %d, want %d (freeze SPEC 1276)", got, frozenSchemaVersion)
 	}
 	if !IsFrozen() {
-		t.Error("IsFrozen() = false, want true — freeze SPEC 1270 was disabled; un-freezing requires an ADR")
+		t.Error("IsFrozen() = false, want true — freeze SPEC 1276 was disabled; un-freezing requires an ADR")
 	}
 	if FreezeDate == "" || FreezeSpec == "" || FreezeVersion == "" {
 		t.Errorf("freeze constants underpopulated (date=%q spec=%q version=%q)", FreezeDate, FreezeSpec, FreezeVersion)

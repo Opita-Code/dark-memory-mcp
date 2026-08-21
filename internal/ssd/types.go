@@ -31,6 +31,15 @@ const (
 // aware columns (ConstitutionID, ConstitutionVersion, ActiveModsJSON,
 // RefusedAttempts, RefusalPattern) so the audit trail can reproduce
 // exactly which constitution + mods were active when the judge ran.
+//
+// v29 (spec 1276, T10) added eight anchor + audit columns:
+// MerkleRoot (chain position), ArtifactSource/ArtifactSHA256/
+// ArtifactPath/ArtifactSize (which bytes were evaluated),
+// ChunkIndex/ChunkTotal (which chunk in a consensus run),
+// NLIProviderID (which model answered). The chunk_* fields are
+// always 0 for non-consensus rows; the artifact_* and NLIProviderID
+// fields are populated only by drift_judge + drift_judge_consensus.
+// All eight columns are NULLABLE — pre-v29 rows have empty values.
 type SDDEvaluation struct {
 	ID                  int64   `json:"id"`
 	EvalType            string  `json:"eval_type"`
@@ -50,7 +59,44 @@ type SDDEvaluation struct {
 	// compat). Lets operators audit which persona was applied to each
 	// historical evaluation.
 	PersonaID string `json:"persona_id,omitempty"`
-	CreatedAt string  `json:"created_at"`
+	// v29 anchor + audit columns (spec 1276, T10).
+	//
+	// MerkleRoot is the 64-char hex hash embedded in the
+	// sdd_evaluations chain. SaveSDDEvaluation computes it
+	// atomically: SELECT last merkle_root → ComputeRoot(prev,
+	// canonical) → INSERT. Empty for pre-v29 rows (legacy boundary
+	// detected by VerifyEvalChain).
+	MerkleRoot string `json:"merkle_root,omitempty"`
+	// ArtifactSource is artifact.Source.String() for drift_judge
+	// and drift_judge_consensus; empty for other eval types.
+	// Possible values: "file", "git_sha", "url", "spec_id",
+	// "artifact_id".
+	ArtifactSource string `json:"artifact_source,omitempty"`
+	// ArtifactSHA256 is the 64-char hex SHA-256 of the resolved
+	// artifact body (the source of truth for "which bytes were
+	// evaluated"). Empty for non-artifact eval types.
+	ArtifactSHA256 string `json:"artifact_sha256,omitempty"`
+	// ArtifactPath is the canonical path or URL that the resolver
+	// fetched. Empty for non-artifact eval types.
+	ArtifactPath string `json:"artifact_path,omitempty"`
+	// ArtifactSize is the size of the resolved body in bytes at
+	// evaluation time. 0 for non-artifact eval types.
+	ArtifactSize int64 `json:"artifact_size,omitempty"`
+	// ChunkIndex is 0 for non-consensus rows (single-shot, or whole
+	// artifact); N (>= 1) for the N-th chunk in a consensus run.
+	// The consensus row itself has ChunkIndex = 0 (disambiguated by
+	// ChunkTotal > 0).
+	ChunkIndex int `json:"chunk_index,omitempty"`
+	// ChunkTotal is N for a consensus run (>= 1); 0 for non-
+	// consensus. The combination (ChunkIndex, ChunkTotal) lets a
+	// reader reconstruct the chunking strategy: (0, 0) → single
+	// whole-artifact evaluation; (K, N) → K-th chunk of N in a
+	// consensus run.
+	ChunkTotal int `json:"chunk_total,omitempty"`
+	// NLIProviderID is the nli.Provider.ID() that scored the
+	// verdict. Empty for non-drift eval types.
+	NLIProviderID string `json:"nli_provider_id,omitempty"`
+	CreatedAt    string  `json:"created_at"`
 }
 
 // ListFilters holds optional filters for ListEvaluations.

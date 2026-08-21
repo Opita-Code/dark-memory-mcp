@@ -1147,4 +1147,155 @@ ALTER TABLE research_items ADD COLUMN write_path TEXT;
 ALTER TABLE research_items ADD COLUMN content_sha256 TEXT;
 `,
 	},
+	{
+		// v27 — Merkle chain for vibe_drift_reports (spec 1276, T04).
+		// Additive: one nullable TEXT column. Pre-v27 rows have NULL
+		// merkle_root and are treated as a legacy boundary by the
+		// verifier (see internal/merkle.VerifyChain). New rows from
+		// SaveDriftReport compute merkle_root atomically:
+		//   SELECT last merkle_root → ComputeRoot(prev, canonical)
+		//   → INSERT (..., merkle_root).
+		// Tampering (insert/delete/modify) anywhere in the chain is
+		// detected by VerifyChain. External anchoring is T12+.
+		Version: 27,
+		Name:    "drift_reports_merkle_root",
+		Up: `
+ALTER TABLE vibe_drift_reports ADD COLUMN merkle_root TEXT;
+`,
+	},
+	{
+		// v28 — projects.nli_config_json (spec 1276, T07).
+		// Per-project NLI configuration for the drift_judge pipeline.
+		// Stored as one JSON-encoded TEXT column (not 8 separate
+		// columns) so:
+		//   - adding a tunable in T08+ doesn't need a new migration
+		//   - the structure matches the nli.Config wire format
+		//   - validation lives in project.NLIConfig.Validate() (Go),
+		//     not in CHECK constraints (SQLite/Postgres portability).
+		//
+		// Nullable: existing projects have NULL nli_config_json and
+		// fall through to nli.Config{}.DefaultsFor() at T08 wiring.
+		// Reads: parse failures on GetProject log + return nil
+		// (graceful degradation — same posture as drift_strictness
+		// and default_agent_id defaults).
+		//
+		// Idempotent: applyOne tolerates F37 "duplicate column name"
+		// so re-running on a fresh schema is a no-op.
+		Version: 28,
+		Name:    "projects_nli_config",
+		Up: `
+ALTER TABLE projects ADD COLUMN nli_config_json TEXT;
+`,
+	},
+	{
+		// v29 — sdd_evaluations audit + anchor columns (spec 1276, T10).
+		//
+		// Closes the audit-gap that the v2.20.0 artifact-anchored
+		// drift_judge pipeline exposed: every LLM-as-judge verdict now
+		// lands in sdd_evaluations, but the row carries no proof of
+		// (a) WHICH artifact was evaluated (only the caller's words),
+		// (b) HOW the artifact was chunked for consensus, or
+		// (c) WHETHER the row is part of a tamper-evident chain.
+		//
+		// Before T10, judgment_history (the read-only tool that
+		// surfaces these rows) could only link back to the caller's
+		// Content — the resolved body SHA, the chunk index, and the
+		// Merkle chain position were buried in the VerdictJSON blob
+		// (and partial / application-specific). An operator auditing
+		// "did the judge really see the file I think it did?" had to
+		// parse freeform JSON.
+		//
+		// v29 promotes the audit-critical fields to first-class
+		// columns. Eight columns total: 1 chain + 7 audit:
+		//
+		//   merkle_root        TEXT     -- 64-char hex
+		//     Per-row Merkle root embedded in the sdd_evaluations
+		//     chain. Mirrors vibe_drift_reports.merkle_root (T04).
+		//     SaveSDDEvaluation computes merkle_root atomically:
+		//       SELECT last merkle_root → ComputeRoot(prev, canonical)
+		//       → INSERT (..., merkle_root).
+		//     Tampering (insert/delete/modify) ANYWHERE in the chain
+		//     is detected by VerifyEvalChain (T10 follow-up; the
+		//     schema is here first so the wire format is stable).
+		//     NULL for pre-v29 rows (legacy boundary).
+		//
+		//   artifact_source    TEXT     -- file|git_sha|url|spec_id|artifact_id
+		//     Captures artifact.Source.String() from the resolved
+		//     artifact.Used by drift_judge + drift_judge_consensus;
+		//     NULL for non-artifact eval types (brand_match,
+		//     compliance_check, mindset_*, etc.).
+		//
+		//   artifact_sha256    TEXT     -- 64-char hex of resolved body
+		//     Source of truth for "which bytes were evaluated". An
+		//     operator can re-evaluate the artifact by sha256 and
+		//     reproduce the verdict. NULL for non-artifact eval types.
+		//
+		//   artifact_path      TEXT     -- canonical path/URL/git_ref
+		//     The path or URL that the resolver fetched. Surfaced in
+		//     judgment_history for human audit. NULL for non-artifact
+		//     eval types.
+		//
+		//   artifact_size      INTEGER  -- bytes of resolved body
+		//     Size at evaluation time. Used by mutation testing
+		//     (gremlins) to verify chunk boundaries.
+		//
+		//   chunk_index        INTEGER  -- 0 for non-consensus,
+		//     N (>= 1) for chunk N in a consensus run. The consensus
+		//     row itself has chunk_index = 0 (the same as non-
+		//     consensus — disambiguated by chunk_total > 0).
+		//
+		//   chunk_total        INTEGER  -- N for consensus (>= 1),
+		//     0 for non-consensus. The combination (chunk_index,
+		//     chunk_total) lets a reader reconstruct the chunking
+		//     strategy: chunk_index = 0 + chunk_total = 0 → single
+		//     whole-artifact evaluation; chunk_index = K + chunk_total
+		//     = N → K-th chunk of N in a consensus run.
+		//
+		//   nli_provider_id    TEXT     -- provider name (drift only)
+		//     Captures the nli.Provider.ID() that scored the verdict.
+		//     Lets the operator audit which model answered.
+		//     NULL for non-drift eval types.
+		//
+		// All eight columns are NULLABLE. Pre-v29 rows have NULL
+		// values; reading them via the new SELECT list is safe (the
+		// scan helpers use sql.NullString / sql.NullInt64).
+		//
+		// Two indexes added:
+		//   idx_sdd_eval_artifact_anchor (target_id, chunk_index)
+		//     Reconstruction: "give me all chunks for consensus run X".
+		//   idx_sdd_eval_merkle_root (merkle_root)
+		//     Verifier lookup: "find the row that holds this merkle_root".
+		//
+		// Idempotent: ALTER TABLE ADD COLUMN with no DEFAULT is a
+		// no-op if the column already exists (SQLite semantics);
+		// applyOne tolerates F37 "duplicate column name" so re-
+		// running on a fresh schema is also a no-op. CREATE INDEX
+		// IF NOT EXISTS on the indexes.
+		//
+		// Postgres parity: see internal/migrate/postgres/ddl.go v29
+		// where the same columns are mirrored with IF NOT EXISTS
+		// (Postgres requires it for idempotency) and the merkle
+		// verifier path is wired through the same SaveSDDEvaluation.
+		//
+		// Reference: spec 1276 §T10 (consensus_mediator migration v29).
+		// Phase 1 of v29 ONLY adds the schema; the merkle chain
+		// verifier (VerifyEvalChain) and chunk_reconstruct tool land
+		// in T13+ (post-v2.20.0).
+		Version: 29,
+		Name:    "sdd_evaluations_audit_anchor",
+		Up: `
+ALTER TABLE sdd_evaluations ADD COLUMN merkle_root     TEXT;
+ALTER TABLE sdd_evaluations ADD COLUMN artifact_source TEXT;
+ALTER TABLE sdd_evaluations ADD COLUMN artifact_sha256 TEXT;
+ALTER TABLE sdd_evaluations ADD COLUMN artifact_path   TEXT;
+ALTER TABLE sdd_evaluations ADD COLUMN artifact_size   INTEGER;
+ALTER TABLE sdd_evaluations ADD COLUMN chunk_index     INTEGER;
+ALTER TABLE sdd_evaluations ADD COLUMN chunk_total     INTEGER;
+ALTER TABLE sdd_evaluations ADD COLUMN nli_provider_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_sdd_eval_artifact_anchor
+  ON sdd_evaluations (target_id, chunk_index);
+CREATE INDEX IF NOT EXISTS idx_sdd_eval_merkle_root
+  ON sdd_evaluations (merkle_root);
+`,
+	},
 }

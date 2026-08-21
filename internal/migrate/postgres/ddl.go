@@ -702,4 +702,56 @@ CREATE INDEX IF NOT EXISTS idx_error_events_resolved   ON error_events (resolved
 CREATE INDEX IF NOT EXISTS idx_error_events_dedup      ON error_events (domain, code, message_hash, tool_name, session_id, resolved);
 `,
 	},
+	{
+// v27 — Merkle chain for vibe_drift_reports (spec 1276, T04).
+		// Mirror of sqlite v27. Postgres parity with IF NOT EXISTS
+		// so a pre-existing column on legacy DBs doesn't fail.
+		Version: 27,
+		Name:    "drift_reports_merkle_root",
+		Up: `
+ALTER TABLE vibe_drift_reports ADD COLUMN IF NOT EXISTS merkle_root TEXT;
+`,
+	},
+	{
+		// v28 — projects.nli_config_json (spec 1276, T07).
+		// Mirror of sqlite v28. Nullable TEXT column for per-project
+		// NLI config (JSON-encoded project.NLIConfig). See sqlite
+		// migration v28 for the rationale and reading semantics.
+		Version: 28,
+		Name:    "projects_nli_config",
+		Up: `
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS nli_config_json TEXT;
+`,
+	},
+	{
+		// v29 — sdd_evaluations audit + anchor columns (spec 1276, T10).
+		// Mirror of sqlite v29. Eight nullable columns: merkle_root,
+		// artifact_source, artifact_sha256, artifact_path,
+		// artifact_size, chunk_index, chunk_total, nli_provider_id.
+		// Two indexes: (target_id, chunk_index) for chunk
+		// reconstruction, and (merkle_root) for verifier lookup.
+		// Postgres requires IF NOT EXISTS on ADD COLUMN for
+		// idempotency; the indexes are also IF NOT EXISTS. See
+		// internal/migrate/sqlite/ddl.go v29 for the full design
+		// rationale (the audit columns are universal — the same
+		// set applies to brand_match, compliance_check, etc. — but
+		// only drift_judge + drift_judge_consensus populate the
+		// artifact_* and chunk_* columns today).
+		Version: 29,
+		Name:    "sdd_evaluations_audit_anchor",
+		Up: `
+ALTER TABLE sdd_evaluations ADD COLUMN IF NOT EXISTS merkle_root     TEXT;
+ALTER TABLE sdd_evaluations ADD COLUMN IF NOT EXISTS artifact_source TEXT;
+ALTER TABLE sdd_evaluations ADD COLUMN IF NOT EXISTS artifact_sha256 TEXT;
+ALTER TABLE sdd_evaluations ADD COLUMN IF NOT EXISTS artifact_path   TEXT;
+ALTER TABLE sdd_evaluations ADD COLUMN IF NOT EXISTS artifact_size   BIGINT;
+ALTER TABLE sdd_evaluations ADD COLUMN IF NOT EXISTS chunk_index     INTEGER;
+ALTER TABLE sdd_evaluations ADD COLUMN IF NOT EXISTS chunk_total     INTEGER;
+ALTER TABLE sdd_evaluations ADD COLUMN IF NOT EXISTS nli_provider_id TEXT;
+CREATE INDEX IF NOT EXISTS idx_sdd_eval_artifact_anchor
+  ON sdd_evaluations (target_id, chunk_index);
+CREATE INDEX IF NOT EXISTS idx_sdd_eval_merkle_root
+  ON sdd_evaluations (merkle_root);
+`,
+	},
 }

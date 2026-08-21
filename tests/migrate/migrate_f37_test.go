@@ -162,6 +162,7 @@ func TestMigrate_PartialMigration_RecordsAndContinues_F37(t *testing.T) {
 // Schema version pin: bumped at every release. v16 = pre-v2.0.2,
 // v17 = pre-v2.1.0, v18 = current (v2.1.0 agent_memory + FTS5).
 // v25 (v2.11.0, spec 757): error_events (Error Observatory).
+// v29 (spec 1276, T10): sdd_evaluations audit_anchor columns.
 func TestMigrate_RealDriverSQLite_BrandNewDB_F37(t *testing.T) {
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "f37-real.db")
@@ -178,7 +179,7 @@ func TestMigrate_RealDriverSQLite_BrandNewDB_F37(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SchemaVersion: %v", err)
 	}
-	const wantSchemaVersion = 26 // v2.15.1 (spec 1011 fix): research_items coexistence added
+	const wantSchemaVersion = 29 // v29 (spec 1276 T10): sdd_evaluations audit_anchor
 	if v != wantSchemaVersion {
 		t.Fatalf("expected schema_version=%d after all migrations applied, got %d", wantSchemaVersion, v)
 	}

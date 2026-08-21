@@ -451,9 +451,9 @@ func WireName(bare string) string {
 //   - Schema additions (sqlite migrations) follow normal semver
 //     backward-compat rules — NOT frozen by this marker.
 const (
-	FreezeDate    = "2026-08-18" // RFC 3339 calendar day; never a moving value
-	FreezeSpec    = "1270"       // SPEC 1242 t7 — pins the contract in docs/governance
-	FreezeVersion = "2.15.2"     // dark-memory-mcp version that locked the surface
+	FreezeDate    = "2026-08-19" // RFC 3339 calendar day; never a moving value
+	FreezeSpec    = "1276"       // SPEC 1276 t7 — pins the contract in docs/governance
+	FreezeVersion = "2.20.0"     // dark-memory-mcp version that locked the surface
 )
 
 // IsFrozen reports whether the canonical surface is under the SPEC

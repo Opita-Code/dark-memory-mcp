@@ -29,6 +29,7 @@ _ "modernc.org/sqlite"
 	"github.com/dark-agents/dark-memory-mcp/internal/audit"
 	"github.com/dark-agents/dark-memory-mcp/internal/constitution"
 	"github.com/dark-agents/dark-memory-mcp/internal/embedder"
+	"github.com/dark-agents/dark-memory-mcp/internal/merkle"
 	"github.com/dark-agents/dark-memory-mcp/internal/migrate"
 	migratesqlite "github.com/dark-agents/dark-memory-mcp/internal/migrate/sqlite"
 	"github.com/dark-agents/dark-memory-mcp/internal/mods"
@@ -2346,11 +2347,38 @@ func (s *Store) SaveDriftReport(ctx context.Context, wc store.WriteContext, d *v
 	}
 	var id int64
 	err := s.runInTx(ctx, func(tx *sql.Tx) error {
+		// Merkle chain (v2.20.0, T04/spec 1276): compute the new
+		// row's merkle_root from the previous row's merkle_root
+		// (or GenesisRoot if this is the first row in the chain).
+		// The SELECT + INSERT runs in the same transaction so
+		// prev_root lookup is race-free with concurrent writers.
+		var prevRoot string
+		row := tx.QueryRowContext(ctx,
+			`SELECT COALESCE(merkle_root, ?) FROM vibe_drift_reports ORDER BY id DESC LIMIT 1`,
+			merkle.GenesisRoot)
+		switch err := row.Scan(&prevRoot); {
+		case err == sql.ErrNoRows:
+			prevRoot = merkle.GenesisRoot
+		case err != nil:
+			return fmt.Errorf("drift: prev_root lookup: %w", err)
+		}
+		canonical := merkle.CanonicalInput{
+			ArtifactID:     d.ArtifactID,
+			SpecID:         d.SpecID,
+			Verdict:        d.Verdict,
+			SpecDiff:       d.SpecDiff,
+			JudgeReasoning: d.JudgeReasoning,
+			CreatedAt:      d.CreatedAt,
+		}
+		newRoot, err := merkle.ComputeRoot(prevRoot, canonical)
+		if err != nil {
+			return fmt.Errorf("drift: merkle compute: %w", err)
+		}
 		res, err := tx.ExecContext(ctx,
-			`INSERT INTO vibe_drift_reports (artifact_id, spec_id, verdict, spec_diff_json, judge_reasoning, reconciled_at, created_at, project_id)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			`INSERT INTO vibe_drift_reports (artifact_id, spec_id, verdict, spec_diff_json, judge_reasoning, reconciled_at, created_at, project_id, merkle_root)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			d.ArtifactID, nullInt(d.SpecID), d.Verdict, nullStr(d.SpecDiff), nullStr(d.JudgeReasoning),
-			nullStr(d.ReconciledAt), d.CreatedAt, projectID)
+			nullStr(d.ReconciledAt), d.CreatedAt, projectID, newRoot)
 		if err != nil {
 			return err
 		}
@@ -2427,6 +2455,44 @@ func (s *Store) LatestDriftForArtifact(ctx context.Context, artifactID int64) (*
 		 WHERE artifact_id = ? AND project_id = ?
 		 ORDER BY id DESC LIMIT 1`, artifactID, activeProject)
 	return scanDriftReport(row)
+}
+
+// VerifyDriftChain walks the active project's vibe_drift_reports
+// rows in id-ascending order, recomputes each row's merkle_root from
+// the previous row's RECOMPUTED root, and returns the result. See
+// internal/merkle.VerifyChain for the full semantics.
+//
+// Returns ErrProjectRequired if no project is active (mirrors the
+// rest of the drift report API). INV-7 scoping: rows from other
+// projects are excluded.
+func (s *Store) VerifyDriftChain(ctx context.Context, wc store.WriteContext) (merkle.VerifyResult, error) {
+	if err := s.requireProject(); err != nil {
+		return merkle.VerifyResult{}, err
+	}
+	projectID := projectIDOrActive(wc.ProjectID, s.ActiveProject()) // capture before locking
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, artifact_id, COALESCE(spec_id, 0), verdict, COALESCE(spec_diff_json, ''), COALESCE(judge_reasoning, ''), created_at, COALESCE(merkle_root, '')
+		 FROM vibe_drift_reports WHERE project_id = ? ORDER BY id ASC`, projectID)
+	if err != nil {
+		return merkle.VerifyResult{}, err
+	}
+	defer rows.Close()
+	var reports []merkle.Report
+	for rows.Next() {
+		var r merkle.Report
+		var canonical merkle.CanonicalInput
+		if err := rows.Scan(&r.ID, &canonical.ArtifactID, &canonical.SpecID, &canonical.Verdict, &canonical.SpecDiff, &canonical.JudgeReasoning, &canonical.CreatedAt, &r.MerkleRoot); err != nil {
+			return merkle.VerifyResult{}, err
+		}
+		r.Canonical = canonical
+		reports = append(reports, r)
+	}
+	if err := rows.Err(); err != nil {
+		return merkle.VerifyResult{}, err
+	}
+	return merkle.VerifyChain(reports), nil
 }
 
 func (s *Store) ListDriftReports(ctx context.Context, artifactID int64, verdict string, limit int) ([]vibeflow.DriftReport, error) {
@@ -2532,12 +2598,18 @@ func (s *Store) SaveSDDEvaluation(ctx context.Context, wc store.WriteContext, e 
 			 (eval_type, target_type, target_id, verdict_json, confidence,
 			  prompt_version, model, created_at,
 			  constitution_id, constitution_version, active_mods_json,
-			  refused_attempts, refusal_pattern, project_id)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			  refused_attempts, refusal_pattern, project_id,
+			  merkle_root, artifact_source, artifact_sha256, artifact_path,
+			  artifact_size, chunk_index, chunk_total, nli_provider_id)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+			         ?, ?, ?, ?, ?, ?, ?, ?)`,
 			e.EvalType, e.TargetType, e.TargetID, e.VerdictJSON, e.Confidence,
 			nullStr(e.PromptVersion), nullStr(e.Model), e.CreatedAt,
 			nullStr(e.ConstitutionID), nullStr(e.ConstitutionVersion), nullStr(e.ActiveModsJSON),
-			e.RefusedAttempts, nullStr(e.RefusalPattern), projectID)
+			e.RefusedAttempts, nullStr(e.RefusalPattern), projectID,
+			nullStr(e.MerkleRoot), nullStr(e.ArtifactSource), nullStr(e.ArtifactSHA256),
+			nullStr(e.ArtifactPath), e.ArtifactSize, e.ChunkIndex, e.ChunkTotal,
+			nullStr(e.NLIProviderID))
 		if err != nil {
 			return err
 		}
@@ -2569,7 +2641,9 @@ func (s *Store) LatestSDDEvaluation(ctx context.Context, evalType, targetType, t
 		`SELECT id, eval_type, target_type, target_id, verdict_json, confidence,
 		        prompt_version, model, created_at,
 		        constitution_id, constitution_version, active_mods_json,
-		        refused_attempts, refusal_pattern
+		        refused_attempts, refusal_pattern,
+		        merkle_root, artifact_source, artifact_sha256, artifact_path,
+		        artifact_size, chunk_index, chunk_total, nli_provider_id
 		 FROM sdd_evaluations
 		 WHERE eval_type = ? AND target_type = ? AND target_id = ? AND project_id = ?
 		 ORDER BY id DESC LIMIT 1`, evalType, targetType, targetID, activeProject)
@@ -2589,7 +2663,9 @@ func (s *Store) ListSDDEvaluations(ctx context.Context, f ssd.ListFilters) ([]ss
 	q := `SELECT id, eval_type, target_type, target_id, verdict_json, confidence,
 	             prompt_version, model, created_at,
 	             constitution_id, constitution_version, active_mods_json,
-	             refused_attempts, refusal_pattern
+	             refused_attempts, refusal_pattern,
+	             merkle_root, artifact_source, artifact_sha256, artifact_path,
+	             artifact_size, chunk_index, chunk_total, nli_provider_id
 	      FROM sdd_evaluations WHERE project_id = ?`
 	args := []any{activeProject}
 	if f.EvalType != "" {
@@ -2625,9 +2701,13 @@ func (s *Store) ListSDDEvaluations(ctx context.Context, f ssd.ListFilters) ([]ss
 func scanSDDEval(row *sql.Row) (*ssd.SDDEvaluation, error) {
 	var e ssd.SDDEvaluation
 	var promptVersion, model, consID, consVer, activeModsJSON, refusalPattern sql.NullString
+	var merkleRoot, artifactSource, artifactSHA256, artifactPath, nliProviderID sql.NullString
+	var artifactSize, chunkIndex, chunkTotal sql.NullInt64
 	if err := row.Scan(&e.ID, &e.EvalType, &e.TargetType, &e.TargetID, &e.VerdictJSON, &e.Confidence,
 		&promptVersion, &model, &e.CreatedAt,
-		&consID, &consVer, &activeModsJSON, &e.RefusedAttempts, &refusalPattern); err != nil {
+		&consID, &consVer, &activeModsJSON, &e.RefusedAttempts, &refusalPattern,
+		&merkleRoot, &artifactSource, &artifactSHA256, &artifactPath,
+		&artifactSize, &chunkIndex, &chunkTotal, &nliProviderID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
@@ -2651,15 +2731,43 @@ func scanSDDEval(row *sql.Row) (*ssd.SDDEvaluation, error) {
 	if refusalPattern.Valid {
 		e.RefusalPattern = refusalPattern.String
 	}
+	if merkleRoot.Valid {
+		e.MerkleRoot = merkleRoot.String
+	}
+	if artifactSource.Valid {
+		e.ArtifactSource = artifactSource.String
+	}
+	if artifactSHA256.Valid {
+		e.ArtifactSHA256 = artifactSHA256.String
+	}
+	if artifactPath.Valid {
+		e.ArtifactPath = artifactPath.String
+	}
+	if artifactSize.Valid {
+		e.ArtifactSize = artifactSize.Int64
+	}
+	if chunkIndex.Valid {
+		e.ChunkIndex = int(chunkIndex.Int64)
+	}
+	if chunkTotal.Valid {
+		e.ChunkTotal = int(chunkTotal.Int64)
+	}
+	if nliProviderID.Valid {
+		e.NLIProviderID = nliProviderID.String
+	}
 	return &e, nil
 }
 
 func scanSDDEvalRows(rows *sql.Rows) (*ssd.SDDEvaluation, error) {
 	var e ssd.SDDEvaluation
 	var promptVersion, model, consID, consVer, activeModsJSON, refusalPattern sql.NullString
+	var merkleRoot, artifactSource, artifactSHA256, artifactPath, nliProviderID sql.NullString
+	var artifactSize, chunkIndex, chunkTotal sql.NullInt64
 	if err := rows.Scan(&e.ID, &e.EvalType, &e.TargetType, &e.TargetID, &e.VerdictJSON, &e.Confidence,
 		&promptVersion, &model, &e.CreatedAt,
-		&consID, &consVer, &activeModsJSON, &e.RefusedAttempts, &refusalPattern); err != nil {
+		&consID, &consVer, &activeModsJSON, &e.RefusedAttempts, &refusalPattern,
+		&merkleRoot, &artifactSource, &artifactSHA256, &artifactPath,
+		&artifactSize, &chunkIndex, &chunkTotal, &nliProviderID); err != nil {
 		return nil, err
 	}
 	if promptVersion.Valid {
@@ -2679,6 +2787,30 @@ func scanSDDEvalRows(rows *sql.Rows) (*ssd.SDDEvaluation, error) {
 	}
 	if refusalPattern.Valid {
 		e.RefusalPattern = refusalPattern.String
+	}
+	if merkleRoot.Valid {
+		e.MerkleRoot = merkleRoot.String
+	}
+	if artifactSource.Valid {
+		e.ArtifactSource = artifactSource.String
+	}
+	if artifactSHA256.Valid {
+		e.ArtifactSHA256 = artifactSHA256.String
+	}
+	if artifactPath.Valid {
+		e.ArtifactPath = artifactPath.String
+	}
+	if artifactSize.Valid {
+		e.ArtifactSize = artifactSize.Int64
+	}
+	if chunkIndex.Valid {
+		e.ChunkIndex = int(chunkIndex.Int64)
+	}
+	if chunkTotal.Valid {
+		e.ChunkTotal = int(chunkTotal.Int64)
+	}
+	if nliProviderID.Valid {
+		e.NLIProviderID = nliProviderID.String
 	}
 	return &e, nil
 }
@@ -3133,6 +3265,9 @@ func (s *Store) CreateProject(ctx context.Context, p *project.Project) error {
 	if err := validateProjectID(p.ProjectID); err != nil {
 		return err
 	}
+	if err := p.NLIConfig.Validate(); err != nil && !errors.Is(err, project.ErrNLIConfigInvalid) {
+		return fmt.Errorf("%w: %v", store.ErrInvalidArgument, err)
+	}
 	if p.CreatedAt == "" {
 		p.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
@@ -3149,9 +3284,23 @@ func (s *Store) CreateProject(ctx context.Context, p *project.Project) error {
 	if p.DefaultAgentID != "" {
 		defaultAgent = sql.NullString{String: p.DefaultAgentID, Valid: true}
 	}
+	// v2.20.0 T07: nli_config_json (migration v28). Same idempotent
+	// replay rule as default_agent_id — empty/nil preserves the
+	// existing column. To explicitly clear, the operator can
+	// UPDATE directly via SQL (clearing via the tool layer is a
+	// v2.20.x follow-up if needed).
+	nliJSON, nliValid := sql.NullString{}, false
+	if p.NLIConfig != nil && p.NLIConfig.Enabled {
+		b, err := json.Marshal(p.NLIConfig)
+		if err != nil {
+			return fmt.Errorf("%w: nli_config_json marshal: %v", store.ErrInvalidArgument, err)
+		}
+		nliJSON = sql.NullString{String: string(b), Valid: true}
+		nliValid = true
+	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO projects (project_id, display_name, description, constitution_id, constitution_ver, created_at, archived_at, parent_project_id, drift_strictness, default_agent_id)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO projects (project_id, display_name, description, constitution_id, constitution_ver, created_at, archived_at, parent_project_id, drift_strictness, default_agent_id, nli_config_json)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(project_id) DO UPDATE SET
 		   display_name = excluded.display_name,
 		   description = excluded.description,
@@ -3160,13 +3309,15 @@ func (s *Store) CreateProject(ctx context.Context, p *project.Project) error {
 		   parent_project_id = excluded.parent_project_id,
 		   drift_strictness = excluded.drift_strictness,
 		   default_agent_id = COALESCE(excluded.default_agent_id, projects.default_agent_id),
+		   nli_config_json = COALESCE(?11, projects.nli_config_json),
 		   archived_at = NULL`,
 		p.ProjectID, p.DisplayName, nullStr(p.Description), nullStr(p.ConstitutionID), nullStr(p.ConstitutionVer),
 		p.CreatedAt, nullStr(p.ArchivedAt), nullStr(p.ParentProjectID),
-		nullStr(driftStrictnessOrDefault(p.DriftStrictness)), defaultAgent)
+		nullStr(driftStrictnessOrDefault(p.DriftStrictness)), defaultAgent, nliJSON)
 	if err != nil {
 		return err
 	}
+	_ = nliValid // reserved for future audit; kept so the bound var is unambiguous to readers.
 	// Seed a 'default' project if this is the first project and 'default' doesn't exist.
 	var n int
 	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM projects WHERE project_id = 'default'`).Scan(&n)
@@ -3183,11 +3334,11 @@ func (s *Store) GetProject(ctx context.Context, projectID string) (*project.Proj
 		return nil, err
 	}
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, project_id, display_name, description, constitution_id, constitution_ver, created_at, archived_at, parent_project_id, drift_strictness, default_agent_id
+		`SELECT id, project_id, display_name, description, constitution_id, constitution_ver, created_at, archived_at, parent_project_id, drift_strictness, default_agent_id, nli_config_json
 		 FROM projects WHERE project_id = ?`, projectID)
 	var p project.Project
-	var desc, consID, consVer, archived, parent, drift, defaultAgent sql.NullString
-	if err := row.Scan(&p.ID, &p.ProjectID, &p.DisplayName, &desc, &consID, &consVer, &p.CreatedAt, &archived, &parent, &drift, &defaultAgent); err != nil {
+	var desc, consID, consVer, archived, parent, drift, defaultAgent, nliJSON sql.NullString
+	if err := row.Scan(&p.ID, &p.ProjectID, &p.DisplayName, &desc, &consID, &consVer, &p.CreatedAt, &archived, &parent, &drift, &defaultAgent, &nliJSON); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
@@ -3214,6 +3365,20 @@ func (s *Store) GetProject(ctx context.Context, projectID string) (*project.Proj
 	if defaultAgent.Valid {
 		p.DefaultAgentID = defaultAgent.String
 	}
+	// v2.20.0 T07: parse nli_config_json. Parse failures are logged
+	// + treated as no-config (graceful degradation — same posture as
+	// drift_strictness defaults). The operator can fix the JSON via
+	// project_create replay once the column is populated correctly.
+	if nliJSON.Valid && nliJSON.String != "" {
+		var cfg project.NLIConfig
+		if err := json.Unmarshal([]byte(nliJSON.String), &cfg); err != nil {
+			// Log to stderr; keep going with no NLIConfig.
+			fmt.Fprintf(os.Stderr, "dark-memory: projects[%s].nli_config_json parse failed: %v\n", projectID, err)
+		} else {
+			// Strip AuthToken on read — never echoed in tool results.
+			p.NLIConfig = cfg.Redacted()
+		}
+	}
 	return &p, nil
 }
 
@@ -3222,7 +3387,7 @@ func (s *Store) ListProjects(ctx context.Context, limit int) ([]project.Project,
 		limit = 100
 	}
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, project_id, display_name, description, constitution_id, constitution_ver, created_at, archived_at, parent_project_id, drift_strictness, default_agent_id
+		`SELECT id, project_id, display_name, description, constitution_id, constitution_ver, created_at, archived_at, parent_project_id, drift_strictness, default_agent_id, nli_config_json
 		 FROM projects
 		 WHERE archived_at IS NULL
 		 ORDER BY created_at DESC, project_id ASC
@@ -3234,8 +3399,8 @@ func (s *Store) ListProjects(ctx context.Context, limit int) ([]project.Project,
 	out := []project.Project{}
 	for rows.Next() {
 		var p project.Project
-		var desc, consID, consVer, archived, parent, drift, defaultAgent sql.NullString
-		if err := rows.Scan(&p.ID, &p.ProjectID, &p.DisplayName, &desc, &consID, &consVer, &p.CreatedAt, &archived, &parent, &drift, &defaultAgent); err != nil {
+		var desc, consID, consVer, archived, parent, drift, defaultAgent, nliJSON sql.NullString
+		if err := rows.Scan(&p.ID, &p.ProjectID, &p.DisplayName, &desc, &consID, &consVer, &p.CreatedAt, &archived, &parent, &drift, &defaultAgent, &nliJSON); err != nil {
 			return nil, err
 		}
 		if desc.Valid {
@@ -3258,6 +3423,14 @@ func (s *Store) ListProjects(ctx context.Context, limit int) ([]project.Project,
 		}
 		if defaultAgent.Valid {
 			p.DefaultAgentID = defaultAgent.String
+		}
+		if nliJSON.Valid && nliJSON.String != "" {
+			var cfg project.NLIConfig
+			if err := json.Unmarshal([]byte(nliJSON.String), &cfg); err != nil {
+				fmt.Fprintf(os.Stderr, "dark-memory: projects[%s].nli_config_json parse failed: %v\n", p.ProjectID, err)
+			} else {
+				p.NLIConfig = cfg.Redacted()
+			}
 		}
 		out = append(out, p)
 	}
