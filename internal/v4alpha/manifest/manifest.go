@@ -238,9 +238,6 @@ WHERE id = ?
 	return scanEntry(row.Scan)
 }
 
-// ErrManifestNotFound is declared with the other sentinel errors at
-// the top of this file.
-
 // ListByArtifact returns every Entry for the given artifact_id, ordered
 // by signed_at ASC (oldest first). Returns an empty slice (not nil) when
 // no rows match.

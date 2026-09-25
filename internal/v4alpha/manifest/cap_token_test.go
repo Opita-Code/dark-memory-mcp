@@ -232,9 +232,9 @@ func TestExample_IsValidScopeName_RejectsMalformed(t *testing.T) {
 		"manifest: read",
 		"-:read",
 		"manifest:-",
-		"a:",                 // resource too short for 1 char + colon + empty action
+		"a:",                // resource too short for 1 char + colon + empty action
 		"a:b:c:d:e:f:g:h:i", // way too long
-		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:b", // resource > 32 chars
+		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:b",   // resource > 32 chars
 		"a:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", // action > 32 chars
 	}
 	for _, s := range cases {

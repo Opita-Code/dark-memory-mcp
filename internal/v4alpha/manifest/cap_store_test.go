@@ -255,9 +255,24 @@ func TestExample_CapStore_CheckReturnsActiveTokens(t *testing.T) {
 
 	base := time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC)
 	// three tokens for "operator-nico"
-	c1 := mustCap(t, func(c *CapToken) { c.ID = "cap-1"; c.Operator = "operator-nico"; c.GrantedAt = base; c.ExpiresAt = base.Add(24 * time.Hour) })
-	c2 := mustCap(t, func(c *CapToken) { c.ID = "cap-2"; c.Operator = "operator-nico"; c.GrantedAt = base.Add(1 * time.Hour); c.ExpiresAt = base.Add(25 * time.Hour) })
-	c3 := mustCap(t, func(c *CapToken) { c.ID = "cap-3"; c.Operator = "operator-nico"; c.GrantedAt = base.Add(2 * time.Hour); c.ExpiresAt = base.Add(48 * time.Hour) })
+	c1 := mustCap(t, func(c *CapToken) {
+		c.ID = "cap-1"
+		c.Operator = "operator-nico"
+		c.GrantedAt = base
+		c.ExpiresAt = base.Add(24 * time.Hour)
+	})
+	c2 := mustCap(t, func(c *CapToken) {
+		c.ID = "cap-2"
+		c.Operator = "operator-nico"
+		c.GrantedAt = base.Add(1 * time.Hour)
+		c.ExpiresAt = base.Add(25 * time.Hour)
+	})
+	c3 := mustCap(t, func(c *CapToken) {
+		c.ID = "cap-3"
+		c.Operator = "operator-nico"
+		c.GrantedAt = base.Add(2 * time.Hour)
+		c.ExpiresAt = base.Add(48 * time.Hour)
+	})
 	for _, c := range []*CapToken{c1, c2, c3} {
 		if err := store.Grant(ctx, c); err != nil {
 			t.Fatalf("Grant %s: %v", c.ID, err)

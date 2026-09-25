@@ -106,7 +106,7 @@ func Sign(e *Entry, priv ed25519.PrivateKey) error {
 // Verify reports whether e.Signature is a valid Ed25519 signature
 // over CanonicalBytes(e) for the given public key. Returns true on
 // success, false + ErrBadSignature on signature mismatch, and
-// ErrBadSignatureLength / ErrVerifyNilKey for bad inputs.
+// ErrBadSignatureLength / ErrVerifyBadKey / ErrVerifyNilEntry for bad inputs.
 //
 // IMPORTANT: Verify does NOT check that the canonical bytes match the
 // stored SHA256 — that is the caller's job. Verify only confirms that

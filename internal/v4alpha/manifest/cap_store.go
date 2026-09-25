@@ -18,8 +18,9 @@ var (
 	// same id is rejected so audit history stays linear.
 	ErrCapExists = errors.New("manifest: cap token already exists")
 
-	// ErrCapNotFound is returned by Get, Revoke, and Check when the
-	// requested id or operator has no matching row.
+	// ErrCapNotFound is returned by Get and Revoke when the requested
+	// id has no matching row. Check never returns it: an operator with
+	// no active tokens gets an empty (non-nil) slice instead.
 	ErrCapNotFound = errors.New("manifest: cap token not found")
 
 	// ErrCapAlreadyRevoked is returned by Revoke when the token's

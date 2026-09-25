@@ -75,8 +75,10 @@ type CapToken struct {
 	// means "not revoked".
 	RevokedAt time.Time
 
-	// Signature is the Ed25519 signature over the canonical form produced
-	// by CanonicalBytes (see sign.go). Verify separately via VerifyCap.
+	// Signature is the Ed25519 signature over the token's canonical form.
+	// CanonicalBytes in sign.go covers Entry, not CapToken; the CapToken
+	// canonical form is a future slice. Verify separately via CapStore
+	// + Verify once the form lands.
 	Signature []byte
 
 	// SignedBy is the operator identity whose private key produced
@@ -85,8 +87,9 @@ type CapToken struct {
 }
 
 // Validate enforces the structural invariants of a CapToken. It does NOT
-// verify the Ed25519 signature (use VerifyCap in sign.go for that) and
-// it does NOT check whether the token is currently active (use CapStore.Check).
+// verify the Ed25519 signature (no CapToken verifier exists yet; Entry
+// verification lives in Verify/VerifyContent in sign.go) and it does NOT
+// check whether the token is currently active (use CapStore.Check).
 //
 // Returns nil if every field is well-formed, otherwise an error wrapping
 // the matching sentinel. Callers should use errors.Is to discriminate.
