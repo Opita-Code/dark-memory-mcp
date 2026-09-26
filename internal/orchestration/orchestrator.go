@@ -31,12 +31,17 @@ package orchestration
 
 import (
 	"context"
+	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/artifact"
+	"github.com/dark-agents/dark-memory-mcp/internal/auditgate"
 	"github.com/dark-agents/dark-memory-mcp/internal/nli"
 	"github.com/dark-agents/dark-memory-mcp/internal/safety"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
@@ -113,6 +118,33 @@ type Orchestrator struct {
 	// flushed synchronously after each write. nil is safe — the
 	// orchestrator skips the call.
 	OnActiveSessionChanged func(projectID string)
+
+	// AuditGate (C6 dark-cli hookup, v3.0.0+): when non-nil, every
+	// PublishVibe call MUST have a corresponding AuditRecord in the
+	// gate's store with a publisher pubkey the gate trusts, OR the
+	// publish is rejected. The gate is the consumer-side counterpart
+	// of dark-cli's `internal/audit/` producer package. Wired by
+	// main.go from DARK_AUDIT_DIR + trust-root config; nil means
+	// "no gate configured → bypass (permissive)" so a vanilla
+	// dark-memory-mcp install still works without dark-cli.
+	AuditGate *auditgate.ReferenceGate
+
+	// TrustRootsDir is the directory from which to load trust roots
+	// (raw ed25519 pubkey files, one per file, basename is the id).
+	// When set and non-empty, the orchestrator loads every *.pubkey
+	// file in the directory into the gate's trust set. When empty,
+	// the gate is configured with whatever roots the harness wired
+	// via WithAuditGate directly. Wired by main.go from
+	// DARK_TRUST_ROOTS_DIR or defaults.
+	TrustRootsDir string
+
+	// pendingAuditProvenance is set by checkAuditGate on accept and
+	// read by PublishVibe when constructing the PublishResult.
+	// Cleared via defer after the result is built. NOT safe for
+	// concurrent publish_vibe calls (single-flight assumption;
+	// parallel publishes would race on this field — guarded by the
+	// caller not invoking vibe_publish concurrently).
+	pendingAuditProvenance *auditgate.Provenance
 }
 
 // New constructs an Orchestrator with the given Store and Safety
@@ -231,16 +263,52 @@ func (o *Orchestrator) WithMaterializer(m *artifact.Materializer) *Orchestrator 
 	return o
 }
 
+// WithAuditGate injects the gate that PublishVibe checks before
+// persisting an artifact. nil → permissive (gate bypassed).
+//
+// The gate is the consumer-side counterpart of dark-cli's
+// `internal/audit/` producer package. See
+// /dark-cli/docs/AUDIT.md for the full protocol. Wired by main.go
+// from DARK_AUDIT_DIR (store dir) + the harness's trust-root set.
+// Tests inject a ReferenceGate pointed at a t.TempDir() store.
+//
+// TrustRootsDir is also set here when non-empty so the gate's trust
+// set is loaded from disk at first publish (not at construction
+// time — operators can drop new pubkey files without restarting
+// the MCP).
+func (o *Orchestrator) WithAuditGate(g *auditgate.ReferenceGate, trustRootsDir string) *Orchestrator {
+	o.AuditGate = g
+	o.TrustRootsDir = trustRootsDir
+	return o
+}
+
+// loadAuditGateRoots returns the trust roots the orchestrator should
+// configure the gate with. If TrustRootsDir is set, load every
+// *.pubkey file in the directory (raw 32-byte ed25519 pubkey, one
+// per file). Returns nil on any error — the caller falls back to
+// "no trust roots → gate rejects all" (fail closed).
+func (o *Orchestrator) loadAuditGateRoots() []ed25519.PublicKey {
+	if o.TrustRootsDir == "" {
+		return nil
+	}
+	roots, err := loadPubkeysFromDir(o.TrustRootsDir)
+	if err != nil {
+		log.Printf("dark-mem-mcp: load trust roots from %s: %v (gate will reject all)", o.TrustRootsDir, err)
+		return nil
+	}
+	return roots
+}
+
 // materializeForPublish is the T11 bridge that converts caller-
 // supplied text into a content-addressed ArtifactRef. It is the
 // central audit-trail fix for the publish_vibe judge pipeline:
 //
-//   1. If a Materializer is injected → use it (stable BaseDir).
-//   2. Otherwise → fall back to artifact.MaterializeFromText
-//      (env-driven: DARK_MATERIALIZE_DIR / UserCacheDir / TempDir).
-//   3. Idempotent: same text + sourceTag → same ArtifactRef.
-//   4. Atomic write: readers never see partial bytes (T03 contract).
-//   5. HardMaxBytes (4 MiB) enforced at entry.
+//  1. If a Materializer is injected → use it (stable BaseDir).
+//  2. Otherwise → fall back to artifact.MaterializeFromText
+//     (env-driven: DARK_MATERIALIZE_DIR / UserCacheDir / TempDir).
+//  3. Idempotent: same text + sourceTag → same ArtifactRef.
+//  4. Atomic write: readers never see partial bytes (T03 contract).
+//  5. HardMaxBytes (4 MiB) enforced at entry.
 //
 // Returns:
 //   - ArtifactRef{Kind: KindFile, Path: <sha256>.txt} on success.
@@ -428,4 +496,48 @@ func verdictToVLP(v string) vlp.Verdict {
 	default:
 		return vlp.VerdictUnknown
 	}
+}
+
+// loadPubkeysFromDir reads every *.pubkey file in dir and returns
+// them as ed25519.PublicKey values. Each file is the raw 32-byte
+// ed25519 public key (matches dark-cli's templates/trust/*.pubkey
+// format). Files that are not exactly 32 bytes or that cannot be
+// read are logged and skipped. Files whose basename starts with a
+// dot (.) are skipped (operators can disable a root by renaming it).
+//
+// On directory-not-found error, returns (nil, nil) — caller treats
+// "no roots dir" as "no roots configured" (fail closed if the gate
+// is otherwise configured).
+func loadPubkeysFromDir(dir string) ([]ed25519.PublicKey, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("readdir %s: %w", dir, err)
+	}
+	var out []ed25519.PublicKey
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if strings.HasPrefix(name, ".") {
+			continue
+		}
+		if !strings.HasSuffix(name, ".pubkey") {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			log.Printf("dark-mem-mcp: skip trust root %s: read: %v", name, err)
+			continue
+		}
+		if len(b) != ed25519.PublicKeySize {
+			log.Printf("dark-mem-mcp: skip trust root %s: got %d bytes, want %d", name, len(b), ed25519.PublicKeySize)
+			continue
+		}
+		out = append(out, ed25519.PublicKey(b))
+	}
+	return out, nil
 }

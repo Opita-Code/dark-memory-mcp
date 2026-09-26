@@ -34,6 +34,7 @@ import (
 
 	"github.com/dark-agents/dark-memory-mcp/internal/agentmemory"
 	"github.com/dark-agents/dark-memory-mcp/internal/artifact"
+	"github.com/dark-agents/dark-memory-mcp/internal/auditgate"
 	"github.com/dark-agents/dark-memory-mcp/internal/errorobs"
 	"github.com/dark-agents/dark-memory-mcp/internal/judgeparse"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
@@ -136,6 +137,13 @@ type PublishResult struct {
 	Confidence       float32 `json:"confidence"`  // 0..1; 0 if skipped or no-LLM
 	NextAction       string  `json:"next_action"` // publish | reconcile | human_gate | poll
 	Reasoning        string  `json:"reasoning"`   // human-readable explanation
+
+	// AuditProvenance (C6 dark-cli hookup): when non-nil, this is
+	// the provenance projection from the dark-cli AuditRecord the
+	// gate used to admit (or reject-with-evidence) the artifact.
+	// When the gate is not configured, or no body was resolvable
+	// (URL-only), this field is nil — publish_vibe still succeeds.
+	AuditProvenance *auditgate.Provenance `json:"audit_provenance,omitempty"`
 	// ActiveAgentID (v2.4.1) echoes the resolved agent_id used for
 	// drift_judge enrichment. Empty when no agent_id is configured.
 	ActiveAgentID string `json:"active_agent_id,omitempty"`
@@ -225,12 +233,66 @@ func (o *Orchestrator) PublishVibe(ctx context.Context, in PublishVibeInput) (*P
 	// advances spec_active → drift_judging. Best-effort.
 	o.emitVLP(ctx, in.SessionID, "orchestrator_publish_vibe", vlp.EventArtifactLog)
 
+	// C6 dark-cli hookup: audit gate pre-write check. Runs BEFORE
+	// the LLM-judge pipeline so an untrusted artifact never costs
+	// a judge call. See /dark-cli/docs/AUDIT.md for the full
+	// protocol.
+	//
+	// Three states:
+	//   1. Gate not configured (o.AuditGate == nil) → bypass;
+	//      vanilla dark-memory-mcp still works without dark-cli.
+	//   2. No resolvable artifact body (URL-only or empty ref) →
+	//      bypass; the gate can't compute a SHA so it has nothing
+	//      to look up. Logged at debug so operators notice.
+	//   3. Resolvable body → gate.Check; on accept, attach
+	//      result.AuditProvenance; on reject, persist drift_log
+	//      (mirror of the no-LLM-judge pattern) + return.
+	if o.AuditGate != nil {
+		gateResult, gateErr := o.checkAuditGate(ctx, in)
+		if gateErr != nil {
+			// Persist drift_log with verdict=drift_detected so the
+			// audit trail is complete (operator can find the row
+			// later). Same pattern as LLM-unavailable.
+			d := &vibeflow.DriftReport{
+				ArtifactID:     artifactID,
+				SpecID:         specID,
+				Verdict:        "drift_detected",
+				JudgeReasoning: "audit gate rejected: " + gateErr.Error(),
+				CreatedAt:      o.now().Format(time.RFC3339Nano),
+			}
+			dID, derr := o.Store.SaveDriftReport(ctx, wc, d)
+			if derr != nil {
+				o.RecordError(ctx, "publish_vibe", in.SessionID,
+					fmt.Errorf("audit gate: drift_log save: %w", derr), errorobs.SeverityWarn)
+			}
+			return &PublishResult{
+				SpecID:          specID,
+				ArtifactID:      artifactID,
+				DriftID:         dID,
+				Verdict:         "drift_detected",
+				NextAction:      "reconcile",
+				Reasoning:       "audit gate rejected: " + gateErr.Error(),
+				AuditProvenance: gateResult, // may be nil on missing-record; non-nil on untrusted/stale
+			}, nil
+		}
+		// On accept: stash Provenance on the result below.
+		// We attach it AFTER constructing the result struct (the
+		// result is declared a few lines below).
+		o.pendingAuditProvenance = gateResult
+		defer func() { o.pendingAuditProvenance = nil }()
+	}
+
 	result := &PublishResult{
 		SpecID:     specID,
 		ArtifactID: artifactID,
 		Verdict:    "needs_human", // pessimistic default; updated after drift
 		NextAction: "human_gate",
 		Reasoning:  "drift check pending",
+	}
+	// C6 dark-cli hookup: if the audit gate accepted, attach the
+	// provenance projection. nil on bypass or missing-record.
+	if o.pendingAuditProvenance != nil {
+		result.AuditProvenance = o.pendingAuditProvenance
 	}
 
 	// v2.4.1: resolve the active agent_id for drift_judge enrichment.

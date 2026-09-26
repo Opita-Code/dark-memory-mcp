@@ -50,6 +50,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/dark-agents/dark-memory-mcp/internal/auditgate"
 	"github.com/dark-agents/dark-memory-mcp/internal/orchestration"
 	"github.com/dark-agents/dark-memory-mcp/internal/safety"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
@@ -150,6 +151,30 @@ func Boot(ctx context.Context) (*BootState, error) {
 	// Construct the orchestrator. WithBackends / WithLLMSelector can
 	// be applied by the caller after Boot (e.g. for tests).
 	orch := orchestration.New(st, safe)
+
+	// C6 dark-cli hookup: configure the audit gate from env vars.
+	// DARK_AUDIT_DIR points at the directory where dark-cli writes
+	// AuditRecord files (one per <sha256>.json). When the var is
+	// unset, the gate is left nil and PublishVibe bypasses the
+	// check — so a vanilla dark-memory-mcp install still works
+	// without dark-cli.
+	//
+	// DARK_TRUST_ROOTS_DIR points at the directory of *.pubkey
+	// files (raw 32-byte ed25519 pubkeys). Defaults to
+	// <UserConfigDir>/dark-cli/trust. Together with DARK_AUDIT_DIR
+	// these env vars wire dark-memory to a dark-cli install on the
+	// same host (the §10 cross-host gap from docs/AUDIT.md).
+	auditDir := strings.TrimSpace(os.Getenv("DARK_AUDIT_DIR"))
+	trustDir := strings.TrimSpace(os.Getenv("DARK_TRUST_ROOTS_DIR"))
+	if auditDir != "" {
+		store2 := auditgate.Open(auditDir)
+		gate := auditgate.NewReferenceGate(store2, nil)
+		orch.WithAuditGate(gate, trustDir)
+		log.Printf("dark-mem-mcp: boot step5 ok audit gate configured (audit_dir=%s trust_roots_dir=%q)",
+			auditDir, trustDir)
+	} else {
+		log.Printf("dark-mem-mcp: boot step5 audit gate bypassed (DARK_AUDIT_DIR not set)")
+	}
 
 	// Construct the registry. Tools are added by the per-namespace
 	// tool files via Register* functions called by the binary's
