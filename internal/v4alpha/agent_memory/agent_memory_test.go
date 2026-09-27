@@ -342,6 +342,96 @@ func TestArchive_NotFoundReturnsError(t *testing.T) {
 	}
 }
 
+// --- Update ---
+
+func TestUpdate_MutatesFieldsAndReSyncsFTS(t *testing.T) {
+	cleanup, s := newTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	id, err := s.Save(ctx, "nico", KindNote, "original", "the busy_timeout was set wrong", "BUG-5", false)
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// Update content + tags + pinned. Title left untouched (nil).
+	pin := true
+	newContent := "the busy_timeout pragma is the right fix"
+	newTags := "BUG-5,SQLite,fix"
+	if err := s.Update(ctx, id, nil, &newContent, &newTags, &pin); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	got, err := s.Get(ctx, id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Content != newContent {
+		t.Errorf("content = %q; want %q", got.Content, newContent)
+	}
+	if got.Tags != newTags {
+		t.Errorf("tags = %q; want %q", got.Tags, newTags)
+	}
+	if !got.Pinned {
+		t.Errorf("pinned = false; want true")
+	}
+	if got.Title != "original" {
+		t.Errorf("title = %q; want %q (nil should leave it alone)", got.Title, "original")
+	}
+
+	// FTS5 sync: the NEW content must be searchable.
+	rows, err := s.Recall(ctx, "nico", "pragma", 10)
+	if err != nil {
+		t.Fatalf("Recall after update: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Errorf("FTS5 sync broken: recall count = %d; want 1", len(rows))
+	}
+	// The OLD content keyword must NOT match anymore.
+	rows, err = s.Recall(ctx, "nico", "set_wrong OR wrong", 10)
+	if err != nil {
+		t.Fatalf("Recall for old content: %v", err)
+	}
+	for _, r := range rows {
+		if r.ID == id && strings.Contains(r.Content, "set wrong") {
+			t.Errorf("FTS5 stale entry: id=%d still has old content", r.ID)
+		}
+	}
+}
+
+func TestUpdate_RejectsEmptyContent(t *testing.T) {
+	cleanup, s := newTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	id, _ := s.Save(ctx, "nico", KindNote, "", "original", "", false)
+	empty := ""
+	if err := s.Update(ctx, id, nil, &empty, nil, nil); err == nil {
+		t.Fatal("expected error for empty content")
+	}
+}
+
+func TestUpdate_NotFound(t *testing.T) {
+	cleanup, s := newTestDB(t)
+	defer cleanup()
+	c := "x"
+	if err := s.Update(context.Background(), 99999, nil, &c, nil, nil); err == nil {
+		t.Fatal("expected ErrNotFound for missing id")
+	}
+}
+
+func TestUpdate_NoFieldsIsNoOp(t *testing.T) {
+	cleanup, s := newTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+	id, _ := s.Save(ctx, "nico", KindNote, "", "hello world", "tag", false)
+	if err := s.Update(ctx, id, nil, nil, nil, nil); err != nil {
+		t.Fatalf("Update with no fields: %v", err)
+	}
+	got, _ := s.Get(ctx, id)
+	if got.Content != "hello world" {
+		t.Errorf("content changed: got %q", got.Content)
+	}
+}
+
 // Suppress unused-import warnings if a refactor removes one of
 // the tests above (sql is referenced through store.OpenSQLite
 // internally; left here so the test file compiles cleanly

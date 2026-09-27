@@ -11,7 +11,9 @@ package mcp
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -36,7 +38,16 @@ func newTestDB(t *testing.T) (cleanup func()) {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
-	ctx := context.Background()
+	if err := applyAllSchemas(context.Background(), d); err != nil {
+		t.Fatalf("applyAllSchemas: %v", err)
+	}
+	return func() { _ = d.Close() }
+}
+
+// applyAllSchemas is the test-friendly version of the cmd/dark-
+// memory-v4 boot path. Centralised here so tests don't drift from
+// production.
+func applyAllSchemas(ctx context.Context, d *sql.DB) error {
 	for _, fn := range []struct {
 		name string
 		f    func() error
@@ -51,10 +62,29 @@ func newTestDB(t *testing.T) (cleanup func()) {
 		{"vibe/drift", func() error { return vibe.CreateDriftSchema(d) }},
 	} {
 		if err := fn.f(); err != nil {
-			t.Fatalf("%s schema: %v", fn.name, err)
+			return fmt.Errorf("%s schema: %w", fn.name, err)
 		}
 	}
-	return func() { _ = d.Close() }
+	return nil
+}
+
+// newTestServer returns a fully-initialised *Server + cleanup
+// func. Convenient for tests that need both.
+func newTestServer(t *testing.T) (cleanup func(), srv *Server) {
+	t.Helper()
+	dsn := filepath.Join(t.TempDir(), "srv_test.db")
+	d, err := store.OpenSQLite(context.Background(), dsn)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if err := applyAllSchemas(context.Background(), d); err != nil {
+		t.Fatalf("applyAllSchemas: %v", err)
+	}
+	s, err := NewServer(d)
+	if err != nil {
+		t.Fatalf("NewServer: %v", err)
+	}
+	return func() { _ = d.Close() }, s
 }
 
 // mcpRequest is the JSON-RPC 2.0 wire format. We only model the
@@ -256,16 +286,37 @@ func TestToolsList_ReturnsSixTools(t *testing.T) {
 	if err := json.Unmarshal(list.Result, &result); err != nil {
 		t.Fatalf("parse tools/list: %v", err)
 	}
-	if len(result.Tools) != 6 {
-		t.Errorf("tool count = %d; want 6 (BUG-7 MVP)", len(result.Tools))
+	if len(result.Tools) != 25 {
+		t.Errorf("tool count = %d; want 25 (BUG-7 MVP + BUG-8 batch 1)", len(result.Tools))
 	}
 	wantNames := map[string]bool{
+		// BUG-7 MVP
 		"dark_memory_health_ping":          false,
 		"dark_memory_session_start":        false,
 		"dark_memory_session_close":        false,
 		"dark_memory_session_status":       false,
 		"dark_memory_agent_memory_save":    false,
 		"dark_memory_agent_memory_recall":  false,
+		// BUG-8 batch 1
+		"dark_memory_session_resume":       false,
+		"dark_memory_session_heartbeat":    false,
+		"dark_memory_agent_memory_list":    false,
+		"dark_memory_agent_memory_get":     false,
+		"dark_memory_agent_memory_update":  false,
+		"dark_memory_agent_memory_archive": false,
+		"dark_memory_memory_state":         false,
+		"dark_memory_writes":               false,
+		"dark_memory_anomalies":            false,
+		"dark_memory_error_summary":        false,
+		"dark_memory_error_list":           false,
+		"dark_memory_error_get":            false,
+		"dark_memory_error_resolve":        false,
+		"dark_memory_active_policy":        false,
+		"dark_memory_load_constitution":    false,
+		"dark_memory_vibe_spec":            false,
+		"dark_memory_vibe_publish":         false,
+		"dark_memory_vibe_pipeline_status": false,
+		"dark_memory_vibe_resolve_drift":   false,
 	}
 	for _, t1 := range result.Tools {
 		if _, ok := wantNames[t1.Name]; ok {
@@ -568,6 +619,310 @@ func TestAgentMemorySave_RejectsInvalidKind(t *testing.T) {
 	}
 	if !strings.Contains(wrapper.Content[0].Text, "invalid kind") {
 		t.Errorf("error text should mention 'invalid kind'; got %q", wrapper.Content[0].Text)
+	}
+}
+
+// --- BUG-8 batch 1: agent_memory list/get/update/archive ---
+
+func TestAgentMemoryListAndGet(t *testing.T) {
+	cleanup, srv := newTestServer(t)
+	defer cleanup()
+	listResp := driveOn(t, srv, append(handshake(),
+		callTool(10, "dark_memory_agent_memory_save", map[string]any{"operator": "nico", "kind": "note", "content": "row one", "pinned": true}),
+		callTool(11, "dark_memory_agent_memory_save", map[string]any{"operator": "nico", "kind": "finding", "content": "row two"}),
+		callTool(12, "dark_memory_agent_memory_list", map[string]any{"operator": "nico"}),
+		callTool(13, "dark_memory_agent_memory_get", map[string]any{"id": float64(1)}),
+		callTool(14, "dark_memory_agent_memory_get", map[string]any{"id": float64(9999)}),
+	), 12, 13, 14)
+	if len(listResp) != 3 {
+		t.Fatalf("got %d responses; want 3 (list, get, get-miss)", len(listResp))
+	}
+	var listOut struct {
+		Operator string `json:"operator"`
+		Count    int    `json:"count"`
+	}
+	if err := extractToolText(t, listResp[0].Result, &listOut); err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if listOut.Count != 2 {
+		t.Errorf("list count = %d; want 2", listOut.Count)
+	}
+	var getOut struct {
+		ID  int64 `json:"id"`
+		Row *struct {
+			Content string `json:"content"`
+		} `json:"row"`
+	}
+	if err := extractToolText(t, listResp[1].Result, &getOut); err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if getOut.Row == nil || getOut.Row.Content != "row one" {
+		t.Errorf("get id=1 row = %+v; want content=row one", getOut.Row)
+	}
+	var missOut struct {
+		Found bool `json:"found"`
+	}
+	if err := extractToolText(t, listResp[2].Result, &missOut); err != nil {
+		t.Fatalf("get-miss: %v", err)
+	}
+	if missOut.Found {
+		t.Errorf("get id=9999 should report found=false")
+	}
+}
+
+func TestAgentMemoryUpdateAndArchive(t *testing.T) {
+	cleanup, srv := newTestServer(t)
+	defer cleanup()
+	responses := driveOn(t, srv, append(handshake(),
+		callTool(10, "dark_memory_agent_memory_save", map[string]any{"operator": "nico", "kind": "note", "content": "original", "tags": "a,b"}),
+		callTool(11, "dark_memory_agent_memory_update", map[string]any{"id": float64(1), "content": "updated", "tags": "x,y"}),
+		callTool(12, "dark_memory_agent_memory_recall", map[string]any{"operator": "nico", "query": "updated"}),
+		callTool(13, "dark_memory_agent_memory_archive", map[string]any{"id": float64(1)}),
+		callTool(14, "dark_memory_agent_memory_recall", map[string]any{"operator": "nico", "query": "updated"}),
+	), 12, 14)
+	if len(responses) != 2 {
+		t.Fatalf("got %d; want 2", len(responses))
+	}
+	var recallBefore struct {
+		Count int `json:"count"`
+	}
+	if err := extractToolText(t, responses[0].Result, &recallBefore); err != nil {
+		t.Fatalf("recall before: %v", err)
+	}
+	if recallBefore.Count != 1 {
+		t.Errorf("recall after update count = %d; want 1 (FTS5 sync)", recallBefore.Count)
+	}
+	var recallAfter struct {
+		Count int `json:"count"`
+	}
+	if err := extractToolText(t, responses[1].Result, &recallAfter); err != nil {
+		t.Fatalf("recall after: %v", err)
+	}
+	if recallAfter.Count != 0 {
+		t.Errorf("recall after archive count = %d; want 0", recallAfter.Count)
+	}
+}
+
+// --- BUG-8 batch 1: session resume + heartbeat ---
+
+func TestSessionResumeAndHeartbeat(t *testing.T) {
+	cleanup, srv := newTestServer(t)
+	defer cleanup()
+	startResp := driveOn(t, srv, append(handshake(),
+		callTool(3, "dark_memory_session_start", map[string]any{"operator": "nico"}),
+	), 3)
+	if len(startResp) != 1 {
+		t.Fatalf("pass 1: got %d; want 1", len(startResp))
+	}
+	var startOut sessionStartOutput
+	if err := extractToolText(t, startResp[0].Result, &startOut); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if startOut.SessionID == "" {
+		t.Fatal("empty session_id")
+	}
+	sid := startOut.SessionID
+	resp2 := driveOn(t, srv, append(handshake(),
+		callTool(4, "dark_memory_session_heartbeat", map[string]any{"session_id": sid}),
+		callTool(5, "dark_memory_session_resume", map[string]any{"session_id": sid}),
+	), 4, 5)
+	var hbResp struct {
+		Refreshed bool `json:"refreshed"`
+	}
+	if err := extractToolText(t, resp2[0].Result, &hbResp); err != nil {
+		t.Fatalf("heartbeat: %v", err)
+	}
+	if !hbResp.Refreshed {
+		t.Errorf("heartbeat refreshed = false")
+	}
+	var resumeResp struct {
+		Status string `json:"status"`
+	}
+	if err := extractToolText(t, resp2[1].Result, &resumeResp); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	if resumeResp.Status != "open" {
+		t.Errorf("resume status = %q; want open", resumeResp.Status)
+	}
+}
+
+// --- BUG-8 batch 1: observability ---
+
+func TestObservabilityTools(t *testing.T) {
+	cleanup, srv := newTestServer(t)
+	defer cleanup()
+	responses := driveOn(t, srv, append(handshake(),
+		callTool(10, "dark_memory_memory_state", map[string]any{}),
+		callTool(11, "dark_memory_writes", map[string]any{"limit": 5}),
+		callTool(12, "dark_memory_anomalies", map[string]any{}),
+	), 10, 11, 12)
+	if len(responses) != 3 {
+		t.Fatalf("got %d; want 3", len(responses))
+	}
+	var state struct {
+		DBOpen bool `json:"db_open"`
+	}
+	if err := extractToolText(t, responses[0].Result, &state); err != nil {
+		t.Fatalf("memory_state: %v", err)
+	}
+	if !state.DBOpen {
+		t.Errorf("memory_state db_open = false; want true")
+	}
+	var writes struct {
+		Limit int `json:"limit"`
+	}
+	if err := extractToolText(t, responses[1].Result, &writes); err != nil {
+		t.Fatalf("writes: %v", err)
+	}
+	if writes.Limit != 5 {
+		t.Errorf("writes limit echo = %d; want 5", writes.Limit)
+	}
+	var anomalies struct {
+		Count int `json:"count"`
+	}
+	if err := extractToolText(t, responses[2].Result, &anomalies); err != nil {
+		t.Fatalf("anomalies: %v", err)
+	}
+	if anomalies.Count != 0 {
+		t.Errorf("anomalies count = %d; want 0 (fresh DB)", anomalies.Count)
+	}
+}
+
+// --- BUG-8 batch 1: error_obs ---
+
+func TestErrorObsTools(t *testing.T) {
+	cleanup, srv := newTestServer(t)
+	defer cleanup()
+	responses := driveOn(t, srv, append(handshake(),
+		callTool(10, "dark_memory_error_summary", map[string]any{}),
+		callTool(11, "dark_memory_error_list", map[string]any{}),
+		callTool(12, "dark_memory_error_resolve", map[string]any{"id": float64(9999), "operator": "nico", "note": "missing"}),
+	), 10, 11, 12)
+	var summary struct {
+		HoursWindow int `json:"hours_window"`
+	}
+	if err := extractToolText(t, responses[0].Result, &summary); err != nil {
+		t.Fatalf("error_summary: %v", err)
+	}
+	if summary.HoursWindow != 1 {
+		t.Errorf("error_summary hours_window = %d; want 1", summary.HoursWindow)
+	}
+	if responses[2].Error != nil {
+		return
+	}
+	var wrapper struct {
+		IsError bool `json:"isError"`
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(responses[2].Result, &wrapper); err != nil {
+		t.Fatalf("resolve unmarshal: %v", err)
+	}
+	if !wrapper.IsError {
+		t.Errorf("error_resolve on missing id should be isError=true")
+	}
+}
+
+// --- BUG-8 batch 1: policy ---
+
+func TestPolicyTools(t *testing.T) {
+	cleanup, srv := newTestServer(t)
+	defer cleanup()
+	responses := driveOn(t, srv, append(handshake(),
+		callTool(10, "dark_memory_active_policy", map[string]any{}),
+		callTool(11, "dark_memory_load_constitution", map[string]any{}),
+	), 10, 11)
+	var policy struct {
+		Driver string `json:"driver"`
+		Active bool   `json:"active"`
+	}
+	if err := extractToolText(t, responses[0].Result, &policy); err != nil {
+		t.Fatalf("active_policy: %v", err)
+	}
+	if policy.Driver != "sqlite" || !policy.Active {
+		t.Errorf("active_policy = %+v; want driver=sqlite active=true", policy)
+	}
+	var constitution struct {
+		Parsed map[string]any `json:"parsed"`
+	}
+	if err := extractToolText(t, responses[1].Result, &constitution); err != nil {
+		t.Fatalf("load_constitution: %v", err)
+	}
+	if _, ok := constitution.Parsed["invariants"]; !ok {
+		t.Errorf("load_constitution missing 'invariants' key")
+	}
+}
+
+// --- BUG-8 batch 1: vibe spec → publish → status → resolve ---
+
+func TestVibeSpecPublishStatusResolve(t *testing.T) {
+	cleanup, srv := newTestServer(t)
+	defer cleanup()
+	responses := driveOn(t, srv, append(handshake(),
+		callTool(10, "dark_memory_vibe_spec", map[string]any{
+			"vibe_case": "C1",
+			"intent":    "smoke test",
+			"tasks":     []map[string]any{{"id": "t1", "description": "hello"}},
+		}),
+		callTool(11, "dark_memory_vibe_publish", map[string]any{
+			"spec_id": float64(1),
+			"type":    "text",
+			"text":    "hello world",
+		}),
+		callTool(12, "dark_memory_vibe_pipeline_status", map[string]any{"artifact_id": float64(1)}),
+		callTool(13, "dark_memory_vibe_resolve_drift", map[string]any{
+			"drift_id": float64(1), "decision": "accept", "operator": "nico",
+		}),
+	), 10, 11, 12, 13)
+	if len(responses) != 4 {
+		t.Fatalf("got %d; want 4", len(responses))
+	}
+	var specResp struct {
+		SpecID int64 `json:"spec_id"`
+	}
+	if err := extractToolText(t, responses[0].Result, &specResp); err != nil {
+		t.Fatalf("vibe_spec: %v", err)
+	}
+	if specResp.SpecID != 1 {
+		t.Errorf("spec_id = %d; want 1", specResp.SpecID)
+	}
+	var pubResp struct {
+		ArtifactID int64   `json:"artifact_id"`
+		DriftID    int64   `json:"drift_id"`
+		Verdict    string  `json:"verdict"`
+		Confidence float64 `json:"confidence"`
+	}
+	if err := extractToolText(t, responses[1].Result, &pubResp); err != nil {
+		t.Fatalf("vibe_publish: %v", err)
+	}
+	if pubResp.ArtifactID != 1 || pubResp.DriftID != 1 {
+		t.Errorf("publish ids = (%d, %d); want (1, 1)", pubResp.ArtifactID, pubResp.DriftID)
+	}
+	if pubResp.Verdict != "aligned" {
+		t.Errorf("publish verdict = %q; want aligned (NoOp judge)", pubResp.Verdict)
+	}
+	if pubResp.Confidence != 1.0 {
+		t.Errorf("publish confidence = %f; want 1.0", pubResp.Confidence)
+	}
+	var statusResp struct {
+		Verdict string `json:"verdict"`
+	}
+	if err := extractToolText(t, responses[2].Result, &statusResp); err != nil {
+		t.Fatalf("pipeline_status: %v", err)
+	}
+	if statusResp.Verdict != "aligned" {
+		t.Errorf("status verdict = %q; want aligned", statusResp.Verdict)
+	}
+	var resolveResp struct {
+		Decision string `json:"decision"`
+	}
+	if err := extractToolText(t, responses[3].Result, &resolveResp); err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if resolveResp.Decision != "accept" {
+		t.Errorf("resolve decision = %q; want accept", resolveResp.Decision)
 	}
 }
 

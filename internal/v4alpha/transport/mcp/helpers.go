@@ -5,9 +5,17 @@ package mcp
 
 import (
 	"encoding/json"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
+
+// nowRFC3339 returns the current time in canonical RFC3339
+// format. Used by every tool that surfaces a timestamp so the
+// output is grep-friendly.
+func nowRFC3339() string {
+	return time.Now().UTC().Format(time.RFC3339Nano)
+}
 
 // bindArgs unmarshals the JSON-RPC CallToolRequest arguments into
 // the target struct. mcp-go v0.40.0 returns arguments as

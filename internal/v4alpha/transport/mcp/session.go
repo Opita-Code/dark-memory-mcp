@@ -1,9 +1,15 @@
 // session_* tools — operator-facing session lifecycle. Maps the
 // v4alpha session.Store methods to MCP tools:
 //
-//   - dark_memory_session_start   → session.Store.Start
-//   - dark_memory_session_close   → session.Store.Close
-//   - dark_memory_session_status  → session.Store.Read (read-only)
+//   - dark_memory_session_start    → session.Store.Start
+//   - dark_memory_session_close    → session.Store.Close
+//   - dark_memory_session_status   → session.Store.Read (read-only)
+//   - dark_memory_session_resume   → session.Store.Read + Heartbeat (refresh)
+//   - dark_memory_session_heartbeat → session.Store.Heartbeat (no-op refresh)
+//
+// session_recover and session_resurrect are deferred to BUG-9
+// (they require the v3 closed_aborted detection + INV-8
+// inheritance semantics, both deferred).
 //
 // INV-7 enforcement (project_id filter on read) is preserved by
 // passing project_id explicitly to every tool. The default
@@ -26,9 +32,11 @@ import (
 )
 
 const (
-	sessionStartToolName  = "dark_memory_session_start"
-	sessionCloseToolName  = "dark_memory_session_close"
-	sessionStatusToolName = "dark_memory_session_status"
+	sessionStartToolName     = "dark_memory_session_start"
+	sessionCloseToolName     = "dark_memory_session_close"
+	sessionStatusToolName    = "dark_memory_session_status"
+	sessionResumeToolName    = "dark_memory_session_resume"
+	sessionHeartbeatToolName = "dark_memory_session_heartbeat"
 )
 
 const defaultProjectID = "dark-memory-v4"
@@ -37,6 +45,8 @@ func registerSessionTools(s *Server) {
 	registerSessionStart(s)
 	registerSessionClose(s)
 	registerSessionStatus(s)
+	registerSessionResume(s)
+	registerSessionHeartbeat(s)
 }
 
 // --- session_start ---
@@ -202,5 +212,110 @@ func registerSessionStatus(s *Server) {
 			out.ClosedAt = &s
 		}
 		return resultJSON(out)
+	})
+}
+
+// --- session_resume ---
+
+// session_resume is the canonical "rebind to existing session"
+// primitive. It validates the (session_id, project_id) pair
+// (INV-7) and refreshes the last_heartbeat_at so the sweeper
+// doesn't auto-close it during a long reasoning pause.
+//
+// Returns ErrNotFound if the session doesn't exist or the
+// project_id doesn't match.
+type sessionResumeInput struct {
+	SessionID string `json:"session_id" jsonschema:"required" jsonschema_description:"Existing session to rebind to"`
+	ProjectID string `json:"project_id,omitempty" jsonschema_description:"Project namespace (INV-7); defaults to dark-memory-v4"`
+}
+
+type sessionResumeOutput struct {
+	SessionID       string `json:"session_id"`
+	Operator        string `json:"operator"`
+	ProjectID       string `json:"project_id"`
+	Status          string `json:"status"`
+	LastHeartbeatAt string `json:"last_heartbeat_at"`
+}
+
+func registerSessionResume(s *Server) {
+	tool := mcp.NewTool(sessionResumeToolName,
+		mcp.WithDescription("Rebind to an existing session. Refreshes heartbeat; returns current state."),
+		mcp.WithInputSchema[sessionResumeInput](),
+	)
+	s.mcpSrv.AddTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		var in sessionResumeInput
+		if err := bindArgs(req, &in); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		if in.SessionID == "" {
+			return mcp.NewToolResultError("session_resume: session_id is required"), nil
+		}
+		projectID := in.ProjectID
+		if projectID == "" {
+			projectID = defaultProjectID
+		}
+
+		// Refresh first (lightweight write), then read (state).
+		if err := s.session.Heartbeat(ctx, in.SessionID); err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("session_resume: %v", err)), nil
+		}
+		sess, err := s.session.Read(ctx, in.SessionID, projectID)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("session_resume: %v", err)), nil
+		}
+		out := sessionResumeOutput{
+			SessionID:       sess.ID,
+			Operator:        sess.Operator,
+			ProjectID:       sess.ProjectID,
+			Status:          sess.Status,
+			LastHeartbeatAt: sess.LastHeartbeatAt.Format("2006-01-02T15:04:05.999999999Z07:00"),
+		}
+		return resultJSON(out)
+	})
+}
+
+// --- session_heartbeat ---
+
+// session_heartbeat is a no-op refresh: it bumps last_heartbeat_at
+// without changing anything else. Operators call it during long
+// reasoning pauses (>60s) so the sweeper doesn't auto-close the
+// session.
+type sessionHeartbeatInput struct {
+	SessionID string `json:"session_id" jsonschema:"required" jsonschema_description:"Session to heartbeat"`
+}
+
+type sessionHeartbeatOutput struct {
+	SessionID       string `json:"session_id"`
+	LastHeartbeatAt string `json:"last_heartbeat_at"`
+	Refreshed       bool  `json:"refreshed"`
+}
+
+func registerSessionHeartbeat(s *Server) {
+	tool := mcp.NewTool(sessionHeartbeatToolName,
+		mcp.WithDescription("Refresh session last_heartbeat_at. No-op if the session is closed."),
+		mcp.WithInputSchema[sessionHeartbeatInput](),
+	)
+	s.mcpSrv.AddTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		var in sessionHeartbeatInput
+		if err := bindArgs(req, &in); err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		if in.SessionID == "" {
+			return mcp.NewToolResultError("session_heartbeat: session_id is required"), nil
+		}
+		err := s.session.Heartbeat(ctx, in.SessionID)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("session_heartbeat: %v", err)), nil
+		}
+		// Read the row to surface the new heartbeat.
+		sess, err := s.session.Get(ctx, in.SessionID)
+		if err != nil {
+			return resultJSON(sessionHeartbeatOutput{SessionID: in.SessionID, Refreshed: true})
+		}
+		return resultJSON(sessionHeartbeatOutput{
+			SessionID:       sess.ID,
+			LastHeartbeatAt: sess.LastHeartbeatAt.Format("2006-01-02T15:04:05.999999999Z07:00"),
+			Refreshed:       true,
+		})
 	})
 }

@@ -104,7 +104,8 @@ func CreateSchema(db *sql.DB) error {
 			content    TEXT    NOT NULL,
 			tags       TEXT,
 			pinned     INTEGER NOT NULL DEFAULT 0,
-			created_at TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
+			created_at TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TEXT
 		)`,
 		`CREATE INDEX IF NOT EXISTS agent_memory_operator_idx
 			ON agent_memory(operator)`,
@@ -301,6 +302,13 @@ func scanRows(rows *sql.Rows) ([]Row, error) {
 // Archive soft-deletes one row. The FTS5 sidecar is updated inside
 // the same transaction so a follow-up Recall doesn't see the row.
 // (BUG-9 will add audit trail for archive events.)
+//
+// FTS5 quirk (resolved): earlier revisions used a contentless
+// FTS5 table (`content='agent_memory'`) which required the FTS5
+// 'delete' command for row removal. modernc.org/sqlite v1.53
+// returned SQLITE_CORRUPT (267) on those commands in some
+// journal modes. The schema now uses a regular FTS5 table that
+// stores its own copy — plain DELETE works.
 func (s *Store) Archive(ctx context.Context, id int64) error {
 	return store.WithTx(ctx, s.db, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx,
@@ -315,10 +323,98 @@ func (s *Store) Archive(ctx context.Context, id int64) error {
 		if n == 0 {
 			return ErrNotFound
 		}
-		_, err = tx.ExecContext(ctx,
-			`DELETE FROM agent_memory_fts WHERE rowid = ?`, id)
-		if err != nil {
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM agent_memory_fts WHERE rowid = ?`, id); err != nil {
 			return fmt.Errorf("agent_memory Archive fts sync: %w", err)
+		}
+		return nil
+	})
+}
+
+// Update mutates mutable fields of one agent_memory row. Fields
+// with the empty string or zero value are NOT overwritten (NULL
+// semantics): pass *string for the optionals, *bool for pinned.
+// Operator and kind are immutable (INV-1 audit identity); to
+// change them, archive + save a new row.
+//
+// FTS5 sync: content + title + tags are re-indexed inside the
+// same transaction. updated_at is set to CURRENT_TIMESTAMP so
+// downstream List can sort by recency.
+//
+// Returns ErrNotFound when the id does not exist.
+func (s *Store) Update(ctx context.Context, id int64, title, content, tags *string, pinned *bool) error {
+	if content != nil && *content == "" {
+		return fmt.Errorf("agent_memory Update: content cannot be empty")
+	}
+	return store.WithTx(ctx, s.db, func(tx *sql.Tx) error {
+		// Verify the row exists first so we can return ErrNotFound
+		// before constructing the UPDATE statement.
+		var exists int
+		if err := tx.QueryRowContext(ctx,
+			`SELECT 1 FROM agent_memory WHERE id = ?`, id).Scan(&exists); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrNotFound
+			}
+			return fmt.Errorf("agent_memory Update exists check: %w", err)
+		}
+		// Build UPDATE dynamically. title + tags can be NULL (skip).
+		setClauses := []string{}
+		args := []interface{}{}
+		if title != nil {
+			setClauses = append(setClauses, "title = ?")
+			args = append(args, nullIfEmpty(*title))
+		}
+		if content != nil {
+			setClauses = append(setClauses, "content = ?")
+			args = append(args, *content)
+		}
+		if tags != nil {
+			setClauses = append(setClauses, "tags = ?")
+			args = append(args, nullIfEmpty(*tags))
+		}
+		if pinned != nil {
+			setClauses = append(setClauses, "pinned = ?")
+			args = append(args, boolToInt(*pinned))
+		}
+		if len(setClauses) == 0 {
+			// Nothing to update — return success without writing.
+			return nil
+		}
+		// FTS5 sync FIRST (before the base UPDATE). modernc.org/sqlite
+		// v1.53 has a quirk where an FTS5 DELETE immediately following
+		// a base-table UPDATE inside the same SERIALIZABLE Tx raises
+		// SQLITE_CORRUPT (267) — "database disk image is malformed".
+		// Doing the FTS5 delete first sidesteps the issue: the base
+		// row still exists, so the index entry is the only stale thing.
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM agent_memory_fts WHERE rowid = ?`, id); err != nil {
+			return fmt.Errorf("agent_memory Update fts delete: %w", err)
+		}
+		// Always bump updated_at so the row reflects the change.
+		setClauses = append(setClauses, "updated_at = CURRENT_TIMESTAMP")
+		args = append(args, id)
+		q := "UPDATE agent_memory SET "
+		for i, c := range setClauses {
+			if i > 0 {
+				q += ", "
+			}
+			q += c
+		}
+		q += " WHERE id = ?"
+		if _, err := tx.ExecContext(ctx, q, args...); err != nil {
+			return fmt.Errorf("agent_memory Update: %w", err)
+		}
+		// Re-index the FTS5 with the new (now-current) content.
+		var newTitle, newContent, newTags string
+		if err := tx.QueryRowContext(ctx,
+			`SELECT COALESCE(title,''), content, COALESCE(tags,'') FROM agent_memory WHERE id = ?`,
+			id).Scan(&newTitle, &newContent, &newTags); err != nil {
+			return fmt.Errorf("agent_memory Update fts re-read: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO agent_memory_fts(rowid, title, content, tags) VALUES (?, ?, ?, ?)`,
+			id, newTitle, newContent, newTags); err != nil {
+			return fmt.Errorf("agent_memory Update fts insert: %w", err)
 		}
 		return nil
 	})

@@ -32,7 +32,9 @@ import (
 
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/agent_memory"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/audit"
+	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/judge"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/session"
+	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/vibe"
 )
 
 // Version is the server's identity string. Set at package init
@@ -60,11 +62,12 @@ type Server struct {
 	audit     *audit.Writer
 	session   *session.Store
 	memories  *agent_memory.Store
+	pipeline  *vibe.Pipeline
 	startedAt string
 }
 
-// NewServer builds the MCPServer, registers the BUG-7 MVP tools,
-// and returns a Server ready for ServeStdio.
+// NewServer builds the MCPServer, registers the BUG-7 + BUG-8
+// tools, and returns a Server ready for ServeStdio.
 //
 // The DB must have had CreateSchema called on every v4alpha
 // package (audit, session, manifest, vibe, agent_memory). The
@@ -79,6 +82,8 @@ func NewServer(db *sql.DB) (*Server, error) {
 	auditW := audit.NewWriter(db)
 	sessStore := session.NewStore(db, auditW)
 	memStore := agent_memory.NewStore(db)
+	noopJudge := judge.NewNoOpJudge()
+	pipe := vibe.NewPipeline(db, auditW, noopJudge)
 
 	mcpSrv := server.NewMCPServer(
 		ServerName,
@@ -93,16 +98,18 @@ func NewServer(db *sql.DB) (*Server, error) {
 		audit:    auditW,
 		session:  sessStore,
 		memories: memStore,
+		pipeline: pipe,
 	}
 
-	// Register the BUG-7 MVP tool set.
-
-	// Register the BUG-7 MVP tool set. The remaining 69 tools
-	// (vibe, governance, observability, research, security,
-	// admin, update) are added incrementally.
-	registerHealthTool(s)
-	registerSessionTools(s)
-	registerAgentMemoryTools(s)
+	// BUG-7 + BUG-8 tool set. Each registerXxx is one namespace.
+	// 6 + 4 + 6 + 4 + 2 + 4 + 4 = 30 tools total.
+	registerHealthTool(s)        // 1
+	registerSessionTools(s)      // 5 (start, close, status, resume, heartbeat)
+	registerAgentMemoryTools(s)  // 6 (save, recall, list, get, update, archive)
+	registerObservabilityTools(s) // 3 (memory_state, writes, anomalies)
+	registerErrorObsTools(s)     // 4 (summary, list, get, resolve)
+	registerPolicyTools(s)       // 2 (active_policy, load_constitution)
+	registerVibeTools(s)         // 4 (spec, publish, pipeline_status, resolve_drift)
 
 	return s, nil
 }

@@ -41,6 +41,18 @@ func NewPipeline(db *sql.DB, w *audit.Writer, j judge.Judge) *Pipeline {
 	}
 }
 
+// Specs returns the underlying SpecStore so callers can look up
+// a spec's intent before publishing. The transport/mcp package
+// uses this to derive spec_intent when the publish tool doesn't
+// pass one explicitly.
+func (p *Pipeline) Specs() *SpecStore { return p.specs }
+
+// Artifacts returns the underlying ArtifactStore.
+func (p *Pipeline) Artifacts() *ArtifactStore { return p.artifacts }
+
+// Drifts returns the underlying DriftStore.
+func (p *Pipeline) Drifts() *DriftStore { return p.drifts }
+
 // Publish inserts the artifact, judges it, and inserts the drift
 // row. Returns the new DriftReport (with ID + EvaluatedAt populated).
 //
