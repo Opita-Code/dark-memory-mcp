@@ -93,7 +93,7 @@ INPUT (artifact_ref + spec_intent + vibe_case + persona_id)
    ▼                                     │
 [7] Audit Emitter ──────────────────────┘ deterministic
    - write_audit row (INV-1)
-   - ssd_evaluations row (legacy compat, optional)
+   - sdd_evaluations row (legacy compat, optional)
    - persona_id + rubric_version recorded
 
 OUTPUT: structured Verdict (§3)
@@ -327,7 +327,7 @@ y son el valor central de este diseño.
 ### Commit 3: Audit emission + INV-1 closure
 
 - `agent_memory.Save/Update/Archive` emiten `write_audit` row (INV-1 closure)
-- `judge.Pipeline.Evaluate` emite `ssd_evaluations` row (legacy compat)
+- `judge.Pipeline.Evaluate` emite `sdd_evaluations` row (legacy compat)
 - `error_resolve` audit emission (ya lo hace, verificar)
 - `audit_log` queries en `judge.judgment_history` tool
 
@@ -415,6 +415,7 @@ callers in `vibe/pipeline.go`.
 6. **dark-sdd ADR-006** (2026-07-10) — Auto-grounding via interceptors. NO aplica a este ADR (es runtime en dark-sdd, no en dark-memory).
 7. **dark-sdd findings/03** — Anti-hallucination state-of-art (G-Eval, RAGAS, DeepEval, prompt injection patterns).
 8. **dark-memory-mcp docs/judge-personas.md** — 8 personas compiladas + Markdown override mechanism (spec 1155 v14).
+9. **Play Favorites** — Spiliopoulou, Fogliato et al. 2025, *Play Favorites: A Statistical Method to Measure Self-Bias in LLM-as-a-Judge*, arxiv:2508.06709 (8 Aug 2025). Empirical study (>5000 prompt-completion pairs, 9 LLM judges) finding GPT-4o + Claude 3.5 Sonnet systematically self-bias, plus a family-bias toward same-family models. Grounds the design of EC-007 (self-bias detection) and motivates `judge-pipeline-v4.md` §4.4 (Evidence structure). URL: <https://arxiv.org/abs/2508.06709>
 
 ## Apéndice B: Anti-patterns evitados (per `dark-testing` skill)
 

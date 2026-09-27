@@ -11,6 +11,127 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [4.0.0-alpha.3] — 2026-09-27 — judge pipeline v4 shipped (ADR-007, 4 commits)
+
+The judge pipeline v4 (ADR-007) is **fully shipped** across 4 commits
+on the `feat/v4-redesign` branch. This is a docs-only release that
+adds the operator-facing references and updates the status doc to
+reflect the shipped pipeline; the implementation landed in the prior
+alpha.1 + alpha.2 commits (the work below documents what those
+commits produced).
+
+> **Status**: pre-release / alpha. 29 of 57 canonical tools registered
+> (51% of the surface, up from 25 in alpha.1). 15 edge cases + 11
+> personas + 4 MCP tools (`dark_memory_judge`,
+> `dark_memory_consensus`, `dark_memory_judgment_history`,
+> `dark_memory_judge_list_personas`). Schema:
+> `v4alpha/2026-09-27/002` (added `sdd_evaluations` table with 18
+> columns + 4 indexes). Local-only (no `git push`, no remote tags).
+> Audience: contributors only — not for end-user consumption yet.
+
+### Judge pipeline (ADR-007) — 4 commits
+
+The judge pipeline landed in 4 sequential commits on the redesign
+branch. All 4 are included under this release because they collectively
+implement the ADR-007 acceptance criteria.
+
+#### ADR-007 commit 1 (commit `8e1af1e`) — interfaces + 30 EC fixtures
+
+- `internal/v4alpha/judge/types.go` — `Verdict`, `Criterion`,
+  `Evidence`, `EdgeCaseHit`, `TemperatureNote`, `BiasAudit` structs.
+- `internal/v4alpha/judge/rubric.go` — `Rubric` interface +
+  `vibe_case`-keyed registry.
+- `internal/v4alpha/judge/edge_cases.go` — the 15 ECs as
+  `func(ctx, input, evidence) []EdgeCaseHit`.
+- `internal/v4alpha/judge/extractor.go` — deterministic evidence
+  extractor (regex, grep, byte-range read; never LLM).
+- `internal/v4alpha/judge/verifier.go` — cheap post-check
+  (independent of LLM) that overrides the verdict on inconsistency.
+- `internal/v4alpha/judge/pipeline.go` — 7-step pipeline as composable
+  functions.
+- 30 EC fixture tests (positive + negative for each of 15 ECs).
+- Atomic mirror rows 2065-2072 in dark-memory.
+
+#### ADR-007 commit 2 (commit `4f860ed`) — LLM-backed Judge + 4 MCP tools
+
+- `internal/v4alpha/judge/llm.go` — `LLMJudge` with self-contained
+  HTTP client (does NOT compose with `internal/orchestration`).
+- `internal/v4alpha/judge/consensus.go` — N-shot consensus (N ≤ 7)
+  with modal verdict tie-break.
+- `internal/v4alpha/judge/personas_v4.go` — 3 new personas
+  (`judge-cross-modal`, `judge-pipeline`, `judge-opinion`).
+- 4 MCP tools wired: `dark_memory_judge`,
+  `dark_memory_consensus`, `dark_memory_judgment_history`
+  (initially a stub in C2; replaced in C3), `dark_memory_judge_list_personas`.
+- T0 tests with `httptest.Server` mock providers (no real LLM key
+  needed).
+- 63 new tests in the judge package; total 136 after this commit.
+- Atomic mirror rows 2075-2082 in dark-memory.
+
+#### ADR-007 commit 3 (commit `b01caea`) — audit emission + INV-1 closure
+
+- `audit.Writer.WriteExec` (new) — `sqlExec` interface (satisfied by
+  `*sql.DB` and `*sql.Tx`) for tx-aware audit emission.
+- `agent_memory.Save/Update/Archive` now require `*Audit{Actor,
+  SessionID, ProjectID}`; emit `audit_log` row in same Tx (INV-1
+  closure for agent_memory).
+- `judge.Store` (new) — `sdd_evaluations` table (18 columns + 4
+  indexes): `id`, `eval_type`, `target_id`, `target_type`,
+  `verdict_json`, `modal`, `eval_consensus`, `non_deterministic`,
+  `session_id`, `provider`, `model`, `persona_id`,
+  `rubric_version`, `schema_version`, `seed`, `max_tokens`,
+  `timeout_ms`, `temperature`, `top_p`, `created_at`. Single 'd'
+  matches legacy v3 table name.
+- `dark_memory_judge` + `dark_memory_consensus` persist
+  `sdd_evaluations` rows + `audit_log` rows atomically.
+- `dark_memory_judgment_history` replaces the C2 stub with a real
+  query against `sdd_evaluations`.
+- Schema migration bumped: `v4alpha/2026-09-27/001` → `v4alpha/2026-09-27/002`.
+- 30 new tests (+6 audit, +6 agent_memory, +18 judge.store).
+- Total v4alpha: 464 tests, 0 FAIL.
+- Atomic mirror rows 2084-2092 in dark-memory.
+
+#### ADR-007 commit 4 (commit pending) — operator-facing docs
+
+This commit (docs-only):
+
+- **`docs/judge-pipeline-v4.md`** — operator's guide. 9 sections
+  (quickstart, providers, wire shapes, verdict semantics,
+  persistence, operator workflow, reproducibility, where to read
+  next, references). 4-tier references (5 papers + Anthropic docs
+  + SQLite WAL + pkg.go.dev + 2 ADRs).
+- **`docs/edge-case-catalog.md`** — 15-EC catalog. 7 sections
+  (overview, per-EC cards, taxonomy, how to extend, anti-patterns,
+  where to read next, references). Per-EC citations: EC-007
+  (Spiliopoulou 2025), EC-008 (Zheng 2023), EC-015 (Liu 2023).
+- **`docs/persona-registry-v4.md`** — 11 personas + override
+  mechanism. 8 sections. Cites Prometheus 2 (Kim 2024) for the
+  direct-assessment + custom-criteria pattern.
+- **`docs/v4-status.md`** — bumped to 29 tools, ADR-007 4-commit
+  status, schema 001 → 002. Added §7 Tier-1 sources with
+  verifiable URLs (sqlite.org/wal.html, pkg.go.dev).
+- **`CHANGELOG.md`** — this entry.
+- **`docs/decisions/ADR-007-judge-pipeline-v4.md`** — fixed 2
+  `ssd_evaluations` typos at lines 96 + 330 (now `sdd_evaluations`,
+  matching legacy v3 table name); added Spiliopoulou 2025 paper
+  to Apéndice A as entry #9.
+
+All docs verified against tier-1 sources on 2026-09-27. See
+`docs/judge-pipeline-v4.md` §9 for the full reference list.
+
+### Known limitations (operator-facing)
+
+- No active-session tracking at the transport layer (operators pass
+  `session_id` explicitly in MCP calls).
+- No `project_id` enforcement (INV-7 deferred; `sdd_evaluations` is
+  session-bound, not project-bound).
+- The judge pipeline returns `verdict=errored` when no LLM key is set
+  (EC-002 path; this is the documented honest behavior, not a silent
+  success).
+- 6 `judge_util_*` tools not yet wired (BUG-10).
+
+---
+
 ## [4.0.0-alpha.1] — 2026-09-27 — v4 redesign branch initial scaffold
 
 The v4 redesign branches clean from `v2.20.0` (not v3.0-void) per
