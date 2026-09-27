@@ -57,16 +57,18 @@ const ServerName = "dark-memory-v4"
 // Server holds the MCP server + its dependency graph. Built by
 // NewServer, used by ServeStdio.
 type Server struct {
-	mcpSrv    *server.MCPServer
-	db        *sql.DB
-	audit     *audit.Writer
-	session   *session.Store
-	memories  *agent_memory.Store
-	pipeline  *vibe.Pipeline
-	startedAt string
+	mcpSrv       *server.MCPServer
+	db           *sql.DB
+	audit        *audit.Writer
+	session      *session.Store
+	memories     *agent_memory.Store
+	pipeline     *vibe.Pipeline
+	judgePipeline *judge.Pipeline    // ADR-007 C2: LLM-backed judge surface
+	judgePersonas judge.PersonaRegistry
+	startedAt    string
 }
 
-// NewServer builds the MCPServer, registers the BUG-7 + BUG-8
+// NewServer builds the MCPServer, registers the BUG-7 + BUG-8 + C2
 // tools, and returns a Server ready for ServeStdio.
 //
 // The DB must have had CreateSchema called on every v4alpha
@@ -74,6 +76,14 @@ type Server struct {
 // binary layer (cmd/dark-memory-v4/serve.go) calls applyAllSchemas
 // before NewServer so this contract is upheld in production.
 // Tests construct the DB by hand.
+//
+// ADR-007 commit 2 (C2): the v4alpha/judge.Pipeline is built with a
+// real LLMClient when one or more provider keys are configured (per
+// DARK_JUDGE_PROVIDER env), otherwise with NoOpJudge fallback (same
+// as commit 1's backwards-compat contract per ADR-007 §10). The
+// 4 new judge tools (dark_memory_judge / _consensus /
+// _judgment_history / _judge_list_personas) are registered after
+// the legacy 25-tool set.
 func NewServer(db *sql.DB) (*Server, error) {
 	if db == nil {
 		return nil, fmt.Errorf("mcp NewServer: db is nil")
@@ -85,6 +95,19 @@ func NewServer(db *sql.DB) (*Server, error) {
 	noopJudge := judge.NewNoOpJudge()
 	pipe := vibe.NewPipeline(db, auditW, noopJudge)
 
+	// Build the v4 judge pipeline. LLMClient is the real client
+	// when env keys are set; nil otherwise (Pipeline fires EC-002
+	// with verdict=errored → matches the NoOpJudge contract).
+	llmClient, err := buildV4JudgeClient()
+	judgePersonas := judge.NewPersonaRegistry()
+	judgePipe, err := judge.New(judge.PipelineConfig{
+		LLMClient: llmClient,
+		Personas:  judgePersonas,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("mcp NewServer: build judge pipeline: %w", err)
+	}
+
 	mcpSrv := server.NewMCPServer(
 		ServerName,
 		Version,
@@ -93,25 +116,44 @@ func NewServer(db *sql.DB) (*Server, error) {
 	)
 
 	s := &Server{
-		mcpSrv:   mcpSrv,
-		db:       db,
-		audit:    auditW,
-		session:  sessStore,
-		memories: memStore,
-		pipeline: pipe,
+		mcpSrv:        mcpSrv,
+		db:            db,
+		audit:         auditW,
+		session:       sessStore,
+		memories:      memStore,
+		pipeline:      pipe,
+		judgePipeline: judgePipe,
+		judgePersonas: judgePersonas,
 	}
 
-	// BUG-7 + BUG-8 tool set. Each registerXxx is one namespace.
-	// 6 + 4 + 6 + 4 + 2 + 4 + 4 = 30 tools total.
-	registerHealthTool(s)        // 1
-	registerSessionTools(s)      // 5 (start, close, status, resume, heartbeat)
-	registerAgentMemoryTools(s)  // 6 (save, recall, list, get, update, archive)
+	// BUG-7 + BUG-8 + C2 tool set. Each registerXxx is one namespace.
+	// 1 + 5 + 6 + 3 + 4 + 2 + 4 + 4 = 29 tools total (C2 adds 4).
+	registerHealthTool(s)         // 1
+	registerSessionTools(s)       // 5 (start, close, status, resume, heartbeat)
+	registerAgentMemoryTools(s)   // 6 (save, recall, list, get, update, archive)
 	registerObservabilityTools(s) // 3 (memory_state, writes, anomalies)
-	registerErrorObsTools(s)     // 4 (summary, list, get, resolve)
-	registerPolicyTools(s)       // 2 (active_policy, load_constitution)
-	registerVibeTools(s)         // 4 (spec, publish, pipeline_status, resolve_drift)
+	registerErrorObsTools(s)      // 4 (summary, list, get, resolve)
+	registerPolicyTools(s)        // 2 (active_policy, load_constitution)
+	registerVibeTools(s)          // 4 (spec, publish, pipeline_status, resolve_drift)
+	registerJudgeTools(s)         // 4 (judge, consensus, judgment_history, list_personas)
 
 	return s, nil
+}
+
+// buildV4JudgeClient wraps the env-aware RealLLMClient builder. When
+// no provider key is configured, returns nil so the Pipeline fires
+// EC-002 (LLM unavailable) — the same contract as NoOpJudge (per
+// ADR-007 §10 backwards compat: v4-alpha.1 callers see the same
+// "errored verdict, no panic" behavior).
+func buildV4JudgeClient() (judge.LLMClient, error) {
+	c, err := judge.NewRealLLMClient()
+	if err != nil {
+		// No key configured → return nil (EC-002 short-circuit).
+		// Log nothing (the operator may intentionally run without
+		// an LLM in tests or air-gapped environments).
+		return nil, nil
+	}
+	return c, nil
 }
 
 // ServeStdio runs the JSON-RPC loop on the provided reader/writer.

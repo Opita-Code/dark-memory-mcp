@@ -269,7 +269,8 @@ func TestInitialize_RespondsWithServerInfo(t *testing.T) {
 }
 
 // TestToolsList_ReturnsSixTools confirms the BUG-7 MVP tool
-// count.
+// count. ADR-007 C2 adds 4 judge tools (judge + consensus +
+// judgment_history + list_personas) — total now 29.
 func TestToolsList_ReturnsSixTools(t *testing.T) {
 	responses := driveServer(t, handshake())
 	// handshake has 3 messages; the server emits responses for
@@ -286,8 +287,8 @@ func TestToolsList_ReturnsSixTools(t *testing.T) {
 	if err := json.Unmarshal(list.Result, &result); err != nil {
 		t.Fatalf("parse tools/list: %v", err)
 	}
-	if len(result.Tools) != 25 {
-		t.Errorf("tool count = %d; want 25 (BUG-7 MVP + BUG-8 batch 1)", len(result.Tools))
+	if len(result.Tools) != 29 {
+		t.Errorf("tool count = %d; want 29 (BUG-7 MVP + BUG-8 batch 1 + ADR-007 C2 judge tools)", len(result.Tools))
 	}
 	wantNames := map[string]bool{
 		// BUG-7 MVP
@@ -317,6 +318,11 @@ func TestToolsList_ReturnsSixTools(t *testing.T) {
 		"dark_memory_vibe_publish":         false,
 		"dark_memory_vibe_pipeline_status": false,
 		"dark_memory_vibe_resolve_drift":   false,
+		// ADR-007 C2 (LLM-backed judge surface)
+		"dark_memory_judge":                 false,
+		"dark_memory_consensus":             false,
+		"dark_memory_judgment_history":      false,
+		"dark_memory_judge_list_personas":   false,
 	}
 	for _, t1 := range result.Tools {
 		if _, ok := wantNames[t1.Name]; ok {
