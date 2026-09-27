@@ -749,6 +749,71 @@ hits_today` and `injection_scan_blocks_today`. Per-bucket policy:
 benign→log, research→log, jailbreak_target→redact+warn,
 sensitive→block+halt.
 
+#### INV-16 — dark-db concurrency contract for multi-agent workloads
+
+**Statement**: Every `*sql.DB` opened against the dark-db (the SQLite
+file at `<UserConfigDir>/dark-agents/dark.db` and per-project
+siblings) MUST go through `internal/v4alpha/store.OpenSQLite` so the
+DSN carries the BUG-5 pragma set (`busy_timeout=5000`,
+`journal_mode=WAL`, `synchronous=NORMAL`, `foreign_keys=1`,
+`wal_autocheckpoint=1000`, `cache_size=-2000`, `temp_store=MEMORY`)
+and the connection pool is bounded (`MaxOpenConns=8`,
+`MaxIdleConns=4`, `ConnMaxIdleTime=5m`). Every read-modify-write
+sequence over the dark-db MUST go through `store.WithTx`
+(`sql.LevelSerializable`).
+
+**Why**: dark-db is shared across multiple agents, multiple
+operator sessions, and the BUG-5 stress test (2026-09-27) confirmed
+that the default `sql.Open("sqlite", dsn+"?_pragma=foreign_keys(1)")`
+deadlocks under concurrent writers on Windows within ~30s (16 goroutines
+opening the same file, 2/16 failed with `SQLITE_BUSY` from the
+`PingContext` that drives the `journal_mode` conversion). Production
+agents writing concurrently would silently corrupt audit trails or
+hang the MCP transport.
+
+The chosen pragma set is grounded in four tier-1 sources:
+
+  1. `sqlite.org/wal.html §2.2`: "WAL provides more concurrency as
+     readers do not block writers and a writer does not block
+     readers. ... since there is only one WAL file, there can only
+     be one writer at a time."
+  2. `sqlite.org/pragma.html#synchronous`: `synchronous=NORMAL` +
+     WAL means writers never fsync — only the checkpoint does, which
+     runs in the background.
+  3. `pkg.go.dev/modernc.org/sqlite` Performance §: maintainer
+     verbatim "Bound the pool with `sql.DB.SetMaxOpenConns` and do
+     not issue a periodic query before the previous one has
+     returned."
+  4. `sqlite.org/wal.html §11` (WAL-reset bug): fixed in SQLite
+     3.51.3. We embed SQLite 3.53.2 via modernc.org/sqlite v1.53.0
+     (`CLAUDE.md` of the modernc repo), so we are patched.
+
+**Enforced at**: `internal/v4alpha/store/open.go::OpenSQLite` and
+`internal/v4alpha/store/tx.go::WithTx`. Direct `sql.Open("sqlite",
+...)` against a dark-db path is a violation; the code review rule
+is "search for `sql.Open` and verify the path is `:memory:` or a
+non-dark-db temporary file".
+
+**Defensive tests**: `internal/v4alpha/store/store_test.go` (10
+tests) and `internal/v4alpha/manifest/cap_store_*test.go` (5
+concurrent tests). Specifically:
+
+  - `TestOpenSQLite_DSNContainsAllPragmas` — pins the pragma list.
+  - `TestOpenSQLite_JournalModeIsWAL` — engine-level WAL check.
+  - `TestOpenSQLite_BusyTimeoutApplied` — 5000ms landed.
+  - `TestOpenSQLite_PoolBounds` — `MaxOpenConnections == 8`.
+  - `TestOpenSQLite_ConcurrentOpens` — 16 goroutines race (T7).
+  - `TestConcurrent_Grant_SameID` — T2 (32 goroutines, same id).
+  - `TestConcurrent_GrantThenRevoke_SameID` — T3 (16 revokers).
+  - `TestStress_10k_Writes` — T4 (no deadlock under 10k inserts).
+  - `TestPoolExhaustion_200Goroutines_Pool8` — T5 (200 goroutines).
+  - `TestMultiDBIsolation` — T8 (cross-DB independence).
+
+**Operator signal**: the `db.Stats()` snapshot is exposed via the
+`dark_db_status` tool (planned for v4-alpha.2). Until then, the
+test suite enforces the contract; a failure of any of the 10 tests
+above is the alert.
+
 ### 6.3 Invariant-to-module quick reference
 
 | Invariant | Module | Enforcement site |
@@ -768,6 +833,7 @@ sensitive→block+halt.
 | INV-13 | `security/redact/middleware.go` | `RedactMiddleware` |
 | INV-14 | `security/ssrf/` | `ValidateURL` |
 | INV-15 | `security/injection/` | `ScanURL` |
+| INV-16 | `internal/v4alpha/store/` | `OpenSQLite`, `WithTx` |
 
 ---
 
