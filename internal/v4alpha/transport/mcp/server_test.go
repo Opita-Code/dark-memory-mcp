@@ -681,9 +681,9 @@ func TestAgentMemoryUpdateAndArchive(t *testing.T) {
 	defer cleanup()
 	responses := driveOn(t, srv, append(handshake(),
 		callTool(10, "dark_memory_agent_memory_save", map[string]any{"operator": "nico", "kind": "note", "content": "original", "tags": "a,b"}),
-		callTool(11, "dark_memory_agent_memory_update", map[string]any{"id": float64(1), "content": "updated", "tags": "x,y"}),
+		callTool(11, "dark_memory_agent_memory_update", map[string]any{"id": float64(1), "operator": "nico", "content": "updated", "tags": "x,y"}),
 		callTool(12, "dark_memory_agent_memory_recall", map[string]any{"operator": "nico", "query": "updated"}),
-		callTool(13, "dark_memory_agent_memory_archive", map[string]any{"id": float64(1)}),
+		callTool(13, "dark_memory_agent_memory_archive", map[string]any{"id": float64(1), "operator": "nico"}),
 		callTool(14, "dark_memory_agent_memory_recall", map[string]any{"operator": "nico", "query": "updated"}),
 	), 12, 14)
 	if len(responses) != 2 {

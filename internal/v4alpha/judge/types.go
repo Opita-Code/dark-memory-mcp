@@ -14,7 +14,7 @@
 //	[4] rubric resolution          uses PersonaRegistry + RubricRegistry
 //	[5] LLM verdict call           LLMRequest -> LLMResponse
 //	[6] verdict aggregator         Criteria[] -> Verdict (with override)
-//	[7] audit emitter              writes ssd_evaluations (commit 3)
+//	[7] audit emitter              writes sdd_evaluations (C3)
 //
 // Only step [5] makes an LLM call; all other steps are deterministic
 // pure functions. This is the attack on F1 (doc-vs-code drift): the
@@ -35,7 +35,7 @@ import (
 
 // Verdict is one judge's verdict on one artifact.
 //
-// Backwards compat (ADR-007 §10): the v4-alpha.1 three fields
+// Backwards compat (ADR-007 §6): the v4-alpha.1 three fields
 // (Verdict + Confidence + Reasoning) are preserved verbatim. New
 // fields are additive; a Verdict constructed with only the legacy
 // three fields is still valid and passes Validate.

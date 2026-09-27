@@ -29,6 +29,7 @@ import (
 
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/agent_memory"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/audit"
+	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/judge"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/manifest"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/session"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/store"
@@ -71,13 +72,13 @@ func runServe(ctx context.Context, args []string, stdout, stderr *os.File) int {
 
 	startedAt := time.Now().UTC()
 	bootReport := bootStatus{
-		DSN:            dsn,
-		SchemaVersion:  schemaVersion,
-		StartedAt:      startedAt.Format(time.RFC3339Nano),
-		GoVersion:      goVersion(),
-		ServerVersion:  Version,
-		Operator:       defaultOperator(),
-		Notes:          []string{"BUG-7: JSON-RPC transport wired (mcp-go v0.40.0). MVP tool set: health + session*3 + memory*2 (6 tools)."},
+		DSN:           dsn,
+		SchemaVersion: schemaVersion,
+		StartedAt:     startedAt.Format(time.RFC3339Nano),
+		GoVersion:     goVersion(),
+		ServerVersion: Version,
+		Operator:      defaultOperator(),
+		Notes:         []string{"BUG-7: JSON-RPC transport wired (mcp-go v0.40.0). MVP tool set: health + session*3 + memory*2 (6 tools)."},
 	}
 
 	if flags.JSON {
@@ -148,6 +149,10 @@ func applyAllSchemas(ctx context.Context, db *sql.DB) error {
 	}
 	if err := vibe.CreateDriftSchema(db); err != nil {
 		return fmt.Errorf("vibe/drift: %w", err)
+	}
+	// ADR-007 C3: judge.CreateSchema for sdd_evaluations persistence.
+	if err := judge.CreateSchema(db); err != nil {
+		return fmt.Errorf("judge: %w", err)
 	}
 	return nil
 }

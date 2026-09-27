@@ -16,19 +16,24 @@
 //   - THREE read methods: Get, List, Recall
 //   - THREE invariants enforced:
 //     1. operator id is non-empty on Save (INV-1 audit row is
-//        identifiable)
+//     identifiable)
 //     2. FTS5 index is kept in sync with the base table inside
-//        one transaction (write-then-search is consistent)
+//     one transaction (write-then-search is consistent)
 //     3. kind is one of the canonical set (note, observation,
-//        decision, finding, todo, link, context) — empty kind is
-//        rejected to keep Recall results queryable
+//     decision, finding, todo, link, context) — empty kind is
+//     rejected to keep Recall results queryable
 //
-// INV-1 audit integration is deferred to BUG-9. The Save path
-// today is a plain INSERT — the audit_id is filled by an
-// explicit Write to the audit_log when the transport layer
-// (transport/mcp) routes a tool call here. Future v4-alpha
-// iterations will promote agent_memory.Save into a primitive
-// that emits its own audit row, matching session.Start.
+// INV-1 audit integration (ADR-007 C3): Save/Update/Archive emit
+// exactly one audit_log row each, INSIDE the same store.WithTx as
+// the agent_memory row insert/update/delete. Both rows are
+// atomic — they succeed together or roll back together. The
+// audit emission uses audit.Writer.WriteExec so the audit row
+// participates in the transaction (tx-aware Executor path).
+//
+// Backwards compat (ADR-007 §6): the transport layer (transport/mcp)
+// is the only production caller and always threads a non-nil *Audit
+// (actor = operator id). Future surface (CLI, dark-copilot) follows
+// the same convention.
 package agent_memory
 
 import (
@@ -39,6 +44,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/audit"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/store"
 )
 
@@ -46,13 +52,13 @@ import (
 // v3.0 agent_memory kinds (spec 1130) — the v4 rename + Mem0
 // taxonomy will land in BUG-9.
 const (
-	KindNote       = "note"
+	KindNote        = "note"
 	KindObservation = "observation"
-	KindDecision   = "decision"
-	KindFinding    = "finding"
-	KindTodo       = "todo"
-	KindLink       = "link"
-	KindContext    = "context"
+	KindDecision    = "decision"
+	KindFinding     = "finding"
+	KindTodo        = "todo"
+	KindLink        = "link"
+	KindContext     = "context"
 )
 
 // validKinds is the allow-list enforced at Save. Empty kind is
@@ -74,16 +80,31 @@ type Row struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// Store is the agent_memory repository. Bound to a *sql.DB that
-// has had CreateSchema called on it.
-type Store struct {
-	db *sql.DB
+// Audit is the INV-1 audit metadata threaded through every
+// state-mutating call (Save/Update/Archive). Actor is required
+// (INV-1 enforcement lives in the audit package). SessionID and
+// ProjectID are optional; empty SessionID is stored as SQL NULL
+// in audit_log to keep JOIN queries clean.
+type Audit struct {
+	Actor     string // required, INV-1 audit owner
+	SessionID string // optional, empty → NULL
+	ProjectID string // optional, reserved for INV-7 future work
 }
 
-// NewStore returns a Store wired to db. The schema must already
-// be initialised via CreateSchema (call once at boot, idempotent).
-func NewStore(db *sql.DB) *Store {
-	return &Store{db: db}
+// Store is the agent_memory repository. Bound to a *sql.DB and an
+// audit.Writer. The schema must already be initialised via
+// CreateSchema (call once at boot, idempotent).
+type Store struct {
+	db    *sql.DB
+	audit *audit.Writer
+}
+
+// NewStore returns a Store wired to db and w. Both must be
+// initialized (CreateSchema on db; NewWriter for w). The audit
+// Writer is mandatory — there is no "no-audit" mode. INV-1 is a
+// non-negotiable invariant; see ADR-007 §5.3.
+func NewStore(db *sql.DB, w *audit.Writer) *Store {
+	return &Store{db: db, audit: w}
 }
 
 // CreateSchema creates the agent_memory base table + FTS5 virtual
@@ -144,13 +165,17 @@ var ErrInvalidKind = errors.New("agent_memory: invalid kind")
 // ErrNotFound is returned by Get when no row matches.
 var ErrNotFound = errors.New("agent_memory: not found")
 
-// Save inserts one row + updates the FTS5 index inside a single
-// SERIALIZABLE transaction (INV-16 enforcement). Returns the new
-// id.
+// Save inserts one row + updates the FTS5 index + emits one
+// audit_log row inside a single SERIALIZABLE transaction (INV-16
+// + INV-1 enforcement). Returns the new id.
 //
 // If pinned is true the row is surfaced first by Recall (until
 // it's archived or unpinned).
-func (s *Store) Save(ctx context.Context, op, kind, title, content, tags string, pinned bool) (int64, error) {
+//
+// audit is the INV-1 metadata: Actor must be non-empty. The audit
+// row, the agent_memory row, and the FTS5 sync all commit
+// atomically; a failure at any step rolls back all three.
+func (s *Store) Save(ctx context.Context, auditMeta *Audit, op, kind, title, content, tags string, pinned bool) (int64, error) {
 	if op == "" {
 		return 0, ErrEmptyOperator
 	}
@@ -159,6 +184,9 @@ func (s *Store) Save(ctx context.Context, op, kind, title, content, tags string,
 	}
 	if _, ok := validKinds[kind]; !ok {
 		return 0, fmt.Errorf("%w: %q (allowed: %s)", ErrInvalidKind, kind, strings.Join(allKinds(), ","))
+	}
+	if auditMeta == nil || auditMeta.Actor == "" {
+		return 0, ErrEmptyOperator // audit.Actor == "" is INV-1 violation
 	}
 
 	var id int64
@@ -184,6 +212,18 @@ func (s *Store) Save(ctx context.Context, op, kind, title, content, tags string,
 		`, id, content, nullIfEmpty(title), nullIfEmpty(tags))
 		if err != nil {
 			return fmt.Errorf("agent_memory Save fts sync: %w", err)
+		}
+
+		// Emit the INV-1 audit row inside the same transaction.
+		// If anything below this line fails (or the tx is rolled
+		// back), the audit_log row is undone together with the
+		// agent_memory insert — no phantom audit rows.
+		payload := []byte(fmt.Sprintf(
+			`{"event":"agent_memory.save","id":%d,"operator":%q,"kind":%q}`,
+			id, op, kind,
+		))
+		if _, err := s.audit.WriteExec(ctx, tx, auditMeta.Actor, auditMeta.SessionID, payload); err != nil {
+			return fmt.Errorf("agent_memory Save audit: %w", err)
 		}
 		return nil
 	})
@@ -299,9 +339,12 @@ func scanRows(rows *sql.Rows) ([]Row, error) {
 	return out, rows.Err()
 }
 
-// Archive soft-deletes one row. The FTS5 sidecar is updated inside
-// the same transaction so a follow-up Recall doesn't see the row.
-// (BUG-9 will add audit trail for archive events.)
+// Archive soft-deletes one row. The FTS5 sidecar is updated + one
+// audit_log row is emitted inside the same transaction so a
+// follow-up Recall doesn't see the row AND a follow-up audit
+// query shows the archive event. All three operations are atomic.
+//
+// audit is the INV-1 metadata; Actor must be non-empty.
 //
 // FTS5 quirk (resolved): earlier revisions used a contentless
 // FTS5 table (`content='agent_memory'`) which required the FTS5
@@ -309,7 +352,10 @@ func scanRows(rows *sql.Rows) ([]Row, error) {
 // returned SQLITE_CORRUPT (267) on those commands in some
 // journal modes. The schema now uses a regular FTS5 table that
 // stores its own copy — plain DELETE works.
-func (s *Store) Archive(ctx context.Context, id int64) error {
+func (s *Store) Archive(ctx context.Context, auditMeta *Audit, id int64) error {
+	if auditMeta == nil || auditMeta.Actor == "" {
+		return ErrEmptyOperator // INV-1
+	}
 	return store.WithTx(ctx, s.db, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx,
 			`DELETE FROM agent_memory WHERE id = ?`, id)
@@ -327,6 +373,12 @@ func (s *Store) Archive(ctx context.Context, id int64) error {
 			`DELETE FROM agent_memory_fts WHERE rowid = ?`, id); err != nil {
 			return fmt.Errorf("agent_memory Archive fts sync: %w", err)
 		}
+		// INV-1 audit emission inside the same tx.
+		payload := []byte(fmt.Sprintf(
+			`{"event":"agent_memory.archive","id":%d}`, id))
+		if _, err := s.audit.WriteExec(ctx, tx, auditMeta.Actor, auditMeta.SessionID, payload); err != nil {
+			return fmt.Errorf("agent_memory Archive audit: %w", err)
+		}
 		return nil
 	})
 }
@@ -339,10 +391,16 @@ func (s *Store) Archive(ctx context.Context, id int64) error {
 //
 // FTS5 sync: content + title + tags are re-indexed inside the
 // same transaction. updated_at is set to CURRENT_TIMESTAMP so
-// downstream List can sort by recency.
+// downstream List can sort by recency. One audit_log row is
+// emitted inside the same transaction for INV-1.
+//
+// audit is the INV-1 metadata; Actor must be non-empty.
 //
 // Returns ErrNotFound when the id does not exist.
-func (s *Store) Update(ctx context.Context, id int64, title, content, tags *string, pinned *bool) error {
+func (s *Store) Update(ctx context.Context, auditMeta *Audit, id int64, title, content, tags *string, pinned *bool) error {
+	if auditMeta == nil || auditMeta.Actor == "" {
+		return ErrEmptyOperator // INV-1
+	}
 	if content != nil && *content == "" {
 		return fmt.Errorf("agent_memory Update: content cannot be empty")
 	}
@@ -378,6 +436,14 @@ func (s *Store) Update(ctx context.Context, id int64, title, content, tags *stri
 		}
 		if len(setClauses) == 0 {
 			// Nothing to update — return success without writing.
+			// Still emit the audit row so INV-1 covers "no-op update"
+			// attempts (operator wanted to update, but nothing
+			// changed — record the attempt for the audit trail).
+			payload := []byte(fmt.Sprintf(
+				`{"event":"agent_memory.update.noop","id":%d}`, id))
+			if _, err := s.audit.WriteExec(ctx, tx, auditMeta.Actor, auditMeta.SessionID, payload); err != nil {
+				return fmt.Errorf("agent_memory Update audit: %w", err)
+			}
 			return nil
 		}
 		// FTS5 sync FIRST (before the base UPDATE). modernc.org/sqlite
@@ -415,6 +481,26 @@ func (s *Store) Update(ctx context.Context, id int64, title, content, tags *stri
 			`INSERT INTO agent_memory_fts(rowid, title, content, tags) VALUES (?, ?, ?, ?)`,
 			id, newTitle, newContent, newTags); err != nil {
 			return fmt.Errorf("agent_memory Update fts insert: %w", err)
+		}
+		// INV-1 audit emission inside the same tx.
+		fields := []string{}
+		if title != nil {
+			fields = append(fields, "title")
+		}
+		if content != nil {
+			fields = append(fields, "content")
+		}
+		if tags != nil {
+			fields = append(fields, "tags")
+		}
+		if pinned != nil {
+			fields = append(fields, "pinned")
+		}
+		payload := []byte(fmt.Sprintf(
+			`{"event":"agent_memory.update","id":%d,"fields":%q}`,
+			id, strings.Join(fields, ",")))
+		if _, err := s.audit.WriteExec(ctx, tx, auditMeta.Actor, auditMeta.SessionID, payload); err != nil {
+			return fmt.Errorf("agent_memory Update audit: %w", err)
 		}
 		return nil
 	})

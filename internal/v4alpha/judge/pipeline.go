@@ -13,7 +13,7 @@
 //	[4] persona + rubric    — resolve default or explicit
 //	[5] LLM verdict call    — ONLY LLM call in the pipeline
 //	[6] parse + verify      — score aggregation + verifier override
-//	[7] audit emitter       — commit 3 (write_audit + ssd_evaluations)
+//	[7] audit emitter       — C3 (audit_log + sdd_evaluations)
 package judge
 
 import (

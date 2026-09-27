@@ -57,15 +57,16 @@ const ServerName = "dark-memory-v4"
 // Server holds the MCP server + its dependency graph. Built by
 // NewServer, used by ServeStdio.
 type Server struct {
-	mcpSrv       *server.MCPServer
-	db           *sql.DB
-	audit        *audit.Writer
-	session      *session.Store
-	memories     *agent_memory.Store
-	pipeline     *vibe.Pipeline
-	judgePipeline *judge.Pipeline    // ADR-007 C2: LLM-backed judge surface
+	mcpSrv        *server.MCPServer
+	db            *sql.DB
+	audit         *audit.Writer
+	session       *session.Store
+	memories      *agent_memory.Store
+	pipeline      *vibe.Pipeline
+	judgePipeline *judge.Pipeline // ADR-007 C2: LLM-backed judge surface
 	judgePersonas judge.PersonaRegistry
-	startedAt    string
+	judgeStore    *judge.Store // ADR-007 C3: sdd_evaluations persistence
+	startedAt     string
 }
 
 // NewServer builds the MCPServer, registers the BUG-7 + BUG-8 + C2
@@ -91,13 +92,14 @@ func NewServer(db *sql.DB) (*Server, error) {
 
 	auditW := audit.NewWriter(db)
 	sessStore := session.NewStore(db, auditW)
-	memStore := agent_memory.NewStore(db)
+	memStore := agent_memory.NewStore(db, auditW) // ADR-007 C3: INV-1 audit emission
 	noopJudge := judge.NewNoOpJudge()
 	pipe := vibe.NewPipeline(db, auditW, noopJudge)
 
 	// Build the v4 judge pipeline. LLMClient is the real client
 	// when env keys are set; nil otherwise (Pipeline fires EC-002
-	// with verdict=errored → matches the NoOpJudge contract).
+	// with verdict=errored → matches the NoOpJudge contract per
+	// ADR-007 §6 backwards compat).
 	llmClient, err := buildV4JudgeClient()
 	judgePersonas := judge.NewPersonaRegistry()
 	judgePipe, err := judge.New(judge.PipelineConfig{
@@ -107,6 +109,8 @@ func NewServer(db *sql.DB) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("mcp NewServer: build judge pipeline: %w", err)
 	}
+	// ADR-007 C3: judge.Store for sdd_evaluations persistence.
+	judgeStore := judge.NewStore(db, auditW)
 
 	mcpSrv := server.NewMCPServer(
 		ServerName,
@@ -124,6 +128,7 @@ func NewServer(db *sql.DB) (*Server, error) {
 		pipeline:      pipe,
 		judgePipeline: judgePipe,
 		judgePersonas: judgePersonas,
+		judgeStore:    judgeStore,
 	}
 
 	// BUG-7 + BUG-8 + C2 tool set. Each registerXxx is one namespace.
@@ -143,7 +148,7 @@ func NewServer(db *sql.DB) (*Server, error) {
 // buildV4JudgeClient wraps the env-aware RealLLMClient builder. When
 // no provider key is configured, returns nil so the Pipeline fires
 // EC-002 (LLM unavailable) — the same contract as NoOpJudge (per
-// ADR-007 §10 backwards compat: v4-alpha.1 callers see the same
+// ADR-007 §6 backwards compat: v4-alpha.1 callers see the same
 // "errored verdict, no panic" behavior).
 func buildV4JudgeClient() (judge.LLMClient, error) {
 	c, err := judge.NewRealLLMClient()

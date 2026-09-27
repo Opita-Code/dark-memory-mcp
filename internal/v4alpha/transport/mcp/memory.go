@@ -13,6 +13,12 @@
 // without re-validating; the Store returns ErrEmptyOperator /
 // ErrInvalidKind on bad input.
 //
+// INV-1 audit emission (ADR-007 C3): the Save/Update/Archive tools
+// thread an *agent_memory.Audit struct (Actor=operator from input,
+// SessionID/ProjectID from optional input fields) to every state-
+// mutating call. The Store emits one audit_log row inside the same
+// transaction as the data row (atomic via store.WithTx).
+//
 // subagent_register / subagent_unregister / delegate / entities
 // land in BUG-9 (they require the C2 subagent binding surface +
 // entity extraction pipeline, both deferred).
@@ -48,12 +54,14 @@ func registerAgentMemoryTools(s *Server) {
 // --- save ---
 
 type agentMemorySaveInput struct {
-	Operator string `json:"operator" jsonschema:"required" jsonschema_description:"Operator id (INV-1 audit owner)"`
-	Kind     string `json:"kind" jsonschema:"required" jsonschema_description:"One of: note, observation, decision, finding, todo, link, context"`
-	Title    string `json:"title,omitempty" jsonschema_description:"Optional short title"`
-	Content  string `json:"content" jsonschema:"required" jsonschema_description:"Memory body"`
-	Tags     string `json:"tags,omitempty" jsonschema_description:"Comma-separated tags for grouping"`
-	Pinned   bool   `json:"pinned,omitempty" jsonschema_description:"Surface this row first in List"`
+	Operator  string `json:"operator" jsonschema:"required" jsonschema_description:"Operator id (INV-1 audit owner; reused as both agent_memory.operator AND audit_log.actor)"`
+	Kind      string `json:"kind" jsonschema:"required" jsonschema_description:"One of: note, observation, decision, finding, todo, link, context"`
+	Title     string `json:"title,omitempty" jsonschema_description:"Optional short title"`
+	Content   string `json:"content" jsonschema:"required" jsonschema_description:"Memory body"`
+	Tags      string `json:"tags,omitempty" jsonschema_description:"Comma-separated tags for grouping"`
+	Pinned    bool   `json:"pinned,omitempty" jsonschema_description:"Surface this row first in List"`
+	SessionID string `json:"session_id,omitempty" jsonschema_description:"Optional active session id for audit_log.session_id traceability"`
+	ProjectID string `json:"project_id,omitempty" jsonschema_description:"Optional project id (INV-7 reserved for future multi-tenant work)"`
 }
 
 type agentMemorySaveOutput struct {
@@ -64,7 +72,7 @@ type agentMemorySaveOutput struct {
 
 func registerAgentMemorySave(s *Server) {
 	tool := mcp.NewTool(agentMemorySaveToolName,
-		mcp.WithDescription("Save one row of operator-scoped memory. Returns the new id."),
+		mcp.WithDescription("Save one row of operator-scoped memory. Emits one audit_log row inside the same transaction (INV-1). Returns the new id."),
 		mcp.WithInputSchema[agentMemorySaveInput](),
 	)
 	s.mcpSrv.AddTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -72,7 +80,12 @@ func registerAgentMemorySave(s *Server) {
 		if err := bindArgs(req, &in); err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		id, err := s.memories.Save(ctx, in.Operator, in.Kind, in.Title, in.Content, in.Tags, in.Pinned)
+		auditMeta := &agent_memory.Audit{
+			Actor:     in.Operator, // reused as both data operator and audit actor
+			SessionID: in.SessionID,
+			ProjectID: in.ProjectID,
+		}
+		id, err := s.memories.Save(ctx, auditMeta, in.Operator, in.Kind, in.Title, in.Content, in.Tags, in.Pinned)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("agent_memory_save: %v", err)), nil
 		}
@@ -204,12 +217,18 @@ func registerAgentMemoryGet(s *Server) {
 
 // agentMemoryUpdateInput uses *string / *bool for optional fields
 // so callers can choose which to mutate. nil = leave alone.
+//
+// audit fields (operator + optional session_id + project_id) are
+// required because Update emits one audit_log row (INV-1).
 type agentMemoryUpdateInput struct {
-	ID      int64   `json:"id" jsonschema:"required" jsonschema_description:"Row id"`
-	Title   *string `json:"title,omitempty" jsonschema_description:"New title; pass empty string to clear"`
-	Content *string `json:"content,omitempty" jsonschema_description:"New content (cannot be empty)"`
-	Tags    *string `json:"tags,omitempty" jsonschema_description:"New tags; pass empty string to clear"`
-	Pinned  *bool   `json:"pinned,omitempty" jsonschema_description:"New pinned flag"`
+	ID        int64   `json:"id" jsonschema:"required" jsonschema_description:"Row id"`
+	Operator  string  `json:"operator" jsonschema:"required" jsonschema_description:"Operator id (INV-1 audit owner)"`
+	Title     *string `json:"title,omitempty" jsonschema_description:"New title; pass empty string to clear"`
+	Content   *string `json:"content,omitempty" jsonschema_description:"New content (cannot be empty)"`
+	Tags      *string `json:"tags,omitempty" jsonschema_description:"New tags; pass empty string to clear"`
+	Pinned    *bool   `json:"pinned,omitempty" jsonschema_description:"New pinned flag"`
+	SessionID string  `json:"session_id,omitempty" jsonschema_description:"Optional active session id for audit_log.session_id"`
+	ProjectID string  `json:"project_id,omitempty" jsonschema_description:"Optional project id (INV-7 reserved)"`
 }
 
 type agentMemoryUpdateOutput struct {
@@ -219,7 +238,7 @@ type agentMemoryUpdateOutput struct {
 
 func registerAgentMemoryUpdate(s *Server) {
 	tool := mcp.NewTool(agentMemoryUpdateToolName,
-		mcp.WithDescription("Mutate one row's title/content/tags/pinned. Operator + kind are immutable."),
+		mcp.WithDescription("Mutate one row's title/content/tags/pinned. Operator + kind are immutable. Emits one audit_log row (INV-1)."),
 		mcp.WithInputSchema[agentMemoryUpdateInput](),
 	)
 	s.mcpSrv.AddTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -230,7 +249,12 @@ func registerAgentMemoryUpdate(s *Server) {
 		if in.ID <= 0 {
 			return mcp.NewToolResultError("agent_memory_update: id must be positive"), nil
 		}
-		err := s.memories.Update(ctx, in.ID, in.Title, in.Content, in.Tags, in.Pinned)
+		auditMeta := &agent_memory.Audit{
+			Actor:     in.Operator,
+			SessionID: in.SessionID,
+			ProjectID: in.ProjectID,
+		}
+		err := s.memories.Update(ctx, auditMeta, in.ID, in.Title, in.Content, in.Tags, in.Pinned)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("agent_memory_update: %v", err)), nil
 		}
@@ -241,7 +265,10 @@ func registerAgentMemoryUpdate(s *Server) {
 // --- archive ---
 
 type agentMemoryArchiveInput struct {
-	ID int64 `json:"id" jsonschema:"required" jsonschema_description:"Row id"`
+	ID        int64  `json:"id" jsonschema:"required" jsonschema_description:"Row id"`
+	Operator  string `json:"operator" jsonschema:"required" jsonschema_description:"Operator id (INV-1 audit owner)"`
+	SessionID string `json:"session_id,omitempty" jsonschema_description:"Optional active session id for audit_log.session_id"`
+	ProjectID string `json:"project_id,omitempty" jsonschema_description:"Optional project id (INV-7 reserved)"`
 }
 
 type agentMemoryArchiveOutput struct {
@@ -251,7 +278,7 @@ type agentMemoryArchiveOutput struct {
 
 func registerAgentMemoryArchive(s *Server) {
 	tool := mcp.NewTool(agentMemoryArchiveToolName,
-		mcp.WithDescription("Soft-delete one row. FTS5 index is synced in the same Tx."),
+		mcp.WithDescription("Soft-delete one row. FTS5 index is synced + one audit_log row is emitted in the same Tx."),
 		mcp.WithInputSchema[agentMemoryArchiveInput](),
 	)
 	s.mcpSrv.AddTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -262,7 +289,12 @@ func registerAgentMemoryArchive(s *Server) {
 		if in.ID <= 0 {
 			return mcp.NewToolResultError("agent_memory_archive: id must be positive"), nil
 		}
-		err := s.memories.Archive(ctx, in.ID)
+		auditMeta := &agent_memory.Audit{
+			Actor:     in.Operator,
+			SessionID: in.SessionID,
+			ProjectID: in.ProjectID,
+		}
+		err := s.memories.Archive(ctx, auditMeta, in.ID)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("agent_memory_archive: %v", err)), nil
 		}

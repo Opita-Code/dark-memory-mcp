@@ -25,7 +25,7 @@
 //   - Server.NewServer calls NewRealLLMClient() at boot.
 //   - If env vars are not set, returns nil + ErrNoKey. The Pipeline
 //     then fires EC-002 (LLM unavailable) → verdict=errored, the
-//     same path as commit 1's NoOpJudge contract (per ADR-007 §10
+//     same path as commit 1's NoOpJudge contract (per ADR-007 §6
 //     backwards compat).
 //
 // Layering (per ADR-007 §5):

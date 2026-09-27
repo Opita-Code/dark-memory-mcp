@@ -3,6 +3,11 @@
 // observation / decision / finding / todo / link / context)
 // with the v4 simplification: no embedding, no Mem0 three-class
 // taxonomy. Those land in BUG-9.
+//
+// C3 (ADR-007): every Save/Update/Archive now emits one
+// audit_log row inside the same Tx. Existing tests still
+// cover the data path; new audit-specific tests live in
+// agent_memory_audit_test.go.
 package agent_memory
 
 import (
@@ -12,10 +17,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/audit"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/store"
 )
 
-// newTestDB returns a fresh *sql.DB with CreateSchema applied.
+// newTestDB returns a fresh *sql.DB with CreateSchema applied
+// and an audit.Writer wired to it (ADR-007 C3: INV-1 closure).
 // Each test gets its own TempDir so concurrent tests don't race
 // on the schema_migrations table.
 func newTestDB(t *testing.T) (cleanup func(), s *Store) {
@@ -28,8 +35,17 @@ func newTestDB(t *testing.T) (cleanup func(), s *Store) {
 	if err := CreateSchema(d); err != nil {
 		t.Fatalf("CreateSchema: %v", err)
 	}
-	return func() { _ = d.Close() }, NewStore(d)
+	if err := audit.CreateSchema(d); err != nil {
+		t.Fatalf("audit.CreateSchema: %v", err)
+	}
+	w := audit.NewWriter(d)
+	return func() { _ = d.Close() }, NewStore(d, w)
 }
+
+// testAudit returns the canonical test audit metadata. ADR-007 C3
+// made Audit a mandatory argument; tests that don't care about
+// the audit specifics can use this default.
+func testAudit() *Audit { return &Audit{Actor: "nico"} }
 
 // --- CreateSchema ---
 
@@ -110,7 +126,7 @@ func TestCreateSchema_IndexesExist(t *testing.T) {
 func TestSave_HappyPath(t *testing.T) {
 	cleanup, s := newTestDB(t)
 	defer cleanup()
-	id, err := s.Save(context.Background(), "nico", KindDecision,
+	id, err := s.Save(context.Background(), testAudit(), "nico", KindDecision,
 		"dark-db concurrency architecture",
 		"WAL + busy_timeout=5000 + bounded pool — INV-16",
 		"sqlite,concurrency,WAL", true)
@@ -142,7 +158,7 @@ func TestSave_HappyPath(t *testing.T) {
 func TestSave_RejectsEmptyOperator(t *testing.T) {
 	cleanup, s := newTestDB(t)
 	defer cleanup()
-	_, err := s.Save(context.Background(), "", KindNote, "", "body", "", false)
+	_, err := s.Save(context.Background(), testAudit(), "", KindNote, "", "body", "", false)
 	if err == nil {
 		t.Fatal("expected error for empty operator")
 	}
@@ -154,7 +170,7 @@ func TestSave_RejectsEmptyOperator(t *testing.T) {
 func TestSave_RejectsEmptyContent(t *testing.T) {
 	cleanup, s := newTestDB(t)
 	defer cleanup()
-	_, err := s.Save(context.Background(), "nico", KindNote, "t", "", "", false)
+	_, err := s.Save(context.Background(), testAudit(), "nico", KindNote, "t", "", "", false)
 	if err == nil {
 		t.Fatal("expected error for empty content")
 	}
@@ -163,7 +179,7 @@ func TestSave_RejectsEmptyContent(t *testing.T) {
 func TestSave_RejectsInvalidKind(t *testing.T) {
 	cleanup, s := newTestDB(t)
 	defer cleanup()
-	_, err := s.Save(context.Background(), "nico", "bogus", "t", "c", "", false)
+	_, err := s.Save(context.Background(), testAudit(), "nico", "bogus", "t", "c", "", false)
 	if err == nil {
 		t.Fatal("expected error for invalid kind")
 	}
@@ -179,7 +195,7 @@ func TestSave_AcceptsAllCanonicalKinds(t *testing.T) {
 		KindNote, KindObservation, KindDecision, KindFinding,
 		KindTodo, KindLink, KindContext,
 	} {
-		_, err := s.Save(context.Background(), "nico", k, "t", "c-"+k, "", false)
+		_, err := s.Save(context.Background(), testAudit(), "nico", k, "t", "c-"+k, "", false)
 		if err != nil {
 			t.Errorf("kind %q rejected: %v", k, err)
 		}
@@ -193,7 +209,7 @@ func TestSave_AcceptsAllCanonicalKinds(t *testing.T) {
 func TestRecall_FindsSavedRow(t *testing.T) {
 	cleanup, s := newTestDB(t)
 	defer cleanup()
-	id, err := s.Save(context.Background(), "nico", KindDecision,
+	id, err := s.Save(context.Background(), testAudit(), "nico", KindDecision,
 		"BUG-5 design", "wal + busy_timeout=5000 + bounded pool", "", true)
 	if err != nil {
 		t.Fatal(err)
@@ -225,10 +241,10 @@ func TestRecall_FindsSavedRow(t *testing.T) {
 func TestRecall_OperatorScope(t *testing.T) {
 	cleanup, s := newTestDB(t)
 	defer cleanup()
-	if _, err := s.Save(context.Background(), "alice", KindNote, "", "red apple", "", false); err != nil {
+	if _, err := s.Save(context.Background(), testAudit(), "alice", KindNote, "", "red apple", "", false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Save(context.Background(), "bob", KindNote, "", "blue apple", "", false); err != nil {
+	if _, err := s.Save(context.Background(), testAudit(), "bob", KindNote, "", "blue apple", "", false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -263,10 +279,10 @@ func TestRecall_EmptyQueryReturnsEmpty(t *testing.T) {
 func TestList_OrdersPinnedFirst(t *testing.T) {
 	cleanup, s := newTestDB(t)
 	defer cleanup()
-	if _, err := s.Save(context.Background(), "nico", KindNote, "t1", "first", "", false); err != nil {
+	if _, err := s.Save(context.Background(), testAudit(), "nico", KindNote, "t1", "first", "", false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Save(context.Background(), "nico", KindNote, "t2", "second-pinned", "", true); err != nil {
+	if _, err := s.Save(context.Background(), testAudit(), "nico", KindNote, "t2", "second-pinned", "", true); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := s.List(context.Background(), "nico", 10)
@@ -284,10 +300,10 @@ func TestList_OrdersPinnedFirst(t *testing.T) {
 func TestList_FiltersByOperator(t *testing.T) {
 	cleanup, s := newTestDB(t)
 	defer cleanup()
-	if _, err := s.Save(context.Background(), "alice", KindNote, "t", "alice's note", "", false); err != nil {
+	if _, err := s.Save(context.Background(), testAudit(), "alice", KindNote, "t", "alice's note", "", false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Save(context.Background(), "bob", KindNote, "t", "bob's note", "", false); err != nil {
+	if _, err := s.Save(context.Background(), testAudit(), "bob", KindNote, "t", "bob's note", "", false); err != nil {
 		t.Fatal(err)
 	}
 	rows, err := s.List(context.Background(), "alice", 10)
@@ -309,12 +325,12 @@ func TestList_FiltersByOperator(t *testing.T) {
 func TestArchive_RemovesFromBaseAndFTS(t *testing.T) {
 	cleanup, s := newTestDB(t)
 	defer cleanup()
-	id, err := s.Save(context.Background(), "nico", KindNote, "t", "to be archived", "", false)
+	id, err := s.Save(context.Background(), testAudit(), "nico", KindNote, "t", "to be archived", "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if err := s.Archive(context.Background(), id); err != nil {
+	if err := s.Archive(context.Background(), testAudit(), id); err != nil {
 		t.Fatalf("Archive: %v", err)
 	}
 
@@ -337,7 +353,7 @@ func TestArchive_RemovesFromBaseAndFTS(t *testing.T) {
 func TestArchive_NotFoundReturnsError(t *testing.T) {
 	cleanup, s := newTestDB(t)
 	defer cleanup()
-	if err := s.Archive(context.Background(), 99999); err == nil {
+	if err := s.Archive(context.Background(), testAudit(), 99999); err == nil {
 		t.Fatal("expected ErrNotFound for missing id")
 	}
 }
@@ -348,7 +364,7 @@ func TestUpdate_MutatesFieldsAndReSyncsFTS(t *testing.T) {
 	cleanup, s := newTestDB(t)
 	defer cleanup()
 	ctx := context.Background()
-	id, err := s.Save(ctx, "nico", KindNote, "original", "the busy_timeout was set wrong", "BUG-5", false)
+	id, err := s.Save(ctx, testAudit(), "nico", KindNote, "original", "the busy_timeout was set wrong", "BUG-5", false)
 	if err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -357,7 +373,7 @@ func TestUpdate_MutatesFieldsAndReSyncsFTS(t *testing.T) {
 	pin := true
 	newContent := "the busy_timeout pragma is the right fix"
 	newTags := "BUG-5,SQLite,fix"
-	if err := s.Update(ctx, id, nil, &newContent, &newTags, &pin); err != nil {
+	if err := s.Update(ctx, testAudit(), id, nil, &newContent, &newTags, &pin); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
 
@@ -402,9 +418,9 @@ func TestUpdate_RejectsEmptyContent(t *testing.T) {
 	cleanup, s := newTestDB(t)
 	defer cleanup()
 	ctx := context.Background()
-	id, _ := s.Save(ctx, "nico", KindNote, "", "original", "", false)
+	id, _ := s.Save(ctx, testAudit(), "nico", KindNote, "", "original", "", false)
 	empty := ""
-	if err := s.Update(ctx, id, nil, &empty, nil, nil); err == nil {
+	if err := s.Update(ctx, testAudit(), id, nil, &empty, nil, nil); err == nil {
 		t.Fatal("expected error for empty content")
 	}
 }
@@ -413,7 +429,7 @@ func TestUpdate_NotFound(t *testing.T) {
 	cleanup, s := newTestDB(t)
 	defer cleanup()
 	c := "x"
-	if err := s.Update(context.Background(), 99999, nil, &c, nil, nil); err == nil {
+	if err := s.Update(context.Background(), testAudit(), 99999, nil, &c, nil, nil); err == nil {
 		t.Fatal("expected ErrNotFound for missing id")
 	}
 }
@@ -422,8 +438,8 @@ func TestUpdate_NoFieldsIsNoOp(t *testing.T) {
 	cleanup, s := newTestDB(t)
 	defer cleanup()
 	ctx := context.Background()
-	id, _ := s.Save(ctx, "nico", KindNote, "", "hello world", "tag", false)
-	if err := s.Update(ctx, id, nil, nil, nil, nil); err != nil {
+	id, _ := s.Save(ctx, testAudit(), "nico", KindNote, "", "hello world", "tag", false)
+	if err := s.Update(ctx, testAudit(), id, nil, nil, nil, nil); err != nil {
 		t.Fatalf("Update with no fields: %v", err)
 	}
 	got, _ := s.Get(ctx, id)

@@ -19,6 +19,7 @@ import (
 
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/agent_memory"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/audit"
+	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/judge"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/manifest"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/session"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/store"
@@ -28,7 +29,7 @@ import (
 // schemaVersion is the v4alpha marker stamped into schema_migrations
 // on a successful migrate. Bumped whenever a CreateSchema changes
 // shape or adds a column.
-const schemaVersion = "v4alpha/2026-09-27/001"
+const schemaVersion = "v4alpha/2026-09-27/002" // C3: + sdd_evaluations
 
 // runMigrate applies every v4alpha CreateSchema in dependency order.
 // Order matters: session must precede audit (audit.Write emits FK-like
@@ -116,6 +117,7 @@ func migrateSteps(db *sql.DB) []migrateStep {
 		{"vibe/spec", func(ctx context.Context) error { return vibe.CreateSpecSchema(db) }},
 		{"vibe/artifact", func(ctx context.Context) error { return vibe.CreateArtifactSchema(db) }},
 		{"vibe/drift", func(ctx context.Context) error { return vibe.CreateDriftSchema(db) }},
+		{"judge", func(ctx context.Context) error { return judge.CreateSchema(db) }}, // ADR-007 C3
 	}
 }
 
