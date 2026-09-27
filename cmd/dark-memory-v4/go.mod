@@ -1,0 +1,30 @@
+// dark-memory-v4 binary — sibling module that imports the parent
+// library. Mirrors the cmd/dark-mem-cli / cmd/dark-mem-mcp pattern
+// (separate go.mod with replace directive pointing at the parent
+// module). Stdlib-only at this layer; the heavy v4alpha packages
+// come from the parent.
+//
+// As of BUG-6 (2026-09-27) the binary uses:
+//   - modernc.org/sqlite v1.53.0 (transitive from parent; embeds
+//     SQLite 3.53.2 with the WAL-reset bug fixed in 3.51.3).
+//   - google/uuid (transitive from parent session package).
+module github.com/dark-agents/dark-memory-mcp/cmd/dark-memory-v4
+
+go 1.25.5
+
+require github.com/dark-agents/dark-memory-mcp v0.0.0
+
+require (
+	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/google/uuid v1.6.0 // indirect
+	github.com/mattn/go-isatty v0.0.20 // indirect
+	github.com/ncruces/go-strftime v1.0.0 // indirect
+	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
+	golang.org/x/sys v0.44.0 // indirect
+	modernc.org/libc v1.73.4 // indirect
+	modernc.org/mathutil v1.7.1 // indirect
+	modernc.org/memory v1.11.0 // indirect
+	modernc.org/sqlite v1.53.0 // indirect
+)
+
+replace github.com/dark-agents/dark-memory-mcp => ../..
