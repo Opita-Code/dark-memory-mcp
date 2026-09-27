@@ -5,6 +5,8 @@ import (
 	"database/sql"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/store"
 )
 
 // testHelper is the minimal subset of *testing.T + *rapid.T that
@@ -19,11 +21,16 @@ type testHelper interface {
 // newTestDB returns a fresh in-memory SQLite connection with the
 // spec + artifact + drift schemas. Audit schema is created via
 // audit.CreateSchema (caller's responsibility).
+//
+// Uses store.OpenSQLite so the pragma set matches production
+// (WAL + busy_timeout + bounded pool). The ":memory:" DSN gives
+// each *sql.DB its own private database; concurrent tests live in
+// store_test.go / cap_store_concurrent_test.go with shared DSN.
 func newTestDB(t testHelper) *sql.DB {
 	t.Helper()
-	db, err := sql.Open("sqlite", ":memory:")
+	db, err := store.OpenSQLite(context.Background(), ":memory:")
 	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
+		t.Fatalf("store.OpenSQLite: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
 

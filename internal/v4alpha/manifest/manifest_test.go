@@ -12,14 +12,19 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/store"
 )
 
 func newTestManifestDB(t *testing.T) *sql.DB {
 	t.Helper()
+	// store.OpenSQLite applies the BUG-5 pragma set so manifest tests
+	// exercise the same connection pool and journal_mode the production
+	// binary will use.
 	dsn := filepath.Join(t.TempDir(), "manifest_test.db")
-	db, err := sql.Open("sqlite", dsn+"?_pragma=foreign_keys(1)")
+	db, err := store.OpenSQLite(context.Background(), dsn)
 	if err != nil {
-		t.Fatalf("open: %v", err)
+		t.Fatalf("store.OpenSQLite: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
 	if err := CreateManifestSchema(context.Background(), db); err != nil {

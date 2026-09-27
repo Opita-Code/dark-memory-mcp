@@ -5,17 +5,20 @@ package audit_test
 // helpers thin and side-effect-free.
 
 import (
+	"context"
 	"database/sql"
 
 	_ "modernc.org/sqlite"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/audit"
+	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/store"
 )
 
-// sqlOpenMemory opens an in-memory SQLite database. Caller is
-// responsible for closing (typically via t.Cleanup).
+// sqlOpenMemory opens an in-memory SQLite database with the BUG-5
+// pragma set applied. Caller is responsible for closing (typically via
+// t.Cleanup).
 func sqlOpenMemory() (*sql.DB, error) {
-	return sql.Open("sqlite", ":memory:")
+	return store.OpenSQLite(context.Background(), ":memory:")
 }
 
 // newTestWriterAny is the unified factory for both *testing.T and
@@ -29,7 +32,7 @@ type writerCleanupper interface {
 func newTestWriterAny(t writerCleanupper) *audit.Writer {
 	db, err := sqlOpenMemory()
 	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
+		t.Fatalf("store.OpenSQLite: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
 

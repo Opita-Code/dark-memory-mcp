@@ -12,6 +12,8 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/store"
 )
 
 // rapidCapDB returns a SHARED SQLite DB across all rapid iterations
@@ -19,9 +21,13 @@ import (
 // each iteration starts from a clean slate, but the file is reused.
 // This is critical for performance: creating t.TempDir() per rapid
 // iteration on Windows is slow (the slow part is directory creation).
+//
+// store.OpenSQLite gives us the BUG-5 pragma set (WAL + busy_timeout +
+// bounded pool) so rapid iterations don't deadlock on concurrent
+// PRAGMA journal_mode transitions.
 func rapidCapDB(t *testing.T, rt *rapid.T) (*sql.DB, func()) {
 	dsn := filepath.Join(t.TempDir(), "rapid-cap.db")
-	db, err := sql.Open("sqlite", dsn+"?_pragma=foreign_keys(1)")
+	db, err := store.OpenSQLite(context.Background(), dsn)
 	if err != nil {
 		rt.Fatalf("rapidCapDB open: %v", err)
 	}

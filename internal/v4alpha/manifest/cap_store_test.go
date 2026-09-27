@@ -9,6 +9,8 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/store"
 )
 
 // helpers_test.go (private to manifest_test.go siblings) — only the
@@ -20,10 +22,12 @@ func newTestCapDB(t *testing.T) *sql.DB {
 	t.Helper()
 	// Use a unique file-based DSN per test to keep tests parallel-safe.
 	// ":memory:" would race across goroutines via the shared cache.
+	// store.OpenSQLite applies the BUG-5 pragma set (WAL + busy_timeout
+	// + bounded pool) so the tests reflect production-grade access.
 	dsn := filepath.Join(t.TempDir(), "test.db")
-	db, err := sql.Open("sqlite", dsn+"?_pragma=foreign_keys(1)")
+	db, err := store.OpenSQLite(context.Background(), dsn)
 	if err != nil {
-		t.Fatalf("open: %v", err)
+		t.Fatalf("store.OpenSQLite: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
 	if err := CreateCapSchema(context.Background(), db); err != nil {

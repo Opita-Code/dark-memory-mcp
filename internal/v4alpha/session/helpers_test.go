@@ -3,7 +3,7 @@ package session_test
 // Shared helpers for session tests (L1 + L2).
 
 import (
-	"database/sql"
+	"context"
 	"time"
 
 	"pgregory.net/rapid"
@@ -12,6 +12,7 @@ import (
 
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/audit"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/session"
+	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/store"
 )
 
 // storeCleanupper is the interface satisfied by both *testing.T and
@@ -22,11 +23,12 @@ type storeCleanupper interface {
 }
 
 // newTestStoreAny opens in-memory SQLite, creates audit + session
-// schemas, wires Store + Writer, and registers cleanup.
+// schemas, wires Store + Writer, and registers cleanup. Uses
+// store.OpenSQLite so the connection setup matches production.
 func newTestStoreAny(t storeCleanupper) *session.Store {
-	db, err := sql.Open("sqlite", ":memory:")
+	db, err := store.OpenSQLite(context.Background(), ":memory:")
 	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
+		t.Fatalf("store.OpenSQLite: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
@@ -44,9 +46,9 @@ func newTestStoreAny(t storeCleanupper) *session.Store {
 // newTestStoreAudit returns (Store, *auditWriterExposed) so property
 // tests can assert on audit_id directly.
 func newTestStoreAudit(t *rapid.T) (*session.Store, *auditWriterExposed) {
-	db, err := sql.Open("sqlite", ":memory:")
+	db, err := store.OpenSQLite(context.Background(), ":memory:")
 	if err != nil {
-		t.Fatalf("sql.Open: %v", err)
+		t.Fatalf("store.OpenSQLite: %v", err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
