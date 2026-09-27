@@ -6,8 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
+
+	sqlite "modernc.org/sqlite" // typed *Error for SQLITE_CONSTRAINT / SQLITE_BUSY
+
+	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/store"
 )
 
 // Sentinel errors for CapStore operations. Wrapped with %w so callers
@@ -149,18 +152,32 @@ WHERE id = ?
 // Revoke marks the token as revoked at the given moment. Returns nil on
 // success. If the token is already revoked, returns ErrCapAlreadyRevoked.
 // To revoke "even if already revoked, idempotently", use RevokeIdempotent.
+//
+// Runs inside a SERIALIZABLE transaction (store.WithTx) so the read-
+// modify-write sequence (UPDATE + probe SELECT) is atomic with respect
+// to concurrent Grant/Revoke on the same id. Without the tx, a Grant
+// landing between the UPDATE and the probe SELECT could change the
+// disambiguation outcome in unpredictable ways.
 func (s *CapStore) Revoke(ctx context.Context, id string, revokedAt time.Time) error {
-	return s.revokeWhere(ctx, id, revokedAt, false)
+	return store.WithTx(ctx, s.db, func(tx *sql.Tx) error {
+		return s.revokeInTx(ctx, tx, id, revokedAt, false)
+	})
 }
 
 // RevokeIdempotent is like Revoke but returns nil when the token is
 // already revoked (no error). Use this from operator UIs where a
 // double-click should not surface an error to the operator.
 func (s *CapStore) RevokeIdempotent(ctx context.Context, id string, revokedAt time.Time) error {
-	return s.revokeWhere(ctx, id, revokedAt, true)
+	return store.WithTx(ctx, s.db, func(tx *sql.Tx) error {
+		return s.revokeInTx(ctx, tx, id, revokedAt, true)
+	})
 }
 
-func (s *CapStore) revokeWhere(ctx context.Context, id string, revokedAt time.Time, idempotent bool) error {
+// revokeInTx is the body of Revoke/RevokeIdempotent. The caller MUST
+// hold a SERIALIZABLE transaction (the only path here is via
+// store.WithTx) so the probe SELECT inside the function sees the
+// post-UPDATE world atomically.
+func (s *CapStore) revokeInTx(ctx context.Context, tx *sql.Tx, id string, revokedAt time.Time, idempotent bool) error {
 	if id == "" {
 		return fmt.Errorf("manifest: %w", ErrCapNotFound)
 	}
@@ -182,9 +199,9 @@ WHERE id = ?
 		err error
 	)
 	if idempotent {
-		res, err = s.db.ExecContext(ctx, qAny, revokedAt.Unix(), id)
+		res, err = tx.ExecContext(ctx, qAny, revokedAt.Unix(), id)
 	} else {
-		res, err = s.db.ExecContext(ctx, qStrict, revokedAt.Unix(), id)
+		res, err = tx.ExecContext(ctx, qStrict, revokedAt.Unix(), id)
 	}
 	if err != nil {
 		return fmt.Errorf("manifest: revoke cap: %w", err)
@@ -195,9 +212,11 @@ WHERE id = ?
 	}
 	if n == 0 {
 		// Disambiguate: does the row not exist, or is it already revoked?
+		// Now safe to query inside the same Tx — no other writer can
+		// change revoked_at between the UPDATE and this SELECT.
 		var existing int64
-		err := s.db.QueryRowContext(ctx, `SELECT revoked_at FROM capabilities WHERE id = ?`, id).Scan(&existing)
-		if err == sql.ErrNoRows {
+		err := tx.QueryRowContext(ctx, `SELECT revoked_at FROM capabilities WHERE id = ?`, id).Scan(&existing)
+		if errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("manifest: %w: id=%s", ErrCapNotFound, id)
 		}
 		if err != nil {
@@ -310,15 +329,25 @@ func scanCapRows(r rowScanner) (*CapToken, error) {
 	return c, nil
 }
 
-// isDuplicateKey returns true when err looks like a SQLite UNIQUE
-// constraint violation. Uses string match because modernc.org/sqlite
-// (the driver we depend on) returns the error message directly without
-// a typed error. This is portable across the drivers we use.
+// isDuplicateKey returns true when err carries a SQLite UNIQUE
+// constraint violation. Uses the modernc.org/sqlite typed *Error
+// (pkg.go.dev/modernc.org/sqlite, ErrorCodeString) so we discriminate
+// on the actual error code, not on message substring matching — which
+// was fragile and version-dependent.
+//
+// modernc.org/sqlite's Error.Code() returns the FULL extended code
+// (primary code in low 8 bits, secondary in next 8 bits — sqlite.org
+// /rescode.html). UNIQUE violations on a PRIMARY KEY surface as
+// SQLITE_CONSTRAINT_PRIMARYKEY = 19 | (6 << 8) = 1555. We test the
+// primary code with & 0xFF so any constraint subclass counts; callers
+// that need finer discrimination can match on the secondary byte.
 func isDuplicateKey(err error) bool {
 	if err == nil {
 		return false
 	}
-	s := err.Error()
-	return strings.Contains(s, "UNIQUE constraint failed") ||
-		strings.Contains(s, "constraint failed: UNIQUE")
+	var se *sqlite.Error
+	if !errors.As(err, &se) {
+		return false
+	}
+	return (se.Code() & 0xFF) == 19 // SQLITE_CONSTRAINT (primary)
 }
