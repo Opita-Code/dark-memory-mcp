@@ -7,7 +7,7 @@
 ║        ██╔═══██╗██╔════╝██╔══██╗████╗ ████║      ████╗ ████║██╔════╝██╔══██╗       ║
 ║        ██║   ██║██║     ██║  ██║██╔████╔██║      ██╔████╔██║██║     ██████╔╝       ║
 ║        ██║   ██║██║     ██║  ██║██║╚██╔╝██║      ██║╚██╔╝██║██║     ██╔═══╝        ║
-║        ╚██████╔╝╚██████╗██████╔╝██║ ╚═╝ ██║      ██║ ╚═╝ ██║╚██████╗██║            ║
+║        ▚██████╔╝╚██████╗██████╔╝██║ ╚═╝ ██║      ██║ ╚═╝ ██║╚██████╗██║            ║
 ║         ╚═════╝  ╚═════╝╚═════╝ ╚═╝     ╚═╝      ╚═╝     ╚═╝ ╚═════╝╚═╝            ║
 ║                                                                                    ║
 ║                     MEMORIA PERSISTENTE PARA AGENTES DE IA                         ║
@@ -22,10 +22,32 @@
 
 [![MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Go 1.25+](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go&logoColor=white)](go.mod)
-[![MCP tools](https://img.shields.io/badge/MCP-57%20canonical%20tools-blueviolet)](#las-57-herramientas)
-[![Schema](https://img.shields.io/badge/schema-v26-success)](#arquitectura)
+[![MCP tools](https://img.shields.io/badge/MCP-25%20of%2057%20(v4--alpha.1)-orange)](#status)
+[![Schema](https://img.shields.io/badge/schema-v4alpha%2F2026--09--27%2F001-orange)](#status)
+[![Branch](https://img.shields.io/badge/branch-feat%2Fv4--redesign-blue)](https://github.com/Opita-Code/dark-memory-mcp)
 [![Install](https://img.shields.io/badge/install-npx%20%40opita--code%2Fdark--memory--mcp-cc3534)](docs/npm-install.md)
-[![Backends](https://img.shields.io/badge/backends-sqlite%20%7C%20postgres-blue)](#arquitectura)
+
+> ## ⚠️ STATUS: v4-alpha.1 in progress
+>
+> **You are reading the README of the v4 redesign branch**
+> (`feat/v4-redesign`). The narrative below describes the v2.20.0
+> production tree; v4-alpha.1 is a partial rewrite in progress.
+>
+> - **Branch**: `feat/v4-redesign` (local-only — no remote)
+> - **Tools**: 25 of 57 canonical tools registered (44%)
+> - **Schema**: `v4alpha/2026-09-27/001` (separate from v2.20.0's `v26`)
+> - **Binary**: `dark-memory-v4` (not `dark-mem-mcp`)
+> - **Project id**: `dark-memory-v4` (not `dark-mem`)
+>
+> For the ground truth on what's actually shipping today, read
+> **[`docs/v4-status.md`](docs/v4-status.md)** first. The narrative
+> below applies to v2.20.0 production; the v4 docs live in
+> [`ARCHITECTURE-V4.md`](ARCHITECTURE-V4.md),
+> [`CONSTITUTION-V4.md`](CONSTITUTION-V4.md), and
+> [`docs/INVARIANTS.md`](docs/INVARIANTS.md) (INV-16 + INV-17 are
+> v4-only).
+
+---
 
 [¿Qué es esto?](#qué-es-esto) · [El problema que resuelve](#el-problema-que-resuelve) · [El vibe-loop](#el-vibe-loop-un-paradigma-nuevo) · [Conceptos clave](#conceptos-clave) · [Quickstart](#quickstart) · [Las 57 herramientas](#las-57-herramientas) · [Camino de aprendizaje](#camino-de-aprendizaje) · [Resolver problemas](#resolver-problemas) · [Contribuir](#contribuir)
 
@@ -230,7 +252,7 @@ Debe mostrar algo como:
 
 ## Las 57 herramientas
 
-Dark Memory expone **57 herramientas** (más 3 extras en modo investigación). El agente las invoca con el prefijo `dark_memory_`. Están agrupadas por 17 oficios:
+Dark Memory expone **57 herramientas** (más 3 extras en modo investigación) en su superficie canónica final (v4 GA target). En `feat/v4-redesign` (v4-alpha.1) hay **25 registradas**. El agente las invoca con el prefijo `dark_memory_`. Estructura final agrupada por 17 oficios:
 
 ### Sesión (7 tools)
 `session_start` · `session_resume` · `session_heartbeat` · `session_status` · `session_close` · `session_recover` · `session_resurrect`
@@ -421,10 +443,13 @@ dark-mem-mcp.exe  ←──  proceso local, 57+3 herramientas
 SQLite (archivo .db en tu disco)  ←── o Postgres si configuras DARK_DRIVER=postgres
 ```
 
-- **Versión actual:** v2.20.0
-- **Schema DB:** v26 (error_events, vibe-loop state, agent_memory con BM25)
+- **Versión actual (v4-alpha.1):** `v4alpha.1-dev` (binary `dark-memory-v4`)
+- **Versión actual (v2.20.0 production):** v2.20.0 (binary `dark-mem-mcp`)
+- **Schema DB (v4-alpha.1):** `v4alpha/2026-09-27/001` (8 tables: audit_log, agent_memory, agent_memory_fts, schema_migrations, sessions, capabilities, manifest, vibe_{specs,artifacts,drifts})
+- **Schema DB (v2.20.0):** v26 (error_events, vibe-loop state, agent_memory con BM25)
 - **Dependencias externas:** ninguna en runtime. Solo Go stdlib + SQLite embebido.
-- **Tests:** 29 suites de integración + 27 paquetes con test.
+- **Tests (v4-alpha.1):** 37 PASS, 0 FAIL across 8 packages.
+- **Tests (v2.20.0):** 29 suites de integración + 27 paquetes con test.
 
 ---
 

@@ -15,11 +15,21 @@
 |---|---|
 | Audience | student, professor, technical auditor, LLM |
 | Level | advanced |
-| Status | draft (review pending) |
+| Status | **alpha.1 in progress** — see [`docs/v4-status.md`](docs/v4-status.md) for the ground truth |
 | Version | v4.0.0-alpha.1 |
-| Last reviewed | 2026-09-24 |
+| Last reviewed | 2026-09-27 (delta from 2026-09-24 baseline) |
 | Branch | `feat/v4-redesign` (from `v2.20.0`) |
+| Local-only | YES — no `git push`/`fetch`/`pull`, no remote tags per operator policy |
 | Parent | [docs/archive/v3.0-research/CRITIQUE-SOTA.md §13](../archive/v3.0-research/CRITIQUE-SOTA.md) |
+
+> **🚨 ASPIRATIONAL vs ACTUAL**: this document was drafted 2026-09-24
+> before any code shipped. §1-4 describe the design intent. **§5
+> (Package structure)** was rewritten 2026-09-27 to reflect the
+> actual layout (see the "Status of §5" callout). §8 (Workflow
+> runtime) describes a mutable `Workflow` struct that **is NOT yet
+> implemented** — v4-alpha.1 ships a fixed FSM in `vibe/pipeline.go`.
+> If you are looking for what is actually shipping today, read
+> [`docs/v4-status.md`](docs/v4-status.md) first.
 
 ---
 
@@ -478,6 +488,291 @@ security:
 ---
 
 ## 5. Package structure
+
+> **Status of §5 — REWRITTEN 2026-09-27**: this section was rewritten
+> to reflect the actual `internal/v4alpha/` layout. The original
+> aspirational layout (`core/`, `vibe/`, `security/`, `adapters/`,
+> `governance/`, `constitutions/`, `tools/`, `installer/`,
+> `extensions/`) is preserved below as a "future state" appendix so
+> the design intent isn't lost. Anything not in the "actual layout"
+> diagram below is NOT yet built.
+
+### 5.0 Actual layout (v4-alpha.1, 2026-09-27)
+
+```
+internal/v4alpha/                         # every internal package is v4-alpha
+├── agent_memory/                         # §5.0.1
+├── audit/                                # §5.0.2
+├── judge/                                # §5.0.3
+├── manifest/                             # §5.0.4
+├── research/                             # §5.0.5 (placeholder, BUG-9)
+├── session/                              # §5.0.6
+├── store/                                # §5.0.7
+├── transport/
+│   └── mcp/                              # §5.0.8
+└── vibe/                                 # §5.0.9
+
+cmd/
+└── dark-memory-v4/                       # §5.0.10 — the binary
+```
+
+#### 5.0.1 `agent_memory/` — operator-scoped notebook
+
+- `agent_memory.go` — `Save`, `Get`, `List`, `Recall`, `Archive`,
+  `Update` (added BUG-8).
+- `agent_memory_test.go` — 18 tests (14 + 4 Update).
+- Schema: `agent_memory` (base) + `agent_memory_fts` (regular FTS5,
+  INV-17).
+- Kinds: `note`, `observation`, `decision`, `finding`, `todo`, `link`,
+  `context`.
+- Tenancy: `operator` field (string), not `project_id` (see §6.4).
+- See [`docs/AGENT_MEMORY_SCHEMA.md`](docs/AGENT_MEMORY_SCHEMA.md) for
+  the full table + FTS5 contract.
+
+#### 5.0.2 `audit/` — write_audit + Writer
+
+- `writer.go` — `Writer.Write(ctx, event)` appends to `write_audit`.
+- Schema: `write_audit` table (actor, session_id, project_id,
+  payload_json, created_at).
+- INV-1 enforcement: every `Save*` in v4-alpha.1 that emits an audit
+  row uses `WithTx` so the audit insert + data insert are atomic.
+- Currently NOT called by `agent_memory.Save` — that's a BUG-9
+  follow-up (closes the only INV-1 gap in v4-alpha.1).
+
+#### 5.0.3 `judge/` — drift verdict abstraction
+
+- `client.go` — `Judge` interface: `Evaluate(ctx, artifact_ref,
+  spec_intent) → Verdict`. Verdict ∈ {`aligned`, `drift_detected`,
+  `needs_human`}, Confidence ∈ [0, 1].
+- `noop.go` — `NoOpJudge` returns `VerdictAligned + Confidence 1.0`.
+  v4-alpha.1 default.
+- LLM-backed `Judge` (HTTP client to `DARK_JUDGE_PROVIDER`) lands in
+  BUG-9. The interface is fixed so swapping `NoOpJudge` → real
+  `Judge` is a one-line change in `vibe.NewPipeline`.
+
+#### 5.0.4 `manifest/` — RBAC + capability layer
+
+- `cap_store.go` — capability grants (`Grant`, `Revoke`,
+  `RevokeIdempotent`). Wrapped in `WithTx` per INV-16.
+- `cap_token.go` — token minting + verification (INV-11 stub; full
+  constant-time compare lands in alpha.3).
+- `manifest.go` — declarative manifest parser (alpha.2 will move to
+  `manifests/` directory per M3 aspirational design).
+
+#### 5.0.5 `research/` — placeholder (BUG-9)
+
+- Directory exists; no tools yet.
+- BUG-9 adds `topic`, `recall`, `resume_thread` as no-op stubs that
+  return `{status: "no_backends_registered"}`. Real backends (web,
+  academic, code, cve, …) land in alpha.3 with `DARK_RESEARCH_*
+  env` hooks.
+
+#### 5.0.6 `session/` — open/read/heartbeat/close
+
+- `session.go` — `Store` with `Open`, `Read`, `Heartbeat`, `Close`.
+- `session_test.go` + `session_property_test.go` — covers open/read
+  invariants, concurrent heartbeats, session-id reuse rules.
+- INV-2: per-session scoping on Recall paths.
+
+#### 5.0.7 `store/` — INV-16 dark-db contract
+
+- `open.go` — `OpenSQLite(dsn) (*sql.DB, error)` enforces the BUG-5
+  pragma set + pool bounds.
+- `tx.go` — `WithTx(ctx, db, fn) error` wraps the function in
+  `LevelSerializable`.
+- `store_test.go` — 10 tests pinning the contract.
+- Every other package that opens a dark-db MUST go through these
+  helpers.
+
+#### 5.0.8 `transport/mcp/` — the 25 tools wire surface
+
+- `server.go` — `NewServer(db) *Server`, registers 25 tools across
+  7 namespaces. Applies `WithWorkerPoolSize(1)` manually to the
+  underlying mcp-go `StdioServer` (BUG-7).
+- `health.go`, `memory.go`, `session.go`, `observability.go`,
+  `error_obs.go`, `policy.go`, `vibe.go` — one file per namespace.
+- `helpers.go` — `nowRFC3339()` + the bindArgs / callTool
+  infrastructure shared across tool files.
+- `server_test.go` — 13 tests covering the 25 tools via JSON-RPC
+  drives.
+
+#### 5.0.9 `vibe/` — fixed FSM pipeline (not mutable workflow yet)
+
+- `pipeline.go` — `Pipeline.Publish(spec, artifact) → Verdict`,
+  `Status(artifact_id)`, `ResolveDrift(drift_id, decision, note)`.
+  Three stores: `Specs()`, `Artifacts()`, `Drifts()`.
+- `spec.go`, `artifact.go`, `drift.go` — three domain types + their
+  per-type stores.
+- The aspirational `Workflow` struct (mutable states/events/transitions
+  + modify_workflow event + drift_judge of modifications) is NOT
+  implemented. The mutable workflow runtime lands in v4.0.0-beta.
+
+#### 5.0.10 `cmd/dark-memory-v4/` — the binary
+
+- 5 subcommands: `help`, `version`/`-v`, `migrate`, `schema-status`,
+  `serve`.
+- `serve.go` wires `store.OpenSQLite` + `applyAllSchemas` +
+  `stampSchemaVersion` + `transport/mcp.NewServer(db).ServeStdio(ctx,
+  os.Stdin, stdout)`.
+- 23 tests in `cmd/dark-memory-v4/*_test.go`.
+
+### 5.0.11 Tool inventory (25 of 57 canonical)
+
+See [`docs/v4-status.md §1`](docs/v4-status.md) for the full table.
+Summary: 25 registered, 32 deferred to BUG-9+.
+
+### 5.0.12 Schema
+
+- Schema version stamped: `v4alpha/2026-09-27/001`.
+- 8 tables: `audit_log`, `agent_memory`, `agent_memory_fts`,
+  `schema_migrations`, `sessions`, `capabilities`, `manifest`,
+  `vibe_specs`, `vibe_artifacts`, `vibe_drifts`.
+- All schema is in `CreateSchema()` functions co-located with each
+  package. The `cmd/dark-memory-v4/migrate.go` orchestrator calls
+  them in dependency order: audit → session → manifest/cap →
+  manifest/meta → vibe/spec → vibe/artifact → vibe/drift →
+  agent_memory.
+
+### 5.0.13 Tests
+
+- `internal/v4alpha/agent_memory/`: 18 tests
+- `internal/v4alpha/audit/`: covered indirectly via session + vibe
+  tests
+- `internal/v4alpha/judge/`: NoOpJudge trivial
+- `internal/v4alpha/manifest/`: 5+ concurrent stress tests (cap_store)
+- `internal/v4alpha/session/`: open/read/heartbeat + property tests
+- `internal/v4alpha/store/`: 10 contract tests
+- `internal/v4alpha/transport/mcp/`: 13 JSON-RPC drive tests
+- `internal/v4alpha/vibe/`: pipeline + spec/artifact/drift stores
+- `cmd/dark-memory-v4/`: 23 subcommand tests
+- **Total: 37 PASS / 0 FAIL** (2026-09-27)
+
+### 5.0.14 What's NOT here
+
+| Aspirational | Status | When |
+|---|---|---|
+| `core/` (pure types) | Inline in `vibe/` and `agent_memory/` | alpha.2 |
+| `security/` (redact, ssrf, pii, injection, capability) | NOT STARTED | alpha.3 — INV-11..INV-15 |
+| `adapters/` (LLM, credentials, embedding, update) | NOT STARTED | alpha.3 |
+| `governance/` | Inline in `vibe/` + `judge/` | alpha.2 |
+| `constitutions/` (YAML files) | Hardcoded in `transport/mcp/policy.go` | BUG-9 — `policy_registry` table |
+| `tools/` (manifest-based auto-discovery) | `transport/mcp/*` files | M3 — deferred past alpha.2 |
+| `installer/` | Lives in `npm/wrapper/` (legacy v2) | Carry over |
+| `extensions/` | NOT STARTED | alpha.3+ — community pack loader |
+
+---
+
+### 5.1 Aspirational layout (original, preserved for design intent)
+
+> The diagram below is from the 2026-09-24 design draft. It is the
+> target shape for v4.0.0 GA. v4-alpha.1 implements roughly 30% of
+> it (see §5.0 above for the actual layout).
+
+```
+dark-memory-v4/
+├── core/                              # Pure types. Zero I/O. No side effects.
+│   ├── artifact.go                    # Artifact, ArtifactRef, ArtifactType, ArtifactHash
+│   ├── spec.go                        # Spec, SpecTask, SpecIntent, VibeCase
+│   ├── drift.go                       # DriftReport, Verdict, Confidence, DispersionSummary
+│   ├── session.go                     # Session, Operator, Project, Constitution
+│   ├── audit.go                       # WriteAudit, AuditEntry, Actor, WritePath
+│   └── primitives.go                  # Hash, Signature, Identity, Capability
+│
+├── vibe/                              # Workflow runtime. The heart.
+│   ├── engine.go                      # Engine: Handle/Modify/Snapshot
+│   ├── workflow.go                    # Workflow data (states/events/transitions)
+│   ├── workflow_default.go            # DefaultWorkflow() — baseline 9 states, 13 transitions
+│   ├── modification.go                # modify_workflow event + validation
+│   ├── modification_drift.go          # Drift_judge the modification itself
+│   ├── journal.go                     # Append-only event log (HMAC-chained, cross-session composition)
+│   ├── observer.go                    # Hooks: BeforeTransition, AfterTransition, OnError
+│   ├── guards.go                      # Default guard library (HasOperator, HasSpecIntent, ...)
+│   └── property_test.go               # R-24: any modification+transition is replayable
+│
+├── security/                          # Promoted from dark-copilot internal/security
+│   ├── redact/                        # Central Redact + RedactWalk + isSensitiveKey (Tier-1 #3)
+│   ├── path/                          # NewTrustedPath (Tier-1 #4)
+│   ├── capability/                    # Token generation + constant-time verify (Tier-1 #1, M6)
+│   ├── audit/                         # HMAC-SHA-256 chain + cross-session composition (Tier-1 #2, M1)
+│   ├── ssrf/                          # URL validator + DNS rebinding defense + blocklist (M2)
+│   ├── pii/                           # dark_ssd_pii_detect + anonymize (M5)
+│   ├── injection/                     # dark_ssd_prompt_injection_scan 8 categories (Tier-1 #7, M4)
+│   ├── quota/                         # SessionQuotaPool + per-backend rate limits (Tier-2 #8, M7)
+│   └── policy/                        # Default-deny allowlist + per-domain policy (Tier-1 #5, M3, M8)
+│
+├── adapters/                          # Pluggable. Loaded from manifests at boot.
+│   ├── store/
+│   │   ├── sqlite/                    # Default backend
+│   │   ├── postgres/                  # Optional
+│   │   └── memory/                    # Test/dev
+│   ├── llm/
+│   │   ├── anthropic/
+│   │   ├── openai/
+│   │   ├── deepseek/
+│   │   └── custom/                    # Bring-your-own
+│   ├── credentials/
+│   │   ├── keyring/                   # OS keyring
+│   │   ├── env/                       # Env-var fallback (explicit opt-in only, M6)
+│   │   └── vault/                     # DPAPI Windows / Keychain macOS / Secret Service Linux
+│   ├── audit/
+│   │   ├── local/                     # Default: write to store
+│   │   ├── merkle/                    # Tamper-evident chain
+│   │   └── remote/                    # Opt-in
+│   ├── federation/                    # Opt-in
+│   │   ├── crdt/
+│   │   └── git-ots/
+│   ├── embedding/
+│   │   ├── sqlite-vec/
+│   │   └── none/                      # Default: lexical-only
+│   ├── research/                      # 18 native research tools (replaces dark-research-mcp)
+│   │   ├── web/   academic/   code/   cve/   domain/
+│   │   ├── dns/   cert/   ip/   threat/   email/
+│   │   ├── dark/  geo/   news/
+│   │   └── multi/                     # Meta-router
+│   └── update/
+│       ├── github/                    # GitHub releases API
+│       ├── verify/                    # SHA256 + Ed25519 signature
+│       └── apply/                     # Atomic binary replace
+│
+├── governance/
+│   ├── constitution/
+│   │   └── loader.go                  # YAML loader + INV-4 watchdog (SHA verify)
+│   ├── judge/                         # LLM-as-judge abstraction
+│   ├── consensus/                     # N-shot aggregation + dispersion
+│   ├── mods/                          # Mod loader with version pin + INV-6 sanitization
+│   └── drift/                         # Drift detection logic
+│
+├── constitutions/                     # YAML, versioned, SHA-pinned
+│   ├── default.yaml                   # Default for v4-alpha.1
+│   ├── strict.yaml                    # Stricter alternative
+│   └── research-only.yaml             # Example for OSINT-only deployments
+│
+├── transport/                         # Thin adapters. No business logic.
+│   ├── mcp/                           # The canonical interface (75 tools auto-discovered)
+│   ├── http/                          # REST for non-MCP integrations
+│   ├── cli/                           # Operator CLI
+│   └── grpc/                          # Internal high-perf
+│
+├── tools/                             # 75 tools auto-discovered via manifests
+│   ├── vibe/                          # 14 vibe-loop tools (publish, spec, modify, ...)
+│   ├── memory/                        # 6 agent_memory tools
+│   ├── governance/                    # 8 judge/consensus/drift tools
+│   ├── observability/                 # 4 error/writes/health tools
+│   ├── research/                      # 18 research tools
+│   ├── security/                      # 3 (security_status, security_rotate_token, security_verify_audit) [M9]
+│   ├── admin/                         # 5 schema/migrate/vacuum
+│   └── update/                        # 3 update_check / update_apply / update_config
+│
+├── installer/                         # The npx installer fix
+│   ├── npm/                           # package.json + postinstall
+│   ├── mcpb/                          # mcpb platform shim
+│   └── tests/                         # E2E install tests (Win/Mac/Linux)
+│
+└── extensions/                        # Community-maintained, separate repo path
+    ├── redteam/                       # Example mod pack (gated)
+    ├── exporters/                     # Prometheus, OTel
+    └── apps/                          # Example applications
+```
 
 ```
 dark-memory-v4/

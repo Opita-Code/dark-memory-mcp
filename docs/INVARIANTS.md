@@ -317,31 +317,235 @@ callers expect).
 
 ---
 
-## Quick reference: which `Save*` enforces which invariant
+# v4-only invariants (added on `feat/v4-redesign`)
 
-| Store method | INV-1 | INV-2 | INV-3 | INV-4 | INV-6 | INV-7 | INV-8 | INV-10 |
-|---|---|---|---|---|---|---|---|---|
-| `SaveSpec` | ✓ | — | — | (read) | — | ✓ | ✓ | — |
-| `SaveArtifact` | ✓ | — | ✓ | (read) | — | ✓ | ✓ | — |
-| `SaveDriftReport` | ✓ | — | — | (read) | — | ✓ | ✓ | — |
-| `SaveSDDEvaluation` | ✓ | — | — | (read) | — | ✓ | ✓ | — |
-| `SaveRun` | ✓ | — | ✓ | (read) | — | ✓ | ✓ | — |
-| `SaveSession` | ✓ | ✓ | — | (read) | — | ✓ | ✓ | — |
-| `SaveMod` / `RecordModLoad` | ✓ | — | ✓ | (read) | ✓ | ✓ | ✓ | — |
-| `SaveConstitution` | ✓ | — | — | (write) | — | ✓ | ✓ | — |
-| `SaveAgentMemory` | ✓ | — | — | (read) | — | ✓ | ✓ | ✓ |
-| `ListAgentMemory` | — | — | — | (read) | — | ✓ | ✓ | ✓ |
-| `SearchAgentMemory` | — | — | — | (read) | — | ✓ | ✓ | ✓ |
-| `UpdateAgentMemory` | ✓ | — | — | (read) | — | ✓ | ✓ | ✓ |
-| `ArchiveAgentMemory` | ✓ | — | — | (read) | — | ✓ | ✓ | — |
-| `Recall` | — | ✓ | (read) | (read) | — | ✓ | ✓ | — |
-| `Vacuum` | — | — | — | — | — | (filters by project) | ✓ | — |
-| `Migrate` | — | — | — | refused under drift | — | — | ✓ | — |
-
-*Legend: ✓ = enforces this invariant; — = not relevant; (read) =
-reads constitution for WriteContext, doesn't enforce a write-side
-invariant.*
+The invariants below are introduced on the v4 redesign branch. They
+do NOT exist in v1.x / v2.x production. Each carries a `feat/v4-
+redesign` tag in its header so v3 readers don't accidentally treat
+them as inherited.
 
 ---
 
-*See also: [RUNBOOK.md](./RUNBOOK.md) · [COEXISTENCE.md](./COEXISTENCE.md) · [CONTEXT_OBJECTS.md](./CONTEXT_OBJECTS.md)*
+## INV-16 — dark-db concurrency contract [`feat/v4-redesign`]
+
+**Statement**: Every `*sql.DB` opened against a dark-db path (the
+SQLite file at `<UserConfigDir>/dark-agents/dark-memory.db` and per-
+project siblings) MUST go through `internal/v4alpha/store.OpenSQLite`
+so the DSN carries the BUG-5 pragma set:
+
+```
+?_pragma=busy_timeout(5000)
+&_pragma=journal_mode(WAL)
+&_pragma=synchronous(NORMAL)
+&_pragma=foreign_keys(1)
+&_pragma=wal_autocheckpoint(1000)
+&_pragma=cache_size(-2000)
+&_pragma=temp_store(MEMORY)
+```
+
+…AND the connection pool is bounded: `MaxOpenConns(8)`,
+`MaxIdleConns(4)`, `ConnMaxIdleTime(5m)`.
+
+Every read-modify-write sequence over a dark-db path MUST go through
+`store.WithTx(ctx, db, fn)` which opens a `sql.LevelSerializable`
+transaction.
+
+**Why**: dark-db is shared across multiple agents, multiple operator
+sessions, and the BUG-5 stress test (2026-09-27) confirmed that the
+default `sql.Open("sqlite", dsn+"?_pragma=foreign_keys(1)")` pattern
+deadlocks under concurrent writers on Windows within ~30 seconds
+(16 goroutines opening the same file; 2/16 failed with `SQLITE_BUSY`
+from the `PingContext` that drives the `journal_mode` conversion).
+Production agents writing concurrently would silently corrupt audit
+trails or hang the MCP transport.
+
+The chosen pragma set is grounded in four tier-1 sources:
+
+1. `sqlite.org/wal.html §2.2`: "WAL provides more concurrency as
+   readers do not block writers and a writer does not block readers.
+   ... since there is only one WAL file, there can only be one writer
+   at a time."
+2. `sqlite.org/pragma.html#synchronous`: `synchronous=NORMAL` + WAL
+   means writers never fsync — only the checkpoint does, which runs
+   in the background.
+3. `pkg.go.dev/modernc.org/sqlite` Performance §: maintainer verbatim
+   "Bound the pool with `sql.DB.SetMaxOpenConns` and do not issue a
+   periodic query before the previous one has returned."
+4. `sqlite.org/wal.html §11` (WAL-reset bug): fixed in SQLite 3.51.3.
+   We embed SQLite 3.53.2 via modernc.org/sqlite v1.53.0 (`CLAUDE.md`
+   of the modernc repo), so we are patched.
+
+**Enforced at**: `internal/v4alpha/store/open.go::OpenSQLite` and
+`internal/v4alpha/store/tx.go::WithTx`. Direct `sql.Open("sqlite",
+...)` against a dark-db path is a violation; the code review rule is
+"search for `sql.Open` and verify the path is `:memory:` or a non-
+dark-db temporary file".
+
+**Defensive tests**: `internal/v4alpha/store/store_test.go` (10 tests)
+and `internal/v4alpha/manifest/cap_store_*test.go` (5 concurrent
+tests). Specifically:
+
+- `TestOpenSQLite_DSNContainsAllPragmas` — pins the pragma list.
+- `TestOpenSQLite_JournalModeIsWAL` — engine-level WAL check.
+- `TestOpenSQLite_BusyTimeoutApplied` — 5000 ms landed.
+- `TestOpenSQLite_PoolBounds` — `MaxOpenConnections == 8`.
+- `TestOpenSQLite_ConcurrentOpens` — 16 goroutines race (T7).
+- `TestConcurrent_Grant_SameID` — T2 (32 goroutines, same id).
+- `TestConcurrent_GrantThenRevoke_SameID` — T3 (16 revokers).
+- `TestStress_10k_Writes` — T4 (no deadlock under 10k inserts).
+- `TestPoolExhaustion_200Goroutines_Pool8` — T5 (200 goroutines).
+- `TestMultiDBIsolation` — T8 (cross-DB independence).
+
+**Operator signal**: `dark_memory_memory_state` tool reports
+`db_pool` (`max_open`, `max_idle`, `in_use`, `idle`). A failure of
+any of the 10 tests above is the alert.
+
+**Migration cost**: zero — `OpenSQLite` is the canonical opener; no
+v3 code is required to migrate (v4 branches from v2.20.0).
+
+---
+
+## INV-17 — FTS5 ordering under SERIALIZABLE [`feat/v4-redesign`]
+
+> **Corrected 2026-09-27**: an earlier draft of this invariant (and
+> agent_memory row 2040) claimed we switched the schema from
+> contentless to regular FTS5. **This was incorrect.** The schema
+> in v4-alpha.1 is contentless (`content='agent_memory',
+> content_rowid='id'`); plain `DELETE FROM fts WHERE rowid=?` works
+> against the contentless table on `modernc.org/sqlite` v1.53 (the
+> `TestArchive_RemovesFromBaseAndFTS` test passes). What we DID
+> discover is a real ordering bug inside `SERIALIZABLE` transactions.
+> See "Why" below for the correct story.
+
+**Statement**: Every multi-step write path that mutates both a
+base table and its companion FTS5 index MUST execute the FTS5
+DELETE **before** the base-table UPDATE within the SERIALIZABLE
+transaction, regardless of whether the FTS5 table is contentless
+or regular. The FTS5 re-INSERT happens after the base-table UPDATE
+completes.
+
+The canonical sequence in `agent_memory.Update` is:
+
+```
+1. (verify row exists) SELECT 1 FROM agent_memory WHERE id=?
+2. DELETE FROM agent_memory_fts WHERE rowid = ?      ← FIRST
+3. UPDATE agent_memory SET ... WHERE id = ?
+4. SELECT title, content, tags FROM agent_memory WHERE id = ?
+5. INSERT INTO agent_memory_fts (rowid, title, content, tags)
+   VALUES (?, ?, ?, ?)
+```
+
+The canonical sequence in `agent_memory.Save` is:
+
+```
+1. INSERT INTO agent_memory (operator, kind, title, content, tags, pinned)
+   VALUES (?, ?, ?, ?, ?, ?)
+2. INSERT INTO agent_memory_fts (rowid, content, title, tags)
+   VALUES (last_insert_rowid(), ?, ?, ?)
+```
+
+The canonical sequence in `agent_memory.Archive` is:
+
+```
+1. DELETE FROM agent_memory WHERE id = ?
+2. DELETE FROM agent_memory_fts WHERE rowid = ?
+```
+
+(Note: in `Archive` the order is base-first, then FTS5, because
+the base DELETE is the trigger and the FTS5 DELETE is the
+sidecar — `TestArchive_RemovesFromBaseAndFTS` passes with this
+order against the contentless schema.)
+
+**Why**: empirical discoveries on `modernc.org/sqlite` v1.53
+(2026-09-27, BUG-8):
+
+- **Ordering bug**: `UPDATE base → DELETE fts → SELECT → INSERT fts`
+  inside one `SERIALIZABLE` transaction raises `SQLITE_CORRUPT
+  (267) — "database disk image is malformed"`. The workaround is
+  `DELETE fts → UPDATE base → SELECT → INSERT fts` — the FTS5
+  DELETE goes first while the base row is still in its original
+  shape. Verified by `TestUpdate_MutatesFieldsAndReSyncsFTS` (passes
+  with the fix; was failing with the reversed order).
+- **Schema type is contentless, not regular**: the v4-alpha.1 schema
+  uses `content='agent_memory', content_rowid='id'`. Earlier draft
+  docs and agent_memory row 2040 claimed we switched to regular
+  FTS5 to dodge SQLITE_CORRUPT on plain `DELETE FROM fts WHERE
+  rowid=?`. The test shows plain DELETE works on contentless too;
+  the real fix is the **ordering** above, not the schema type.
+  Leaving the schema contentless saves the ~2× storage cost.
+- **FTS5 `'delete-all'` command** (the canonical way to delete from
+  a contentless FTS5) is also known to fail on modernc v1.53 under
+  SERIALIZABLE; we never use it. Plain `DELETE FROM fts WHERE
+  rowid=?` works and is what all three write methods use.
+
+These are not bugs we can patch upstream. They are quirks in
+modernc v1.53's FTS5 module under SERIALIZABLE isolation. The
+only durable defense is the **canonical sequence** documented
+above.
+
+**Enforced at**: `internal/v4alpha/agent_memory/agent_memory.go` —
+`Save`, `Update`, `Archive` all use the canonical sequence. Code
+review rule: any new method that mutates both a base table and its
+FTS5 sidecar inside one transaction MUST do the FTS5 DELETE before
+the base UPDATE.
+
+**Defensive tests**: `internal/v4alpha/agent_memory/agent_memory_test.go`:
+
+- `TestUpdate_MutatesFieldsAndReSyncsFTS` — exercises the Update
+  path; asserts FTS5 sees the new content after Update.
+- `TestUpdate_NoFieldsIsNoOp` — boundary: empty mutation should not
+  corrupt FTS5.
+- `TestArchive_RemovesFromBaseAndFTS` — asserts FTS5 row is gone
+  after Archive. PASSES against the contentless schema.
+- `TestList_OrdersPinnedFirst` + `TestRecall_FindsRecentlySaved` —
+  guard against future regressions that re-introduce the
+  ordering bug.
+
+**Operator signal**: `dark_memory_memory_state` reports
+`agent_memory.fts_mode = "contentless"`. If a future schema
+migration flips this to `"regular"`, the storage cost doubles
+(unnecessary in v4-alpha.1) but no functionality changes. If a
+future revision flips it to `external content` (FTS5 column names
+without a rowid binding), the entire agent_memory surface breaks;
+the test suite catches it.
+
+**Why "fts-delete-first" is the canonical name**: the ordering is
+the load-bearing property. Future FTS5 work in v4 (research items,
+workflow journals, etc.) should start from this rule.
+
+**Source**: discovered during BUG-8 implementation, agent_memory row
+2040 in `dark-memory-v4` project (operator `nico`, 2026-09-27). The
+"regular vs contentless" detail was corrected on 2026-09-27 after
+the test pass + code inspection showed the schema is contentless.
+
+---
+
+## Quick reference: which `Save*` enforces which invariant
+
+| Store method | INV-1 | INV-2 | INV-3 | INV-4 | INV-6 | INV-7 | INV-8 | INV-10 | INV-16 | INV-17 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `SaveSpec` | ✓ | — | — | (read) | — | ✓ | ✓ | — | ✓ | — |
+| `SaveArtifact` | ✓ | — | ✓ | (read) | — | ✓ | ✓ | — | ✓ | — |
+| `SaveDriftReport` | ✓ | — | — | (read) | — | ✓ | ✓ | — | ✓ | — |
+| `SaveSDDEvaluation` | ✓ | — | — | (read) | — | ✓ | ✓ | — | ✓ | — |
+| `SaveRun` | ✓ | — | ✓ | (read) | — | ✓ | ✓ | — | ✓ | — |
+| `SaveSession` | ✓ | ✓ | — | (read) | — | ✓ | ✓ | — | ✓ | — |
+| `SaveMod` / `RecordModLoad` | ✓ | — | ✓ | (read) | ✓ | ✓ | ✓ | — | ✓ | — |
+| `SaveConstitution` | ✓ | — | — | (write) | — | ✓ | ✓ | — | ✓ | — |
+| `SaveAgentMemory` | ✓ | — | — | (read) | — | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `ListAgentMemory` | — | — | — | (read) | — | ✓ | ✓ | ✓ | ✓ | — |
+| `SearchAgentMemory` | — | — | — | (read) | — | ✓ | ✓ | ✓ | ✓ | (FTS5 read) |
+| `UpdateAgentMemory` | ✓ | — | — | (read) | — | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `ArchiveAgentMemory` | ✓ | — | — | (read) | — | ✓ | ✓ | — | ✓ | ✓ |
+| `Recall` | — | ✓ | (read) | (read) | — | ✓ | ✓ | — | ✓ | (FTS5 read) |
+| `Vacuum` | — | — | — | — | — | (filters by project) | ✓ | — | ✓ | — |
+| `Migrate` | — | — | — | refused under drift | — | — | ✓ | — | ✓ | — |
+
+*Legend: ✓ = enforces this invariant; — = not relevant; (read) =
+reads constitution for WriteContext, doesn't enforce a write-side
+invariant; `(FTS5 read)` = goes through FTS5 index, INV-17 read-side
+contract applies (no DELETE/INSERT within the read Tx).*
+
+---
+
+*See also: [RUNBOOK.md](./RUNBOOK.md) · [COEXISTENCE.md](./COEXISTENCE.md) · [CONTEXT_OBJECTS.md](./CONTEXT_OBJECTS.md) · [v4-status.md](./v4-status.md) · [AGENT_MEMORY_SCHEMA.md](./AGENT_MEMORY_SCHEMA.md)*

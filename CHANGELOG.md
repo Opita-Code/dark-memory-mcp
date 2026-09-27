@@ -4,6 +4,172 @@ All notable changes to dark-memory-mcp are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+> **Heads up**: the `feat/v4-redesign` branch is a deliberate void of
+> v3.0. v4 work is documented at the top of the changelog as
+> `[4.0.0-alpha.1]`. v1.x and v2.x entries describe the production
+> lineage that v4 supersedes.
+
+---
+
+## [4.0.0-alpha.1] — 2026-09-27 — v4 redesign branch initial scaffold
+
+The v4 redesign branches clean from `v2.20.0` (not v3.0-void) per
+`ARCHITECTURE-V4.md §1.1`. This entry tracks the v4-alpha.1 work on
+the `feat/v4-redesign` branch. Every commit lands here; the version
+number does NOT advance to 4.0.0-anything-else until v4 ships.
+
+> **Status**: pre-release / alpha. 25 of 57 canonical tools registered
+> (44% of the surface). Local-only (no `git push`, no remote tags).
+> Schema: `v4alpha/2026-09-27/001`. Audience: contributors only — not
+> for end-user consumption yet.
+
+### BUG-5 (commit `3c358ed` / `de21ee0`) — dark-db concurrency contract
+
+Established INV-16 (the v4-only invariant): every `*sql.DB` against a
+dark-db path goes through `internal/v4alpha/store.OpenSQLite` (DSN
+with 7 pragmas) + `store.WithTx` (`LevelSerializable`).
+
+- WAL + busy_timeout=5000ms + MaxOpenConns=8 — eliminates the v3
+  foreign-key-induced deadlock under concurrent writers.
+- Type-safe constraint detection (`errors.As(&sqlite.Error{}).Code()
+  & 0xFF == 19`) replaces string matching.
+- 10 tests in `internal/v4alpha/store/store_test.go` + 5 concurrent
+  tests in `manifest/`. 0 SQLITE_BUSY across 200 goroutines, 0
+  cross-lock across 100 concurrent grants on 2 DBs.
+- Source: tier-1 research on sqlite.org/wal.html, modernc.org/sqlite
+  Performance §, sqlite 3.51.3 WAL-reset bug. SQLite 3.53.2 is
+  embedded via modernc v1.53.0.
+
+### BUG-6 (commit `b8a88cc`) — cmd/dark-memory-v4 binary skeleton
+
+First compilable entry point on the redesign branch.
+
+- 5 subcommands: `help`, `version`/`-v`, `migrate`, `schema-status`,
+  `serve`.
+- Each subcommand is a separate file (`migrate.go`, `schema_status.go`,
+  `serve.go`); handlers take `*os.File` for stdout/stderr (avoids
+  `io.Pipe` ↔ `*os.File` impedance mismatch).
+- Exit codes per RFC D-1 §6 (0=success, 1=runtime error, 2=usage).
+- Schema version stamped `v4alpha/2026-09-27/001`. Apply order:
+  audit → session → manifest/cap → manifest/meta → vibe/spec →
+  vibe/artifact → vibe/drift.
+- 22 tests PASS, 1 SKIP (TestRun_PanicRecovery deferred — deferred
+  `recover()` is structurally enforced). Binary size 10.3 MB.
+
+### BUG-7 (commit `c517cdf`) — JSON-RPC transport + 6 MVP tools + agent_memory
+
+Three artifacts wired end-to-end:
+
+1. **`internal/v4alpha/agent_memory/`** — Save/Get/List/Recall/Archive
+   + FTS5. Canonical kinds: `note, observation, decision, finding,
+   todo, link, context`. Operator-scoped rows survive session close
+   (INV-10 adopted). 14 tests.
+2. **`internal/v4alpha/transport/mcp/`** — mcp-go v0.40.0 wrapper,
+   6 tools registered: `health_ping`, `session_start/close/status`,
+   `agent_memory_save/recall`. **CRITICAL DISCOVERY**: default mcp-go
+   worker pool runs tool calls in parallel; this races against the
+   read-after-write contract FTS5 recall depends on. Fix:
+   `WithWorkerPoolSize(1)` applied manually to `*StdioServer` after
+   `NewStdioServer` (Listen signature doesn't accept options; the
+   documented escape hatch is applying option funcs manually). 6 tests.
+3. **`cmd/dark-memory-v4/serve.go`** — wires `mcp.NewServer` →
+   `ServeStdio`.
+
+Live verification: real subprocess test with JSON-RPC over stdin.
+Result: 6 tools returned by `tools/list`; `health_ping` returns full
+identity snapshot.
+
+### BUG-8 (commit `264fddc`) — register 19 more tools (25 total)
+
+Adds 19 tools on top of the BUG-7 MVP. Bumps tool count from 6 to 25.
+
+- **agent_memory**: list, get, update, archive (+ new `Update` method
+  mutating title/content/tags/pinned in one SERIALIZABLE Tx)
+- **session**: resume, heartbeat
+- **observability**: memory_state, writes, anomalies
+- **error_obs**: summary, list, get, resolve (SQL queries against
+  audit_log; resolve appends new row, never mutates original = INV-1)
+- **policy**: active_policy, load_constitution (hard-coded v4-alpha.1
+  default; policy_registry table lands in BUG-9)
+- **vibe**: spec, publish, pipeline_status, resolve_drift (uses
+  `NoOpJudge` — see below)
+
+**NEW INFRASTRUCTURE:**
+- `internal/v4alpha/judge/noop.go` — NoOpJudge always returns
+  VerdictAligned + Confidence 1.0. The LLM-backed judge lands in BUG-9.
+- `vibe.Pipeline.Specs()/Artifacts()/Drifts()` accessors.
+- `transport/mcp/helpers.go::nowRFC3339()`.
+
+**CRITICAL DISCOVERY — modernc.org/sqlite v1.53 FTS5 quirks (the
+basis for INV-17 — added in this commit):**
+
+Two separate issues hit during BUG-8:
+
+1. **Ordering bug inside SERIALIZABLE Tx**: `UPDATE base → DELETE
+   fts → SELECT → INSERT fts` raises `SQLITE_CORRUPT (267) — database
+   disk image is malformed`. FIX: reorder to `DELETE fts → UPDATE
+   base → SELECT → INSERT fts` (the FTS5 delete goes first while
+   the base row is still in its original shape). Verified by
+   `TestUpdate_MutatesFieldsAndReSyncsFTS` (passes with fix; failed
+   with reversed order).
+
+2. **Schema type — contentless, not regular**: the v4-alpha.1 schema
+   uses `content='agent_memory', content_rowid='id'` (contentless).
+   Earlier drafts claimed we switched to regular FTS5 to dodge
+   SQLITE_CORRUPT on plain DELETE; the `TestArchive_RemovesFromBaseAndFTS`
+   test passes against the contentless schema with plain DELETE,
+   proving the claim wrong. The real fix is the ordering above.
+   Leaving the schema contentless avoids the ~2× storage cost of
+   regular FTS5.
+
+These are empirical discoveries. Future FTS5 work should start from
+the now-known-good order: **fts-delete-first**. The schema stays
+contentless.
+
+**DELIBERATE BREAKS** (both caught):
+- Reversed agent_memory.List output → `TestList_OrdersPinnedFirst`
+  FAILED. Restored.
+- Set active_policy.Active=false → `TestPolicyTools` FAILED. Restored.
+
+**TESTS**: 37 PASS / 0 FAIL (agent_memory 18, transport/mcp 13,
+cmd/dark-memory-v4 23). 32 tools still deferred (research, judge,
+mindset, delegation, project, context, agent_bootstrap, L6-VLP,
+red-team, admin vacuum, agent_memory c2, session c2).
+
+### v4-alpha.1 total — at a glance
+
+| Metric | Value |
+|---|---|
+| Branch | `feat/v4-redesign` (from `v2.20.0`) |
+| Commits on top of v2.20.0 | 8 (BUG-5a, 5b, 5c, 6, 7, 8 + INV-16 doc + CHANGELOG) |
+| Tools registered | 25 of 57 (44%) |
+| Tests | 37 PASS, 0 FAIL |
+| Schema | `v4alpha/2026-09-27/001` |
+| Invariants adopted | INV-1..INV-10 (inherited from v3) + INV-16 (dark-db concurrency) + INV-17 (FTS5 ordering) |
+| Binary | `dark-memory-v4` (10.3 MB) |
+| Local-only | YES (no remote push, no remote tags per operator policy) |
+
+### v4-alpha.1 — operator decisions recorded
+
+| Date | Decision | Rationale |
+|---|---|---|
+| 2026-09-24 | v3.0 is a deliberate void | See ARCHITECTURE-V4.md §1.1 |
+| 2026-09-27 | INV-16: dark-db concurrency contract | BUG-5a/5b/5c — eliminates v3 foreign-key deadlock |
+| 2026-09-27 | INV-17: FTS5 ordering + non-contentless | BUG-8 — modernc.org/sqlite v1.53 quirk discovery |
+| 2026-09-27 | mcp-go worker pool size=1 | BUG-7 — manual `WithWorkerPoolSize(1)` is permanent |
+| 2026-09-27 | NoOpJudge for v4-alpha.1 | LLM-backed judge lands in BUG-9 |
+| 2026-09-27 | Local-only v4-alpha.1 | Operator policy: no remote push/fetch/pull |
+
+### What's NEXT (v4-alpha.2 scope)
+
+- **BUG-9** (next): register remaining 32 tools + real LLM-backed
+  Judge (HTTP client to DARK_JUDGE_PROVIDER) + agent_memory audit_id
+  emission (INV-1) + error_resolve audit trail.
+- **v4-alpha.2**: full 57-tool surface, real judge, policy_registry
+  table, manifests-not-code (per ARCHITECTURE-V4.md §M3).
+- **v4.0.0-beta**: shadow dark.db with v4 schema, validate against
+  INV-1..INV-17, dual-driver contract.
+
 ---
 
 ## [2.20.0] — 2026-08-20 — artifact-anchored drift_judge (spec 1276, T01-T12)
