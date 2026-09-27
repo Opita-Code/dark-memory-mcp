@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/agent_memory"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/audit"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/manifest"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/session"
@@ -109,6 +110,7 @@ func migrateSteps(db *sql.DB) []migrateStep {
 	return []migrateStep{
 		{"audit", func(ctx context.Context) error { return audit.CreateSchema(db) }},
 		{"session", func(ctx context.Context) error { return session.CreateSchema(db) }},
+		{"agent_memory", func(ctx context.Context) error { return agent_memory.CreateSchema(db) }},
 		{"manifest/cap", func(ctx context.Context) error { return manifest.CreateCapSchema(ctx, db) }},
 		{"manifest/meta", func(ctx context.Context) error { return manifest.CreateManifestSchema(ctx, db) }},
 		{"vibe/spec", func(ctx context.Context) error { return vibe.CreateSpecSchema(db) }},

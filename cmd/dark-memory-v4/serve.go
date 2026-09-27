@@ -27,10 +27,12 @@ import (
 	"os"
 	"time"
 
+	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/agent_memory"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/audit"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/manifest"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/session"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/store"
+	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/transport/mcp"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/vibe"
 )
 
@@ -75,7 +77,7 @@ func runServe(ctx context.Context, args []string, stdout, stderr *os.File) int {
 		GoVersion:      goVersion(),
 		ServerVersion:  Version,
 		Operator:       defaultOperator(),
-		Notes:          []string{"BUG-6 skeleton — JSON-RPC transport lands in BUG-7"},
+		Notes:          []string{"BUG-7: JSON-RPC transport wired (mcp-go v0.40.0). MVP tool set: health + session*3 + memory*2 (6 tools)."},
 	}
 
 	if flags.JSON {
@@ -91,15 +93,28 @@ func runServe(ctx context.Context, args []string, stdout, stderr *os.File) int {
 		fmt.Fprintf(stdout, "  operator        %s\n", bootReport.Operator)
 		fmt.Fprintf(stdout, "  started_at      %s\n", bootReport.StartedAt)
 		fmt.Fprintf(stdout, "  ready\n")
-		fmt.Fprintf(stdout, "  (waiting for SIGINT/SIGTERM — JSON-RPC transport lands in BUG-7)\n")
+		fmt.Fprintf(stdout, "  serving MCP on stdio (mcp-go v0.40.0, 6 tools)\n")
 	}
 
-	// 4. Block until ctx is cancelled (SIGINT/SIGTERM via the
-	// NotifyContext in run()).
-	<-ctx.Done()
+	// 4. Construct the MCP server + drive the JSON-RPC loop on
+	//    os.Stdin / os.Stdout. Blocks until ctx is cancelled or
+	//    stdin reaches EOF.
+	mcpSrv, err := mcp.NewServer(db)
+	if err != nil {
+		fmt.Fprintf(stderr, "dark-memory-v4: serve: mcp.NewServer: %v\n", err)
+		_ = db.Close()
+		return exitRuntimeErr
+	}
+	if err := mcpSrv.ServeStdio(ctx, os.Stdin, stdout); err != nil {
+		fmt.Fprintf(stderr, "dark-memory-v4: serve: ServeStdio: %v\n", err)
+		_ = db.Close()
+		return exitRuntimeErr
+	}
+
+	// 5. Clean shutdown.
 	elapsed := time.Since(startedAt)
-	fmt.Fprintf(stderr, "dark-memory-v4: serve: shutdown after %s (%v)\n",
-		elapsed.Truncate(time.Millisecond), ctx.Err())
+	fmt.Fprintf(stderr, "dark-memory-v4: serve: shutdown after %s\n",
+		elapsed.Truncate(time.Millisecond))
 	if err := db.Close(); err != nil {
 		fmt.Fprintf(stderr, "dark-memory-v4: serve: close: %v\n", err)
 		return exitRuntimeErr
@@ -115,6 +130,9 @@ func applyAllSchemas(ctx context.Context, db *sql.DB) error {
 	}
 	if err := session.CreateSchema(db); err != nil {
 		return fmt.Errorf("session: %w", err)
+	}
+	if err := agent_memory.CreateSchema(db); err != nil {
+		return fmt.Errorf("agent_memory: %w", err)
 	}
 	if err := manifest.CreateCapSchema(ctx, db); err != nil {
 		return fmt.Errorf("manifest/cap: %w", err)

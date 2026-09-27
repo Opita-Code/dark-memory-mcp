@@ -163,8 +163,8 @@ func TestServe_JSONBootReport(t *testing.T) {
 	if !strings.Contains(out, `"schema_version": "`+schemaVersion+`"`) {
 		t.Errorf("missing schema_version in JSON: %s", out)
 	}
-	if !strings.Contains(out, "BUG-6 skeleton") {
-		t.Errorf("missing BUG-6 skeleton marker in JSON: %s", out)
+	if !strings.Contains(out, "BUG-7") {
+		t.Errorf("missing BUG-7 marker in JSON: %s", out)
 	}
 	if !strings.Contains(out, `"server_version"`) {
 		t.Errorf("missing server_version field: %s", out)
