@@ -11,6 +11,62 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [4.0.0-alpha.11] — 2026-09-28 — SOTA-doc workstream close + alpha.11 plan + namespace reframe
+
+### Doc-only — `docs/sota-critique.md` §7.6 + `docs/v4-alpha-11-plan.md` (NEW) + `docs/specs/SPEC-alpha-11-chunk7.md` (NEW) + `docs/v4-status.md` + `CHANGELOG.md` (this entry)
+- **SOTA-doc workstream closed** (6 of 7 chunks shipped 2026-09-28).
+  +2,380/-7 lines across 12 file operations. 20 honest
+  couldn't-verify (none papered over). 17 ADRs + 1 BUG
+  proposed as remediation. See `docs/sota-critique.md`
+  for the meta-doc.
+- **`docs/v4-alpha-11-plan.md` NEW** (270 lines): 5 vibe-loops
+  for the next 8-11 weeks. Phase 1 (close + cheap wins,
+  1-2 weeks) → Phase 2 (audit chain, 1 week) → Phase 3
+  (judge improvements, 1 week) → Phase 4 (BUG-10 10b
+  namespace primitive, 2-3 weeks) → Phase 5 (memory
+  subsystem, 3-4 weeks).
+- **`docs/specs/SPEC-alpha-11-chunk7.md` NEW** (the first
+  vibe-loop spec, closing the SOTA-doc workstream).
+- **Namespace reframe** (per operator question 2026-09-28
+  "qué interpretas por multitentant para un MCP"):
+  `project_id` is a SOFT workstream namespace, not a
+  SaaS multi-tenant primitive. Hard isolation is
+  `coexistence_group` (per-MCP `dark.db`). BUG-10 10b
+  sizing drops from XL (~700 LoC, HIGH risk) to L
+  (~500 LoC, MEDIUM risk). See `docs/sota-critique.md`
+  §7.6.9 for the full threat model and
+  `docs/v4-status.md` §6.6 for the canonical statement.
+- **`docs/sota-critique.md` §7.6**: 9 subsections (was 8;
+  added §7.6.9 threat model). Sizing matrix updated.
+  Risk register updated. OD6 added to operator decision
+  points (project_id framing = namespace).
+- **`docs/v4-status.md`**: status flipped to alpha.10;
+  "Last reviewed" 2026-09-28; new §6.5 SOTA-doc workstream
+  summary; new §6.6 namespace primitive threat model; §8
+  cross-references updated.
+
+### 5 operator decisions needed (OD1-OD5+OD6) before Phase 1
+- OD1: Phase 1 start point. Default: chunk 7 first (this
+  chunk).
+- OD2: Include ADR-013 (vector retrieval)? Default: defer
+  to beta.
+- OD3: BUG-10 10b blocks other work? Default: parallel.
+- OD4: v2.9.x embedder resurrected? Default: NO (per
+  row 1578).
+- OD5: ADR-013 strategy (if OD2=YES). Default: FRESH.
+- OD6: `project_id` framing. Default: **namespace (soft)**
+  per §7.6.9 threat model.
+
+### Next concrete work
+- Phase 1B: PRE-1 C3 (Loadout for session_start) — M,
+  ~200 LoC, ~2-3 days.
+- Phase 1C: PRE-1 C4 (summarize_session) — M, ~180 LoC,
+  ~1-2 days.
+- Phase 1D: BUG-12 (cross-process monotonicity) — XS,
+  ~40 LoC, ~1 day.
+
+---
+
 ## [4.0.0-alpha.10] — 2026-09-28 — SOTA criticism chunk 5: MCP ecosystem + spec-driven pattern
 
 ### Added — `ARCHITECTURE-V4.md` §15 (SOTA criticism of MCP + spec-driven)

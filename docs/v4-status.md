@@ -1,21 +1,25 @@
 # v4 Status — current state of the redesign
 
 > **Audience**: anyone touching the `feat/v4-redesign` branch.
-> **TL;DR**: v4-alpha.4 ships **38 of 57 canonical tools** (67% of
+> **TL;DR**: v4-alpha.10 ships **38 of 57 canonical tools** (67% of
 > the surface) plus the full judge pipeline (ADR-007, 4 commits
-> shipped) plus the judge_util + research namespaces (BUG-10 10a).
+> shipped) plus the judge_util + research namespaces (BUG-10 10a)
+> plus the SOTA-doc workstream (6 of 7 chunks, +2,380/-7 lines,
+> 12 file operations).
 > The package layout is **NOT** what `ARCHITECTURE-V4.md
 > §5 (original)` promised — see "actual layout" below. The operator-
 > facing surface is real and tested.
 > Remaining 19 tools land in BUG-10 10b-e; the judge pipeline was
-> added in 4 commits (commits 1-4 of ADR-007).
+> added in 4 commits (commits 1-4 of ADR-007). The next concrete
+> work is the **alpha.11 plan** (5 vibe-loops, ~3,320 LoC,
+> 8-11 weeks) — see `docs/v4-alpha-11-plan.md`.
 
 | Field | Value |
 |---|---|
 | Branch | `feat/v4-redesign` (from `v2.20.0`, NOT from `v3.0-void`) |
-| Last reviewed | 2026-09-27 |
-| Status | **alpha.1** — pre-release, local-only, contributors only |
-| Version constant | `v4alpha.1-dev` (resolved via `ldflags` → `debug.ReadBuildInfo` → `"dev"`) |
+| Last reviewed | 2026-09-28 |
+| Status | **alpha.10** — pre-release, local-only, contributors only |
+| Version constant | `v4alpha.10-dev` (resolved via `ldflags` → `debug.ReadBuildInfo` → `"dev"`) |
 | Schema version | `v4alpha/2026-09-27/002` (stamped in `schema_migrations`) — C3 added `sdd_evaluations` (18 cols + 4 indexes) |
 | Binary | `dark-memory-v4` (10.3 MB Windows) |
 | Local-only policy | YES — no `git push`/`fetch`/`pull`, no remote tags/releases |
@@ -202,6 +206,69 @@ $ printf "%s\n" \
 | ⚠️ Likely to evolve | Package names (still aspirational vs actual drift), Pipeline API (LLM judge swap), Constitution (still hardcoded), persona override mechanism (spec 1155 v14 inheritance) |
 | ❌ Not implemented | security/* (INV-11..15), mutable Workflow, red-team mods, 6 `judge_util_*` tools, research/mindset/delegation/project/context/bootstrap/L6-VLP/admin/agent_memory-c2/session-c2 |
 
+## 6.5. SOTA-doc workstream (2026-09-28, 6 of 7 chunks shipped)
+
+The SOTA-doc workstream is the **criticism** axis of the
+v4-alpha mandate ("retomar el trabajo de v4, respecto a
+la documentación y crítica SOTA"). It shipped 6 of 7
+chunks as a doc-only release:
+
+- `b080e91` — chunk 1: judge pipeline SOTA (Prometheus 2,
+  Play Favorites, G-Eval, MT-Bench).
+- `e176f2f` — chunk 2: agent memory SOTA (MemGPT, Mem0,
+  Letta, A-MEM).
+- `5e35e30` — chunk 3: audit chain INV-1 SOTA (Rekor, immudb,
+  in-toto, Trillian, CT).
+- `8c8a7de` — chunk 4: workflow runtime M1 SOTA
+  (LangGraph, LlamaIndex, DSPy, AutoGen, CrewAI, Temporal).
+- `0b11a67` — chunk 5: MCP + spec-driven SOTA
+  (Anthropic MCP, Pydantic, Datomic, CUE, Effect).
+- `fbec6e2` — chunk 6: meta-doc `docs/sota-critique.md`
+  (13 ahead / 28 on-par / 39 behind, 17 ADRs + 1 BUG).
+- `6b4daae` + this commit — chunk 7: workstream close
+  + alpha.11 plan + namespace reframe.
+
+**Aggregate**: +2,380/-7 lines across 12 file operations.
+20 honest "couldn't verify" findings (4 per chunk × 5
+chunks, none papered over). 17 ADRs + 1 BUG proposed as
+remediation. 5 ADRs (020-024) explicitly marked
+out-of-v4-alpha-scope (architectural decisions deferred
+to beta/GA).
+
+**Per-chunk atomic mirrors** (per ADR-008):
+- chunk 1: rows 2137 (SUMMARY) + 2138-2142
+- chunk 2: rows 2143 (SUMMARY) + 2144-2148
+- chunk 3: rows 2149 (SUMMARY) + 2150-2154
+- chunk 4: rows 2155 (SUMMARY) + 2157-2160
+- chunk 5: rows 2161 (SUMMARY) + 2162-2165
+- chunk 6: rows 2166 (SUMMARY) + 2167-2169
+- chunk 7: row 2174 (SUMMARY) + 2175-2179 (this commit)
+
+**Next**: alpha.11 plan — 5 vibe-loops, ~3,320 LoC,
+8-11 weeks. See `docs/v4-alpha-11-plan.md` and
+`docs/sota-critique.md` §7.6 + §7.6.9.
+
+## 6.6. Namespace primitive threat model (per row 2173)
+
+> v4 assumes the harness session is the only concurrent
+> consumer. Project IDs scope workstreams within one
+> operator. For HARD isolation between concurrent users,
+> use separate `coexistence_group`s or separate MCP
+> instances. The `project_id` column is a soft namespace,
+> not a security boundary.
+
+- **Hard isolation primitive**: `coexistence_group`
+  (per-MCP `dark.db`). Production-grade.
+- **Soft separation primitive**: `project_id` column
+  (BUG-10 10b's namespace registry).
+- SOTA pattern is consistent: Notion workspace=hard,
+  page=soft; GitHub org=hard, repo=soft; Snowflake
+  account=hard, schema=soft.
+
+This statement is the canonical threat model for v4. BUG-10
+10b's ADR-025 (or similar) is the "Namespace Primitive"
+ADR, NOT a "Multi-Tenant Primitive" ADR.
+
 ---
 
 ## 7. Tier-1 sources (verified 2026-09-27)
@@ -230,6 +297,15 @@ The summary below points to the upstream sources cited in this doc.
 - `docs/edge-case-catalog.md` — 15 ECs + how to extend (ADR-007 §4)
 - `docs/persona-registry-v4.md` — 11 personas + override mechanism (ADR-007 §2.2)
 - `CONSTITUTION-V4.md` — release-integrity constitution (v4 fork)
+- `docs/sota-critique.md` — meta-doc SOTA criticism (5 chunks
+  aggregated: 13 ahead / 28 on-par / 39 behind, 17 ADRs + 1 BUG,
+  20 honest couldn't-verify). §7.6 has the alpha.11+ roadmap;
+  §7.6.9 has the namespace primitive threat model.
+- `docs/v4-alpha-11-plan.md` — 5 vibe-loops for the next 8-11
+  weeks (Phase 1-5: close + cheap wins / audit chain / judge
+  improvements / BUG-10 10b namespace / memory subsystem).
+- `docs/specs/SPEC-alpha-11-*.md` — the per-phase vibe-loop
+  specs (chunk 7 ships; Phase 1B-5 to follow).
 - `CHANGELOG.md` (top of file) — entry `[4.0.0-alpha.3]`
 - `docs/decisions/ADR-007-judge-pipeline-v4.md` — design ADR
 - `docs/decisions/ADR-008-work-standard.md` — atomic mirror discipline

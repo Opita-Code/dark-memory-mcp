@@ -505,7 +505,7 @@ focused implementation work.
 |---|---|---|---|
 | A. SOTA-doc close | chunk 7 (v4-status + CHANGELOG) | doc-only, XS | first |
 | B. PRE-1 (preflight) | C3 (Loadout) + C4 (summarize_session) | additive API, M each | first |
-| C. BUG-10 10b (surface expansion) | mindset + delegation + project (4 tools) + `projects` table schema | XL, schema migration | second (after PRE-1) |
+| C. BUG-10 10b (surface expansion) | mindset + delegation + project (4 tools) + `projects` **namespace** table + `project_id` column on 5 tables | L, schema migration | second (after PRE-1) |
 | D. SOTA-doc in-scope ADRs | 9 ADRs (per §7.2) | mixed S-XL | parallel to C in waves |
 
 **§7.6.2 Sizing matrix (per item, rough estimates)**
@@ -515,7 +515,7 @@ focused implementation work.
 | chunk 7 | docs | XS | ~50 | 2 | 0 | LOW |
 | PRE-1 C3 | preflight | M | ~200 | 3 | 3-4 | LOW |
 | PRE-1 C4 | preflight | M | ~180 | 3 | 2-3 | LOW |
-| BUG-10 10b | tools + schema | XL | ~700 | 8-10 | 10-12 | HIGH (schema) |
+| BUG-10 10b | tools + schema (namespace, NOT multi-tenant) | L | ~500 | 8-10 | 10-12 | MEDIUM (schema) |
 | BUG-12 | audit | XS | ~40 | 1-2 | 2-3 | LOW |
 | ADR-009 | judge | S | ~150 | 2-3 | 5-6 | LOW |
 | ADR-011 | judge | M | ~250 | 2-3 | 3-4 | MEDIUM |
@@ -577,10 +577,13 @@ focused implementation work.
 8. ADR-009 (provider allow-list 4 → 10+) — S, ~2-3 days
 9. ADR-011 (judge calibration bootstrap-CI) — M, ~3-4 days
 
-**Phase 4 — BUG-10 10b architectural lift (2-3 weeks)**
-10. BUG-10 10b — XL, ~2-3 weeks (mindset + delegation + project
-    + `projects` table schema). Pre-coding 4-doc plan + operator
-    approval gate (per the 10a pattern, row 2112).
+**Phase 4 — BUG-10 10b namespace primitive (2-3 weeks)**
+10. BUG-10 10b — L, ~2-3 weeks (mindset + delegation + project
+    + `projects` **namespace** table + `project_id` column on 5
+    tables). Pre-coding 4-doc plan + operator approval gate
+    (per the 10a pattern, row 2112). The `projects` table is a
+    **namespace registry**, not a tenant registry — see §7.6.9
+    threat model.
 
 **Phase 5 — Memory subsystem (3-4 weeks)**
 11. ADR-013 (vector retrieval + RRF) — XL, ~2-3 weeks
@@ -636,17 +639,45 @@ cycle**
 
 - Option A: Include ADR-013 (the big one) — 3-4 extra weeks.
 - Option B: Defer ADR-013 to v4.0.0-beta, ship alpha.11+
+
+**D4 — Whether to include ADR-013 in this implementation
+cycle**
+
+- Option A: Include ADR-013 (the big one) — 3-4 extra weeks.
+- Option B: Defer ADR-013 to v4.0.0-beta, ship alpha.11+
   without vector retrieval.
 
 **Recommendation: B** if operator wants faster alpha.11+
 ship. ADR-013 is the single biggest scope item; deferring
 it lets Phase 1-3 ship in ~3-4 weeks.
 
+**D5 — `project_id` framing: namespace primitive vs
+multi-tenant primitive (operator question 2026-09-28)**
+
+- Option A: **Namespace primitive (soft)**. The
+  `project_id` column is a filter for the operator's
+  workstreams. The hard isolation primitive is
+  `coexistence_group` (per-MCP `dark.db`), not
+  `project_id`. Rename BUG-10 10b's ADR from
+  "Multi-Tenant Primitive" to "Namespace Primitive".
+  See §7.6.9 for the full threat model.
+- Option B: Multi-tenant primitive (hard). Keep the
+  `projects` table framed as a tenant registry. Risk:
+  future contributors may treat `project_id` as a
+  security boundary, write code that assumes isolation,
+  and ship a vulnerability.
+
+**Recommendation: A** — the rename. The threat model is
+honest, the SOTA pattern is consistent, and the rename
+avoids the security-bad-smell of calling soft isolation
+"multi-tenant". Sizing drops: BUG-10 10b L (not XL),
+~500 LoC (not ~700), risk MEDIUM (not HIGH).
+
 **§7.6.6 Risk register (top 5)**
 
 | # | Item | Risk | Mitigation |
 |---|---|---|---|
-| 1 | BUG-10 10b | HIGH (schema migration, multi-tenant) | 4-doc pre-plan + operator approval gate (per 10a row 2112) |
+| 1 | BUG-10 10b | MEDIUM (schema migration + namespace) | 4-doc pre-plan + operator approval gate (per 10a row 2112); namespace primitive, NOT multi-tenant (see §7.6.9) |
 | 2 | ADR-013 | HIGH (biggest scope, v2.9.x abandonment) | D1 decision + fresh implementation, no v2.9.x import |
 | 3 | ADR-015 | MED-HIGH (graph design is non-trivial) | depends on ADR-013; may need separate ADR-015 design doc |
 | 4 | ADR-019 | MEDIUM (schema migration in production) | D2 decision; additive ALTER TABLE pattern |
@@ -678,6 +709,97 @@ Phase 1 starts)**
 | OD3 | BUG-10 10b blocks other work? | yes / parallel | parallel (different surface area) |
 | OD4 | v2.9.x embedder code resurrected? | yes / no (per row 1578) | no (per row 1578) |
 | OD5 | ADR-013 implementation | fresh / v2.9.x / defer | fresh (per D1) |
+| OD6 | `project_id` framing | namespace (soft) / multi-tenant (hard) | **namespace (soft)** per §7.6.9 threat model |
+
+**§7.6.9 Namespace primitive threat model (the hard/soft
+distinction)**
+
+This subsection formalizes the threat model that the
+`project_id` column implements. It exists because the
+operator's question "qué interpretas por multitentant
+para un MCP" surfaced a common confusion between HARD
+multi-tenant isolation and SOFT workstream namespacing.
+
+**The MCP reality (what v4 actually is)**:
+- ONE operator (the harness session) per MCP process.
+- ONE SQLite file (dark.db) per `coexistence_group`.
+- The harness is the only concurrent consumer; there
+  is no "tenant A vs tenant B" in flight.
+- v4 is a "tool of tools" — it serves one LLM, in one
+  process, against one SQLite file.
+
+**HARD isolation primitive**: `coexistence_group` (per-MCP
+`dark.db`). This is the security boundary. dark-memory's
+`dark.db` is physically separate from dark-research's
+`dark-research.db`. Rows in one do not appear in the other,
+and cannot cross. The `policy_gateway` flag in
+`opencode.jsonc` enforces capability checks at the MCP
+boundary. **This is real multi-tenant.**
+
+**SOFT separation primitive**: `project_id` column (the
+BUG-10 10b proposal). This is a filter column. Useful
+for the operator to scope their workstreams (opita-market,
+dark-memory-mcp, Pasiones) within one MCP instance. NOT
+a security boundary.
+
+**What `project_id` does**:
+- Filters `Recall`/`List`/`Update` queries to one
+  workstream.
+- Surfaces in the audit_log (INV-1 actor).
+- Provides namespace registration via the `projects`
+  table.
+- Enables cross-workstream disambiguation: when I
+  (Opita-AI) work on opita-market, my dark-memory-mcp
+  memories don't pollute my context.
+
+**What `project_id` does NOT do**:
+- It does NOT isolate data physically (all rows in
+  the same `dark.db`).
+- It does NOT enforce quotas per workstream.
+- It does NOT apply RBAC (the operator can read any
+  workstream's rows by omitting the filter).
+- It does NOT provide data residency per workstream.
+- It does NOT bill per workstream (self-hosted
+  single-operator).
+
+**The threat model statement** (for BUG-10 10b docs):
+
+> v4 assumes the harness session is the only concurrent
+> consumer. Project IDs scope workstreams within one
+> operator. For HARD isolation between concurrent users,
+> use separate `coexistence_group`s or separate MCP
+> instances. The `project_id` column is a soft namespace,
+> not a security boundary.
+
+**SOTA consistency check** (the pattern is universal):
+- Notion: workspace=hard, page=soft.
+- GitHub: org=hard, repo=soft (or hard with perms).
+- Snowflake: account=hard, schema=soft.
+- Datomic: database=hard.
+- Linear: workspace=hard, team=soft, project=soft.
+- **dark-memory**: coexistence_group=hard, project_id=soft.
+
+**What the rename "namespace primitive" avoids**: the
+common bug of treating `project_id` as a security
+boundary. A future contributor who reads "multi-tenant
+primitive" might think `project_id` enforces isolation,
+write code that assumes it, and ship a vulnerability.
+Renaming to "namespace" makes the soft nature obvious
+in the type name and the docstring.
+
+**Rename impact**:
+- BUG-10 10b ADR is "Namespace Primitive", not
+  "Multi-Tenant Primitive".
+- BUG-10 10b 4-doc plan uses the threat model statement
+  above as its §1.
+- The `projects` table is documented as a namespace
+  registry, not a tenant registry.
+- Sizing drops: BUG-10 10b is L (not XL) because
+  defensive code for "true" tenant isolation is
+  unnecessary.
+- Risk drops: BUG-10 10b is MEDIUM (not HIGH) because
+  the threat model is honest (no promised isolation
+  beyond the cooperative assumption).
 
 ## 8. Cross-references (per-chunk SOTA criticism)
 
