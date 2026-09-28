@@ -13,6 +13,7 @@ package agent_memory
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -452,4 +453,220 @@ func TestUpdate_NoFieldsIsNoOp(t *testing.T) {
 // the tests above (sql is referenced through store.OpenSQLite
 // internally; left here so the test file compiles cleanly
 // without an unused-imports error).
+
+// --- PRE-1 C1: RecallFiltered / ListFiltered tests ---
+
+// TestRecallFiltered_TagPrefix proves the new TagPrefix filter
+// matches any tag in the CSV that starts with the given prefix.
+// This is the loadout protocol's "give me all docs_index rows"
+// query: tag_prefix="doc-index:".
+func TestRecallFiltered_TagPrefix(t *testing.T) {
+	ctx := context.Background()
+	cleanup, s := newTestDB(t)
+	defer cleanup()
+	am := testAudit()
+
+	mustSaveC1(t, s, am, "nico", KindLink, "RUNBOOK v1",
+		"primary operator manual for dark-memory-mcp", "doc-index:v1,doc:RUNBOOK", true)
+	mustSaveC1(t, s, am, "nico", KindLink, "INVARIANTS v1",
+		"the eight operational rules", "doc-index:v1,doc:INVARIANTS", true)
+	mustSaveC1(t, s, am, "nico", KindLink, "RUNBOOK v0",
+		"old version of the runbook", "doc-index:v0,doc:RUNBOOK", true)
+	mustSaveC1(t, s, am, "nico", KindNote, "random note",
+		"this has nothing to do with docs", "personal,misc", false)
+
+	// Query with tag_prefix="doc-index:" should hit all 3 doc-index rows.
+	rows, err := s.RecallFiltered(ctx, "nico", "runbook OR rules",
+		RecallFilter{TagPrefix: "doc-index:"}, 10)
+	if err != nil {
+		t.Fatalf("RecallFiltered: %v", err)
+	}
+	if len(rows) != 3 {
+		t.Errorf("RecallFiltered returned %d rows, want 3 (the 3 doc-index rows)", len(rows))
+	}
+	for _, r := range rows {
+		if !strings.Contains(r.Tags, "doc-index:") {
+			t.Errorf("row %d has tags %q, want one with doc-index: prefix", r.ID, r.Tags)
+		}
+	}
+}
+
+// TestRecallFiltered_TagPrefix_NoFalsePositive proves the
+// tag_prefix filter does NOT match partial tags (e.g. "doc"
+// should NOT match a row tagged "doc-index:v1" because we
+// require the comma boundary).
+func TestRecallFiltered_TagPrefix_NoFalsePositive(t *testing.T) {
+	ctx := context.Background()
+	cleanup, s := newTestDB(t)
+	defer cleanup()
+	am := testAudit()
+	// Tag "doc" with surrounding commas is a different tag from
+	// "doc-index:v1" which starts with "doc-".
+	mustSaveC1(t, s, am, "nico", KindNote, "doc-only",
+		"keyword alpha content", "doc", false)
+	mustSaveC1(t, s, am, "nico", KindNote, "doc-index",
+		"keyword bravo content", "doc-index:v1", false)
+
+	// tag_prefix="doc-index:" should match only the second row.
+	rows, err := s.RecallFiltered(ctx, "nico", "keyword",
+		RecallFilter{TagPrefix: "doc-index:"}, 10)
+	if err != nil {
+		t.Fatalf("RecallFiltered: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1 (only the doc-index:v1 row)", len(rows))
+	}
+	if rows[0].Title != "doc-index" {
+		t.Errorf("got title %q, want 'doc-index'", rows[0].Title)
+	}
+}
+
+// TestRecallFiltered_KindFilter proves the Kind filter narrows
+// the result to one canonical kind.
+func TestRecallFiltered_KindFilter(t *testing.T) {
+	ctx := context.Background()
+	cleanup, s := newTestDB(t)
+	defer cleanup()
+	am := testAudit()
+	mustSaveC1(t, s, am, "nico", KindNote, "shared content",
+		"this content appears in both note and link", "shared", false)
+	mustSaveC1(t, s, am, "nico", KindLink, "shared content",
+		"this content appears in both note and link", "shared", false)
+
+	rows, err := s.RecallFiltered(ctx, "nico", "shared",
+		RecallFilter{Kind: KindLink}, 10)
+	if err != nil {
+		t.Fatalf("RecallFiltered: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1", len(rows))
+	}
+	if rows[0].Kind != KindLink {
+		t.Errorf("row kind = %q, want %q", rows[0].Kind, KindLink)
+	}
+}
+
+// TestListFiltered_KindFilter proves the kind filter on List.
+func TestListFiltered_KindFilter(t *testing.T) {
+	ctx := context.Background()
+	cleanup, s := newTestDB(t)
+	defer cleanup()
+	am := testAudit()
+	mustSaveC1(t, s, am, "nico", KindNote, "n1", "a note", "t", false)
+	mustSaveC1(t, s, am, "nico", KindLink, "l1", "a link", "t", false)
+	mustSaveC1(t, s, am, "nico", KindLink, "l2", "another link", "t", true)
+
+	rows, err := s.ListFiltered(ctx, "nico", ListFilter{Kind: KindLink}, 10)
+	if err != nil {
+		t.Fatalf("ListFiltered: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Errorf("got %d rows, want 2 (the 2 links)", len(rows))
+	}
+	for _, r := range rows {
+		if r.Kind != KindLink {
+			t.Errorf("row %d kind = %q, want link", r.ID, r.Kind)
+		}
+	}
+}
+
+// TestListFiltered_PinnedOnly proves the Pinned pointer filter
+// distinguishes true (only pinned) from false (only unpinned).
+func TestListFiltered_PinnedOnly(t *testing.T) {
+	ctx := context.Background()
+	cleanup, s := newTestDB(t)
+	defer cleanup()
+	am := testAudit()
+	mustSaveC1(t, s, am, "nico", KindNote, "pinned", "x", "t", true)
+	mustSaveC1(t, s, am, "nico", KindNote, "unpinned", "x", "t", false)
+	mustSaveC1(t, s, am, "nico", KindNote, "unpinned2", "x", "t", false)
+
+	pinned := true
+	rows, err := s.ListFiltered(ctx, "nico", ListFilter{Pinned: &pinned}, 10)
+	if err != nil {
+		t.Fatalf("ListFiltered: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Errorf("pinned=true got %d, want 1", len(rows))
+	}
+	if !rows[0].Pinned {
+		t.Errorf("pinned=true returned unpinned row")
+	}
+
+	unpinned := false
+	rows, err = s.ListFiltered(ctx, "nico", ListFilter{Pinned: &unpinned}, 10)
+	if err != nil {
+		t.Fatalf("ListFiltered: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Errorf("pinned=false got %d, want 2", len(rows))
+	}
+}
+
+// TestListFiltered_TagExact proves the exact tag filter
+// matches a single tag in the CSV.
+func TestListFiltered_TagExact(t *testing.T) {
+	ctx := context.Background()
+	cleanup, s := newTestDB(t)
+	defer cleanup()
+	am := testAudit()
+	mustSaveC1(t, s, am, "nico", KindNote, "with-tag", "content", "alpha,beta,gamma", false)
+	mustSaveC1(t, s, am, "nico", KindNote, "no-tag", "content", "delta,epsilon", false)
+	mustSaveC1(t, s, am, "nico", KindNote, "with-prefix", "content", "alpha-extra,zeta", false)
+
+	rows, err := s.ListFiltered(ctx, "nico", ListFilter{Tag: "alpha"}, 10)
+	if err != nil {
+		t.Fatalf("ListFiltered: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Errorf("got %d, want 1 (only the exact 'alpha' tag)", len(rows))
+	}
+	if len(rows) >= 1 && rows[0].Title != "with-tag" {
+		t.Errorf("got title %q, want 'with-tag'", rows[0].Title)
+	}
+}
+
+// TestEscapeLike_EscapesWildcards proves the LIKE escape helper
+// handles the 3 wildcards (% _ and the escape char itself).
+func TestEscapeLike_EscapesWildcards(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"plain", "plain"},
+		{"with%percent", `with\%percent`},
+		{"with_underscore", `with\_underscore`},
+		{`with\backslash`, `with\\backslash`},
+		{"a%b_c\\d", `a\%b\_c\\d`},
+		{"", ""},
+	}
+	for _, c := range cases {
+		got := escapeLike(c.in)
+		if got != c.want {
+			t.Errorf("escapeLike(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestListFiltered_InvalidKind proves the kind validation
+// (rejects unknown kinds).
+func TestListFiltered_InvalidKind(t *testing.T) {
+	ctx := context.Background()
+	cleanup, s := newTestDB(t)
+	defer cleanup()
+	_, err := s.ListFiltered(ctx, "nico", ListFilter{Kind: "bogus"}, 10)
+	if err == nil {
+		t.Fatal("ListFiltered with bogus kind returned nil error")
+	}
+	if !errors.Is(err, ErrInvalidKind) {
+		t.Errorf("got %v, want ErrInvalidKind", err)
+	}
+}
+
+// mustSaveC1 is a test helper that fails the test on error.
+// Named with the C1 suffix to avoid colliding with any
+// potential helper added in a later chunk.
+func mustSaveC1(t *testing.T, s *Store, am *Audit, op, kind, title, content, tags string, pinned bool) {
+	t.Helper()
+	if _, err := s.Save(context.Background(), am, op, kind, title, content, tags, pinned); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+}
 var _ sql.IsolationLevel

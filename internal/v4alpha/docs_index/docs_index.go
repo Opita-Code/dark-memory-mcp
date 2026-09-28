@@ -239,8 +239,8 @@ type Result struct {
 }
 
 // Index inserts / updates the 5 index rows in agent_memory.
-// Idempotent: re-running with the same IndexVersion is a
-// no-op. Bumping IndexVersion triggers re-index of all rows.
+// Idempotent: re-running with the same IndexVersion is a no-op.
+// Bumping IndexVersion triggers re-index of all rows.
 //
 // The function is defensive: a failure on one doc does not
 // abort the index. The caller (NewServer) decides whether
@@ -252,6 +252,9 @@ type Result struct {
 func Index(ctx context.Context, store *agent_memory.Store) (*Result, error) {
 	if store == nil {
 		return nil, fmt.Errorf("docs_index.Index: store is nil")
+	}
+	if testModeSkip {
+		return &Result{Version: IndexVersion, Skipped: len(DocsToIndex)}, nil
 	}
 	result := &Result{Version: IndexVersion}
 
@@ -371,4 +374,22 @@ func AllIndexedIDs() []string {
 		ids = append(ids, d.ID)
 	}
 	return ids
+}
+
+// testModeSkip is the test-mode flag. When true, Index
+// returns a synthetic "all skipped" Result without touching
+// the store. This lets transport-layer tests control which
+// row ids are reserved (avoids "id=1 is the docs_index
+// RUNBOOK, not the test's first row" surprises).
+//
+// Set via SetTestMode(true) from TestMain in test files.
+// NOT for production use.
+var testModeSkip bool
+
+// SetTestMode toggles the test-mode flag. Returns the
+// previous value so tests can save/restore the global.
+func SetTestMode(skip bool) bool {
+	prev := testModeSkip
+	testModeSkip = skip
+	return prev
 }

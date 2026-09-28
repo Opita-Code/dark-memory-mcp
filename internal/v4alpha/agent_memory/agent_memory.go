@@ -264,21 +264,7 @@ func (s *Store) Get(ctx context.Context, id int64) (*Row, error) {
 // List returns up to limit rows for the given operator, newest
 // first. limit=0 means 50.
 func (s *Store) List(ctx context.Context, op string, limit int) ([]Row, error) {
-	if limit <= 0 {
-		limit = 50
-	}
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, operator, kind, COALESCE(title,''), content, COALESCE(tags,''), pinned, created_at
-		FROM agent_memory
-		WHERE operator = ?
-		ORDER BY pinned DESC, created_at DESC
-		LIMIT ?
-	`, op, limit)
-	if err != nil {
-		return nil, fmt.Errorf("agent_memory List: %w", err)
-	}
-	defer rows.Close()
-	return scanRows(rows)
+	return s.ListFiltered(ctx, op, ListFilter{}, limit)
 }
 
 // Recall runs FTS5 against (content, title, tags) for the given
@@ -289,29 +275,178 @@ func (s *Store) List(ctx context.Context, op string, limit int) ([]Row, error) {
 // returns an empty slice and no error (caller decides whether
 // to treat that as a usage error).
 func (s *Store) Recall(ctx context.Context, op, query string, limit int) ([]Row, error) {
+	return s.RecallFiltered(ctx, op, query, RecallFilter{}, limit)
+}
+
+// RecallFilter is the optional set of filters for RecallFiltered.
+// All fields are zero-value = no filter applied.
+//
+// PRE-1 C1: this struct unlocks the loadout protocol. The
+// transport layer (memory.go) exposes the equivalent JSON
+// fields to MCP callers. See package doc for the design.
+type RecallFilter struct {
+	TagPrefix string    // filter to rows whose tags CSV contains a tag starting with this. Empty = no filter. Example: "doc-index:" returns all rows tagged doc-index:v1, doc-index:v2, etc.
+	Kind      string    // filter to one canonical kind. Empty = all kinds. Validated against validKinds; empty is the only "no filter" value.
+	Since     time.Time // filter to rows with created_at >= this time. Zero = no filter. Stored as RFC3339Nano for cross-version compat; compared lexicographically against the SQLite CURRENT_TIMESTAMP "YYYY-MM-DD HH:MM:SS" format (works because both sort correctly).
+}
+
+// ListFilter is the optional set of filters for ListFiltered.
+// All fields are zero-value = no filter applied.
+//
+// PRE-1 C1: ListFilter is the read-mostly path counterpart to
+// RecallFilter. It does NOT run FTS5 (use Recall for that);
+// it just filters the base table by the given criteria.
+type ListFilter struct {
+	Kind   string    // filter to one canonical kind. Empty = all kinds.
+	Tag    string    // filter to rows whose tags CSV contains this exact tag. Empty = no filter.
+	Pinned *bool     // filter to pinned (true) or unpinned (false). nil = all.
+	Since  time.Time // filter to rows with created_at >= this time. Zero = no filter.
+}
+
+// ListFiltered returns up to limit rows for the given operator
+// that match the filter, pinned first then newest. limit=0
+// means 50.
+//
+// PRE-1 C1: new method. The old List() is a thin wrapper.
+// The transport layer (memory.go) builds a ListFilter from
+// the input JSON and calls this directly so the MCP tool
+// surface can offer the new filters without breaking the
+// old "operator + limit" contract.
+func (s *Store) ListFiltered(ctx context.Context, op string, filter ListFilter, limit int) ([]Row, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+
+	// Build the WHERE clause dynamically. Empty filter fields
+	// contribute no constraint. We always filter by operator
+	// (INV-2: operator scope is the primary isolation axis).
+	where := []string{"operator = ?"}
+	args := []interface{}{op}
+
+	if filter.Kind != "" {
+		if _, ok := validKinds[filter.Kind]; !ok {
+			return nil, fmt.Errorf("%w: kind=%q", ErrInvalidKind, filter.Kind)
+		}
+		where = append(where, "kind = ?")
+		args = append(args, filter.Kind)
+	}
+	if filter.Tag != "" {
+		// Tag exact match inside the CSV. Same trick as
+		// TagPrefix: surround with synthetic commas, single
+		// LIKE pattern.
+		where = append(where, "(',' || tags || ',') LIKE ? ESCAPE '\\'")
+		args = append(args, "%,"+escapeLike(filter.Tag)+",%")
+	}
+	if filter.Pinned != nil {
+		where = append(where, "pinned = ?")
+		args = append(args, boolToInt(*filter.Pinned))
+	}
+	if !filter.Since.IsZero() {
+		where = append(where, "created_at >= ?")
+		// SQLite CURRENT_TIMESTAMP returns "YYYY-MM-DD HH:MM:SS"
+		// UTC. We compare as TEXT (lexicographic) which works
+		// because both formats sort the same.
+		args = append(args, filter.Since.UTC().Format("2006-01-02 15:04:05"))
+	}
+
+	q := `SELECT id, operator, kind, COALESCE(title,''), content, COALESCE(tags,''), pinned, created_at
+	      FROM agent_memory WHERE ` + joinAnd(where) + `
+	      ORDER BY pinned DESC, created_at DESC
+	      LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("agent_memory ListFiltered: %w", err)
+	}
+	defer rows.Close()
+	return scanRows(rows)
+}
+
+// RecallFiltered runs FTS5 against (content, title, tags) for the
+// given query, then applies the optional filters. Results are
+// scored by FTS5 bm25 (lower = better).
+//
+// limit=0 means 10. The query MUST be non-empty; an empty query
+// returns an empty slice and no error.
+//
+// PRE-1 C1: this is the new method the MCP transport calls.
+// The old Recall() is a thin wrapper for backwards compat.
+func (s *Store) RecallFiltered(ctx context.Context, op, query string, filter RecallFilter, limit int) ([]Row, error) {
 	if query == "" {
 		return nil, nil
 	}
 	if limit <= 0 {
 		limit = 10
 	}
+
+	where := []string{"agent_memory_fts MATCH ?", "m.operator = ?"}
+	args := []interface{}{query, op}
+
+	if filter.TagPrefix != "" {
+		// Tag prefix match: any tag in the CSV that starts with
+		// the prefix. The CSV is "tag1,tag2,tag3"; we surround
+		// it with synthetic commas and then LIKE for "%,<prefix>%"
+		// which matches at any comma boundary. This unifies all
+		// 4 cases (only tag / first / middle / last) into one
+		// pattern.
+		where = append(where, "(',' || m.tags || ',') LIKE ? ESCAPE '\\'")
+		args = append(args, "%,"+escapeLike(filter.TagPrefix)+"%")
+	}
+	if filter.Kind != "" {
+		if _, ok := validKinds[filter.Kind]; !ok {
+			return nil, fmt.Errorf("%w: kind=%q", ErrInvalidKind, filter.Kind)
+		}
+		where = append(where, "m.kind = ?")
+		args = append(args, filter.Kind)
+	}
+	if !filter.Since.IsZero() {
+		where = append(where, "m.created_at >= ?")
+		args = append(args, filter.Since.UTC().Format("2006-01-02 15:04:05"))
+	}
+
 	// We join FTS5 to the base table so we can filter by operator
 	// (FTS5 doesn't know about operator scope on its own).
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT m.id, m.operator, m.kind, COALESCE(m.title,''), m.content,
-		       COALESCE(m.tags,''), m.pinned, m.created_at
-		FROM agent_memory_fts f
-		JOIN agent_memory m ON m.id = f.rowid
-		WHERE agent_memory_fts MATCH ?
-		  AND m.operator = ?
-		ORDER BY rank
-		LIMIT ?
-	`, query, op, limit)
+	q := `SELECT m.id, m.operator, m.kind, COALESCE(m.title,''), m.content,
+	             COALESCE(m.tags,''), m.pinned, m.created_at
+	      FROM agent_memory_fts f
+	      JOIN agent_memory m ON m.id = f.rowid
+	      WHERE ` + joinAnd(where) + `
+	      ORDER BY rank
+	      LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
-		return nil, fmt.Errorf("agent_memory Recall fts query: %w", err)
+		return nil, fmt.Errorf("agent_memory RecallFiltered: %w", err)
 	}
 	defer rows.Close()
 	return scanRows(rows)
+}
+
+// joinAnd joins WHERE clauses with " AND ".
+func joinAnd(parts []string) string {
+	out := ""
+	for i, p := range parts {
+		if i > 0 {
+			out += " AND "
+		}
+		out += p
+	}
+	return out
+}
+
+// escapeLike escapes SQLite LIKE wildcards (% and _) and the
+// escape character (\) in s so the value is treated as literal.
+// The caller MUST use `ESCAPE '\'` in the LIKE clause.
+//
+// Example:
+//   escapeLike("doc-index:") → "doc-index:"
+//   escapeLike("a%b_c")      → "a\\%b\\_c"
+//   escapeLike("a\\b")       → "a\\\\b"
+func escapeLike(s string) string {
+	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	return r.Replace(s)
 }
 
 // scanRows materialises the common (id, op, kind, title, content,

@@ -27,6 +27,7 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 
@@ -100,21 +101,25 @@ func registerAgentMemorySave(s *Server) {
 // --- recall ---
 
 type agentMemoryRecallInput struct {
-	Operator string `json:"operator" jsonschema:"required" jsonschema_description:"Operator id (scope axis)"`
-	Query    string `json:"query" jsonschema:"required" jsonschema_description:"FTS5 query string"`
-	Limit    int    `json:"limit,omitempty" jsonschema_description:"Max rows; defaults 10"`
+	Operator   string `json:"operator" jsonschema:"required" jsonschema_description:"Operator id (scope axis)"`
+	Query      string `json:"query" jsonschema:"required" jsonschema_description:"FTS5 query string"`
+	Limit      int    `json:"limit,omitempty" jsonschema_description:"Max rows; defaults 10"`
+	TagPrefix  string `json:"tag_prefix,omitempty" jsonschema_description:"PRE-1 C1: filter to rows whose tags CSV contains a tag starting with this prefix. Comma-boundary aware. Example: 'doc-index:' returns all rows tagged doc-index:v1, doc-index:v2, etc."`
+	Kind       string `json:"kind,omitempty" jsonschema_description:"PRE-1 C1: filter to one canonical kind (note, observation, decision, finding, todo, link, context)"`
+	SinceMins  int    `json:"since_minutes,omitempty" jsonschema_description:"PRE-1 C1: filter to rows created within the last N minutes. 0 = no filter."`
 }
 
 type agentMemoryRecallOutput struct {
-	Operator string             `json:"operator"`
-	Query    string             `json:"query"`
-	Count    int                `json:"count"`
-	Rows     []agent_memory.Row `json:"rows"`
+	Operator  string             `json:"operator"`
+	Query     string             `json:"query"`
+	Count     int                `json:"count"`
+	Rows      []agent_memory.Row `json:"rows"`
+	AppliedFilter map[string]any  `json:"applied_filter,omitempty"`
 }
 
 func registerAgentMemoryRecall(s *Server) {
 	tool := mcp.NewTool(agentMemoryRecallToolName,
-		mcp.WithDescription("FTS5 search across (content, title, tags). Operator-scoped."),
+		mcp.WithDescription("FTS5 search across (content, title, tags). Operator-scoped. PRE-1 C1: optional tag_prefix / kind / since_minutes filters."),
 		mcp.WithInputSchema[agentMemoryRecallInput](),
 	)
 	s.mcpSrv.AddTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -128,15 +133,34 @@ func registerAgentMemoryRecall(s *Server) {
 		if in.Query == "" {
 			return mcp.NewToolResultError("agent_memory_recall: query is required"), nil
 		}
-		rows, err := s.memories.Recall(ctx, in.Operator, in.Query, in.Limit)
+		filter := agent_memory.RecallFilter{
+			TagPrefix: in.TagPrefix,
+			Kind:      in.Kind,
+		}
+		if in.SinceMins > 0 {
+			filter.Since = time.Now().UTC().Add(-time.Duration(in.SinceMins) * time.Minute)
+		}
+		rows, err := s.memories.RecallFiltered(ctx, in.Operator, in.Query, filter, in.Limit)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("agent_memory_recall: %v", err)), nil
 		}
+		// Echo the filter back so the caller can confirm what was applied.
+		applied := map[string]any{}
+		if in.TagPrefix != "" {
+			applied["tag_prefix"] = in.TagPrefix
+		}
+		if in.Kind != "" {
+			applied["kind"] = in.Kind
+		}
+		if in.SinceMins > 0 {
+			applied["since_minutes"] = in.SinceMins
+		}
 		return resultJSON(agentMemoryRecallOutput{
-			Operator: in.Operator,
-			Query:    in.Query,
-			Count:    len(rows),
-			Rows:     rows,
+			Operator:      in.Operator,
+			Query:         in.Query,
+			Count:         len(rows),
+			Rows:          rows,
+			AppliedFilter: applied,
 		})
 	})
 }
@@ -144,19 +168,24 @@ func registerAgentMemoryRecall(s *Server) {
 // --- list ---
 
 type agentMemoryListInput struct {
-	Operator string `json:"operator" jsonschema:"required" jsonschema_description:"Operator id (scope axis)"`
-	Limit    int    `json:"limit,omitempty" jsonschema_description:"Max rows; defaults 50"`
+	Operator        string `json:"operator" jsonschema:"required" jsonschema_description:"Operator id (scope axis)"`
+	Limit           int    `json:"limit,omitempty" jsonschema_description:"Max rows; defaults 50"`
+	Kind            string `json:"kind,omitempty" jsonschema_description:"PRE-1 C1: filter to one canonical kind"`
+	Tag             string `json:"tag,omitempty" jsonschema_description:"PRE-1 C1: filter to rows that contain this exact tag in the CSV"`
+	PinnedOnly      *bool  `json:"pinned_only,omitempty" jsonschema_description:"PRE-1 C1: when true, only pinned rows; when false, only unpinned; nil = all"`
+	SinceMinutes    int    `json:"since_minutes,omitempty" jsonschema_description:"PRE-1 C1: filter to rows created within the last N minutes. 0 = no filter."`
 }
 
 type agentMemoryListOutput struct {
-	Operator string             `json:"operator"`
-	Count    int                `json:"count"`
-	Rows     []agent_memory.Row `json:"rows"`
+	Operator      string             `json:"operator"`
+	Count         int                `json:"count"`
+	Rows          []agent_memory.Row `json:"rows"`
+	AppliedFilter map[string]any      `json:"applied_filter,omitempty"`
 }
 
 func registerAgentMemoryList(s *Server) {
 	tool := mcp.NewTool(agentMemoryListToolName,
-		mcp.WithDescription("List rows for one operator, pinned first then newest. Read-only."),
+		mcp.WithDescription("List rows for one operator, pinned first then newest. Read-only. PRE-1 C1: optional kind / tag / pinned_only / since_minutes filters."),
 		mcp.WithInputSchema[agentMemoryListInput](),
 	)
 	s.mcpSrv.AddTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -167,14 +196,36 @@ func registerAgentMemoryList(s *Server) {
 		if in.Operator == "" {
 			return mcp.NewToolResultError("agent_memory_list: operator is required"), nil
 		}
-		rows, err := s.memories.List(ctx, in.Operator, in.Limit)
+		filter := agent_memory.ListFilter{
+			Kind:   in.Kind,
+			Tag:    in.Tag,
+			Pinned: in.PinnedOnly,
+		}
+		if in.SinceMinutes > 0 {
+			filter.Since = time.Now().UTC().Add(-time.Duration(in.SinceMinutes) * time.Minute)
+		}
+		rows, err := s.memories.ListFiltered(ctx, in.Operator, filter, in.Limit)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("agent_memory_list: %v", err)), nil
 		}
+		applied := map[string]any{}
+		if in.Kind != "" {
+			applied["kind"] = in.Kind
+		}
+		if in.Tag != "" {
+			applied["tag"] = in.Tag
+		}
+		if in.PinnedOnly != nil {
+			applied["pinned_only"] = *in.PinnedOnly
+		}
+		if in.SinceMinutes > 0 {
+			applied["since_minutes"] = in.SinceMinutes
+		}
 		return resultJSON(agentMemoryListOutput{
-			Operator: in.Operator,
-			Count:    len(rows),
-			Rows:     rows,
+			Operator:      in.Operator,
+			Count:         len(rows),
+			Rows:          rows,
+			AppliedFilter: applied,
 		})
 	})
 }

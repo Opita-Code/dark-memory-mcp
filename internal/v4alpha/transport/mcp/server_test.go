@@ -14,6 +14,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -21,11 +22,25 @@ import (
 
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/agent_memory"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/audit"
+	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/docs_index"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/manifest"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/session"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/store"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/vibe"
 )
+
+// TestMain is the package-level setup. PRE-1 C2: skip the
+// docs_index auto-index for the whole package so the 5
+// docs_index rows don't pollute transport tests that hardcode
+// row ids. Restored to false at end (though Go's test process
+// dies after testing.M.Run(), so the restore is mostly
+// defensive).
+func TestMain(m *testing.M) {
+	docs_index.SetTestMode(true)
+	code := m.Run()
+	docs_index.SetTestMode(false)
+	os.Exit(code)
+}
 
 // newTestDB returns a *sql.DB with every v4alpha schema applied
 // + a cleanup func. Mirrors the production boot path of
@@ -33,6 +48,11 @@ import (
 // tested in the same shape it ships in.
 func newTestDB(t *testing.T) (cleanup func()) {
 	t.Helper()
+	// PRE-1 C2: skip the docs_index auto-index in tests so the
+	// 5 docs_index rows don't get inserted before the test
+	// starts (which would break tests that hardcode id=1).
+	prev := docs_index.SetTestMode(true)
+	t.Cleanup(func() { docs_index.SetTestMode(prev) })
 	dsn := filepath.Join(t.TempDir(), "mcp_test.db")
 	d, err := store.OpenSQLite(context.Background(), dsn)
 	if err != nil {
