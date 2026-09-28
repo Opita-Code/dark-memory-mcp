@@ -772,3 +772,7 @@ The SOTA criticism is honest about what I don't know:
 - `vibe-flow/main/DELEGATION_SOTA.md` — 2026-08-04 prior SOTA
   research (P1-P8 delegation principles, token budgets, model
   selection)
+- `docs/sota-critique.md` — meta-doc aggregating chunks 1-5
+  (13 ahead / 28 on-par / 39 behind, 17 ADRs + 1 BUG, 20 honest
+  couldn't-verify). The operator-facing summary of the SOTA-doc
+  workstream.

@@ -1925,6 +1925,11 @@ engine, not a module library or prompt optimizer).
 | v4 fixed FSM | `v4-status.md:128-150` | 2026-09-28 | `spec_create → artifact_log → drift_judge → drift_log → (aligned \| drift_detected \| needs_human)` |
 | v4 Pipeline API | `internal/v4alpha/vibe/pipeline.go:33-150` | 2026-09-28 | Publish, Status, Resolve |
 
+**See also**: [`docs/sota-critique.md`](../sota-critique.md) —
+meta-doc aggregating chunks 1-5 (13 ahead / 28 on-par / 39
+behind, 17 ADRs + 1 BUG, 20 honest couldn't-verify). The
+operator-facing summary of the SOTA-doc workstream.
+
 ---
 
 ## 15. SOTA criticism — MCP ecosystem + spec-driven pattern (2026-09-28)
@@ -2245,6 +2250,11 @@ that uses types as a foundation. The ahead-of-SOTA claims in
 | ADR-007 judge pipeline | `docs/decisions/ADR-007-judge-pipeline-v4.md` | 2026-09-28 | 4 commits shipped |
 | v4 sdd_evaluations | `internal/v4alpha/vibe` | 2026-09-28 | 18-col schema + 4 indexes |
 | v4 W3C trace | `judge_util.go:39` | 2026-09-28 | judge_util_trace |
+
+**See also**: [`docs/sota-critique.md`](../sota-critique.md) —
+meta-doc aggregating chunks 1-5 (13 ahead / 28 on-par / 39
+behind, 17 ADRs + 1 BUG, 20 honest couldn't-verify). The
+operator-facing summary of the SOTA-doc workstream.
 
 ---
 

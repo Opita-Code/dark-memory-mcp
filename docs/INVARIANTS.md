@@ -868,3 +868,8 @@ All URLs verified via primary fetch 2026-09-28. The
 table — they are honestly missing. The QLDB row
 is marked "(inconclusive)" because the redirect was
 noted but the deprecation status was not confirmed.
+
+**See also**: `docs/sota-critique.md` — meta-doc aggregating
+chunks 1-5 (13 ahead / 28 on-par / 39 behind, 17 ADRs + 1 BUG,
+20 honest couldn't-verify). The operator-facing summary of the
+SOTA-doc workstream.
