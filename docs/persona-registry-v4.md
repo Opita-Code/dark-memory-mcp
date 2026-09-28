@@ -247,3 +247,26 @@ Full bibliographic detail (URLs, dates, license) lives in
 | Self-enhancement bias in LLM-as-judge (motivation for EC-007 self-bias check) | Spiliopoulou, Fogliato et al. 2025 — *Play Favorites*, arxiv:2508.06709 |
 | Persona override mechanism (Markdown overrides + field-level merge) | `dark-memory-mcp` spec 1155 v14 §5 (legacy carry-over) |
 | Atomic mirror discipline (this ADR is itself mirrored in dark-memory) | ADR-008 — `docs/decisions/ADR-008-work-standard.md` |
+
+---
+
+## 9. SOTA criticism (chunk 1, 2026-09-28)
+
+This registry was reviewed against the 2026 state of the art as part
+of the SOTA-doc chunk 1 (see `docs/judge-pipeline-v4.md` §10 for the
+full criticism). The registry-specific finding:
+
+- **`judge-cross-modal` is a v4-introduced concept, not a SOTA
+  citation.** The persona is defined in §2.2 and registers for
+  `visual_artifact_eval`, `audio_artifact_eval`, `video_artifact_eval`
+  (C3 image, C4 video defaults). The persona is a v4-innovation;
+  the SOTA 2026 benchmarks for MLLM-as-judge (vision-language
+  model evaluation) are not cited. v4 does not validate
+  `judge-cross-modal` against any published MLLM-as-judge benchmark.
+  **Verdict: behind in SOTA grounding.** Remediation: cite the
+  relevant 2025-26 MLLM-as-judge survey in §8 above. The specific
+  paper is not in the verified set for chunk 1 (see
+  `docs/judge-pipeline-v4.md` §10.4 for what could not be verified).
+
+For the full SOTA criticism (8 gaps with file:line + 4 proposed
+remediation ADRs), see `docs/judge-pipeline-v4.md` §10.

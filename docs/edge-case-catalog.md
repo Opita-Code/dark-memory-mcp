@@ -355,3 +355,25 @@ Full bibliographic detail lives in `docs/judge-pipeline-v4.md` §9.
 | EC-003 (10 prompt-injection patterns) | `dark-memory-mcp` spec v3 §6.6.3 (legacy carry-over; see ADR-007 §6) |
 
 All URLs are in `docs/judge-pipeline-v4.md` §9.
+
+---
+
+## 8. SOTA criticism (chunk 1, 2026-09-28)
+
+This catalog was reviewed against the 2026 state of the art as part
+of the SOTA-doc chunk 1 (see `docs/judge-pipeline-v4.md` §10 for the
+full criticism). The catalog-specific finding:
+
+- **EC-007 is binary, not statistical.** The current EC-007 (self-bias
+  check) is a binary signal: "the artifact was produced by the same
+  model as the judge → flag". SOTA Play Favorites (Spiliopoulou,
+  Fogliato et al. 2025, arxiv:2508.06709 — verified 2026-09-28)
+  provides a **statistical framework** that quantifies self-bias
+  while accounting for genuine quality differences. v4 does not
+  implement the statistical test; it relies on the binary signal.
+  **Verdict: aligned in intent, behind in measurement axis.**
+  Remediation: not blocking (binary is good enough for `flagged`
+  action), documented in `docs/judge-pipeline-v4.md` §10.3.
+
+For the full SOTA criticism (8 gaps with file:line + 4 proposed
+remediation ADRs), see `docs/judge-pipeline-v4.md` §10.

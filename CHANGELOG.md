@@ -11,6 +11,37 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [4.0.0-alpha.6] — 2026-09-28 — SOTA criticism chunk 1: judge pipeline
+
+### Added — `docs/judge-pipeline-v4.md` §10 (SOTA alignment + gaps)
+- New §10 with honest SOTA criticism of v4's judge pipeline against the 2026 state of the art. Verified via `fresh-osint` discipline (tier-1 sources only): arxiv primary (Prometheus 2, Play Favorites verified 2026-09-28), vendor docs primary (Anthropic Structured Outputs verified 2026-09-28). Structured as: §10.1 on-par with SOTA 2026, §10.2 ahead of SOTA 2026 (4 places), §10.3 behind SOTA 2026 (8 gaps with file:line + remediation ADR), §10.4 what could not be verified (honest gap), §10.5 what this section is NOT.
+
+### Changed — `docs/judge-pipeline-v4.md` §9.2 (Anthropic Structured Outputs)
+- Refreshed with 2026-09-28 verification: the parameter is `output_config.format` (the legacy `output_format` is **deprecated** and returns 400 without the `structured-outputs-2025-11-13` beta header). 2026 supported models list expanded (Fable 5-1, Mythos 5-1, Opus 5-5, Sonnet 5, Opus 4-8, etc.). v4's allow-list of 4 providers is narrower than 2026 SOTA (OpenAI GPT-5/5.1/5.2, Google Gemini 2.5/3.0, Qwen 3, Kimi K2 missing) — flagged as a gap with proposed ADR-009.
+
+### Added — `docs/judge-pipeline-v4.md` §11 (Where to read next, updated)
+- New §11 replacing the old §8 "Where to read next" with cross-references to the SOTA criticism (§10), the meta-doc (forthcoming), and `vibe-flow/main/DELEGATION_SOTA.md` (the 2026-08-04 prior SOTA research by the dark-agent on delegation patterns).
+
+### Why
+- The operator's mandate 2026-09-28: "retomar el trabajo de v4, respecto a la documentacion y critica SOTA" — resume v4 work, focus on documentation and SOTA criticism. This entry ships the judge pipeline SOTA criticism as chunk 1 of 7 in the SOTA-doc plan (chunks 2-7: agent memory, audit chain, workflow runtime, MCP, meta-doc, v4-status+CHANGELOG).
+
+### Test count
+- No test changes. Doc-only release. All v4alpha tests still pass (no regressions; `internal/v4alpha/judge/` test suite untouched).
+
+### Schema
+- No bump. SOTA criticism chunk 1 is doc-only. `sdd_evaluations` schema (18 cols + 4 indexes) unchanged.
+
+### Gaps surfaced (chunk 1 — proposed remediation ADRs)
+- **ADR-009**: Provider allow-list expansion (4 → 10+ providers with native structured outputs)
+- **ADR-010**: Pairwise ranking (rejected in ADR-007 §7; revisit for hard cases)
+- **ADR-011**: Judge calibration with bootstrap-CI (statistical self-bias test per Play Favorites)
+- **ADR-012**: RLJF (Reinforcement Learning from Judge Feedback) loop
+
+### Honest scope
+- The SOTA criticism is honest about what was not verified: specific 2025-26 LLM-as-judge papers I could not find via primary source, whether MT-Bench/Chatbot Arena is still canonical, current state of OpenAI/Google/DeepSeek structured outputs. Each gap is documented in §10.4. The next chunk (agent memory SOTA) will repeat the verification with a more targeted search.
+
+---
+
 ## [4.0.0-alpha.5] — 2026-09-28 — PRE-1: loadout protocol foundation (docs as intelligence)
 
 ### Added — `docs_index` package

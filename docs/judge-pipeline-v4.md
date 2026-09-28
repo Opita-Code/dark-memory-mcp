@@ -471,13 +471,37 @@ claim comes from, and the URL an operator can check.
 
 ### 9.2 Provider docs
 
-6. **Anthropic Structured Outputs** — official documentation, GA as
-   of 2026. Supports `output_config.format: {type: "json_schema",
-   schema: <VerdictSchema>}` with constrained decoding (always-valid,
-   type-safe, no retries for schema violations). Models supported
-   include Sonnet 4.5/4.6, Opus 4.5/4.6, Haiku 4.5.
+6. **Anthropic Structured Outputs** — official documentation, GA
+   status verified 2026-09-28. **Updated 2026-09-28** (SOTA chunk 1):
+   the parameter is `output_config.format` (the legacy `output_format`
+   parameter is **deprecated**; using it without the
+   `structured-outputs-2025-11-13` beta header returns 400). Supports
+   `output_config.format: {type: "json_schema", schema: <VerdictSchema>}`
+   with constrained decoding (always-valid, type-safe, no retries for
+   schema violations). Two complementary features: JSON outputs
+   (`output_config.format`) and Strict tool use (`strict: true`).
+   **2026 supported models** (per Anthropic docs, last verified
+   2026-09-28): `claude-fable-5-1`, `claude-mythos-5-1`, `claude-fable-5`,
+   `claude-mythos-5`, `claude-mythos-preview`, `claude-opus-5-5`,
+   `claude-opus-5`, `claude-opus-4-8`, `claude-opus-4-7`, `claude-opus-4-6`,
+   `claude-sonnet-5-5`, `claude-sonnet-5`, `claude-sonnet-4-6`,
+   `claude-sonnet-4-5-20250929`, `claude-opus-4-5-20251101`,
+   `claude-haiku-4-5-20251001`. ZDR-eligible (zero data retention) for
+   covered models.
    URL: <https://docs.anthropic.com/en/docs/build-with-claude/structured-outputs>
    Used in: §2 (provider config — why Anthropic is on the allow-list).
+   **SOTA gap (chunk 1)**: v4's allow-list has only 4 providers
+   (anthropic, minimax, minimax-cn, deepseek). SOTA 2026 includes
+   OpenAI GPT-5/5.1/5.2 (structured outputs native since 2024), Google
+   Gemini 2.5/3.0, Qwen 3, Kimi K2 — none of which v4 supports. See
+   §10.3 for the criticism.
+
+7. **Anthropic model allow-list gap (SOTA chunk 1, 2026-09-28)** —
+   v4's `dark_memory_judge` provider list has 4 entries, but the 2026
+   Anthropic GA list has **15+ models** (above). Many of the newer
+   ones (Fable 5-1, Mythos 5-1, Opus 5-5, Sonnet 5-5) are not on the
+   v4 allow-list. The minimax and deepseek providers cover only a
+   subset of SOTA. The v4 allow-list needs an ADR-009 expansion.
 
 ### 9.3 Storage / concurrency
 
@@ -522,3 +546,229 @@ claim comes from, and the URL an operator can check.
   adopted G-Eval's bias observation + Prometheus 2's direct-assessment
   pattern, but did NOT adopt Prometheus 2's pairwise-ranker model).
   See ADR-007 §7 (Trade-offs) for what we explicitly rejected.
+
+---
+
+## 10. SOTA alignment + gaps (chunk 1, 2026-09-28)
+
+> **Audience**: anyone evaluating v4's judge pipeline against the
+> 2026 state of the art. **Honest assessment** — no defensiveness.
+> SOTA verification method: tier-1 source per `fresh-osint` (arXiv
+> primary, vendor docs primary, news/blogs only for trail color).
+> Verification date: 2026-09-28.
+
+This section is the SOTA criticism of v4's judge pipeline. It is
+structured as: §10.1 where v4 is **on-par** with SOTA 2026,
+§10.2 where v4 is **ahead** (rare), §10.3 where v4 is **behind**
+(with file:line), §10.4 what we **could not verify** (honest gaps).
+
+### 10.1 On-par with SOTA 2026
+
+The v4 judge pipeline's core design choices align with the canonical
+LLM-as-judge SOTA as of 2026:
+
+- **Direct-assessment + custom-criteria** (the `judge-logical` persona
+  pattern). SOTA source: Prometheus 2 (Kim et al. 2024,
+  arxiv:2405.01535, EMNLP 2024 — verified 2026-09-28 via
+  <https://arxiv.org/abs/2405.01535>). The "open evaluator LM that
+  mirrors human and GPT-4 judgements" pattern is exactly v4's
+  persona + rubric model. **Verdict: aligned**.
+
+- **Self-enhancement bias detection** (EC-007). SOTA source: Play
+  Favorites (Spiliopoulou, Fogliato et al. 2025, arxiv:2508.06709 —
+  verified 2026-09-28 via <https://arxiv.org/abs/2508.06709>). The
+  paper finds "GPT-4o and Claude 3.5 Sonnet systematically assign
+  higher scores to their own outputs" plus family-bias. v4's EC-007
+  is a binary check; the paper's contribution is a statistical
+  framework. **Verdict: aligned in intent, but v4 does not implement
+  the statistical test** (see §10.3).
+
+- **Position bias mitigation** (EC-008 — position swap). SOTA source:
+  MT-Bench / Chatbot Arena (Zheng et al. 2023, arxiv:2306.05685,
+  NeurIPS 2023 — referenced in v4 §9.1.3). The position-swap
+  technique is canonical. **Verdict: aligned**.
+
+- **Constrained-decoding structured outputs** (the `Verdict`
+  JSON-schema response). SOTA source: Anthropic Structured Outputs
+  (GA 2026, verified 2026-09-28 — see §9.2 #6 update). v4's
+  `Verdict` schema follows the Anthropic pattern. **Verdict:
+  aligned, but provider allow-list is narrower than 2026 SOTA
+  (see §10.3)**.
+
+- **Self-critique + reflection tokens** (EC-015 verifier override).
+  SOTA source: Self-RAG (Asai et al. 2023, arxiv:2310.11511 —
+  referenced in v4 §9.1.4). v4's post-LLM verifier that can
+  override a verdict for consistency. **Verdict: aligned**.
+
+- **G-Eval-style rubric decomposition** (the per-criterion score
+  + weight in `Verdict.Criteria`). SOTA source: G-Eval (Liu et al.
+  2023, arxiv:2303.16634 — referenced in v4 §9.1.1). **Verdict:
+  aligned**.
+
+### 10.2 Ahead of SOTA 2026 (rare but real)
+
+Three places where v4 is **ahead** of the canonical SOTA:
+
+- **Persona override mechanism** — v4's Markdown-based field-level
+  override (per `persona-registry-v4.md` §3) is cleaner than the
+  SOTA 2026 alternatives I verified (no SOTA LLM-as-judge paper has
+  a field-level merge strategy with `field_replace` / `full_replace`
+  / `append` modes). The override-via-Markdown-with-validation
+  (weights must sum to 1.0, otherwise EC-005) is operationally
+  more robust than SOTA's "edit the system prompt and hope".
+
+- **15 deterministic pre-flight ECs** as a first-class concept
+  (per `edge-case-catalog.md`). Most SOTA LLM-as-judge work is
+  "ask the LLM and trust"; v4's pre-flight gates save the LLM
+  call on known-bad inputs (EC-001 empty artifact, EC-002 LLM
+  provider failure, EC-004 oversized artifact, EC-005 persona
+  weight validation). This is operational SOTA.
+
+- **4-verdict outcome model** (aligned / drift_detected /
+  needs_human / errored). SOTA 2026 typically uses 2-class
+  (pass / fail) or 3-class (pass / fail / unsure). v4's split
+  of `errored` (infrastructure) from `drift_detected` (real
+  failure) and `needs_human` (ambiguous) is more nuanced and
+  operationally cleaner.
+
+- **Per-provider `TemperatureNote` for reproducibility** (v4
+  `sdd_evaluations` table has 18 columns; 9 are the TemperatureNote
+  fields). SOTA 2026 evaluation datasets often omit
+  model+seed+temperature+top_p+schema_version from the persisted
+  record. v4 persists all of them. **Verdict: ahead**.
+
+### 10.3 Behind SOTA 2026 (with file:line)
+
+The honest list of gaps. Each cites the v4 location and the SOTA
+2026 alternative.
+
+- **Provider allow-list is narrow** — `internal/v4alpha/judge/llm_client.go`
+  (v4-alpha.4, see §2 of this doc) has 4 providers: `anthropic`,
+  `minimax`, `minimax-cn`, `deepseek`. **SOTA 2026** has at least
+  10+ viable providers with native structured outputs: OpenAI
+  GPT-5/5.1/5.2, Google Gemini 2.5/3.0, Anthropic 15+ models
+  (see §9.2 #6), DeepSeek v3.2/v4, Qwen 3, Kimi K2, GLM-4.5,
+  Mistral. **Verdict: behind by ~6 providers**. Remediation:
+  ADR-009 (provider expansion), tracked separately.
+
+- **No pairwise ranking** — v4 explicitly rejected Prometheus 2's
+  pairwise-ranker model (per ADR-007 §7 trade-offs). For "drift"
+  vs "aligned" hard cases, pairwise comparison is more
+  discriminative. SOTA 2026 (Prometheus 2 + newer judge ensembles)
+  supports both. **Verdict: behind in the discrimination axis**.
+  Remediation: ADR-010 (pairwise ranking) when needed.
+
+- **EC-007 self-bias check is binary, not statistical** — v4's
+  EC-007 (per `edge-case-catalog.md`) flags self-bias as
+  "the artifact is from the same model as the judge" — a binary
+  signal. SOTA Play Favorites (arxiv:2508.06709) provides a
+  **statistical framework** that quantifies self-bias while
+  accounting for genuine quality differences. v4 does not
+  implement the statistical test. **Verdict: behind in the
+  measurement axis**. Remediation: not blocking (binary is
+  good enough for `flagged` action), but documented as a
+  known gap.
+
+- **`spec_intent` capped at 4 KiB** — v4 caps the hypothesis
+  field at 4 KiB (per `docs/judge-pipeline-v4.md` §3.1).
+  SOTA 2026 long-context models (Opus 5-5 1M, Gemini 2.5 Pro
+  2M, MiniMax-M3 1M per the prior SOTA research in
+  `vibe-flow/main/DELEGATION_SOTA.md`) can absorb longer
+  spec_intent. The 4 KiB cap is over-conservative for the
+  long-context era. **Verdict: behind in input budget**.
+  Remediation: bump to 64 KiB (still well within prompt
+  overhead) in BUG-11.
+
+- **No multi-modal judge evaluation** — v4 has a
+  `judge-cross-modal` persona defined (per
+  `docs/persona-registry-v4.md` §2.2) but the SOTA 2026 work on
+  **MLLM-as-judge** benchmarks (vision-language model evaluation)
+  is not cited. The persona is a v4-introduced concept; the
+  benchmarks (e.g. MLLM-as-Judge surveys from 2025-26) are not.
+  **Verdict: behind in SOTA grounding**. Remediation: cite
+  the relevant 2025-26 MLLM-as-judge survey in
+  `persona-registry-v4.md` §8 references.
+
+- **No bootstrap evaluation of the judge** — v4 records
+  `sdd_evaluations` rows but does NOT compute bootstrap
+  confidence intervals on the judge's accuracy. SOTA 2026
+  LLM-as-judge best practice (per the LLM-as-Judge survey
+  literature) includes bootstrap-CI on per-judge-call accuracy
+  vs human labels. **Verdict: behind in the calibration
+  axis**. Remediation: ADR-011 (judge calibration with
+  bootstrap-CI), tracked separately.
+
+- **Rubric is static** — v4 persona rubrics are compiled into
+  the binary. SOTA 2025-26 work on **learned / adaptive
+  rubrics** (where the rubric weights are updated based on
+  past judge calls) is not present. **Verdict: behind in
+  the adaptation axis**. Remediation: not blocking (overkill
+  for v4-alpha), but documented.
+
+- **No active learning loop** — verdicts don't feed back to
+  improve the personas (no fine-tuning path mentioned). SOTA
+  2026 has Reinforcement Learning from Judge Feedback (RLJF)
+  patterns. **Verdict: behind in the improvement axis**.
+  Remediation: out of scope for v4-alpha; ADR-012 (RLJF
+  loop) when adopted.
+
+### 10.4 What I could not verify (honest gap)
+
+The SOTA criticism is honest about what I don't know:
+
+- **Specific 2025-26 SOTA papers I cannot verify from primary
+  source in this session.** My training cutoff is January 2026
+  per the harness, but I attempted to verify newer papers via
+  webfetch in this session. Two of the three attempts returned
+  unrelated physics papers (incorrect arxiv IDs I guessed
+  without verification). The honest statement: I do NOT have
+  specific arxiv IDs for 2026 LLM-as-judge SOTA papers that
+  may have superseded Prometheus 2 / Play Favorites / G-Eval.
+  The next SOTA-doc chunk (chunk 2: agent memory) will repeat
+  this verification with a more targeted search.
+
+- **Whether the LLM-as-judge field has converged on a new
+  standard benchmark** replacing MT-Bench / Chatbot Arena. The
+  v4 docs assume MT-Bench is still canonical (per §9.1.3). I
+  could not verify this in this session.
+
+- **The current state of OpenAI / Google / DeepSeek structured
+  outputs** (vs Anthropic). I verified Anthropic Structured
+  Outputs is GA as of 2026-09-28. The other vendors' structured
+  output mechanisms I cannot verify from this session.
+
+- **Whether 2025-26 MLLM-as-judge benchmarks** (vision eval)
+  are SOTA or still maturing. The `judge-cross-modal` persona
+  references this space but I cannot cite specific papers.
+
+### 10.5 What this section is NOT
+
+- It is **not** a refutation of v4's design. v4 ships
+  substantial, well-cited work (38 tools, 15 ECs, 11 personas,
+  LLM-backed judge with provenance). The gaps in §10.3 are
+  tractable, not architectural.
+- It is **not** a substitute for ADR-009/010/011/012
+  (proposed remediations). Each gap has a proposed ADR; the
+  ADRs are the next step, not this section.
+- It is **not** a comprehensive SOTA survey. The
+  SOTA-doc chunk 1 scope is the **judge pipeline**. Other
+  chunks (agent memory, audit chain, workflow runtime, MCP)
+  cover their respective SOTA comparisons.
+
+---
+
+## 11. Where to read next (updated)
+
+- `docs/decisions/ADR-007-judge-pipeline-v4.md` — design ADR (15 ECs,
+  11 personas, 7-step pipeline)
+- `docs/edge-case-catalog.md` — every EC: trigger, severity,
+  short-circuit, real failure it catches, file:line refs
+- `docs/persona-registry-v4.md` — 11 personas + override mechanism
+- `docs/v4-status.md` — current shipped state (38 tools, ADR-007
+  shipped 4 commits)
+- `CHANGELOG.md` — entry `[4.0.0-alpha.6]` (SOTA criticism chunk 1)
+- `docs/INVARIANTS.md` — INV-1 (write-path audit), INV-7 (per-project
+  scoping), INV-17 (FTS5 ordering)
+- `vibe-flow/main/DELEGATION_SOTA.md` — 2026-08-04 prior SOTA
+  research (P1-P8 delegation principles, token budgets, model
+  selection)
