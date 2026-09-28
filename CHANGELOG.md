@@ -11,6 +11,42 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [4.0.0-alpha.7] — 2026-09-28 — SOTA criticism chunk 2: agent memory
+
+### Added — `docs/AGENT_MEMORY_SCHEMA.md` §8 (SOTA alignment + gaps)
+- New §8 with honest SOTA criticism of v4's agent-memory schema against the 2025-2026 SOTA (MemGPT, Mem0, Letta, A-MEM, and 18+ 2026 papers verified via `fresh-osint` discipline). Structured as: §8.1 on-par (4 verifications with arxiv IDs), §8.2 ahead (3 places, rare but real), §8.3 behind (7 gaps with file:line + remediation ADR), §8.4 what could not be verified (honest gap, 4 items), §8.5 what this section is NOT.
+
+### Added — `docs/AGENT_MEMORY_SCHEMA.md` §9 (References)
+- New §9 with 16 tier-1 source citations (MemGPT arxiv:2310.08560, Mem0 blog, Letta blogs, 13 2026 papers from arxiv). Each row includes URL + verification date 2026-09-28. The "couldn't verify" items in §8.4 are NOT in this table — they are honestly missing.
+
+### Why
+- Chunk 2 of 7 in the SOTA-doc plan (chunk 1 = judge pipeline shipped as [4.0.0-alpha.6]). The agent-memory schema is v4's most-touched surface (every harness Save emits a row). Honest SOTA criticism here is high-leverage.
+
+### Test count
+- No test changes. Doc-only release. All v4alpha tests still pass (no regressions; `internal/v4alpha/agent_memory/` test suite untouched).
+
+### Schema
+- No bump. SOTA criticism chunk 2 is doc-only. The 9-column `agent_memory` table + FTS5 contentless sidecar is unchanged.
+
+### Gaps surfaced (chunk 2 — proposed remediation ADRs)
+- **ADR-013**: Embedding/vector retrieval + multi-signal fusion (BM25 only → BM25 + dense + entity)
+- **ADR-014**: Temporal re-ranking in `Recall()` (use `created_at`/`updated_at` for recency + time-aware decay)
+- **ADR-015**: Multi-hop retrieval / graph links between memories (cross-memory links à la CABLE/HippoRAG)
+
+### Honest scope (chunk 2 — what I could NOT verify)
+- The **original A-MEM arxiv ID**. A-MEM is referenced as a 2025 baseline in 8+ SOTA 2026 papers I verified (ProGraph arxiv:2607.19359, CABLE arxiv:2608.17911, LycheeMemory V2 arxiv:2608.12990, ClinTraceBench arxiv:2609.01111, RSM-full arxiv:2609.04915, SF-AMS arxiv:2607.22562, Bio-Memory arxiv:2609.08558, V-Mem arxiv:2608.01543). I attempted 2 arxiv search queries to find the original paper (2026-09-28) and got either empty or derivative-work results. The honest statement: **I do NOT have the A-MEM arxiv ID verified in this session.** The 8 derivative papers cite A-MEM but I cannot confirm the primary source.
+- The **Mem0 three-class taxonomy** (episodic/semantic/procedural). Recalled from v3 row 491 but the current Mem0 docs (verified 2026-09-28) describe architecture, not this taxonomy. The taxonomy may be a v3 interpretation, not a Mem0 concept.
+- **OpenAI Memory / LangMem / Zep** benchmark numbers. Letta's Aug 2025 blog (verified) references these but I did not verify the original benchmark numbers in this session.
+- **Beyond the 18+ 2026 papers I verified** — arxiv adds ~100 papers/day in cs.AI; the search results I saw were the 1-50/2,224 of "agentic memory LLM" query. There may be significant papers I missed.
+
+### Lessons from chunk 1 applied
+- Did NOT guess arxiv IDs (chunk 1 had 2 random arxiv guesses that returned unrelated physics papers — both honestly noted in §10.4)
+- Every SOTA claim annotated with the verified source (arxiv URL, vendor blog URL) and the verification date (2026-09-28)
+- Honest acknowledgment of what could not be verified (4 items, not papered over)
+- 3 ADRs proposed as remediation for the 7 behind-SOTA gaps
+
+---
+
 ## [4.0.0-alpha.6] — 2026-09-28 — SOTA criticism chunk 1: judge pipeline
 
 ### Added — `docs/judge-pipeline-v4.md` §10 (SOTA alignment + gaps)
