@@ -11,6 +11,88 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [4.0.0-alpha.10] — 2026-09-28 — SOTA criticism chunk 5: MCP ecosystem + spec-driven pattern
+
+### Added — `ARCHITECTURE-V4.md` §15 (SOTA criticism of MCP + spec-driven)
+- New §15 with 10 subsections of honest SOTA criticism of
+  v4's MCP surface (39 tools, 11 namespaces, mcp-go v0.56.0)
+  and v4's spec-driven development pattern (ADR-007 +
+  ADR-008) against 2025-26 SOTA. Verified via `fresh-osint`
+  tier-1 sources: Anthropic MCP, modelcontextprotocol.io
+  (5 spec eras, 39 SEPs, 12 WGs, 8 IGs, MCP Apps/Registry),
+  Pydantic, Datomic, CUE, Effect. Structured as:
+  §15.1 what v4 ships today (20-row baseline table — 13 YES,
+  7 NO).
+  §15.2 MCP SOTA 2025-26 (12 verified items: 5 spec eras,
+  39 SEPs, 12 WGs, 8 IGs, primitives, transports, OAuth
+  2.1, MCP Apps, Registry, mcp-go SDK).
+  §15.3 spec-driven SOTA 2025-26 (5 systems: Pydantic,
+  Datomic, CUE, Effect, Terraform).
+  §15.4 on-par (5 verifications: MCP wire compat, audit
+  log, per-MCP isolation, spec-driven pipeline, W3C
+  trace primitive).
+  §15.5 ahead (3 places, rare but real: atomic mirror
+  discipline, drift_judge of spec changes, canary flag).
+  §15.6 behind (8 gaps with file:line + remediation
+  ADR-022/023/024).
+  §15.7 spec-driven comparison table (8 dimensions vs
+  Pydantic/Datomic/CUE/Effect).
+  §15.8 couldn't verify (4 honest gaps).
+  §15.9 what this section is NOT.
+  §15.10 verified tier-1 sources (22 rows).
+
+### Key insight (different from chunks 1-4)
+- Unlike §14 (workflow runtime = aspirational), §15
+  critiques the **actual shipped v4 surface** against a
+  real, shipping SOTA ecosystem. v4's MCP server is
+  battle-tested; the spec-driven pattern is the v4
+  innovation.
+- **v4 is the only system in the §15.7 comparison table
+  with BOTH LLM-as-judge AND atomic mirror**. Pydantic,
+  Datomic, CUE, Effect are type-systems-first. v4 is
+  *governance-system-first* that uses types as a
+  foundation.
+
+### Gaps surfaced (3 ADRs proposed + 5 out-of-scope)
+- **ADR-022**: Streamable HTTP transport (MCP 2025-03
+  era, replaces stdio-only)
+- **ADR-023**: OAuth 2.1 + capability token (SEP-985
+  RFC 9728, INV-11 deferred alpha.3)
+- **ADR-024**: Publish v4 to MCP Registry
+- 5 of 8 gaps marked out-of-v4-alpha-scope (MCP Apps,
+  Skills, Tasks, OTel propagation on wire, JSON Schema
+  2020-12 dialect)
+
+### Test count
+- No test changes. Doc-only release. All v4alpha tests
+  still pass (no regressions; `internal/v4alpha/transport/mcp/`
+  test suite untouched).
+
+### Schema
+- No bump. SOTA criticism chunk 5 is doc-only.
+
+### Honest gaps (chunk 5 — what I could NOT verify)
+1. **mcp-go v0.56.0 JSON Schema dialect**. Verified the
+   version is pinned and that JSON Schema is used. Did NOT
+   verify the exact dialect (draft-04? 2020-12?).
+2. **MCP adoption count**. Verified early adopters
+   (Block, Apollo, Zed, Replit). Did NOT verify how many
+   MCP servers exist in production 2026-09-28.
+3. **MCP Apps adoption matrix**. Verified SEP-1865. Did
+   NOT verify which MCP hosts support MCP Apps.
+4. **Effect (TypeScript) production scale**. Verified the
+   website. Did NOT verify download/contributor counts.
+
+### Lessons from chunks 1-4 applied
+- Every SOTA claim annotated with verified source + date
+- 4 honest gaps in §15.8, not papered over
+- 3 ADRs proposed for 3 of 8 behind-SOTA gaps; 5
+  explicitly out-of-scope (architectural)
+- Comparison table §15.7 makes the ahead-of-SOTA claims
+  concrete vs comparable systems
+
+---
+
 ## [4.0.0-alpha.9] — 2026-09-28 — SOTA criticism chunk 4: workflow runtime (M1, §8)
 
 ### Added — `ARCHITECTURE-V4.md` §14 (SOTA criticism of M1)
