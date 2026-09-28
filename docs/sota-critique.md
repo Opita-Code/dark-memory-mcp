@@ -491,6 +491,194 @@ that v4 explicitly defers to a later release.
 - §14.4 properties at runtime (modification-replayability as a
   test, not a design)
 
+### 7.6 Implementation organization (the 13-item work plan)
+
+§7.2 lists the 9 in-scope ADRs. This section adds the **other
+outstanding work** (4 items: SOTA-doc close + PRE-1 C3/C4 +
+BUG-10 10b), the **dependency graph**, the **sizing matrix**,
+and the **recommended sequencing** for the next 8-11 weeks of
+focused implementation work.
+
+**§7.6.1 The 4 categories (13 items total)**
+
+| Category | Items | Scope | Priority |
+|---|---|---|---|
+| A. SOTA-doc close | chunk 7 (v4-status + CHANGELOG) | doc-only, XS | first |
+| B. PRE-1 (preflight) | C3 (Loadout) + C4 (summarize_session) | additive API, M each | first |
+| C. BUG-10 10b (surface expansion) | mindset + delegation + project (4 tools) + `projects` table schema | XL, schema migration | second (after PRE-1) |
+| D. SOTA-doc in-scope ADRs | 9 ADRs (per §7.2) | mixed S-XL | parallel to C in waves |
+
+**§7.6.2 Sizing matrix (per item, rough estimates)**
+
+| Item | Domain | Complexity | LoC est | Files | Tests | Risk |
+|---|---|---|---|---|---|---|
+| chunk 7 | docs | XS | ~50 | 2 | 0 | LOW |
+| PRE-1 C3 | preflight | M | ~200 | 3 | 3-4 | LOW |
+| PRE-1 C4 | preflight | M | ~180 | 3 | 2-3 | LOW |
+| BUG-10 10b | tools + schema | XL | ~700 | 8-10 | 10-12 | HIGH (schema) |
+| BUG-12 | audit | XS | ~40 | 1-2 | 2-3 | LOW |
+| ADR-009 | judge | S | ~150 | 2-3 | 5-6 | LOW |
+| ADR-011 | judge | M | ~250 | 2-3 | 3-4 | MEDIUM |
+| ADR-013 | memory | XL | ~700 | 5-7 | 8-10 | HIGH |
+| ADR-014 | memory | M | ~180 | 2-3 | 2-3 | MEDIUM |
+| ADR-015 | memory | L | ~400 | 3-4 | 4-5 | MED-HIGH |
+| ADR-017 | audit | S | ~120 | 2-3 | 2-3 | LOW |
+| ADR-018 | audit | S | ~100 | 1-2 | 2-3 | LOW |
+| ADR-019 | audit | M | ~250 | 3-4 | 3-4 | MEDIUM (schema) |
+
+**Total**: ~3,320 LoC, ~50 tests, 4 schema migrations (BUG-10
+10b + ADR-019, possibly BUG-10 10b split into 2).
+
+**§7.6.3 Dependency graph**
+
+```
+                    chunk 7 (close)
+                        │
+       ┌────────────────┴────────────────┐
+       │                                 │
+   PRE-1 C3 → PRE-1 C4                BUG-10 10b
+   (sequential)                       (mindset + delegation
+                                       + project + projects
+                                        table schema)
+
+   WAVE 1 (parallelizable, low-risk) ─────────┐
+   BUG-12  (XS)                                │
+   ADR-019 (M, schema migration)               │
+   ADR-009 (S, provider allow-list)           │
+   ADR-011 (M, judge calibration)             │
+                                               ▼
+   WAVE 2 (depends on ADR-019) ─────────┐
+   ADR-017 (S, Ed25519 on payload)       │
+   ADR-018 (S, audit verify tool)        │
+                                          ▼
+   WAVE 3 (the big one, memory) ─────┐
+   ADR-013 (XL, vector retrieval) ─┐  │
+   ADR-014 (M, temporal ranking) ──┤  │ depends on ADR-013
+   ADR-015 (L, multi-hop graph) ───┘  │
+                                          │
+                                          ▼
+                                    v4.0.0-alpha.11 ship
+```
+
+**§7.6.4 Recommended sequencing (8-11 weeks focused)**
+
+**Phase 1 — Close + cheap wins (1-2 weeks)**
+1. chunk 7 — XS, ~30 min (doc-only, atomic mirror)
+2. PRE-1 C3 (Loadout for session_start) — M, ~2-3 days
+3. PRE-1 C4 (summarize_session) — M, ~1-2 days
+4. BUG-12 (cross-process monotonicity) — XS, ~1 day
+
+**Phase 2 — Audit chain completion (1 week)**
+5. ADR-019 (split payload BLOB into structured columns) — M, ~3-4 days
+6. ADR-017 (Ed25519 signature on payload BLOB) — S, ~1-2 days
+7. ADR-018 (dark_memory_audit_verify tool) — S, ~1-2 days
+
+**Phase 3 — Judge improvements (1 week)**
+8. ADR-009 (provider allow-list 4 → 10+) — S, ~2-3 days
+9. ADR-011 (judge calibration bootstrap-CI) — M, ~3-4 days
+
+**Phase 4 — BUG-10 10b architectural lift (2-3 weeks)**
+10. BUG-10 10b — XL, ~2-3 weeks (mindset + delegation + project
+    + `projects` table schema). Pre-coding 4-doc plan + operator
+    approval gate (per the 10a pattern, row 2112).
+
+**Phase 5 — Memory subsystem (3-4 weeks)**
+11. ADR-013 (vector retrieval + RRF) — XL, ~2-3 weeks
+12. ADR-014 (temporal re-ranking) — M, ~1 week (depends on 013)
+13. ADR-015 (multi-hop / graph) — L, ~1-2 weeks (depends on 013)
+
+**§7.6.5 Critical decisions BEFORE coding**
+
+**D1 — ADR-013 (vector retrieval) implementation strategy**
+
+- Option A: **Fresh implementation, NO v2.9.x inheritance**
+  (per row 1578 abandonment decision). v4 ships its own
+  vector column, its own embedding adapter, its own RRF
+  re-ranker. ~700 LoC.
+- Option B: Resurrect `internal/embedder/` from v2.9.x. Risk:
+  the v2.9.x code is zombie (per row 1578); the +47 MB
+  ONNX bundle was the original sin; the operator pivoted
+  to darkllm gateway. Resurrecting is more work than
+  fresh.
+- Option C: Defer ADR-013 entirely (stay FTS5-only for
+  alpha.11+). v4 remains honest about being FTS5-only.
+
+**Recommendation: A.** v2.9.x's embedder is the wrong
+inspiration; v4 should make its own decision. The v2.9.x
+RRF (Cormack 2009 k=60) is reusable as a *reference*, not
+as code to import.
+
+**D2 — Schema migration strategy for ADR-019 + BUG-10 10b**
+
+- Option A: **Separate migrations** (one per release).
+  Audit reasons differ (audit chain improvement vs
+  multi-tenant).
+- Option B: Combined migration (one ALTER TABLE). Faster
+  but harder to roll back.
+
+**Recommendation: A** — separate migrations, one audit row
+each, easier rollback.
+
+**D3 — Cross-process monotonicity (BUG-12)**
+
+- Option A: **SQLite AUTOINCREMENT** (relies on
+  `sqlite_sequence` table for cross-process order).
+  ~40 LoC, well-understood.
+- Option B: Continue per-Writer mutex + seq++ (current
+  behavior, but document as single-process).
+
+**Recommendation: A** — auto-monotonicity is cheap and
+correct, and matches the SOTA 2025-26 bar (Rekor, immudb,
+in-toto all use DB-level sequences).
+
+**D4 — Whether to include ADR-013 in this implementation
+cycle**
+
+- Option A: Include ADR-013 (the big one) — 3-4 extra weeks.
+- Option B: Defer ADR-013 to v4.0.0-beta, ship alpha.11+
+  without vector retrieval.
+
+**Recommendation: B** if operator wants faster alpha.11+
+ship. ADR-013 is the single biggest scope item; deferring
+it lets Phase 1-3 ship in ~3-4 weeks.
+
+**§7.6.6 Risk register (top 5)**
+
+| # | Item | Risk | Mitigation |
+|---|---|---|---|
+| 1 | BUG-10 10b | HIGH (schema migration, multi-tenant) | 4-doc pre-plan + operator approval gate (per 10a row 2112) |
+| 2 | ADR-013 | HIGH (biggest scope, v2.9.x abandonment) | D1 decision + fresh implementation, no v2.9.x import |
+| 3 | ADR-015 | MED-HIGH (graph design is non-trivial) | depends on ADR-013; may need separate ADR-015 design doc |
+| 4 | ADR-019 | MEDIUM (schema migration in production) | D2 decision; additive ALTER TABLE pattern |
+| 5 | ADR-011 | MEDIUM (statistical correctness of bootstrap-CI) | per Play Favorites arxiv:2508.06709 methodology; cite |
+
+**§7.6.7 What this section is NOT**
+
+- It is NOT a commitment. The 13 items are PROPOSED, not
+  committed. Each requires operator approval, design,
+  implementation, tests, and atomic mirror before ship.
+- It is NOT a substitute for the per-ADR decision. ADR-009,
+  ADR-013, etc. each need their own ADR document (or
+  entry in `docs/decisions/`) before implementation.
+- It is NOT a promise of timing. The 8-11 week estimate
+  assumes 1 engineer (me, the Opita-AI agent) with no
+  other work in parallel. Real timing will depend on
+  operator decisions, blocking issues, and SOTA drift
+  (newer SOTA may invalidate some ADRs).
+- It is NOT a substitute for the v4-status.md + CHANGELOG
+  close. Chunk 7 still ships separately.
+
+**§7.6.8 Operator decision points (to approve before
+Phase 1 starts)**
+
+| # | Decision | Options | Default if no input |
+|---|---|---|---|
+| OD1 | Phase 1 start point | chunk 7 first / PRE-1 C3 first / BUG-12 first | chunk 7 first (smallest, closes workstream) |
+| OD2 | Include ADR-013? | yes / defer to beta | defer (smaller alpha.11+) |
+| OD3 | BUG-10 10b blocks other work? | yes / parallel | parallel (different surface area) |
+| OD4 | v2.9.x embedder code resurrected? | yes / no (per row 1578) | no (per row 1578) |
+| OD5 | ADR-013 implementation | fresh / v2.9.x / defer | fresh (per D1) |
+
 ## 8. Cross-references (per-chunk SOTA criticism)
 
 | Chunk | File | Section | Line | Commit |
