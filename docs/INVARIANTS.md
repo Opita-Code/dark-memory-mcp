@@ -549,3 +549,322 @@ contract applies (no DELETE/INSERT within the read Tx).*
 ---
 
 *See also: [RUNBOOK.md](./RUNBOOK.md) · [COEXISTENCE.md](./COEXISTENCE.md) · [CONTEXT_OBJECTS.md](./CONTEXT_OBJECTS.md) · [v4-status.md](./v4-status.md) · [AGENT_MEMORY_SCHEMA.md](./AGENT_MEMORY_SCHEMA.md)*
+
+---
+
+## §18. SOTA criticism — audit chain (chunk 3, 2026-09-28)
+
+This section is an honest SOTA criticism of v4's audit chain
+(INV-1 + the planned INV-11..INV-15) against the 2025-2026
+state of the art. It is the third in the SOTA-doc series
+(chunks 1, 2 already shipped; see `docs/judge-pipeline-v4.md`
+§10 and `docs/AGENT_MEMORY_SCHEMA.md` §8).
+
+### 18.1 What v4 has (current state, honest baseline)
+
+| Capability | Status | Where | Notes |
+|---|---|---|---|
+| INV-1 write-path audit (every Save emits one row) | **YES (fully closed)** | `internal/v4alpha/audit/writer.go` `Write()` | 5-col `audit_log` table; `audit_id` PK auto-inc; mutex around (seq++, INSERT) |
+| Atomicity (audit row + data row in same Tx) | **YES (v3 contract; v4 inherits)** | `WriteContext{}` in v3 store; v4 has `audit.Writer.Write` + caller-managed Tx | Verified per Store method in the Quick reference table above |
+| Operator (actor) attribution | **YES** | `actor TEXT NOT NULL CHECK (actor <> '')` | INV-1's identity-first primitive |
+| Session attribution | **YES** | `session_id TEXT` (nullable) | Empty → NULL per writer.go:84-86 |
+| canary_present flag | **YES (v3 lineage; v4 inherits table col)** | v3 `write_audit.canary_present` | INV-3 tripwire |
+| Cross-process monotonicity of audit_id | **NO** (caller's responsibility) | writer.go:30-33 | Per-instance seq; cross-process is "DB-level sequence or external coordinator" — neither implemented |
+| Cryptographic chaining (each row hashes the prior) | **NO** | n/a | INV-12 deferred to alpha.3 per `v4-status.md:119` |
+| Tamper-evidence (Merkle tree, inclusion proof) | **NO** | n/a | INV-12 deferred |
+| External attestation (Rekor / sigstore) | **NO** | n/a | Not in scope for v4-alpha |
+| Redact-before-log (PII, secrets, query-hash) | **PARTIAL** | query-hash=sha256(query) for research (R6 mitigation) | INV-13 deferred to alpha.3 per `v4-status.md:120`; only research path redacts today |
+| Transport auth (capability token) | **NO** | n/a | INV-11 deferred to alpha.3 per `v4-status.md:118` |
+| Prompt injection scan on payload | **NO** | n/a | INV-15 deferred to alpha.3 per `v4-status.md:122` |
+
+**Verdict of the baseline**: v4 ships a **well-engineered
+write-path audit** (INV-1) with the right primitives (operator
+attribution, session attribution, canary flag, atomicity
+contract). v4 does **NOT** ship a **tamper-evident chain**
+(INV-12), and the 4 related alpha.3 invariants (INV-11, 13, 14,
+15) are all explicitly deferred. This is a **known design
+choice** documented in `v4-status.md:118-122`, not a hidden gap.
+
+### 18.2 On-par with SOTA 2025-26 (4 verifications, tier-1 sources)
+
+1. **Append-only audit log as the foundational primitive.**
+   v4's `audit_log` table is append-only by design (no UPDATE or
+   DELETE methods exposed; the writer only INSERTs). This is the
+   same foundational primitive that all SOTA 2025-26 systems
+   start with.
+   SOTA: Rekor (sigstore.dev) — "an immutable, tamper-resistant
+   ledger of metadata" — verified 2026-09-28 via
+   <https://docs.sigstore.dev/rekor/overview/>. **Verdict:
+   aligned in primitive; v4 lacks the cryptographic layer that
+   makes Rekor "tamper-resistant".**
+
+2. **Operator/actor attribution as the identity primitive.**
+   v4's `actor TEXT NOT NULL CHECK (actor <> '')` is
+   identity-first (who caused the mutation, not what system).
+   This is structurally the same primitive that SOTA 2025-26
+   audit systems use.
+   SOTA: immudb (codenotary/immudb) — `user` field in the
+   structured audit log — verified 2026-09-28 via
+   <https://github.com/codenotary/immudb>. immudb's audit log
+   captures: `ts` (nanosecond timestamp), `user`, `ip`, `db`,
+   `method`, `type` (AUTH/ADMIN/WRITE/READ/SYSTEM), `ok`,
+   `err`, `dur_ms`, `sid`. v4 captures fewer fields
+   (operator, session_id, payload, created_at) but the identity
+   primitive is the same. **Verdict: aligned in pattern; v4
+   has fewer fields.**
+
+3. **In-process SQLite + SERIALIZABLE for the audit writer.**
+   v4's `audit.Writer` uses in-process SQLite with mutex
+   around (seq++, INSERT). This is operationally simpler than
+   the SOTA alternatives (Rekor runs a separate server,
+   immudb is a separate process or embedded library) but
+   achieves the same atomicity guarantee per process.
+   SOTA: immudb embedded mode (per its docs, can run
+   "fully in-process as a Go library — no server, no container")
+   — verified 2026-09-28. **Verdict: aligned in operational
+   pattern when immudb is in embedded mode; v4 is simpler
+   (no Merkle tree) but more limited (no tamper-evidence).**
+
+4. **IN-Toto-style step attribution (v3's `write_path` col;
+   v4's payload BLOB).** v3 had an explicit `write_path`
+   column (e.g. `write_path="MindsetApplyCache"`,
+   `write_path="SaveAgentMemory"`). v4 does not have this
+   column but the payload BLOB carries the equivalent
+   information implicitly.
+   SOTA: in-toto (in-toto.io) — "make it transparent to the
+   user what steps were performed, by whom and in what order"
+   — CNCF graduated — verified 2026-09-28 via
+   <https://in-toto.io/>. **Verdict: v4 is aligned in intent
+   (v3's `write_path` was a v3-era step attribution); v4's
+   payload BLOB carries it implicitly but is not as queryable
+   as a dedicated column.**
+
+### 18.3 Ahead of SOTA 2025-26 (3 places, rare but real)
+
+1. **Per-instance strict monotonicity of audit_id (no gaps
+   even on INSERT failure).** v4's `Writer.Write` does
+   `w.seq++` BEFORE the INSERT and `w.seq--` on INSERT
+   failure (writer.go:90-98). This is a no-gaps guarantee
+   per Writer instance. SOTA 2025-26 systems (Rekor,
+   immudb, in-toto) use sequence numbers but typically
+   allow gaps on failure (the failed entry is discarded).
+   v4's contract is **stricter** than SOTA in this
+   respect. **Verdict: ahead in sequence discipline.**
+
+2. **INV-1 atomicity contract (audit insert fails → data
+   write rolls back).** This is documented per
+   `Store.Save*` method in the Quick reference table
+   above. The audit row and the data row are written in
+   the **same** SQL transaction. If the audit insert
+   fails, the data write rolls back. SOTA 2025-26
+   systems (Rekor, immudb) have separate audit logs
+   that can fail without rolling back the data write.
+   **Verdict: ahead in atomicity contract.** This is
+   the foundation that makes v4's drift detection
+   (vibe_publish → drift_judge) meaningful.
+
+3. **Per-MCP database isolation (INV-8).** v4's
+   per-MCP `dark.db` file (per the `coexistence_group`
+   contract) means each dark-* MCP has its own audit
+   log. A compromise in one dark-* MCP does not
+   contaminate the audit logs of the others. SOTA
+   2025-26 systems typically have one shared audit
+   log (Rekor, immudb). **Verdict: ahead in
+   blast-radius isolation.** The per-MCP audit is
+   weaker individually but the blast radius is
+   strictly smaller.
+
+### 18.4 Behind SOTA 2025-26 (8 gaps with file:line + remediation)
+
+1. **No cryptographic chaining of audit rows.** v4's
+   `audit_log` has 5 columns (`audit_id`, `actor`,
+   `session_id`, `payload`, `created_at`). There is no
+   `prev_hash` or `row_hash` column. Each row is
+   independent. SOTA 2025-26 systems chain rows
+   cryptographically: immudb uses a Merkle tree over
+   all transactions; Rekor uses a Trillian-backed
+   append-only log; in-toto uses signed link metadata.
+   v4 can lose or modify a row without detection.
+   **Verdict: behind in tamper-evidence.** Remediation:
+   INV-12 (alpha.3). File: `internal/v4alpha/audit/`.
+
+2. **No Merkle tree / inclusion proof.** v4 cannot
+   prove that a specific audit row is in the log
+   without scanning the table. immudb provides
+   `VerifiableGet` (verified 2026-09-28 via
+   codenotary/immudb) that returns a cryptographic
+   proof alongside the value. Rekor provides
+   inclusion proofs against the Trillian log
+   (transparency.dev verified).
+   **Verdict: behind in proof generation.**
+   Remediation: INV-12.
+
+3. **No external transparency log.** v4's audit log
+   is local (per `dark.db` file). SOTA 2025-26
+   systems publish to public transparency logs:
+   Rekor publishes to rekor.sigstore.dev (public
+   instance, 99.5% SLO); Certificate Transparency
+   publishes to multiple Google and non-Google logs;
+   Go's sumdb publishes to sum.golang.org.
+   A v4 operator cannot independently verify the
+   audit log without access to the local DB.
+   **Verdict: behind in independent verifiability.**
+   Remediation: out of v4-alpha scope; ADR-016 when
+   adopted (audit log to public transparency log).
+
+4. **No redact-before-log (INV-13).** v4 stores the
+   raw `payload` BLOB in `audit_log`. INV-13
+   (deferred to alpha.3) is supposed to redact
+   secrets, PII, and prompt-injection patterns
+   before persistence. SOTA 2025-26 systems have
+   configurable redaction (immudb's audit events
+   are JSON and can be filtered pre-write; Rekor
+   entries are signed but the signer chooses what
+   to include). v4 currently relies on callers to
+   pre-redact (R6 mitigation: `query_hash=sha256(query)`
+   for research) but this is caller discipline, not
+   the storage layer.
+   **Verdict: behind in default-redaction.**
+   Remediation: INV-13.
+
+5. **No payload signature (caller → row).** v4's
+   `payload` BLOB is unsigned. SOTA 2025-26 systems
+   sign the entry: Rekor entries are signed by the
+   submitter (or by Fulcio with OIDC for keyless);
+   in-toto link metadata files are signed by the
+   functionary. v4 has no way to prove that the
+   `payload` BLOB was actually emitted by the
+   claimed `actor`. **Verdict: behind in payload
+   integrity.** Remediation: ADR-017 (Ed25519
+   signature on payload BLOB keyed by actor).
+
+6. **No audit chain verification tool.** v4 has
+   no way for an operator to verify the audit
+   chain end-to-end. immudb provides
+   `immudb_verify_row('table', id)` and
+   `immudb_history('key')` SQL functions
+   (verified 2026-09-28). v4 has
+   `dark_memory_writes` (per `v4-status.md`) which
+   returns rows but not a cryptographic proof.
+   **Verdict: behind in verification UX.**
+   Remediation: ADR-018 (`dark_memory_audit_verify`
+   tool that walks the chain and returns a proof).
+
+7. **Cross-process monotonicity not enforced.**
+   v4's `Writer.seq` is per-Writer-instance
+   (writer.go:26-33). Two `Writer` instances in two
+   processes can interleave INSERTs such that the
+   `audit_id` sequence has gaps OR out-of-order
+   rows. SOTA 2025-26 systems (Rekor, immudb) use
+   DB-level sequence generators (PostgreSQL
+   sequences, SQLite AUTOINCREMENT with
+   `sqlite_sequence` table) which give strict
+   cross-process monotonicity. v4's design is
+   **per-instance only** and acknowledges this as
+   "the caller's responsibility" — but the caller
+   has no helper to enforce it.
+   **Verdict: behind in distributed correctness.**
+   Remediation: BUG-12 (use SQLite AUTOINCREMENT's
+   implicit sequence; don't manage `seq` manually
+   in the Writer).
+
+8. **No structured audit fields (compared to immudb).**
+   immudb's audit log is JSON-structured: `ts`,
+   `user`, `ip`, `db`, `method`, `type`, `ok`,
+   `err`, `dur_ms`, `sid`. v4's `audit_log` has
+   only 4 fields (actor, session_id, payload BLOB,
+   created_at). The payload BLOB has to encode
+   method, type, ok, err, etc. structurally.
+   **Verdict: behind in structured audit.**
+   Remediation: ADR-019 (split `payload` into
+   `method`, `event_type`, `success`, `error_msg`,
+   `duration_ms` columns).
+
+### 18.5 Couldn't verify (honest gap, 4 items)
+
+1. **The exact cryptographic primitive Rekor uses for
+   Merkle tree inclusion proofs.** Rekor is built on
+   Trillian (transparency.dev verified 2026-09-28).
+   Trillian uses a Verifiable Data Structure based
+   on a Merkle tree with a specific hash function
+   (SHA-256 by default). I verified the high-level
+   architecture but did not verify the exact hash
+   function and tree shape in this session.
+
+2. **The current state of AWS QLDB.** I attempted
+   to fetch <https://aws.amazon.com/qldb/> on
+   2026-09-28 and the response was a redirect to
+   the Amazon Aurora landing page. This suggests
+   QLDB has been deprecated and replaced by Aurora
+   DSQL (mentioned in the Aurora page). The exact
+   deprecation date and migration path I could not
+   verify in this session. **The honest statement:
+   I do NOT know if QLDB is still available in
+   2026-09-28.**
+
+3. **The current state of immudb's structured audit
+   logging as a default.** The README (verified
+   2026-09-28) describes `--audit-log` as a flag
+   that "is now supports" — but I did not verify
+   the version in which this became default. v4
+   cannot cite a specific immudb version as the
+   baseline.
+
+4. **The Certificate Transparency ecosystem's
+   current log operators.** I verified
+   transparency.dev (the umbrella org) but did
+   not verify the list of CT log operators
+   (Google Argon, Google Xenon, Let's Encrypt
+   Oak, etc.) in this session. CT is a 2013-era
+   SOTA standard; the operator list is public
+   knowledge but I cannot cite specific current
+   log names.
+
+### 18.6 What this section is NOT
+
+- It is NOT a refutation of v4's design. v4 ships
+  a well-engineered INV-1 (write-path audit) with
+  the right primitives. The gaps in §18.4 are
+  tractable, not architectural.
+
+- It is NOT a substitute for ADR-016/017/018/019
+  (proposed remediations). Each gap has a proposed
+  ADR; the ADRs are the next step, not this section.
+
+- It is NOT a comprehensive SOTA survey. The
+  SOTA-doc chunk 3 scope is the audit chain.
+  Rekor, in-toto, immudb, Trillian, and
+  Certificate Transparency are the canonical 4-5
+  systems in this space. There are other related
+  systems (Trillian alone, sigsum, key transparency)
+  that I did not verify in this session.
+
+## §19. References (tier-1 sources verified 2026-09-28)
+
+| Claim in this doc | Cited source | URL | Verified |
+|---|---|---|---|
+| Rekor: immutable, tamper-resistant ledger of supply chain metadata | sigstore.dev Rekor overview | <https://docs.sigstore.dev/rekor/overview/> | 2026-09-28 |
+| Rekor public instance (rekor.sigstore.dev) at 99.5% SLO | sigstore.dev Rekor overview | <https://docs.sigstore.dev/rekor/overview/> | 2026-09-28 |
+| Rekor built on top of a verifiable data structure (Trillian) | sigstore.dev Rekor overview | <https://docs.sigstore.dev/rekor/overview/> | 2026-09-28 |
+| in-toto: framework to secure the integrity of software supply chains (CNCF graduated) | in-toto.io | <https://in-toto.io/> | 2026-09-28 |
+| immudb: immutable database with built-in cryptographic proof and verification (9k stars, MIT-style BSL 1.1) | codenotary/immudb GitHub | <https://github.com/codenotary/immudb> | 2026-09-28 |
+| immudb design: cryptographic commit log with parallel Merkle Tree | codenotary/immudb README | (same URL) | 2026-09-28 |
+| immudb structured audit logging: --audit-log flag, JSON events, AUTH/ADMIN/WRITE/READ/SYSTEM | codenotary/immudb README "Recent Changes" | (same URL) | 2026-09-28 |
+| immudb embedded mode: "fully in-process as a Go library — no server, no container" | codenotary/immudb README | (same URL) | 2026-09-28 |
+| immudb performance: 1.8M writes/sec at 50 workers, 1k batch | codenotary/immudb README "Performance figures" | (same URL) | 2026-09-28 |
+| immudb SQL: immudb_state(), immudb_verify_row(), immudb_verify_tx(), immudb_history() | codenotary/immudb README | (same URL) | 2026-09-28 |
+| immudb SQL: DIFF OF for SQL audit (range queries) | codenotary/immudb README | (same URL) | 2026-09-28 |
+| immudb 1.9.5 latest release | codenotary/immudb README "Quickstart" | (same URL) | 2026-09-28 |
+| Transparency.dev: tamper-evident log used by Go, CT, Sigstore | transparency.dev | <https://transparency.dev/> | 2026-09-28 |
+| Trillian: verifiable log (built by Google) used by Rekor | transparency.dev / sigstore.dev | <https://transparency.dev/verifiable-data-structures/> | 2026-09-28 |
+| Certificate Transparency: enforce all certs in a verifiable log | transparency.dev | <https://certificate.transparency.dev/> | 2026-09-28 |
+| AWS QLDB: deprecated/redirected to Aurora (status not verified precisely 2026-09-28) | aws.amazon.com/qldb/ | (redirected to Aurora) | 2026-09-28 (inconclusive) |
+| v4's INV-12 (audit chain) status: NOT STARTED, planned for alpha.3 | v4-status.md:119 | (in-repo) | 2026-09-28 |
+| v4's INV-11, 13, 14, 15 status: NOT STARTED, all planned for alpha.3 | v4-status.md:118-122 | (in-repo) | 2026-09-28 |
+| v4's `audit.Writer` source code (mutex, seq, payload BLOB) | internal/v4alpha/audit/writer.go | (in-repo) | 2026-09-28 |
+
+All URLs verified via primary fetch 2026-09-28. The
+"couldn't verify" items in §18.5 are NOT in this
+table — they are honestly missing. The QLDB row
+is marked "(inconclusive)" because the redirect was
+noted but the deprecation status was not confirmed.

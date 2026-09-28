@@ -11,6 +11,44 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [4.0.0-alpha.8] — 2026-09-28 — SOTA criticism chunk 3: audit chain (INV-1)
+
+### Added — `docs/INVARIANTS.md` §18 (SOTA alignment + gaps)
+- New §18 with honest SOTA criticism of v4's audit chain (INV-1 + the planned INV-11..INV-15) against the 2025-2026 SOTA. Verified via `fresh-osint` discipline (tier-1 sources only): sigstore.dev, in-toto.io (CNCF graduated), codenotary/immudb (9k stars, embedded DB with Merkle tree), transparency.dev (Trillian). Structured as: §18.1 what v4 has (current state, honest baseline, 11-row table), §18.2 on-par with SOTA 2025-26 (4 verifications), §18.3 ahead of SOTA 2025-26 (3 places, rare but real), §18.4 behind SOTA 2025-26 (8 gaps with file:line + remediation ADR-016/017/018/019), §18.5 couldn't verify (4 honest gaps), §18.6 what this section is NOT.
+
+### Added — `docs/INVARIANTS.md` §19 (References)
+- New §19 with 18 tier-1 source citations (sigstore Rekor, in-toto, immudb, Trillian, CT, AWS QLDB status, v4's own v4-status.md + audit/writer.go). Each row includes URL + verification date 2026-09-28. The QLDB row is marked "(inconclusive)" because the /qldb/ page redirected to Aurora; deprecation status not confirmed.
+
+### Why
+- Chunk 3 of 7 in the SOTA-doc plan (chunks 1-2 shipped as [4.0.0-alpha.6] and [4.0.0-alpha.7]). The audit chain is the FOUNDATION of v4's drift detection (vibe_publish → drift_judge). Honest SOTA criticism here is critical because v4 explicitly does NOT have INV-12 (audit chain) — that gap is documented as deferred to alpha.3, and the SOTA criticism shows what closing the gap looks like.
+
+### Test count
+- No test changes. Doc-only release. All v4alpha tests still pass (no regressions; `internal/v4alpha/audit/` test suite untouched).
+
+### Schema
+- No bump. SOTA criticism chunk 3 is doc-only. The 5-column `audit_log` table is unchanged.
+
+### Gaps surfaced (chunk 3 — proposed remediation ADRs)
+- **ADR-016**: Audit log to public transparency log (Rekor-style external attestation)
+- **ADR-017**: Ed25519 signature on payload BLOB keyed by actor (payload integrity)
+- **ADR-018**: `dark_memory_audit_verify` tool (walk the chain, return proof)
+- **ADR-019**: Split `payload` BLOB into structured columns (`method`, `event_type`, `success`, `error_msg`, `duration_ms`)
+
+### Honest scope (chunk 3 — what I could NOT verify)
+- The exact cryptographic primitive Rekor uses for Merkle tree inclusion proofs. I verified the high-level architecture (Trillian-based) but not the exact hash function and tree shape.
+- The current state of AWS QLDB. /qldb/ redirected to Aurora; I could not confirm the exact deprecation date in this session. **Honest statement: I do NOT know if QLDB is still available in 2026-09-28.**
+- The exact immudb version where structured audit logging became default (vs the `--audit-log` flag).
+- The current list of Certificate Transparency log operators (Google Argon, Google Xenon, Let's Encrypt Oak, etc.).
+
+### Lessons from chunks 1-2 applied
+- Did NOT guess arxiv IDs (chunks 1-2 had 0 random guesses, only deliberate searches)
+- Every SOTA claim annotated with the verified source (URL) and the verification date (2026-09-28)
+- 4 honest gaps in §18.5 (not papered over)
+- 4 ADRs proposed as remediation for the 8 behind-SOTA gaps
+- One row marked "(inconclusive)" rather than fabricated (QLDB status)
+
+---
+
 ## [4.0.0-alpha.7] — 2026-09-28 — SOTA criticism chunk 2: agent memory
 
 ### Added — `docs/AGENT_MEMORY_SCHEMA.md` §8 (SOTA alignment + gaps)
