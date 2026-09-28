@@ -33,6 +33,7 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/agent_memory"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/audit"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/judge"
+	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/research"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/session"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/vibe"
 )
@@ -57,16 +58,17 @@ const ServerName = "dark-memory-v4"
 // Server holds the MCP server + its dependency graph. Built by
 // NewServer, used by ServeStdio.
 type Server struct {
-	mcpSrv        *server.MCPServer
-	db            *sql.DB
-	audit         *audit.Writer
-	session       *session.Store
-	memories      *agent_memory.Store
-	pipeline      *vibe.Pipeline
-	judgePipeline *judge.Pipeline // ADR-007 C2: LLM-backed judge surface
-	judgePersonas judge.PersonaRegistry
-	judgeStore    *judge.Store // ADR-007 C3: sdd_evaluations persistence
-	startedAt     string
+	mcpSrv          *server.MCPServer
+	db              *sql.DB
+	audit           *audit.Writer
+	session         *session.Store
+	memories        *agent_memory.Store
+	pipeline        *vibe.Pipeline
+	judgePipeline   *judge.Pipeline // ADR-007 C2: LLM-backed judge surface
+	judgePersonas   judge.PersonaRegistry
+	judgeStore      *judge.Store // ADR-007 C3: sdd_evaluations persistence
+	researchExecutor *research.Executor // BUG-10 10a: 17-backend research fan-out
+	startedAt       string
 }
 
 // NewServer builds the MCPServer, registers the BUG-7 + BUG-8 + C2
@@ -112,6 +114,11 @@ func NewServer(db *sql.DB) (*Server, error) {
 	// ADR-007 C3: judge.Store for sdd_evaluations persistence.
 	judgeStore := judge.NewStore(db, auditW)
 
+	// BUG-10 10a: research executor (17 backends, SSRF guard,
+	// health-aware routing, per-type cache).
+	researchHTTP := research.NewHTTPClient(research.DefaultHTTPConfig())
+	researchExec := research.NewExecutor(researchHTTP)
+
 	mcpSrv := server.NewMCPServer(
 		ServerName,
 		Version,
@@ -120,19 +127,20 @@ func NewServer(db *sql.DB) (*Server, error) {
 	)
 
 	s := &Server{
-		mcpSrv:        mcpSrv,
-		db:            db,
-		audit:         auditW,
-		session:       sessStore,
-		memories:      memStore,
-		pipeline:      pipe,
-		judgePipeline: judgePipe,
-		judgePersonas: judgePersonas,
-		judgeStore:    judgeStore,
+		mcpSrv:           mcpSrv,
+		db:               db,
+		audit:            auditW,
+		session:          sessStore,
+		memories:         memStore,
+		pipeline:         pipe,
+		judgePipeline:    judgePipe,
+		judgePersonas:    judgePersonas,
+		judgeStore:       judgeStore,
+		researchExecutor: researchExec,
 	}
 
-	// BUG-7 + BUG-8 + C2 tool set. Each registerXxx is one namespace.
-	// 1 + 5 + 6 + 3 + 4 + 2 + 4 + 4 = 29 tools total (C2 adds 4).
+	// BUG-7 + BUG-8 + C2 + C3 + 10a tool set.
+	// 29 + 7 judge_util + 3 research = 39 tools after 10a.
 	registerHealthTool(s)         // 1
 	registerSessionTools(s)       // 5 (start, close, status, resume, heartbeat)
 	registerAgentMemoryTools(s)   // 6 (save, recall, list, get, update, archive)
@@ -141,6 +149,8 @@ func NewServer(db *sql.DB) (*Server, error) {
 	registerPolicyTools(s)        // 2 (active_policy, load_constitution)
 	registerVibeTools(s)          // 4 (spec, publish, pipeline_status, resolve_drift)
 	registerJudgeTools(s)         // 4 (judge, consensus, judgment_history, list_personas)
+	registerJudgeUtilTools(s)     // 7 (normalize, validate_overrides, pattern_descriptions, verify, verify_hash, trace, validate_trace)
+	registerResearchTools(s)      // 3 (topic, recall, resume_thread)
 
 	return s, nil
 }

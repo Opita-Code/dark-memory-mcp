@@ -1,13 +1,14 @@
 # v4 Status — current state of the redesign
 
 > **Audience**: anyone touching the `feat/v4-redesign` branch.
-> **TL;DR**: v4-alpha.3 ships **29 of 57 canonical tools** (51% of
+> **TL;DR**: v4-alpha.4 ships **38 of 57 canonical tools** (67% of
 > the surface) plus the full judge pipeline (ADR-007, 4 commits
-> shipped). The package layout is **NOT** what `ARCHITECTURE-V4.md
+> shipped) plus the judge_util + research namespaces (BUG-10 10a).
+> The package layout is **NOT** what `ARCHITECTURE-V4.md
 > §5 (original)` promised — see "actual layout" below. The operator-
-> facing surface is real and tested (464 v4alpha tests PASS, 0 FAIL).
-> Remaining 28 tools land in BUG-10+; the judge pipeline was added in
-> 4 commits (commits 1-4 of ADR-007).
+> facing surface is real and tested.
+> Remaining 19 tools land in BUG-10 10b-e; the judge pipeline was
+> added in 4 commits (commits 1-4 of ADR-007).
 
 | Field | Value |
 |---|---|
@@ -20,8 +21,7 @@
 | Local-only policy | YES — no `git push`/`fetch`/`pull`, no remote tags/releases |
 
 ---
-
-## 1. Tools inventory (29 of 57)
+## 1. Tools inventory (38 of 57)
 
 The canonical surface is 57 tools (see `ARCHITECTURE-V4.md §6.3
 tool-count target`). v4-alpha.3 registers **29 of those**.

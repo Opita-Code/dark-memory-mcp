@@ -287,8 +287,8 @@ func TestToolsList_ReturnsSixTools(t *testing.T) {
 	if err := json.Unmarshal(list.Result, &result); err != nil {
 		t.Fatalf("parse tools/list: %v", err)
 	}
-	if len(result.Tools) != 29 {
-		t.Errorf("tool count = %d; want 29 (BUG-7 MVP + BUG-8 batch 1 + ADR-007 C2 judge tools)", len(result.Tools))
+	if len(result.Tools) != 39 {
+		t.Errorf("tool count = %d; want 39 (BUG-7 MVP + BUG-8 batch 1 + ADR-007 C2 judge + BUG-10 10a judge_util + research)", len(result.Tools))
 	}
 	wantNames := map[string]bool{
 		// BUG-7 MVP

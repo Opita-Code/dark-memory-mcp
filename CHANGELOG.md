@@ -11,6 +11,71 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [4.0.0-alpha.4] — 2026-09-27 — BUG-10 10a: judge_util + research (29 → 38 tools)
+
+### Added — judge_util (6 tools)
+- `dark_memory_judge_util_normalize` — T5 normalization pipeline (NFKC + zero-width strip + unicode-escape decode + Cyrillic homoglyph map + lowercase + whitespace collapse). Pure, deterministic, no I/O.
+- `dark_memory_judge_util_validate_overrides` — scan text for the 10 prompt-injection override patterns (OP-1..OP-10). Returns hits with severity (block / flag) and 40-char context snippet.
+- `dark_memory_judge_util_pattern_descriptions` — list the canonical 10 patterns with descriptions. Stable across versions.
+- `dark_memory_judge_util_verify` — Ed25519 signature verification (32-byte public key, 64-byte base64 signature, content).
+- `dark_memory_judge_util_verify_hash` — SHA-256 content-hash verification.
+- `dark_memory_judge_util_trace` — generate a fresh W3C Trace Context (32-hex trace_id + 16-hex span_id + 01 sampled + canonical traceparent header).
+- `dark_memory_judge_util_validate_trace` — validate a W3C traceparent against the grammar (case-insensitive hex).
+
+### Added — research (3 tools)
+- `dark_memory_research_topic` — run a research query across the **17 no-API-key backends**. Tier-aware fan-out (T1 → T2 → T3), health-aware routing, per-type cache TTL with stale-while-revalidate, SSRF guard, prompt-injection gate, entity resolution across corroborating backends. Audit row stores `sha256(target)` — raw target NEVER logged (R6 mitigation).
+- `dark_memory_research_recall` — recall prior research items by query string. Scans the in-memory cache; the 10b implementation will back it with FTS5.
+- `dark_memory_research_resume_thread` — continue a multi-turn research thread by re-running the executor with the new query (10b moves thread state to SQLite).
+
+### Added — 17 research backends (no API key required)
+| Intent | Backend | Tier |
+|---|---|---|
+| cve | `osv`, `nvd` | T1, T2 |
+| code | `npm`, `crates`, `github` | T1, T1, T2 |
+| academic | `openalex`, `crossref`, `arxiv` | T1, T2, T1 |
+| domain | `rdap` | T1 |
+| dns | `doh-google`, `doh-cloudflare` | T1, T2 |
+| ip | `ip-api`, `ripe-db` | T1, T2 |
+| cert | `crt` | T1 |
+| email | `hibp-range` (k-anonymity, 5-char prefix) | T2 |
+| geo | `nominatim` | T1 |
+| news | `hn-algolia`, `gdelt` | T1, T2 |
+| web | `ddg-html` (HTML scrape) | T3 |
+
+### Added — security package
+- `internal/v4alpha/security/ssrf.go` — SSRF guard with 16 v4 CIDRs (RFC 1918, CGNAT, link-local incl. 169.254/16 cloud metadata, loopback, multicast, broadcast, documentation) + 9 v6 CIDRs (loopback, unique-local, link-local, multicast, IPv4-mapped). Test escape hatch `DARK_TEST_SSRF_BYPASS=1` for `httptest.NewServer`.
+
+### Added — research package foundation
+- `cache.go` — per-type TTL with stale-while-revalidate (5m/1h/24h/7d).
+- `health.go` — circuit breaker (DegradeAfter=3, KillAfter=10).
+- `http.go` — HTTPClient with SSRF chokepoint, `errgroup` backpressure, `context.WithTimeout(12s)`, TLS strict, body cap with `ErrBodyTooLarge`.
+- `manifest_v4.go` — Tier (T1/T2/T3) + VibeCase (C1..C7) + `ManifestV4` + `ValidateExtended`.
+- `merge.go` — entity resolution + sort by relevance; formula `specificity × tier_weight × (1 + 0.1·corroboration) × freshness` (corroboration capped at 3; can reach 1.3).
+- `parsers.go` — 18 pure parsers in a registry; each returns `Result{Intent, Query, Items, Sources, FetchedAt}`.
+- `fixtures.go` + `parsers_test.go` — 17 snapshot fixtures + per-backend shape tests.
+- `executor.go` — the orchestration: tier filter, vibe_case filter, depth budget, health-aware routing, cache, SSRF, parser, gate, audit summary, merge.
+
+### Changed
+- `internal/v4alpha/transport/mcp/server.go` — `Server` now holds `researchExecutor`; `NewServer` wires the 17-backend executor. `registerJudgeUtilTools` + `registerResearchTools` added; the total tool count goes from 29 → 38 (67% of the 57 canonical).
+- `internal/v4alpha/transport/mcp/transport/mcp/server_test.go` — `TestToolsList_ReturnsSixTools` updated to expect 38 tools (was 29).
+
+### Documentation
+- `docs/research-backends.md` — operator-facing reference: the 17 backends, the selection algorithm (intent + vibe_case + tier), the per-type TTL table, health + circuit breaker, SSRF guard, prompt-injection gate, rate-limit handling, what's NOT in 10a.
+- `docs/v4-status.md` — updated 29 → 38 tools, alpha.3 → alpha.4.
+- `CHANGELOG.md` — this entry.
+
+### Migration
+- No schema bump (no new tables). 10a is docs-only for the schema.
+- The `Server` struct gained two fields (`researchExecutor`); existing callers that construct `Server` directly (not via `NewServer`) must add the field.
+
+### Test count
+- Research package: 18 parser tests + 3 merge + 3 cache + 5 health + 3 relevance + 2 substitute + 7 executor = **41 new tests** in `internal/v4alpha/research/`.
+- Judge_util: 5 T5 normalizer + 4 override + 1 pattern desc + 3 Ed25519 + 3 SHA-256 + 4 W3C = **20 new tests** in `internal/v4alpha/judge/`.
+- Security: 50+ SSRF tests (already shipped with C2-era; `SetTestMode` mutator added).
+- All v4alpha tests PASS.
+
+---
+
 ## [4.0.0-alpha.3] — 2026-09-27 — judge pipeline v4 shipped (ADR-007, 4 commits)
 
 The judge pipeline v4 (ADR-007) is **fully shipped** across 4 commits
