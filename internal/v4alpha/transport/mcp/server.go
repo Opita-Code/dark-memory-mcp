@@ -26,12 +26,14 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+	"os"
 	"runtime"
 
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/agent_memory"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/audit"
+	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/docs_index"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/judge"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/research"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/session"
@@ -95,6 +97,20 @@ func NewServer(db *sql.DB) (*Server, error) {
 	auditW := audit.NewWriter(db)
 	sessStore := session.NewStore(db, auditW)
 	memStore := agent_memory.NewStore(db, auditW) // ADR-007 C3: INV-1 audit emission
+
+	// PRE-1 C2: index operator-facing docs so recall() can
+	// find them. Defensive: per-doc failures are logged to
+	// stderr; the server still starts in degraded mode.
+	// The 5 individual audit_log rows (one per Save/Update)
+	// capture the partial state for INV-1 traceability.
+	idxRes, idxErr := docs_index.Index(context.Background(), memStore)
+	if idxErr != nil {
+		fmt.Fprintf(os.Stderr, "docs_index.Index fatal: %v\n", idxErr)
+	} else if idxRes != nil && len(idxRes.Errors) > 0 {
+		fmt.Fprintf(os.Stderr, "docs_index.Index partial: %d error(s): %v\n",
+			len(idxRes.Errors), idxRes.Errors)
+	}
+
 	noopJudge := judge.NewNoOpJudge()
 	pipe := vibe.NewPipeline(db, auditW, noopJudge)
 

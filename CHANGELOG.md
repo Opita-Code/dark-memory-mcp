@@ -11,6 +11,25 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [4.0.0-alpha.5] — 2026-09-28 — PRE-1: loadout protocol foundation (docs as intelligence)
+
+### Added — `docs_index` package
+- New `internal/v4alpha/docs_index/` package. On every server boot, `Index(ctx, store)` upserts 5 pinned `kind=link, tag=doc:<name>, doc-index:v1` rows into `agent_memory`, making the 5 most important operator-facing docs discoverable via `dark_memory_agent_memory_recall`. Idempotent (same version = no-op); bumping `IndexVersion` (v1 → v2) forces re-index of stale rows. The 5 indexed docs are: `RUNBOOK`, `INVARIANTS`, `AGENT_MEMORY_SCHEMA`, `v4-status`, `judge-pipeline-v4`. Each row carries a TL;DR + section list + path; the harness reads the actual file when it needs the authoritative content. Defensive (per-doc failures are logged, server still starts).
+
+### Why
+- The operator's loadout protocol depends on `recall` finding the operator manual, the invariants doc, the schema reference, the v4 status, and the judge pipeline guide. Before PRE-1, those were inert files. After PRE-1, the LLM can `recall("operator manual", "system")` and get the runbook row back. The "docs are intelligence" property is now true: every fresh install has them indexed on first boot.
+
+### Changed — transport wiring
+- `NewServer` now calls `docs_index.Index` after constructing the agent_memory store. Per-doc errors are logged to stderr with the doc id + op + underlying error; a fatal top-level error (e.g. nil store, list failure) is logged but does NOT abort server startup. The 5 individual `audit_log` rows (one per Save/Update) capture the partial state for INV-1 traceability.
+
+### Test count
+- 9 new tests (`docs_index_test.go`): empty-DB insert, idempotent no-op, stale-version update, recall by content, recall by tag token, nil-store guard, build-tags format, version parser, canonical id stability. All v4alpha tests still pass (no regressions; transport/mcp tests + agent_memory tests + research tests + judge tests untouched).
+
+### Schema
+- No bump. PRE-1 C2 is additive (new package, new rows). `agent_memory` schema v30 is unchanged. `IndexVersion` is the only version carrier; bump it explicitly when editing `DocsToIndex`.
+
+---
+
 ## [4.0.0-alpha.4] — 2026-09-27 — BUG-10 10a: judge_util + research (29 → 38 tools)
 
 ### Added — judge_util (6 tools)
