@@ -48,6 +48,7 @@
 11. [Migration from v3.0-void to v4](#11-migration-from-v3.0-void-to-v4)
 12. [Tests discipline](#12-tests-discipline)
 13. [Contributing (preview)](#13-contributing-preview)
+14. [SOTA criticism — workflow runtime (M1, 2026-09-28)](#14-sota-criticism--workflow-runtime-m1-2026-09-28)
 
 ---
 
@@ -1682,6 +1683,249 @@ A PR is mergeable when:
 
 ---
 
+## 14. SOTA criticism — workflow runtime (M1, 2026-09-28)
+
+> **🚨 ASPIRATIONAL vs ACTUAL reminder**: §8 describes a mutable
+> `Workflow` runtime that **is NOT yet implemented**. What v4-alpha
+> ships today is a **fixed 5-stage FSM** in
+> `internal/v4alpha/vibe/pipeline.go`. This §14 critiques both:
+> (a) what v4 ships today, and (b) what v4 claims in §8 — against
+> the 2025-26 SOTA workflow runtimes (LangGraph, LlamaIndex
+> Workflows, DSPy, AutoGen 0.4+, CrewAI, Temporal).
+
+### 14.1 What v4 ships today (honest baseline)
+
+Verified via `internal/v4alpha/vibe/pipeline.go` and
+`docs/v4-status.md` §4 on 2026-09-28:
+
+| Capability | Status | Where | Notes |
+|---|---|---|---|
+| Fixed FSM (5 stages) | YES | `pipeline.go:70-110` | `spec_create → artifact_log → drift_judge → drift_log → (aligned \| drift_detected \| needs_human)` |
+| Pipeline.Publish | YES | `pipeline.go:70` | `Publish(ctx, art, specIntent) → *DriftReport` |
+| Pipeline.Status | YES | `pipeline.go:113` | `Status(ctx, artifactID) → *DriftReport` |
+| Pipeline.Resolve | YES | `pipeline.go:130` | `Resolve(ctx, driftID, decision, note, operator)` |
+| 3 separate stores | YES | `pipeline.go:48-54` | Specs, Artifacts, Drifts |
+| Judge interface (LLMJudge) | YES | `judge/judge.go` | 4 providers: anthropic, minimax, minimax-cn, deepseek |
+| NoOpJudge fallback | YES | `judge/judge.go` | used when no provider key set |
+| Audit emission (INV-1) | YES | `pipeline.go:102-104` | `{"event":"vibe.publish",...}` in audit_log |
+| Mutable Workflow runtime | **NO** | n/a | "lands in v4.0.0-beta at the earliest" per v4-status.md:167 |
+| `modify_workflow` event | **NO** | n/a | aspirational in §8.2 |
+| 9 states / 8 events / 13 transitions | **NO** | n/a | aspirational in §8.1 |
+| drift_judge of modification | **NO** | n/a | aspirational in §8.2 step 4 |
+| Property tests (replayable, preserves invariants, no orphan states) | **NO** | n/a | aspirational in §8.3 |
+| Workflow persisted in `dark.db` | **NO** | n/a | INV-1 INV-2 contract aspirational only |
+| Durable execution (years of state) | **NO** | n/a | not in v4-alpha scope |
+| Distributed runtime | **NO** | n/a | not in v4-alpha scope |
+| Pre-validated workflow graph | **NO** | n/a | not in v4-alpha scope |
+
+**KEY HONEST ASSESSMENT**: v4 ships a **fixed 5-stage FSM** in
+2026-09-28. The mutable workflow runtime in §8 is **explicitly
+not implemented** and lands in v4.0.0-beta at the earliest
+(`v4-status.md:167`). The §8 design document is **aspirational**,
+not the current implementation. This makes the SOTA criticism
+unusual: most SOTA workflow runtimes are *real and shipping*;
+v4's is *designed and deferred*.
+
+### 14.2 What v4 claims in §8 (M1 aspirational design)
+
+Per §8.1-8.3 (verified 2026-09-28):
+
+- **Workflow struct** with mutable States, Events, Transitions
+- **9 baseline states**: `idle`, `drafting_spec`, `spec_active`,
+  `drift_judging`, `complete`, `needs_human`, `drift_detected`,
+  `aborted`, `delegating`
+- **8 events**: `session_start`, `vibe_publish`, `artifact_log`,
+  `drift_log`, `delegate`, `modify_workflow`, `agent_complete`,
+  `abort`
+- **13 baseline transitions** (each with a guard)
+- **`modify_workflow` event** with `WorkflowModification` struct
+  (AddStates, RemoveStates, AddEvents, RemoveEvents,
+  AddTransitions, RemoveTransitions, Author, Rationale, Timestamp)
+- **5-step apply pipeline**: validate → apply → journal →
+  drift_judge → commit/reject
+- **3 property tests** (executable specification):
+  1. `TestWorkflow_AnyModificationPlusTransitionIsReplayable`
+  2. `TestWorkflow_ModificationPreservesInvariants`
+  3. `TestWorkflow_NoOrphanStates`
+
+### 14.3 On-par with SOTA 2025-26 (5 verifications)
+
+Tier-1 sources verified 2026-09-28.
+
+1. **Single-source-of-truth for the engine + the operator as
+   policy author**. v4 §8 places the orchestrator (operator/agent)
+   as the policy author via `modify_workflow`. SOTA 2025-26: every
+   workflow runtime (LangGraph, LlamaIndex Workflows, AutoGen,
+   CrewAI flows) treats the developer/operator as the policy
+   author. Verdict: aligned in role model.
+
+2. **Guard clauses for transitions**. v4 §8 attaches a guard
+   function to each transition (e.g. `HasOperator`,
+   `VerdictIsAligned`). SOTA 2025-26: LangGraph uses conditional
+   edges, LlamaIndex Workflows uses event-type matching. Verdict:
+   aligned in pattern; v4's guard is a Go function, SOTA's is
+   often a Python lambda.
+
+3. **Drift-aware verification at runtime**. v4 §8 invokes
+   `drift_judge` to verify a `modify_workflow` modification. SOTA
+   2025-26: no workflow runtime (LangGraph, LlamaIndex, AutoGen,
+   CrewAI, Temporal) has a built-in LLM-as-judge for *modifications
+   to the workflow itself*. Temporal signals can modify a
+   running workflow but are not drift_judged. Verdict: v4's
+   design is **novel** (SOTA gap, see §14.4 ahead).
+
+4. **Replayability from the journal**. v4 §8.3 test 1 asserts
+   "any modification + transition is replayable from the journal".
+   SOTA 2025-26: Temporal's deterministic replay is the canonical
+   SOTA implementation. Verdict: aligned in pattern; v4's journal
+   is a SQLite audit_log, Temporal's is an event history server.
+
+5. **Operator-rationale audit**. v4 §8.2 requires the
+   `WorkflowModification.Rationale` field (LLM-generated
+   explanation). SOTA 2025-26: no workflow runtime requires a
+   rationale field on a modification; LangGraph/LlamaIndex
+   modifications are code changes, not runtime events. Verdict:
+   v4's design is **novel** (SOTA gap, see §14.4 ahead).
+
+### 14.4 Ahead of SOTA 2025-26 (3 places, rare but real)
+
+1. **LLM-as-judge for the modification itself** (v4 §8.2 step 4).
+   When the orchestrator calls `modify_workflow`, the engine
+   runs `drift_judge` on the modification to decide aligned /
+   drift_detected / needs_human. No SOTA 2025-26 framework
+   (LangGraph, LlamaIndex Workflows, AutoGen 0.4+, CrewAI,
+   Temporal, DSPy) has a built-in judge for workflow
+   modifications. Temporal signals are not drift_judged;
+   LangGraph graph edits are code changes. Verdict: v4's design
+   is ahead in governance-by-judge.
+
+2. **Rationale as a first-class field on a modification** (v4
+   §8.2 `WorkflowModification.Rationale`). v4 requires a
+   human/agent-generated rationale on every modification; if the
+   rationale is empty, the engine rejects the modification. SOTA
+   2025-26: no workflow runtime requires a rationale on a
+   modification. LangGraph, LlamaIndex, and AutoGen
+   modifications are not rationale-annotated. Verdict: v4's
+   design is ahead in auditability of changes.
+
+3. **Property test for "any modification + transition is
+   replayable"** (v4 §8.3 test 1). The claim that the journal
+   produced by `Handle(E) on ApplyModification(M)` is
+   byte-identical to the journal produced by replay on a fresh
+   engine. SOTA 2025-26: Temporal has deterministic replay, but
+   it is for crash-recovery, not for *modification* replay.
+   Verdict: v4's design is ahead in the
+   modification-replayability property.
+
+### 14.5 Behind SOTA 2025-26 (8 gaps with file:line + remediation)
+
+| # | Gap | File:line | SOTA reference | Remediation |
+|---|---|---|---|---|
+| 1 | **No durable execution** (state survives years) | `pipeline.go` (entire) | Temporal 99.999% uptime, 12+ framework integrations; AutoGen 0.4+ distributed runtime | ADR-020 (Temporal integration) — out of v4-alpha scope |
+| 2 | **No pre-validated workflow graph** | §8 aspirational | LlamaIndex Workflows `workflow.validate()` runs before `.run()` | Implementation of §8 lands in v4.0.0-beta |
+| 3 | **No event-driven step model** (plain Python) | §8 aspirational | LlamaIndex Workflows `@step` decorator + Pydantic events | Implementation of §8 lands in v4.0.0-beta |
+| 4 | **No signaturized modules** | n/a | DSPy signatures + modules (ReAct, ChainOfThought, BestOfN, CodeAct, Flex, MultiChainComparison, Parallel, ProgramOfThought, ReActV2, Refine, RLM) | n/a — v4 is a workflow engine, not a module library |
+| 5 | **No optimizers** (GEPA, MIPROv2, BootstrapFewShot) | n/a | DSPy 3.4.0, 5.2M+ monthly downloads, Shopify 550x cost reduction | n/a — v4 is a workflow engine, not a prompt optimizer |
+| 6 | **No graph-based concurrency primitives** | n/a | LlamaIndex Workflows `ctx.send_event`, `ctx.collect_events`, `list[Event]` for fan-out | Implementation of §8 lands in v4.0.0-beta |
+| 7 | **No observability/visualization** | n/a | LangGraph + LangSmith (state transitions, traces, runtime metrics); LlamaIndex workflows have `Drawing a Workflow` | ADR-021 (LangSmith integration or equivalent) — out of v4-alpha scope |
+| 8 | **No 99.999% uptime SLO** | n/a | Temporal's published SLO | n/a — v4 is a single-process MCP server, not a distributed runtime |
+
+**Honest assessment**: 6 of 8 gaps are due to v4 being a
+**single-process Go MCP server**, not a distributed workflow
+runtime. Closing gaps 1, 6, 7 requires architectural change
+(durable execution, fan-out, observability) that is out of v4-alpha
+scope. Gaps 2, 3 are closed by implementing §8 in v4.0.0-beta.
+Gaps 4, 5 are **out of v4's scope** entirely (v4 is a workflow
+engine, not a module library or prompt optimizer).
+
+### 14.6 Couldn't verify (4 honest gaps)
+
+1. **LangGraph production deployments at scale** (Klarna, Uber,
+   J.P. Morgan). Verified via `docs.langchain.com/oss/python/langgraph/overview`
+   on 2026-09-28 that LangGraph is "trusted by companies shaping
+   the future of agents—including Klarna, Uber, J.P. Morgan".
+   Did NOT verify the *specific* LangGraph use cases at these
+   companies (i.e. what each company actually runs on LangGraph
+   is not public).
+
+2. **Temporal's $12.55B Series E valuation**. Verified the
+   headline on `temporal.io/ai` on 2026-09-28. Did NOT verify the
+   exact valuation date or lead investor. Honest: I do NOT know
+   whether the $12.55B figure is pre-money or post-money.
+
+3. **AutoGen's distributed runtime** (vs SingleThreadedAgentRuntime).
+   Verified the `SingleThreadedAgentRuntime` API on 2026-09-28
+   via `microsoft.github.io/autogen`. Did NOT verify the exact
+   distributed runtime architecture (GRPC? HTTP? libp2p?).
+   Honest: I do NOT know the wire protocol of AutoGen 0.4+.
+
+4. **DSPy's 5.2M+ monthly downloads**. Verified the headline on
+   `dspy.ai/current/` on 2026-09-28. Did NOT verify the exact
+   date of the 5.2M figure (it could be monthly peak or
+   trailing-30-day average). Honest: I do NOT know the exact
+   measurement methodology.
+
+### 14.7 What this section is NOT
+
+- It is **NOT a refutation of v4's M1 design**. v4's §8 design is
+  a thoughtful, novel approach that is *ahead* of SOTA in
+  governance-by-judge (14.4.1), rationale-first modifications
+  (14.4.2), and modification-replayability property (14.4.3). The
+  gaps in §14.5 are due to v4 being a single-process Go MCP
+  server, not due to design weakness.
+
+- It is **NOT a substitute for §8 implementation**. The §8
+  design is not yet implemented; this SOTA criticism does not
+  change that. The 6 of 8 behind-SOTA gaps that map to §8
+  implementation (gaps 2, 3, 6) are closed by **building §8**.
+
+- It is **NOT a comprehensive SOTA survey**. The SOTA-doc
+  chunk 4 scope is the workflow runtime. The 6 systems surveyed
+  (LangGraph, LlamaIndex Workflows, DSPy, AutoGen 0.4+, CrewAI,
+  Temporal) are the canonical ones for LLM agent workflows in
+  2025-26. There are other systems (Prefect, Apache Airflow,
+  DBOS, Inngest, Restate, Hatchet) that I did not verify in
+  this session.
+
+- It is **NOT a Temporal recommendation**. Gap 1 (no durable
+  execution) is closed by integrating with Temporal (ADR-020)
+  or by building durable execution in v4 itself. The choice is
+  the operator's.
+
+### 14.8 Verified tier-1 sources (2026-09-28)
+
+| Source | URL | Verified | Notes |
+|---|---|---|---|
+| LangGraph overview | `docs.langchain.com/oss/python/langgraph/overview` | 2026-09-28 | Low-level orchestration framework; Klarna/Uber/JPM |
+| LangGraph inspired by | Pregel, Apache Beam, NetworkX | 2026-09-28 | Cited in overview |
+| LlamaIndex Workflows | `developers.llamaindex.ai/python/llamaagents/workflows/` | 2026-09-28 | Event-driven, step-based, Pydantic events |
+| LlamaIndex Workflows validation | `workflow.validate()` | 2026-09-28 | "Before a workflow runs, Workflows validates the event graph" |
+| LlamaIndex Durable Workflows | `python/llamaagents/workflows/durable_workflows` | 2026-09-28 | DBOS integration for durability |
+| LlamaIndex 25M+ downloads/month | `llamaindex.ai/llamaindex` | 2026-09-28 | Homepage metric |
+| LlamaIndex 1.5k+ contributors | `llamaindex.ai/llamaindex` | 2026-09-28 | Homepage metric |
+| LlamaIndex 20k+ community | `llamaindex.ai/llamaindex` | 2026-09-28 | Homepage metric |
+| DSPy 3.4.0 | `dspy.ai/current/` | 2026-09-28 | Current version, MIT license, Stanford NLP |
+| DSPy 5.2M+ monthly downloads | `dspy.ai/current/` | 2026-09-28 | Homepage metric |
+| DSPy 461+ contributors | `dspy.ai/current/` | 2026-09-28 | Homepage metric |
+| DSPy 38k stars | `dspy.ai/current/` | 2026-09-28 | Homepage metric |
+| DSPy 7 arXiv papers | arxiv.org/abs/2512.24601, 2507.19457, 2407.10930, 2406.11695, 2402.14207, 2310.03714, 2212.14024 | 2026-09-28 | DSPy, GEPA, BetterTogether, MIPROv2, STORM, Demonstrate-Search-Predict, RLM (Dec 2025) |
+| DSPy Shopify case study | `youtube.com/watch?v=bxToahwOVpY` | 2026-09-28 | ~550x cost reduction on metadata extraction |
+| AutoGen 0.4+ Core API | `microsoft.github.io/autogen/dev/user-guide/core-user-guide/framework/agent-and-agent-runtime.html` | 2026-09-28 | RoutedAgent, message_handler, AgentId, AgentType |
+| AutoGen AgentChat | `microsoft.github.io/autogen/dev/user-guide/agentchat-user-guide/index.html` | 2026-09-28 | AssistantAgent, etc. |
+| CrewAI Enterprise | `crewai.com` | 2026-09-28 | "65% of the Fortune 500", 450M+ workflows/month, 4000 signups/week |
+| CrewAI Flows | `docs.crewai.com` | 2026-09-28 | "Orchestrate start/listen/router steps, manage state, persist execution, resume long-running workflows" |
+| Temporal for AI | `temporal.io/ai` | 2026-09-28 | "The orchestrator for AI applications" |
+| Temporal $12.55B Series E | `temporal.io/ai` | 2026-09-28 | "Temporal Raises Series E at $12.55B Valuation" |
+| Temporal 99.999% uptime | `temporal.io/ai` | 2026-09-28 | "99.999% trailing 30-day uptime" |
+| Temporal 12+ framework integrations | `temporal.io/ai` | 2026-09-28 | OpenAI Agents SDK, Pydantic AI, Langfuse, Vercel AI SDK, Braintrust, Google ADK, Mastra, Tenuo, Parseable, OpenBox, Strands Agents, SpringAI, Tuning Engines |
+| Temporal Replit case study | `temporal.io/resources/case-studies/replit-uses-temporal-to-power-replit-agent-reliably-at-scale` | 2026-09-28 | Replit Agent control plane layer at scale |
+| v4 M1 aspirational status | `ARCHITECTURE-V4.md` lines 25-30 | 2026-09-28 | "§8 (Workflow runtime) describes a mutable `Workflow` struct that is NOT yet implemented" |
+| v4 mutable workflow status | `v4-status.md:165-167` | 2026-09-28 | "Mutable workflow runtime (Workflow struct + modify_workflow event + drift_judge of modifications) lands in v4.0.0-beta at the earliest" |
+| v4 fixed FSM | `v4-status.md:128-150` | 2026-09-28 | `spec_create → artifact_log → drift_judge → drift_log → (aligned \| drift_detected \| needs_human)` |
+| v4 Pipeline API | `internal/v4alpha/vibe/pipeline.go:33-150` | 2026-09-28 | Publish, Status, Resolve |
+
+---
+
 ## Appendix A. References
 
 - [INVARIANTS.md](../INVARIANTS.md) — INV-1..INV-10 (preserved
@@ -1729,8 +1973,12 @@ These are tracked in `feat/v4-redesign/docs/OPEN_QUESTIONS.md`
 
 > **Version**: v4.0.0-alpha.1
 > **Branch**: `feat/v4-redesign`
-> **Last reviewed**: 2026-09-24
+> **Last reviewed**: 2026-09-28
 > **Next review**: when first 75-tool smoke test passes on
 > `feat/v4-redesign`
+
+> **§14 added 2026-09-28**: SOTA criticism of the workflow
+> runtime (M1, §8). Tier-1 sources verified 2026-09-28.
+> See §14.8.
 > **Status**: draft (pending peer review from constitution-
 > maintainers team)
