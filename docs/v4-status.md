@@ -1,36 +1,37 @@
 # v4 Status — current state of the redesign
 
 > **Audience**: anyone touching the `feat/v4-redesign` branch.
-> **TL;DR**: v4-alpha.10 ships **38 of 57 canonical tools** (67% of
+> **TL;DR**: v4-alpha.11 ships **41 of 57 canonical tools** (72% of
 > the surface) plus the full judge pipeline (ADR-007, 4 commits
 > shipped) plus the judge_util + research namespaces (BUG-10 10a)
 > plus the SOTA-doc workstream (6 of 7 chunks, +2,380/-7 lines,
-> 12 file operations).
+> 12 file operations) plus PRE-1 C4 (summarize_session +
+> skill_loaded tracking).
 > The package layout is **NOT** what `ARCHITECTURE-V4.md
 > §5 (original)` promised — see "actual layout" below. The operator-
 > facing surface is real and tested.
-> Remaining 19 tools land in BUG-10 10b-e; the judge pipeline was
+> Remaining 16 tools land in BUG-10 10b-e; the judge pipeline was
 > added in 4 commits (commits 1-4 of ADR-007). The next concrete
-> work is the **alpha.11 plan** (5 vibe-loops, ~3,320 LoC,
+> work is the **alpha.11+ plan** (5 vibe-loops, ~3,320 LoC,
 > 8-11 weeks) — see `docs/v4-alpha-11-plan.md`.
 
 | Field | Value |
 |---|---|
 | Branch | `feat/v4-redesign` (from `v2.20.0`, NOT from `v3.0-void`) |
 | Last reviewed | 2026-09-28 |
-| Status | **alpha.10** — pre-release, local-only, contributors only |
-| Version constant | `v4alpha.10-dev` (resolved via `ldflags` → `debug.ReadBuildInfo` → `"dev"`) |
+| Status | **alpha.11** — pre-release, local-only, contributors only |
+| Version constant | `v4alpha.11-dev` (resolved via `ldflags` → `debug.ReadBuildInfo` → `"dev"`) |
 | Schema version | `v4alpha/2026-09-27/002` (stamped in `schema_migrations`) — C3 added `sdd_evaluations` (18 cols + 4 indexes) |
 | Binary | `dark-memory-v4` (10.3 MB Windows) |
 | Local-only policy | YES — no `git push`/`fetch`/`pull`, no remote tags/releases |
 
 ---
-## 1. Tools inventory (38 of 57)
+## 1. Tools inventory (41 of 57)
 
 The canonical surface is 57 tools (see `ARCHITECTURE-V4.md §6.3
-tool-count target`). v4-alpha.3 registers **29 of those**.
+tool-count target`). v4-alpha.11 registers **41 of those**.
 
-### ✅ Registered (29)
+### ✅ Registered (41)
 
 | Namespace | Tools | Count | When |
 |---|---|---|---|
@@ -41,9 +42,12 @@ tool-count target`). v4-alpha.3 registers **29 of those**.
 | **Error obs** | `summary`, `list`, `get`, `resolve` | 4 | BUG-8 |
 | **Policy** | `active_policy`, `load_constitution` | 2 | BUG-8 |
 | **Vibe** | `spec`, `publish`, `pipeline_status`, `resolve_drift` | 4 | BUG-8 |
-| **Judge** ⭐ NEW | `judge`, `consensus`, `judgment_history`, `judge_list_personas` | 4 | **ADR-007 C2 (this release)** |
+| **Judge** | `judge`, `consensus`, `judgment_history`, `judge_list_personas` | 4 | ADR-007 C2 |
+| **Judge util** | `normalize`, `validate_overrides`, `pattern_descriptions`, `verify`, `verify_hash`, `trace`, `validate_trace` | 7 | BUG-10 10a |
+| **Research** | `topic`, `recall`, `resume_thread` | 3 | BUG-10 10a |
+| **Summarize** ⭐ NEW | `summarize_session`, `skill_loaded` | 2 | **PRE-1 C4 (this release)** |
 
-### ⏳ Deferred to BUG-10+ (28)
+### ⏳ Deferred to BUG-10+ (16)
 
 | Namespace | Tools | Count | Defer reason |
 |---|---|---|---|

@@ -11,6 +11,68 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [4.0.0-alpha.12] — 2026-09-28 — PRE-1 C4: summarize_session + skill_loaded tracking (alpha.11+ Phase 1C)
+
+### Added — `internal/v4alpha/session/summarize.go` (NEW) + `internal/v4alpha/transport/mcp/summarize.go` (NEW)
+- **`dark_memory_summarize_session(session_id, format?)`** —
+  returns a markdown handoff document with 5 sections:
+  Session metadata, Pinned rows, Open todos, Recent writes
+  (audit_log), Skills loaded. Read-only; no audit emission.
+- **`dark_memory_skill_loaded(operator, skill_name,
+  version?, source?, session_id?)`** — records a skill load
+  event in agent_memory with `kind=observation,
+  tags=skill_loaded:v1+skill:<name>+version:<v>+source:<src>`.
+  Emits one INV-1 audit row per call.
+- **Convention**: `skill_loaded:v1` tag prefix is the
+  canonical retrieval key. Summarize uses
+  `RecallFiltered(tag_prefix="skill_loaded:")` to find them.
+  This is the explicit form of PRE-1 C2 L2 ("system-generated
+  rows are a clean pattern").
+
+### Internal API (NEW)
+- `session.Summarize(ctx, sessionID, sessionStore, amStore,
+  db) (*HandoffSummary, error)` — pure summarize logic.
+- `session.HandoffSummary` struct (Session + PinnedRows +
+  OpenTodos + AuditRows + SkillsLoaded + GeneratedAt).
+- `session.HandoffSummary.Markdown() string` — markdown
+  formatter.
+- `session.RecordSkillLoad(ctx, amStore, auditMeta, operator,
+  skillName, version, source) (int64, error)` — the
+  convention-enforcing helper.
+
+### Modified
+- `internal/v4alpha/transport/mcp/server.go` — wires
+  `registerSummarizeTools(s)`. Tool count 39 → 41.
+- `internal/v4alpha/transport/mcp/server_test.go` —
+  `TestToolsList_ReturnsSixTools` updated to expect 41 tools.
+- `docs/v4-status.md` — status flipped to alpha.11;
+  tool inventory 38 → 41; new Summarize row in Registered
+  table; Deferred count 28 → 16.
+
+### Tests (3 NEW, all PASS)
+- `TestSummarize_EmptySession` — fresh session returns a
+  Summary with empty lists (not an error). Markdown
+  output is valid and explains what's missing.
+- `TestSummarize_PopulatedSession` — pinned rows, todos,
+  audit_log rows surface in the summary; markdown contains
+  the expected titles.
+- `TestSkillLoad_RoundTrip` — write 2 skill_loaded events,
+  summarize, both surface with name/version/source parsed
+  from tags.
+
+### Out of scope for v1 (documented in §6 "What's NOT in this summary")
+- Drift reports (vibe_drifts.session_id column not added yet).
+- Judge verdicts (sdd_evaluations.session_id column not added).
+- JSON output format (markdown v1 only).
+- Include filter (v1 returns everything).
+
+### Vibe-loop
+- alpha-11-phase-1c (Phase 1 of alpha.11+ plan, item 3 of 4).
+- Spec: `docs/specs/SPEC-alpha-11-pre1c4.md`.
+- All v4alpha tests pass (11 packages, no regressions).
+
+---
+
 ## [4.0.0-alpha.11] — 2026-09-28 — SOTA-doc workstream close + alpha.11 plan + namespace reframe
 
 ### Doc-only — `docs/sota-critique.md` §7.6 + `docs/v4-alpha-11-plan.md` (NEW) + `docs/specs/SPEC-alpha-11-chunk7.md` (NEW) + `docs/v4-status.md` + `CHANGELOG.md` (this entry)

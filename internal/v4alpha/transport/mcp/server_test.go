@@ -290,7 +290,8 @@ func TestInitialize_RespondsWithServerInfo(t *testing.T) {
 
 // TestToolsList_ReturnsSixTools confirms the BUG-7 MVP tool
 // count. ADR-007 C2 adds 4 judge tools (judge + consensus +
-// judgment_history + list_personas) — total now 29.
+// judgment_history + list_personas). PRE-1 C4 adds 2 tools
+// (summarize_session + skill_loaded) — total now 41.
 func TestToolsList_ReturnsSixTools(t *testing.T) {
 	responses := driveServer(t, handshake())
 	// handshake has 3 messages; the server emits responses for
@@ -307,8 +308,8 @@ func TestToolsList_ReturnsSixTools(t *testing.T) {
 	if err := json.Unmarshal(list.Result, &result); err != nil {
 		t.Fatalf("parse tools/list: %v", err)
 	}
-	if len(result.Tools) != 39 {
-		t.Errorf("tool count = %d; want 39 (BUG-7 MVP + BUG-8 batch 1 + ADR-007 C2 judge + BUG-10 10a judge_util + research)", len(result.Tools))
+	if len(result.Tools) != 41 {
+		t.Errorf("tool count = %d; want 41 (BUG-7 MVP + BUG-8 batch 1 + ADR-007 C2 judge + BUG-10 10a judge_util + research + PRE-1 C4 summarize)", len(result.Tools))
 	}
 	wantNames := map[string]bool{
 		// BUG-7 MVP
