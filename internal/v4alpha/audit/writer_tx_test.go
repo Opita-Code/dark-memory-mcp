@@ -178,26 +178,30 @@ func TestWriteExecRollback(t *testing.T) {
 		t.Fatalf("audit_log rows after rollback=%d, want 0", auditCount)
 	}
 
-	// Counter behaviour after rollback: WriteExec succeeded at the
-	// ExecContext level (the INSERT was queued in the tx), so the
-	// counter advanced from 0 to 1 even though the row was rolled
-	// back. The next Write returns id=2 (monotonic, with a gap at 1).
-	// Gaps are acceptable — the audit_id column is writer-driven,
-	// not DB AUTOINCREMENT-driven.
+	// Counter behaviour after rollback: the INSERT was queued in
+	// the tx, AND sqlite_sequence was updated by SQLite, BUT the
+	// rollback restores BOTH the row and the sequence. The next
+	// Write returns id=1 (the sequence "releases" the rolled-back
+	// id).
+	//
+	// This is a STRONGER contract than pre-BUG-12: the old in-mem
+	// counter advanced optimistically and produced gaps (id=1
+	// rolled back, next id=2). The new contract: no gaps from
+	// rolled-back transactions. Cleaner.
 	id, err := w.Write(ctx, "operator-a", "", []byte(`{"event":"after.rollback"}`))
 	if err != nil {
 		t.Fatalf("Write after rollback: %v", err)
 	}
-	if id != 2 {
-		t.Fatalf("Write returned id=%d after rollback, want 2 (counter advances optimistically; tx rollback creates a gap)", id)
+	if id != 1 {
+		t.Fatalf("Write returned id=%d after rollback, want 1 (sqlite_sequence is rolled back with the tx, no gap)", id)
 	}
-	// And the gap at id=1 is visible (audit_id=1 was rolled back).
+	// And audit_log has exactly 1 row (the post-rollback Write).
 	var visibleCount int
 	if err := db.QueryRow("SELECT COUNT(*) FROM audit_log").Scan(&visibleCount); err != nil {
 		t.Fatalf("audit_log count: %v", err)
 	}
 	if visibleCount != 1 {
-		t.Fatalf("audit_log rows=%d, want 1 (id=2 only; id=1 was rolled back)", visibleCount)
+		t.Fatalf("audit_log rows=%d, want 1 (post-rollback Write only)", visibleCount)
 	}
 }
 

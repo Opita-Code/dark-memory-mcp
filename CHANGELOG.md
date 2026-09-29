@@ -11,6 +11,82 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [4.0.0-alpha.14] — 2026-09-29 — BUG-12: cross-process audit_id monotonicity (alpha.11+ Phase 1D)
+
+### Fixed — `internal/v4alpha/audit/writer.go` + `writer_tx.go`
+- **Cross-process monotonicity**: audit_id assignment moved from
+  in-memory counter (`w.seq++` + explicit INSERT) to SQLite
+  AUTOINCREMENT (`Result.LastInsertId()`). Two `audit.Writer`
+  instances on the same file-backed DB now coordinate via the
+  persistent `sqlite_sequence` table instead of independent
+  counters. Pre-BUG-12, two Writers writing to the same audit_log
+  could both compute `seq=5` and the second INSERT would fail with
+  PRIMARY KEY conflict — losing the audit row.
+- **No more gaps from rolled-back transactions**: SQLite's
+  transactional semantics extend to `sqlite_sequence` (it's a
+  regular B-tree table). When a tx rolls back, both the row AND
+  the sequence value roll back. Next Write gets the same id that
+  was freed. This is a STRONGER contract than pre-BUG-12 (where
+  the in-memory counter advanced optimistically and produced gaps).
+- **No more counter rollback dance**: the previous code had
+  `w.seq++; INSERT; if err: w.seq--`. With AUTOINCREMENT, there's
+  no counter to roll back; the DB handles it. Less code, fewer
+  edge cases.
+- **`Writer.lastID` field** (renamed from `seq`): in-memory mirror
+  of the most recent id returned by `LastInsertId()`. Used by
+  `LastID()` for fast diagnostic reads (no DB roundtrip per call).
+  Per-process mirror; may under-approximate MAX(audit_id) globally
+  if other processes have written more.
+
+### Changed — INV-1 audit contract
+- `Writer.Write` now omits `audit_id` from the INSERT:
+  `INSERT INTO audit_log (actor, session_id, payload) VALUES (?, ?, ?)`
+  (was: `(audit_id, actor, session_id, payload) VALUES (?, ?, ?, ?)`)
+- The audit_id is read back via `Result.LastInsertId()`.
+- Same pattern in `WriteExec` (for tx-aware audit emission).
+- The mutex is kept for `lastID` mirror updates (race-free reads)
+  but no longer drives the INSERT.
+
+### Tests — `internal/v4alpha/audit/writer_cross_process_test.go` (NEW, 3 tests, all PASS)
+- **`TestCrossProcess_Monotonic`** — 2 Writers (2 *sql.DB handles)
+  on the same file-backed DB. Each inserts 5 rows. All 10 ids
+  present, strictly increasing (1..10). Pre-BUG-12, the second
+  Writer's first INSERT would have failed.
+- **`TestCrossProcess_Interleaved`** — 6 interleaved writes
+  (A, B, A, B, A, B). Each write gets the expected next id. Each
+  Writer's `LastID()` mirror matches its own last insertion.
+- **`TestCrossProcess_Concurrent`** — 2 goroutines, 2 Writers,
+  25 writes each = 50 concurrent inserts. All 50 present, no
+  duplicates, strictly increasing. Verifies AUTOINCREMENT
+  coordination under concurrent access.
+
+### Existing tests — updated + all PASS (15 total in audit pkg)
+- **`TestWriteExecRollback`** — updated. Pre-BUG-12 expected
+  `id=2` after rollback (counter advanced optimistically). New
+  contract: `id=1` after rollback (sqlite_sequence rolled back
+  with the tx). NO gaps from rolled-back transactions.
+- All 15 audit tests pass (5 L2 examples + 3 L1 properties +
+  6 tx-aware + 3 cross-process).
+
+### All v4alpha packages pass (no regressions)
+11 packages tested.
+
+### Cross-references
+- `docs/specs/SPEC-alpha-11-bug12.md` — the spec.
+- SQLite AUTOINCREMENT semantics: <https://www.sqlite.org/autoinc.html>
+- modernc.org/sqlite (pure-Go driver): the same AUTOINCREMENT
+  semantics as the C reference driver; sqlite_sequence is a
+  regular B-tree table subject to transactional rollback.
+
+### Migration notes (none)
+- `audit.Writer.Write` and `WriteExec` signatures are unchanged.
+  Callers (session.Store, agent_memory.Store, judge.Store,
+  research.Executor, error_resolve) work without modification.
+- The returned audit_id semantics are STRONGER (no gaps from
+  rollback, cross-process monotonic). This is a strict improvement.
+
+---
+
 ## [4.0.0-alpha.13] — 2026-09-29 — PRE-1 C3: session_start Loadout (alpha.11+ Phase 1B)
 
 ### Added — `internal/v4alpha/transport/mcp/loadout.go` (NEW)

@@ -17,9 +17,12 @@
 //	var ex audit.sqlExec = tx  // inside an agent_memory.WithTx
 //	w.WriteExec(ctx, ex, actor, sessionID, payload)
 //
-// The monotonicity contract (audit_id > previous audit_id per Writer
-// instance) is preserved exactly: the same mutex + counter dance as
-// Write; only the final Exec dispatch changes.
+// # BUG-12 alignment (2026-09-29)
+//
+// The audit_id is assigned by SQLite AUTOINCREMENT, not driven by an
+// in-memory counter. WriteExec follows the same pattern as Write:
+// omit audit_id from the INSERT, read it back via Result.LastInsertId(),
+// update the lastID mirror under the mutex.
 //
 // # Why not change Write
 //
@@ -50,14 +53,14 @@ type sqlExec interface {
 //
 // INV-1 enforcement: actor must be non-empty; empty sessionID is
 // stored as NULL. The audit_id monotonicity guarantee is identical
-// to Write — see Writer.Write for the full contract.
+// to Write — backed by SQLite AUTOINCREMENT (BUG-12).
 //
-// On INSERT failure, the counter claim is rolled back (w.seq--) so
-// the next successful WriteExec returns a monotonic id with no gaps
-// from the caller's perspective.
+// On INSERT failure, no state change (sqlite_sequence is not
+// advanced; the next Write gets a fresh id from the DB). The
+// caller sees the error.
 //
-// Returns the new audit_id (strictly greater than any prior audit_id
-// returned by this Writer).
+// Returns the new audit_id (strictly greater than any prior
+// audit_id in the audit_log table — per-process AND cross-process).
 func (w *Writer) WriteExec(ctx context.Context, ex sqlExec, actor, sessionID string, payload []byte) (int64, error) {
 	if ex == nil {
 		return 0, fmt.Errorf("audit WriteExec: executor is nil")
@@ -71,16 +74,19 @@ func (w *Writer) WriteExec(ctx context.Context, ex sqlExec, actor, sessionID str
 	} else {
 		sessionIDArg = sessionID
 	}
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.seq++
-	_, err := ex.ExecContext(ctx,
-		"INSERT INTO audit_log (audit_id, actor, session_id, payload) VALUES (?, ?, ?, ?)",
-		w.seq, actor, sessionIDArg, payload,
+	res, err := ex.ExecContext(ctx,
+		"INSERT INTO audit_log (actor, session_id, payload) VALUES (?, ?, ?)",
+		actor, sessionIDArg, payload,
 	)
 	if err != nil {
-		w.seq--
 		return 0, fmt.Errorf("audit WriteExec insert: %w", err)
 	}
-	return w.seq, nil
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("audit WriteExec LastInsertId: %w", err)
+	}
+	w.mu.Lock()
+	w.lastID = id
+	w.mu.Unlock()
+	return id, nil
 }

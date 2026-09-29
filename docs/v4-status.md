@@ -1,13 +1,14 @@
 # v4 Status — current state of the redesign
 
 > **Audience**: anyone touching the `feat/v4-redesign` branch.
-> **TL;DR**: v4-alpha.13 ships **41 of 57 canonical tools** (72% of
+> **TL;DR**: v4-alpha.14 ships **41 of 57 canonical tools** (72% of
 > the surface) plus the full judge pipeline (ADR-007, 4 commits
 > shipped) plus the judge_util + research namespaces (BUG-10 10a)
 > plus the SOTA-doc workstream (7 of 7 chunks, +2,380/-7 lines,
 > 12 file operations) plus PRE-1 C4 (summarize_session +
-> skill_loaded tracking) plus **PRE-1 C3 (session_start gains a
-> Loadout of operator startup context)**.
+> skill_loaded tracking) plus PRE-1 C3 (session_start gains a
+> Loadout of operator startup context) plus **BUG-12 (cross-
+> process audit_id monotonicity)**.
 > The package layout is **NOT** what `ARCHITECTURE-V4.md
 > §5 (original)` promised — see "actual layout" below. The operator-
 > facing surface is real and tested.
@@ -20,8 +21,8 @@
 |---|---|
 | Branch | `feat/v4-redesign` (from `v2.20.0`, NOT from `v3.0-void`) |
 | Last reviewed | 2026-09-29 |
-| Status | **alpha.13** — pre-release, local-only, contributors only |
-| Version constant | `v4alpha.13-dev` (resolved via `ldflags` → `debug.ReadBuildInfo` → `"dev"`) |
+| Status | **alpha.14** — pre-release, local-only, contributors only |
+| Version constant | `v4alpha.14-dev` (resolved via `ldflags` → `debug.ReadBuildInfo` → `"dev"`) |
 | Schema version | `v4alpha/2026-09-27/002` (stamped in `schema_migrations`) — C3 added `sdd_evaluations` (18 cols + 4 indexes) |
 | Binary | `dark-memory-v4` (10.3 MB Windows) |
 | Local-only policy | YES — no `git push`/`fetch`/`pull`, no remote tags/releases |
