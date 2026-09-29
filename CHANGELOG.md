@@ -11,6 +11,86 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [4.0.0-alpha.13] — 2026-09-29 — PRE-1 C3: session_start Loadout (alpha.11+ Phase 1B)
+
+### Added — `internal/v4alpha/transport/mcp/loadout.go` (NEW)
+- **`session_start` gains a `Loadout` field** — the
+  operator's startup context in one inline call. No new
+  tool registered (count stays at 41). Six fields:
+  - `pinned_rows` (up to 50, kind=link pinned=true)
+  - `open_todos` (up to 50, kind=todo)
+  - `recent_writes` (up to 20, audit_log actor=operator)
+  - `constitution` (id + version + active_mods)
+  - `schema_version` (latest row in schema_migrations)
+  - `server_now` (RFC3339)
+
+- **Partial-failure contract** — if a loadout query fails,
+  the affected field is set to its zero value AND a warning
+  is added to `loadout_warnings`. The session itself NEVER
+  fails on a loadout problem — degraded loadout is better
+  than a dead session. Same pattern as docs_index.Index
+  (PRE-1 C2).
+
+- **`LoadoutBuilder` with stub schema/constitution sources** —
+  `SetSchemaFn` + `SetConstitFn` allow tests to substitute
+  the schema-version reader and the constitution source
+  without touching the live DB or globals.
+
+- **Constitution globals** — `ConstitutionID` and
+  `ConstitutionVersion` are now declared in loadout.go
+  (overridable via ldflags at build time). Defaults match
+  `policy.go`'s hardcoded values: `dark-cli/v4-alpha.1` /
+  `v4-alpha.1`.
+
+### Changed — `internal/v4alpha/transport/mcp/session.go`
+- `sessionStartOutput` gains `Loadout` + `LoadoutWarnings`
+  fields. The 5 original fields (session_id, operator,
+  project_id, status, started_at) are unchanged.
+- `registerSessionStart` now constructs a `LoadoutBuilder`
+  and calls `Build` inline. Best-effort; the harness sees
+  the session + loadout in one RPC.
+
+### Tests — `internal/v4alpha/transport/mcp/loadout_test.go` (NEW, 9 tests, all PASS)
+- `TestBuildLoadout_EmptyOperator` — fresh operator,
+  empty slices, constitution populated, server_now
+  RFC3339-parseable.
+- `TestBuildLoadout_PinnedRows` — 5 pinned + 2 unpinned,
+  only 5 surface.
+- `TestBuildLoadout_OpenTodos` — 3 todos + 2 notes +
+  1 decision, only 3 surface.
+- `TestBuildLoadout_RecentWrites` — 25 audit_log rows,
+  latest 20 surface in descending order.
+- `TestBuildLoadout_PartialFailure_PinnedRows` — closed
+  DB, all queries fail, warnings populated, server_now
+  still emitted.
+- `TestBuildLoadout_Constitution` — ConstitutionInfo
+  shape populated from stub source.
+- `TestBuildLoadout_SchemaVersion` — DefaultSchemaVersion
+  reads latest row from schema_migrations.
+- `TestBuildLoadout_ServerNow` — server_now within 1s
+  of `time.Now()`.
+- `TestBuildLoadout_SchemaFnError` — schema source
+  returns error; loadout schema_version empty + warning
+  emitted.
+
+### Cross-references
+- `docs/specs/SPEC-alpha-11-pre1c3.md` — the spec
+  (PRE-1 C3, Phase 1B of alpha.11+).
+- `docs/sota-critique.md` §7.6 — Phase 1B is item 2 of 5.
+- `docs/v4-alpha-11-plan.md` — the 5-vibe-loop plan.
+- Row 2180 (PRE-1 C4) — the sister chunk at session_close.
+- Row 2127 (PRE-1 C1) — RecallFiltered + tag_prefix (the
+  mechanism Loadout uses for pinned/todos).
+- Row 2173 (multi-tenant reframe) — Loadout is operator-
+  scoped, not project-scoped.
+
+### Migration notes (none)
+- Existing callers that read the 5 original fields are
+  unaffected. New callers that read `loadout` and
+  `loadout_warnings` get the new context inline.
+
+---
+
 ## [4.0.0-alpha.12] — 2026-09-28 — PRE-1 C4: summarize_session + skill_loaded tracking (alpha.11+ Phase 1C)
 
 ### Added — `internal/v4alpha/session/summarize.go` (NEW) + `internal/v4alpha/transport/mcp/summarize.go` (NEW)

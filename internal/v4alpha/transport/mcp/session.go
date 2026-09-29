@@ -28,6 +28,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 
+	am "github.com/dark-agents/dark-memory-mcp/internal/v4alpha/agent_memory"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/session"
 )
 
@@ -56,17 +57,23 @@ type sessionStartInput struct {
 	ProjectID string `json:"project_id,omitempty" jsonschema_description:"Project namespace (INV-7); defaults to dark-memory-v4"`
 }
 
+// sessionStartOutput adds Loadout (PRE-1 C3) to the v1
+// shape. The 5 original fields are unchanged. Loadout is
+// always present (may be empty); LoadoutWarnings is a
+// per-field failure signal (empty when clean).
 type sessionStartOutput struct {
-	SessionID string `json:"session_id"`
-	Operator  string `json:"operator"`
-	ProjectID string `json:"project_id"`
-	Status    string `json:"status"`
-	StartedAt string `json:"started_at"`
+	SessionID       string   `json:"session_id"`
+	Operator        string   `json:"operator"`
+	ProjectID       string   `json:"project_id"`
+	Status          string   `json:"status"`
+	StartedAt       string   `json:"started_at"`
+	Loadout         *Loadout `json:"loadout"`
+	LoadoutWarnings []string `json:"loadout_warnings"`
 }
 
 func registerSessionStart(s *Server) {
 	tool := mcp.NewTool(sessionStartToolName,
-		mcp.WithDescription("Open a new session and emit one INV-1 audit row. Returns the session_id."),
+		mcp.WithDescription("Open a new session and emit one INV-1 audit row. Returns the session_id plus a Loadout of the operator's startup context (pinned rows, open todos, recent audit writes, constitution, schema version, server time). PRE-1 C3: loadout is best-effort; per-field failures surface in loadout_warnings."),
 		mcp.WithInputSchema[sessionStartInput](),
 	)
 	s.mcpSrv.AddTool(tool, func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -86,12 +93,33 @@ func registerSessionStart(s *Server) {
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("session_start: %v", err)), nil
 		}
+
+		// PRE-1 C3: build the Loadout inline. Best-effort; the
+		// session itself is already open. Build returns warnings
+		// for any field whose query failed; we surface them so
+		// the harness knows what's missing.
+		builder := NewLoadoutBuilder(s.memories, s.db)
+		loadout, warnings, buildErr := builder.Build(ctx, in.Operator)
+		if buildErr != nil {
+			// Build returned a hard error (nil store/db or
+			// missing operator). The session itself is OK;
+			// surface the error as a single warning.
+			warnings = []string{buildErr.Error()}
+			loadout = &Loadout{
+				PinnedRows:   []am.Row{},
+				OpenTodos:    []am.Row{},
+				RecentWrites: []AuditLoadRow{},
+			}
+		}
+
 		out := sessionStartOutput{
-			SessionID: sess.ID,
-			Operator:  sess.Operator,
-			ProjectID: sess.ProjectID,
-			Status:    sess.Status,
-			StartedAt: sess.StartedAt.Format("2006-01-02T15:04:05.999999999Z07:00"),
+			SessionID:       sess.ID,
+			Operator:        sess.Operator,
+			ProjectID:       sess.ProjectID,
+			Status:          sess.Status,
+			StartedAt:       sess.StartedAt.Format("2006-01-02T15:04:05.999999999Z07:00"),
+			Loadout:         loadout,
+			LoadoutWarnings: warnings,
 		}
 		return resultJSON(out)
 	})

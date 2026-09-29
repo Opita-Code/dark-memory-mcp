@@ -1,12 +1,13 @@
 # v4 Status — current state of the redesign
 
 > **Audience**: anyone touching the `feat/v4-redesign` branch.
-> **TL;DR**: v4-alpha.11 ships **41 of 57 canonical tools** (72% of
+> **TL;DR**: v4-alpha.13 ships **41 of 57 canonical tools** (72% of
 > the surface) plus the full judge pipeline (ADR-007, 4 commits
 > shipped) plus the judge_util + research namespaces (BUG-10 10a)
-> plus the SOTA-doc workstream (6 of 7 chunks, +2,380/-7 lines,
+> plus the SOTA-doc workstream (7 of 7 chunks, +2,380/-7 lines,
 > 12 file operations) plus PRE-1 C4 (summarize_session +
-> skill_loaded tracking).
+> skill_loaded tracking) plus **PRE-1 C3 (session_start gains a
+> Loadout of operator startup context)**.
 > The package layout is **NOT** what `ARCHITECTURE-V4.md
 > §5 (original)` promised — see "actual layout" below. The operator-
 > facing surface is real and tested.
@@ -18,9 +19,9 @@
 | Field | Value |
 |---|---|
 | Branch | `feat/v4-redesign` (from `v2.20.0`, NOT from `v3.0-void`) |
-| Last reviewed | 2026-09-28 |
-| Status | **alpha.11** — pre-release, local-only, contributors only |
-| Version constant | `v4alpha.11-dev` (resolved via `ldflags` → `debug.ReadBuildInfo` → `"dev"`) |
+| Last reviewed | 2026-09-29 |
+| Status | **alpha.13** — pre-release, local-only, contributors only |
+| Version constant | `v4alpha.13-dev` (resolved via `ldflags` → `debug.ReadBuildInfo` → `"dev"`) |
 | Schema version | `v4alpha/2026-09-27/002` (stamped in `schema_migrations`) — C3 added `sdd_evaluations` (18 cols + 4 indexes) |
 | Binary | `dark-memory-v4` (10.3 MB Windows) |
 | Local-only policy | YES — no `git push`/`fetch`/`pull`, no remote tags/releases |
@@ -29,7 +30,26 @@
 ## 1. Tools inventory (41 of 57)
 
 The canonical surface is 57 tools (see `ARCHITECTURE-V4.md §6.3
-tool-count target`). v4-alpha.11 registers **41 of those**.
+tool-count target`). v4-alpha.13 registers **41 of those**.
+
+### 1.1 session_start Loadout (PRE-1 C3, alpha.13)
+
+The `dark_memory_session_start` response gains two new fields
+(`loadout`, `loadout_warnings`). The loadout collapses 5-7
+follow-up calls into one inline response:
+
+- `pinned_rows` (up to 50)
+- `open_todos` (up to 50)
+- `recent_writes` (up to 20, audit_log for the operator)
+- `constitution` (id + version + active_mods)
+- `schema_version` (latest row in schema_migrations)
+- `server_now` (RFC3339)
+
+`loadout_warnings` is a per-field failure signal (empty when
+clean). The session itself NEVER fails on a loadout problem —
+degraded loadout is better than a dead session.
+
+No new tool registered. Tool count remains 41.
 
 ### ✅ Registered (41)
 
@@ -309,8 +329,9 @@ The summary below points to the upstream sources cited in this doc.
   weeks (Phase 1-5: close + cheap wins / audit chain / judge
   improvements / BUG-10 10b namespace / memory subsystem).
 - `docs/specs/SPEC-alpha-11-*.md` — the per-phase vibe-loop
-  specs (chunk 7 ships; Phase 1B-5 to follow).
-- `CHANGELOG.md` (top of file) — entry `[4.0.0-alpha.3]`
+  specs (chunk 7 + pre1c3 + pre1c4 ship; Phase 2-5 to follow).
+- `CHANGELOG.md` (top of file) — entry `[4.0.0-alpha.13]`
+  (PRE-1 C3, session_start Loadout).
 - `docs/decisions/ADR-007-judge-pipeline-v4.md` — design ADR
 - `docs/decisions/ADR-008-work-standard.md` — atomic mirror discipline
 - `docs/archive/v3.0-wave-4/` — v3 context (legacy, kept for reference)
