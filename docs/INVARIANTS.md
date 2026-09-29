@@ -685,8 +685,17 @@ choice** documented in `v4-status.md:118-122`, not a hidden gap.
    all transactions; Rekor uses a Trillian-backed
    append-only log; in-toto uses signed link metadata.
    v4 can lose or modify a row without detection.
-   **Verdict: behind in tamper-evidence.** Remediation:
-   INV-12 (alpha.3). File: `internal/v4alpha/audit/`.
+   **Verdict (alpha.15 update, 2026-09-29): CLOSED for
+   hash chain via SHA-256.** `internal/v4alpha/audit/`
+   now ships `prev_hash BLOB` + `row_hash BLOB` columns
+   and a canonical encoding (`canonical.go`) that
+   chains every row to its predecessor. See
+   `docs/specs/SPEC-alpha-11-phase2.md` (Phase 2 lite,
+   Option B). Detection: modification, deletion,
+   forgery. NOT detected: "rewrite the whole file"
+   (needs external trust anchor — alpha.3 deferred).
+   **Remaining gap** (alpha.3): Merkle tree /
+   inclusion proof (immudb's `VerifiableGet` model).
 
 2. **No Merkle tree / inclusion proof.** v4 cannot
    prove that a specific audit row is in the log
@@ -697,7 +706,7 @@ choice** documented in `v4-status.md:118-122`, not a hidden gap.
    inclusion proofs against the Trillian log
    (transparency.dev verified).
    **Verdict: behind in proof generation.**
-   Remediation: INV-12.
+   Remediation: alpha.3 deferred.
 
 3. **No external transparency log.** v4's audit log
    is local (per `dark.db` file). SOTA 2025-26
@@ -734,9 +743,17 @@ choice** documented in `v4-status.md:118-122`, not a hidden gap.
    in-toto link metadata files are signed by the
    functionary. v4 has no way to prove that the
    `payload` BLOB was actually emitted by the
-   claimed `actor`. **Verdict: behind in payload
-   integrity.** Remediation: ADR-017 (Ed25519
-   signature on payload BLOB keyed by actor).
+   claimed `actor`. **Verdict (alpha.15 update,
+   2026-09-29): DEFERRED to ADR-017 (Ed25519
+   signature on row_hash).** Forward-compatible with
+   the Phase 2 hash chain: a future `signature BLOB`
+   column can sign row_hash, covering both payload
+   and chain. See `docs/specs/SPEC-alpha-11-phase2.md`
+   §10 for the rationale and trigger conditions.
+   **Remediation: ADR-017 when a real external verifier
+   appears** (compliance review, multi-tenant
+   non-trusting case, or operator-driven non-repudiation
+   for legal reasons).
 
 6. **No audit chain verification tool.** v4 has
    no way for an operator to verify the audit
@@ -746,27 +763,25 @@ choice** documented in `v4-status.md:118-122`, not a hidden gap.
    (verified 2026-09-28). v4 has
    `dark_memory_writes` (per `v4-status.md`) which
    returns rows but not a cryptographic proof.
-   **Verdict: behind in verification UX.**
-   Remediation: ADR-018 (`dark_memory_audit_verify`
-   tool that walks the chain and returns a proof).
+   **Verdict (alpha.15 update, 2026-09-29): CLOSED.**
+   `dark_memory_audit_verify` MCP tool (registered in
+   `internal/v4alpha/transport/mcp/audit_verify.go`)
+   walks the chain and returns `{verified, broken_at,
+   count, start_id, end_id, elapsed_ms}`. Read-only.
+   Detects modification, deletion, forgery, and any
+   case where row_hash doesn't match its canonical
+   recomputation. Pure Go over `audit.Verify()`.
 
 7. **Cross-process monotonicity not enforced.**
-   v4's `Writer.seq` is per-Writer-instance
-   (writer.go:26-33). Two `Writer` instances in two
-   processes can interleave INSERTs such that the
-   `audit_id` sequence has gaps OR out-of-order
-   rows. SOTA 2025-26 systems (Rekor, immudb) use
-   DB-level sequence generators (PostgreSQL
-   sequences, SQLite AUTOINCREMENT with
-   `sqlite_sequence` table) which give strict
-   cross-process monotonicity. v4's design is
-   **per-instance only** and acknowledges this as
-   "the caller's responsibility" — but the caller
-   has no helper to enforce it.
-   **Verdict: behind in distributed correctness.**
-   Remediation: BUG-12 (use SQLite AUTOINCREMENT's
-   implicit sequence; don't manage `seq` manually
-   in the Writer).
+   **Verdict (alpha.14 update, 2026-09-29): CLOSED.**
+   BUG-12 fix in commit `7ebfa26` replaced the
+   per-instance `Writer.seq` with SQLite AUTOINCREMENT
+   (`sqlite_sequence` table, persistent + transactional).
+   Two Writer instances on the same file-backed DB now
+   get strictly monotonic audit_ids. Verified by
+   `internal/v4alpha/audit/writer_cross_process_test.go`
+   (3 tests PASS: Monotonic, Interleaved, Concurrent).
+   See `docs/specs/SPEC-alpha-11-bug12.md`.
 
 8. **No structured audit fields (compared to immudb).**
    immudb's audit log is JSON-structured: `ts`,

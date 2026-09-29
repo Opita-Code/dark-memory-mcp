@@ -24,6 +24,16 @@
 // omit audit_id from the INSERT, read it back via Result.LastInsertId(),
 // update the lastID mirror under the mutex.
 //
+// # Phase 2 chain (2026-09-29, alpha.15)
+//
+// WriteExec follows the same hash-chain flow as Write. Because the
+// executor may be a *sql.Tx, prev_hash is resolved INSIDE the
+// transaction (the row we read is the consistent snapshot at tx
+// BEGIN). The hash covers (prev_hash, audit_id, actor, session_id,
+// payload, created_at) per canonical.go — the same canonical
+// encoding Write uses, so any drift breaks the chain (which is the
+// point).
+//
 // # Why not change Write
 //
 // Write is the public API every existing call site uses. Changing
@@ -38,13 +48,29 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 )
 
 // sqlExec is the minimum surface WriteExec needs from an executor.
 // Both *sql.DB and *sql.Tx satisfy it. Callers can pass either one
 // directly — they don't need to declare this interface locally.
+//
+// # Phase 2 chain queries
+//
+// The chain flow needs 4 queries per WriteExec:
+//   1. SELECT row_hash FROM audit_log ORDER BY audit_id DESC LIMIT 1
+//      (resolve prev_hash; cold start only)
+//   2. INSERT INTO audit_log (...)
+//   3. SELECT created_at FROM audit_log WHERE audit_id = ?
+//   4. UPDATE audit_log SET row_hash = ? WHERE audit_id = ?
+//
+// Queries 1, 3 need QueryRowContext; the interface below exposes
+// only ExecContext because they share the same QueryRow/QueryRowContext
+// surface. Callers using *sql.DB or *sql.Tx get both for free; we
+// only need to widen the interface for the package's tests.
 type sqlExec interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
 // WriteExec inserts one audit_log row via the given executor. The
@@ -55,9 +81,22 @@ type sqlExec interface {
 // stored as NULL. The audit_id monotonicity guarantee is identical
 // to Write — backed by SQLite AUTOINCREMENT (BUG-12).
 //
+// Phase 2 chain flow (mirror of Write, optimized):
+//  1. Generate created_at in Go (UTC RFC3339Nano).
+//  2. Resolve prev_hash (mirror or SELECT from executor).
+//  3. INSERT with prev_hash + created_at (row_hash populated step 5).
+//  4. Compute row_hash (pure function — canonical.go).
+//  5. UPDATE row_hash.
+//  6. Update mirrors (lastID, lastHash).
+//
+// Performance: 2 queries per WriteExec (INSERT + UPDATE), same as
+// Write. No per-Write SELECT for created_at — Go generates it.
+//
 // On INSERT failure, no state change (sqlite_sequence is not
 // advanced; the next Write gets a fresh id from the DB). The
-// caller sees the error.
+// caller sees the error. The mutex protects lastID + lastHash
+// mirrors; the executor itself is not locked (the caller owns
+// the tx).
 //
 // Returns the new audit_id (strictly greater than any prior
 // audit_id in the audit_log table — per-process AND cross-process).
@@ -74,9 +113,26 @@ func (w *Writer) WriteExec(ctx context.Context, ex sqlExec, actor, sessionID str
 	} else {
 		sessionIDArg = sessionID
 	}
+
+	// 1. Generate created_at in Go. Same value goes into both the
+	// INSERT and the row_hash input.
+	createdAt := time.Now().UTC().Format(time.RFC3339Nano)
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	// 2. Resolve prev_hash. When executor is a *sql.Tx, this reads
+	// the consistent snapshot at tx BEGIN (not the live DB).
+	prevHash, err := w.resolvePrevHashExecLocked(ctx, ex)
+	if err != nil {
+		return 0, fmt.Errorf("audit WriteExec resolvePrevHash: %w", err)
+	}
+
+	// 3. INSERT with prev_hash + created_at (row_hash populated
+	// in step 5).
 	res, err := ex.ExecContext(ctx,
-		"INSERT INTO audit_log (actor, session_id, payload) VALUES (?, ?, ?)",
-		actor, sessionIDArg, payload,
+		"INSERT INTO audit_log (actor, session_id, payload, prev_hash, created_at) VALUES (?, ?, ?, ?, ?)",
+		actor, sessionIDArg, payload, prevHash, createdAt,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("audit WriteExec insert: %w", err)
@@ -85,8 +141,64 @@ func (w *Writer) WriteExec(ctx context.Context, ex sqlExec, actor, sessionID str
 	if err != nil {
 		return 0, fmt.Errorf("audit WriteExec LastInsertId: %w", err)
 	}
-	w.mu.Lock()
+
+	// 4. Compute row_hash (pure function — canonical.go). Uses the
+	// SAME createdAt we just stored.
+	rowHash := ComputeRowHash(prevHash, id, actor, sessionID, payload, createdAt)
+
+	// 5. UPDATE row_hash.
+	if _, err := ex.ExecContext(ctx,
+		"UPDATE audit_log SET row_hash = ? WHERE audit_id = ?",
+		rowHash[:], id,
+	); err != nil {
+		return id, fmt.Errorf("audit WriteExec update row_hash: %w", err)
+	}
+
+	// 6. Update mirrors.
 	w.lastID = id
-	w.mu.Unlock()
+	w.lastHash = rowHash[:]
 	return id, nil
+}
+
+// resolvePrevHashExecLocked is the executor-aware variant of
+// resolvePrevHashLocked. Reads the most recent row_hash via the
+// given executor (which may be a *sql.Tx). MUST be called with
+// w.mu held.
+func (w *Writer) resolvePrevHashExecLocked(ctx context.Context, ex sqlExec) ([]byte, error) {
+	if w.lastHash != nil {
+		return w.lastHash, nil
+	}
+	var prev []byte
+	err := ex.QueryRowContext(ctx,
+		"SELECT row_hash FROM audit_log ORDER BY audit_id DESC LIMIT 1",
+	).Scan(&prev)
+	if err == sql.ErrNoRows {
+		return ZeroHash(), nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if prev == nil {
+		return ZeroHash(), nil
+	}
+	return prev, nil
+}
+
+// fetchCreatedAtExecLocked is the executor-aware variant of
+// fetchCreatedAtLocked. Deprecated: WriteExec now generates
+// created_at in Go (time.Now().UTC().Format(time.RFC3339Nano)) and
+// passes it directly to INSERT — no DB read needed. Kept here for
+// backward compatibility with tests that pre-date the optimization;
+// new code should not call it.
+//
+// MUST be called with w.mu held.
+func (w *Writer) fetchCreatedAtExecLocked(ctx context.Context, ex sqlExec, id int64) (string, error) {
+	var createdAt string
+	err := ex.QueryRowContext(ctx,
+		"SELECT created_at FROM audit_log WHERE audit_id = ?", id,
+	).Scan(&createdAt)
+	if err != nil {
+		return "", err
+	}
+	return createdAt, nil
 }

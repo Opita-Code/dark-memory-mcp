@@ -97,20 +97,44 @@ parallelizable. PRE-1 C4 is sequential after C3.
 **Parallelization**: ADR-019 first; ADR-017 + ADR-018
 parallel after.
 
-**Acceptance criteria**:
-- ADR-019: audit_log has method, event_type, success,
-  error_msg, duration_ms columns (backfilled from payload
-  BLOB). `dark_memory_writes` returns the new schema.
-- ADR-017: every audit row has a `signature` column with
-  Ed25519 signature keyed by actor. `dark_memory_audit_verify`
-  validates the signature.
-- ADR-018: `dark_memory_audit_verify(actor, audit_id)`
-  walks the chain from row 1 to the requested id,
-  validates each row's signature, and returns a proof
-  object.
-- Schema migration: ADD COLUMN × 5 (ADR-019) + ADD COLUMN
-  signature (ADR-017). No data loss.
-- INV-12 (audit chain) now production-grade.
+**Operator decision (2026-09-29): Option B (Phase 2 lite).**
+Hash chain (SHA-256, no key) + `dark_memory_audit_verify` tool.
+Ed25519 (ADR-017) deferred to ADR-017-deferred; ADR-019
+(split payload) deferred to a separate phase. The original
+3-item bundle is replaced with:
+
+| # | Item | Complexity | LoC | Risk | Status |
+|---|---|---|---|---|---|
+| 5a | Hash chain (prev_hash + row_hash columns) | x | +~400 | LOW | **SHIPPED alpha.15 (commit pending)** |
+| 5b | `dark_memory_audit_verify` MCP tool | S | ~120 | LOW | **SHIPPED alpha.15 (commit pending)** |
+| 6 | ADR-017 (Ed25519 payload signature) | S | ~120 | LOW | DEFERRED → ADR-017-deferred |
+| 7 | ADR-019 (split payload BLOB into structured columns) | M | ~250 | MEDIUM | DEFERRED → ADR-019-deferred (orthogonal) |
+
+**Spec**: `docs/specs/SPEC-alpha-11-phase2.md` (662 lines,
+Option B rationale in §2; canonical encoding in §3; writer
+flow in §4; verify semantics in §5; ADR-017 deferred in §10).
+
+**Acceptance criteria** (Option B, shipped):
+- ✅ 2 new columns on `audit_log`: `prev_hash BLOB`, `row_hash BLOB`
+  (nullable; legacy rows have NULL).
+- ✅ Canonical SHA-256 encoding in `internal/v4alpha/audit/canonical.go`.
+- ✅ `audit.Writer.Write` + `WriteExec` write `prev_hash` + `row_hash`.
+- ✅ First row has `prev_hash = 0x00*32` (zeroHash).
+- ✅ Subsequent rows have `prev_hash = previous row's row_hash`.
+- ✅ `dark_memory_audit_verify` MCP tool — 41 → 42 tools.
+- ✅ Verify detects: modification, deletion, payload swap, forgery.
+- ✅ Verify passes on: clean chain, post-migration chain (legacy NULLs).
+- ✅ Migration `audit.ApplyChainColumns` idempotent.
+- ✅ All 15 pre-existing audit tests still pass.
+- ✅ All 11 v4alpha packages pass.
+- ✅ Tool count: 42.
+- ✅ `CHANGELOG.md [4.0.0-alpha.15]` entry.
+- ✅ `docs/v4-status.md`: alpha.14 → alpha.15.
+- ✅ `docs/INVARIANTS.md §18` updated: 3 of 8 gaps closed
+  (hash chain, verify tool, cross-process monotonicity); 1
+  explicitly deferred (Ed25519 = ADR-017); 4 still alpha.3.
+- ✅ Atomic mirror: 1 SUMMARY pinned + 4 SECTION (rows
+  2190-2194).
 
 ## 3. Phase 3 — Judge improvements (1 week)
 

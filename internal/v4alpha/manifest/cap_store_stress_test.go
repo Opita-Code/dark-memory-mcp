@@ -88,8 +88,16 @@ func TestStress_10k_Writes(t *testing.T) {
 	elapsed := time.Since(start)
 	t.Logf("10k Grants: %s (%.0f/s)", elapsed, float64(N)/elapsed.Seconds())
 
-	if elapsed > 30*time.Second {
-		t.Errorf("BUG-5 regression: 10k writes took %s; want < 30s", elapsed)
+	if elapsed > 60*time.Second {
+		// Threshold raised from 30s → 60s in alpha.15 (Phase 2):
+		// every audit_log Write now does INSERT + UPDATE row_hash
+		// instead of just INSERT. Each Write picks up ~1-2ms extra
+		// per the documented SPEC-alpha-11-phase2 §11.3 risk 3.
+		// 10k Writes × ~1.5ms ≈ 15s extra. Threshold accommodates
+		// that. Tighter than this would catch the BUG-5 deadlock
+		// regression (Go test timeout), but a sub-60s slowdown is
+		// within the Phase 2 cost envelope.
+		t.Errorf("BUG-5 regression: 10k writes took %s; want < 60s", elapsed)
 	}
 
 	// Sanity: all rows persisted.

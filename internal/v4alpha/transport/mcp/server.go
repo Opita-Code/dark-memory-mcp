@@ -155,8 +155,8 @@ func NewServer(db *sql.DB) (*Server, error) {
 		researchExecutor: researchExec,
 	}
 
-	// BUG-7 + BUG-8 + C2 + C3 + 10a + PRE-1 C4 tool set.
-	// 29 + 7 judge_util + 3 research + 2 summarize = 41 tools.
+	// BUG-7 + BUG-8 + C2 + C3 + 10a + PRE-1 C4 + Phase 2 tool set.
+	// 29 + 7 judge_util + 3 research + 2 summarize + 1 audit_verify = 42 tools.
 	registerHealthTool(s)         // 1
 	registerSessionTools(s)       // 5 (start, close, status, resume, heartbeat)
 	registerAgentMemoryTools(s)   // 6 (save, recall, list, get, update, archive)
@@ -168,6 +168,7 @@ func NewServer(db *sql.DB) (*Server, error) {
 	registerJudgeUtilTools(s)     // 7 (normalize, validate_overrides, pattern_descriptions, verify, verify_hash, trace, validate_trace)
 	registerResearchTools(s)      // 3 (topic, recall, resume_thread)
 	registerSummarizeTools(s)     // 2 (summarize_session, skill_loaded) — PRE-1 C4
+	registerAuditVerifyTool(s)    // 1 (audit_verify) — Phase 2 alpha.15
 
 	return s, nil
 }

@@ -67,12 +67,19 @@ func newTestDB(t *testing.T) (cleanup func()) {
 // applyAllSchemas is the test-friendly version of the cmd/dark-
 // memory-v4 boot path. Centralised here so tests don't drift from
 // production.
+//
+// Phase 2 (alpha.15): audit.ApplyChainColumns is called after
+// audit.CreateSchema. For new DBs it's a no-op (the columns are
+// already in the CREATE TABLE); for legacy DBs (created in
+// alpha.14 and earlier) it's the migration that adds
+// prev_hash + row_hash to audit_log. Idempotent either way.
 func applyAllSchemas(ctx context.Context, d *sql.DB) error {
 	for _, fn := range []struct {
 		name string
 		f    func() error
 	}{
 		{"audit", func() error { return audit.CreateSchema(d) }},
+		{"audit/chain", func() error { return audit.ApplyChainColumns(ctx, d) }},
 		{"session", func() error { return session.CreateSchema(d) }},
 		{"agent_memory", func() error { return agent_memory.CreateSchema(d) }},
 		{"manifest/cap", func() error { return manifest.CreateCapSchema(ctx, d) }},
@@ -148,6 +155,7 @@ func driveServer(t *testing.T, inputLines []string) []mcpResponse {
 		f    func() error
 	}{
 		{"audit", func() error { return audit.CreateSchema(db) }},
+		{"audit/chain", func() error { return audit.ApplyChainColumns(ctx, db) }},
 		{"session", func() error { return session.CreateSchema(db) }},
 		{"agent_memory", func() error { return agent_memory.CreateSchema(db) }},
 		{"manifest/cap", func() error { return manifest.CreateCapSchema(ctx, db) }},
@@ -291,7 +299,8 @@ func TestInitialize_RespondsWithServerInfo(t *testing.T) {
 // TestToolsList_ReturnsSixTools confirms the BUG-7 MVP tool
 // count. ADR-007 C2 adds 4 judge tools (judge + consensus +
 // judgment_history + list_personas). PRE-1 C4 adds 2 tools
-// (summarize_session + skill_loaded) — total now 41.
+// (summarize_session + skill_loaded). Phase 2 adds 1 tool
+// (audit_verify) — total now 42.
 func TestToolsList_ReturnsSixTools(t *testing.T) {
 	responses := driveServer(t, handshake())
 	// handshake has 3 messages; the server emits responses for
@@ -308,8 +317,8 @@ func TestToolsList_ReturnsSixTools(t *testing.T) {
 	if err := json.Unmarshal(list.Result, &result); err != nil {
 		t.Fatalf("parse tools/list: %v", err)
 	}
-	if len(result.Tools) != 41 {
-		t.Errorf("tool count = %d; want 41 (BUG-7 MVP + BUG-8 batch 1 + ADR-007 C2 judge + BUG-10 10a judge_util + research + PRE-1 C4 summarize)", len(result.Tools))
+	if len(result.Tools) != 42 {
+		t.Errorf("tool count = %d; want 42 (BUG-7 MVP + BUG-8 batch 1 + ADR-007 C2 judge + BUG-10 10a judge_util + research + PRE-1 C4 summarize + Phase 2 audit_verify)", len(result.Tools))
 	}
 	wantNames := map[string]bool{
 		// BUG-7 MVP
@@ -344,6 +353,8 @@ func TestToolsList_ReturnsSixTools(t *testing.T) {
 		"dark_memory_consensus":             false,
 		"dark_memory_judgment_history":      false,
 		"dark_memory_judge_list_personas":   false,
+		// Phase 2 (alpha.15, INV-12 audit chain)
+		"dark_memory_audit_verify":          false,
 	}
 	for _, t1 := range result.Tools {
 		if _, ok := wantNames[t1.Name]; ok {
@@ -442,6 +453,7 @@ func TestSessionStartClose_FullLifecycle(t *testing.T) {
 		f    func() error
 	}{
 		{"audit", func() error { return audit.CreateSchema(db) }},
+		{"audit/chain", func() error { return audit.ApplyChainColumns(ctx, db) }},
 		{"session", func() error { return session.CreateSchema(db) }},
 		{"agent_memory", func() error { return agent_memory.CreateSchema(db) }},
 		{"manifest/cap", func() error { return manifest.CreateCapSchema(ctx, db) }},
@@ -950,6 +962,108 @@ func TestVibeSpecPublishStatusResolve(t *testing.T) {
 	}
 	if resolveResp.Decision != "accept" {
 		t.Errorf("resolve decision = %q; want accept", resolveResp.Decision)
+	}
+}
+
+// --- Phase 2 (alpha.15): audit_verify tool end-to-end ---
+
+// TestAuditVerifyTool_CleanChain drives dark_memory_audit_verify
+// after a sequence of agent_memory_save calls (which each emit
+// audit_log rows). The chain must verify as clean.
+func TestAuditVerifyTool_CleanChain(t *testing.T) {
+	cleanup, srv := newTestServer(t)
+	defer cleanup()
+	responses := driveOn(t, srv, append(handshake(),
+		callTool(10, "dark_memory_agent_memory_save", map[string]any{"operator": "nico", "kind": "note", "content": "row one"}),
+		callTool(11, "dark_memory_agent_memory_save", map[string]any{"operator": "nico", "kind": "note", "content": "row two"}),
+		callTool(12, "dark_memory_agent_memory_save", map[string]any{"operator": "nico", "kind": "note", "content": "row three"}),
+		callTool(13, "dark_memory_audit_verify", map[string]any{}),
+	), 13)
+	if len(responses) != 1 {
+		t.Fatalf("got %d responses; want 1", len(responses))
+	}
+	var out struct {
+		Verified  bool  `json:"verified"`
+		BrokenAt  int64 `json:"broken_at"`
+		Count     int   `json:"count"`
+		StartID   int64 `json:"start_id"`
+		EndID     int64 `json:"end_id"`
+		ElapsedMS int64 `json:"elapsed_ms"`
+	}
+	if err := extractToolText(t, responses[0].Result, &out); err != nil {
+		t.Fatalf("audit_verify: %v", err)
+	}
+	if !out.Verified {
+		t.Errorf("verified = false; broken_at=%d count=%d", out.BrokenAt, out.Count)
+	}
+	if out.BrokenAt != 0 {
+		t.Errorf("broken_at = %d; want 0", out.BrokenAt)
+	}
+	if out.Count < 3 {
+		t.Errorf("count = %d; want >= 3 (3 saves + at least 4 audit rows for the session itself)", out.Count)
+	}
+	if out.EndID < 3 {
+		t.Errorf("end_id = %d; want >= 3", out.EndID)
+	}
+}
+
+// TestAuditVerifyTool_DetectsCorruption drives audit_verify after
+// manually corrupting a row_hash in the DB. Must report verified=false.
+func TestAuditVerifyTool_DetectsCorruption(t *testing.T) {
+	cleanup, srv := newTestServer(t)
+	defer cleanup()
+	// First, write some rows so there's a chain to corrupt.
+	responses := driveOn(t, srv, append(handshake(),
+		callTool(10, "dark_memory_agent_memory_save", map[string]any{"operator": "nico", "kind": "note", "content": "row one"}),
+		callTool(11, "dark_memory_agent_memory_save", map[string]any{"operator": "nico", "kind": "note", "content": "row two"}),
+		callTool(12, "dark_memory_agent_memory_save", map[string]any{"operator": "nico", "kind": "note", "content": "row three"}),
+	), 10, 11, 12)
+	if len(responses) != 3 {
+		t.Fatalf("got %d setup responses; want 3", len(responses))
+	}
+
+	// DELIBERATE BREAK: corrupt the smallest chained row_hash.
+	// srv.DBG() is the test-only export that gives us direct DB
+	// access (same file the server holds open via WAL).
+	db := srv.DBG()
+	var targetID int64
+	if err := db.QueryRowContext(context.Background(),
+		"SELECT MIN(audit_id) FROM audit_log WHERE row_hash IS NOT NULL",
+	).Scan(&targetID); err != nil {
+		t.Fatalf("find target: %v", err)
+	}
+	if targetID == 0 {
+		t.Fatalf("no chained audit rows found")
+	}
+	if _, err := db.ExecContext(context.Background(),
+		"UPDATE audit_log SET row_hash = ? WHERE audit_id = ?",
+		make([]byte, 32), targetID,
+	); err != nil {
+		t.Fatalf("corrupt: %v", err)
+	}
+
+	// Now call audit_verify. The server reads through its DB handle
+	// (same WAL, sees the corruption).
+	resp2 := driveOn(t, srv, []string{
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"0.1"}}}`,
+		`{"jsonrpc":"2.0","method":"notifications/initialized"}`,
+		callTool(13, "dark_memory_audit_verify", map[string]any{}),
+	}, float64(13))
+	if len(resp2) != 1 {
+		t.Fatalf("got %d verify responses; want 1", len(resp2))
+	}
+	var out struct {
+		Verified bool  `json:"verified"`
+		BrokenAt int64 `json:"broken_at"`
+	}
+	if err := extractToolText(t, resp2[0].Result, &out); err != nil {
+		t.Fatalf("audit_verify: %v", err)
+	}
+	if out.Verified {
+		t.Fatalf("audit_verify reported verified=true after deliberate corruption at id=%d; expected detected", targetID)
+	}
+	if out.BrokenAt != targetID {
+		t.Errorf("broken_at = %d; want %d", out.BrokenAt, targetID)
 	}
 }
 
