@@ -15,6 +15,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/store"
 )
 
 func TestDeliberateBreak_Store_AuditActorMissingFailsFast(t *testing.T) {
@@ -216,5 +218,77 @@ func TestDeliberateBreak_Store_ProjectIDColumnReadyForFuture(t *testing.T) {
 	}
 	if nCols != 0 {
 		t.Fatalf("project_id column already exists (nCols=%d); update this test to assert presence", nCols)
+	}
+}
+
+// TestDeliberateBreak_Store_ApplyCalibrationColumns_Idempotent (ADR-011,
+// Phase 3). The 4 calibration columns are added by an idempotent
+// migration helper. This test exercises the legacy-DB migration path:
+// pre-Phase-3 schema (no calibration columns) → ApplyCalibrationColumns
+// → columns present. Calling it again must not error.
+func TestDeliberateBreak_Store_ApplyCalibrationColumns_Idempotent(t *testing.T) {
+	// Build a pre-Phase-3 sdd_evaluations table (no calibration cols).
+	db, err := store.OpenSQLite(context.Background(), "file::memory:?cache=shared")
+	if err != nil {
+		t.Fatalf("store.OpenSQLite: %v", err)
+	}
+	defer db.Close()
+
+	if _, err := db.Exec(`
+		CREATE TABLE sdd_evaluations (
+			id            INTEGER PRIMARY KEY AUTOINCREMENT,
+			eval_type     TEXT NOT NULL,
+			target_type   TEXT NOT NULL,
+			target_id     TEXT NOT NULL,
+			verdict_json  TEXT NOT NULL,
+			confidence    REAL NOT NULL DEFAULT 0,
+			provider      TEXT,
+			model         TEXT,
+			persona_id    TEXT,
+			rubric_version TEXT,
+			schema_version TEXT,
+			seed          INTEGER,
+			max_tokens    INTEGER,
+			timeout_ms    INTEGER,
+			temperature   REAL,
+			top_p         REAL,
+			non_deterministic INTEGER NOT NULL DEFAULT 0,
+			session_id    TEXT,
+			created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`); err != nil {
+		t.Fatalf("legacy create: %v", err)
+	}
+
+	// First call: adds the 4 columns + index.
+	if err := ApplyCalibrationColumns(context.Background(), db); err != nil {
+		t.Fatalf("ApplyCalibrationColumns (1st): %v", err)
+	}
+	var n int
+	if err := db.QueryRow(
+		"SELECT COUNT(*) FROM pragma_table_info('sdd_evaluations') "+
+			"WHERE name IN ('confidence_calibrated','calibration_ci_low','calibration_ci_high','calibration_method')",
+	).Scan(&n); err != nil {
+		t.Fatalf("pragma_table_info: %v", err)
+	}
+	if n != 4 {
+		t.Fatalf("calibration columns after 1st ApplyCalibrationColumns: %d; want 4", n)
+	}
+
+	// Second call: must not error (idempotent).
+	if err := ApplyCalibrationColumns(context.Background(), db); err != nil {
+		t.Fatalf("ApplyCalibrationColumns (2nd, idempotent): %v", err)
+	}
+
+	// Third call: post-CreateSchema (new-schema DB) also idempotent.
+	db2, err := store.OpenSQLite(context.Background(), "file::memory:?cache=shared")
+	if err != nil {
+		t.Fatalf("open2: %v", err)
+	}
+	defer db2.Close()
+	if err := CreateSchema(db2); err != nil {
+		t.Fatalf("CreateSchema: %v", err)
+	}
+	if err := ApplyCalibrationColumns(context.Background(), db2); err != nil {
+		t.Fatalf("ApplyCalibrationColumns on new schema: %v", err)
 	}
 }

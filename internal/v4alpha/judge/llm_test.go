@@ -14,6 +14,7 @@ package judge
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -21,6 +22,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/dark-agents/dark-memory-mcp/internal/llm"
 )
 
 // ---------- Env var routing ----------
@@ -83,7 +86,10 @@ func TestRealLLMClient_NewAutoDetect_Minimax(t *testing.T) {
 }
 
 func TestRealLLMClient_UnsupportedProvider(t *testing.T) {
-	t.Setenv("DARK_JUDGE_PROVIDER", "openai") // not in supportedProviderIDs
+	// ADR-009 (Phase 3): openai is now in the supported list, so
+	// pick a provider that isn't (mistral — not in the canonical
+	// catalog). Verify the unsupported-provider error path.
+	t.Setenv("DARK_JUDGE_PROVIDER", "mistral") // not in supportedProviderIDs
 	_, err := NewRealLLMClient()
 	if err == nil {
 		t.Fatal("expected error for unsupported provider pin")
@@ -369,6 +375,134 @@ func TestEnrichSystemPrompt_EmptyPersona_Unchanged(t *testing.T) {
 	base := "base prompt"
 	if got := EnrichSystemPrompt("", base); got != base {
 		t.Errorf("empty personaID changed base: %q", got)
+	}
+}
+
+// ---------- ADR-009 (Phase 3): provider allow-list 4 → 9 ----------
+
+// clearAllProviderKeys removes every LLM env var so the
+// auto-detect chain has nothing to find. Helper for ADR-009 tests.
+func clearAllProviderKeys(t *testing.T) {
+	t.Helper()
+	for _, k := range []string{
+		"DARK_JUDGE_PROVIDER",
+		"ANTHROPIC_API_KEY",
+		"OPENAI_API_KEY",
+		"GEMINI_API_KEY",
+		"MINIMAX_API_KEY",
+		"MINIMAX_API_KEY_CN",
+		"DEEPSEEK_API_KEY",
+		"ZAI_API_KEY",
+		"MOONSHOT_API_KEY",
+		"DASHSCOPE_API_KEY",
+	} {
+		t.Setenv(k, "")
+	}
+}
+
+// TestNewRealLLMClient_OpenAI — provider=openai + OPENAI_API_KEY
+// resolves to dialect=OpenAI, baseURL=https://api.openai.com/v1.
+func TestNewRealLLMClient_OpenAI(t *testing.T) {
+	clearAllProviderKeys(t)
+	t.Setenv("DARK_JUDGE_PROVIDER", "openai")
+	t.Setenv("OPENAI_API_KEY", "sk-test-openai-12345")
+
+	c, err := NewRealLLMClient()
+	if err != nil {
+		t.Fatalf("NewRealLLMClient: %v", err)
+	}
+	if c.provider != "openai" {
+		t.Errorf("provider = %q; want openai", c.provider)
+	}
+	if c.dialect != llm.DialectOpenAI {
+		t.Errorf("dialect = %q; want OpenAI", c.dialect)
+	}
+	if c.baseURL != "https://api.openai.com/v1" {
+		t.Errorf("baseURL = %q; want https://api.openai.com/v1", c.baseURL)
+	}
+}
+
+// TestNewRealLLMClient_Google — provider=google + GEMINI_API_KEY
+// resolves to dialect=OpenAI (Google's OpenAI-compat endpoint).
+func TestNewRealLLMClient_Google(t *testing.T) {
+	clearAllProviderKeys(t)
+	t.Setenv("DARK_JUDGE_PROVIDER", "google")
+	t.Setenv("GEMINI_API_KEY", "gem-test-12345")
+
+	c, err := NewRealLLMClient()
+	if err != nil {
+		t.Fatalf("NewRealLLMClient: %v", err)
+	}
+	if c.provider != "google" {
+		t.Errorf("provider = %q; want google", c.provider)
+	}
+	if c.dialect != llm.DialectOpenAI {
+		t.Errorf("dialect = %q; want OpenAI (Google's OpenAI-compat endpoint)", c.dialect)
+	}
+	if c.baseURL != "https://generativelanguage.googleapis.com/v1beta/openai/" {
+		t.Errorf("baseURL = %q; want googleapis openai-compat", c.baseURL)
+	}
+}
+
+// TestNewRealLLMClient_Qwen_AnthropicDialect — provider=qwen +
+// DARK_JUDGE_DIALECT=anthropic + DASHSCOPE_API_KEY resolves to
+// dialect=Anthropic (qwen supports both).
+func TestNewRealLLMClient_Qwen_AnthropicDialect(t *testing.T) {
+	clearAllProviderKeys(t)
+	t.Setenv("DARK_JUDGE_PROVIDER", "qwen")
+	t.Setenv("DARK_JUDGE_DIALECT", "anthropic")
+	t.Setenv("DASHSCOPE_API_KEY", "dash-test-12345")
+
+	c, err := NewRealLLMClient()
+	if err != nil {
+		t.Fatalf("NewRealLLMClient: %v", err)
+	}
+	if c.provider != "qwen" {
+		t.Errorf("provider = %q; want qwen", c.provider)
+	}
+	if c.dialect != llm.DialectAnthropic {
+		t.Errorf("dialect = %q; want Anthropic (override)", c.dialect)
+	}
+	if c.baseURL == "" {
+		t.Errorf("baseURL empty; want qwen AnthropicBaseURL")
+	}
+}
+
+// TestNewRealLLMClient_UnsupportedProvider — DARK_JUDGE_PROVIDER=
+// mistral returns ErrLLMUnavailable with the 9-provider list in
+// the error message.
+func TestNewRealLLMClient_UnsupportedProvider(t *testing.T) {
+	clearAllProviderKeys(t)
+	t.Setenv("DARK_JUDGE_PROVIDER", "mistral")
+
+	_, err := NewRealLLMClient()
+	if err == nil {
+		t.Fatal("NewRealLLMClient with mistral returned nil error; want ErrLLMUnavailable")
+	}
+	if !errors.Is(err, ErrLLMUnavailable) {
+		t.Errorf("err is not ErrLLMUnavailable: %v", err)
+	}
+	for _, want := range []string{
+		"mistral", "anthropic", "openai", "google", "qwen", "zhipu", "moonshot", "minimax", "deepseek",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error message missing %q: %s", want, err.Error())
+		}
+	}
+}
+
+// TestNewRealLLMClient_AutoDetect_OpenAI — no explicit pin, only
+// OPENAI_API_KEY set; auto-detect resolves to openai.
+func TestNewRealLLMClient_AutoDetect_OpenAI(t *testing.T) {
+	clearAllProviderKeys(t)
+	t.Setenv("OPENAI_API_KEY", "sk-test-12345")
+
+	c, err := NewRealLLMClient()
+	if err != nil {
+		t.Fatalf("NewRealLLMClient: %v", err)
+	}
+	if c.provider != "openai" {
+		t.Errorf("auto-detect provider = %q; want openai", c.provider)
 	}
 }
 

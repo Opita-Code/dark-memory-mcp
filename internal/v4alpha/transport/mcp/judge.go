@@ -20,6 +20,7 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/mark3labs/mcp-go/mcp"
 
@@ -115,6 +116,12 @@ func registerJudge(s *Server) {
 			}
 			if id, err := s.judgeStore.SaveEvaluation(ctx, auditMeta, e); err == nil {
 				evalID = id
+				// ADR-011: best-effort bootstrap-CI calibration.
+				// Pulls historical confidences for this
+				// (provider, target_type, eval_type) tuple and,
+				// when ShouldRecalibrate(N) holds, computes the CI
+				// and stamps the row. Failure is non-fatal.
+				s.populateCalibration(ctx, id, e, v)
 			}
 		}
 
@@ -122,6 +129,33 @@ func registerJudge(s *Server) {
 		out.EvaluationID = evalID
 		return resultJSON(out)
 	})
+}
+
+// populateCalibration (ADR-011) computes the bootstrap-CI for the
+// just-saved evaluation and stamps the row. Best-effort — failure
+// is logged at debug level (no audit row; calibration is metadata,
+// not state).
+//
+// Triggers only when ShouldRecalibrate(N) holds for the
+// (provider, target_type, eval_type) tuple — i.e., at least 50
+// historical confidences. Below that threshold we leave the
+// calibration columns NULL (EC-007a handles the cold-start case).
+func (s *Server) populateCalibration(ctx context.Context, evalID int64, e *judge.Evaluation, v *judge.Verdict) {
+	provider := ""
+	if v != nil {
+		provider = v.TemperatureNote.Provider
+	}
+	confidences, err := s.judgeStore.ConfidencesByProviderTarget(
+		ctx, provider, e.TargetType, e.EvalType, 1000,
+	)
+	if err != nil || !judge.ShouldRecalibrate(len(confidences)) {
+		return
+	}
+	ci := judge.BootstrapCI(confidences, 0.95, 1000)
+	if err := s.judgeStore.SetCalibration(ctx, evalID, ci, "play_favorites_v1"); err != nil {
+		// Best-effort: log to stderr, do not fail the verdict.
+		fmt.Fprintf(os.Stderr, "dark-memory-v4: populateCalibration id=%d: %v\n", evalID, err)
+	}
 }
 
 // validateJudgeInput checks the input shape. Mirrors the Pipeline's

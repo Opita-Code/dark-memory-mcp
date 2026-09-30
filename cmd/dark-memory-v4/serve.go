@@ -154,6 +154,12 @@ func applyAllSchemas(ctx context.Context, db *sql.DB) error {
 	if err := judge.CreateSchema(db); err != nil {
 		return fmt.Errorf("judge: %w", err)
 	}
+	// ADR-011 (Phase 3): idempotent migration for the 4 calibration
+	// columns. For new DBs CreateSchema already includes them; for
+	// pre-Phase-3 DBs this is the migration.
+	if err := judge.ApplyCalibrationColumns(ctx, db); err != nil {
+		return fmt.Errorf("judge/calibration: %w", err)
+	}
 	return nil
 }
 

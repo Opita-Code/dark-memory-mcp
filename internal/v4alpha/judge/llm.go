@@ -1,11 +1,20 @@
-// Package judge — LLM-backed Judge client (ADR-007 §9 commit 2).
+// Package judge — LLM-backed Judge client (ADR-007 §9 commit 2 +
+// ADR-009 extension).
 //
 // The v4alpha Pipeline consumes an LLMClient interface (see types.go).
 // This file provides a concrete implementation, RealLLMClient, that
-// speaks the HTTP wire formats of the 4 supported providers
-// (anthropic, minimax, minimax-cn, deepseek) and routes via the
+// speaks the HTTP wire formats of the 9 supported providers
+// (anthropic, openai, google, deepseek, minimax, minimax-cn,
+// zhipu, moonshot, qwen) and routes via the
 // DARK_JUDGE_PROVIDER / DARK_JUDGE_DIALECT / DARK_JUDGE_MODEL_<PROVIDER>
 // env vars.
+//
+// ADR-009 (Phase 3, 2026-09-30): allow-list extended 4 → 9. The
+// canonical internal/llm/catalog.go already had 9 ProviderSpecs
+// wired; v4alpha just wasn't consuming 5 of them. The HTTP wire
+// code (buildAnthropicRequest / buildOpenAIRequest) was already
+// generic — the change is in supportedProviderIDs + auto-detect
+// order. m3-thinking (spec 1198) stays minimax-only.
 //
 // Why a fresh HTTP client (not orchestration.DefaultFailoverClient):
 //   - v4alpha is the new v4 architecture; importing the v2.x
@@ -60,18 +69,39 @@ import (
 // ---------- Supported providers ----------
 
 // supportedProviderIDs is the explicit allow-list of providers this
-// client speaks. Other entries in the canonical llm.Catalog (openai,
-// google, zhipu, moonshot, qwen) are not wired here — operators can
-// extend by adding a case branch below.
+// client speaks. It enumerates the 9 canonical providers from
+// internal/llm/catalog.go (the canonical catalog). Aliases
+// (z-ai→zhipu, dashscope→qwen) are resolved by llm.ResolveID
+// before this map is consulted.
 //
-// Rationale (per ADR-007 §9): commit 2 ships the 4 providers the
-// operator runs in production (anthropic + the 2 minimax variants +
-// deepseek). The remaining 5 land when an operator asks for them.
+// ADR-009 (Phase 3): extended 4 → 9. Mistral is NOT in the canonical
+// catalog yet; adding it requires a new catalog entry, not a change
+// here.
 var supportedProviderIDs = map[string]bool{
-	"anthropic":   true,
-	"minimax":     true,
-	"minimax-cn":  true,
-	"deepseek":    true,
+	"anthropic":  true,
+	"openai":     true,
+	"google":     true,
+	"deepseek":   true,
+	"minimax":    true,
+	"minimax-cn": true,
+	"zhipu":      true,
+	"moonshot":   true,
+	"qwen":       true,
+}
+
+// autoDetectOrder is the priority chain for key-based provider
+// detection (when DARK_JUDGE_PROVIDER is unset). The first provider
+// whose EnvKey is non-empty wins.
+var autoDetectOrder = []string{
+	"anthropic",
+	"openai",
+	"google",
+	"minimax",
+	"minimax-cn",
+	"deepseek",
+	"zhipu",
+	"moonshot",
+	"qwen",
 }
 
 // ---------- RealLLMClient ----------
@@ -154,8 +184,8 @@ func resolveProviderFromEnv() (string, string, llm.ProviderDialect, string, erro
 		canonical, _ := llm.ResolveID(pin)
 		if !supportedProviderIDs[canonical] {
 			return "", "", "", "", fmt.Errorf(
-				"%w: DARK_JUDGE_PROVIDER=%q not in supportedProviderIDs (supported: anthropic, minimax, minimax-cn, deepseek)",
-				ErrLLMUnavailable, pin,
+				"%w: DARK_JUDGE_PROVIDER=%q not in supportedProviderIDs (supported: %s)",
+				ErrLLMUnavailable, pin, strings.Join(supportedProviderIDList(), ", "),
 			)
 		}
 		spec := llm.SpecByID(canonical)
@@ -173,8 +203,8 @@ func resolveProviderFromEnv() (string, string, llm.ProviderDialect, string, erro
 		dialect, baseURL := effectiveDialectAndURL(spec)
 		return canonical, key, dialect, baseURL, nil
 	}
-	// 1-4. Auto-detect by env key presence.
-	for _, id := range []string{"anthropic", "minimax", "minimax-cn", "deepseek"} {
+	// 1-9. Auto-detect by env key presence.
+	for _, id := range autoDetectOrder {
 		spec := llm.SpecByID(id)
 		if spec == nil {
 			continue
@@ -186,10 +216,28 @@ func resolveProviderFromEnv() (string, string, llm.ProviderDialect, string, erro
 		dialect, baseURL := effectiveDialectAndURL(spec)
 		return id, key, dialect, baseURL, nil
 	}
+	envKeys := make([]string, 0, len(autoDetectOrder))
+	for _, id := range autoDetectOrder {
+		if spec := llm.SpecByID(id); spec != nil {
+			envKeys = append(envKeys, spec.EnvKey)
+		}
+	}
 	return "", "", "", "", fmt.Errorf(
-		"%w: no LLM key detected (set one of ANTHROPIC_API_KEY, MINIMAX_API_KEY, MINIMAX_API_KEY_CN, DEEPSEEK_API_KEY, or DARK_JUDGE_PROVIDER=<id>)",
-		ErrLLMUnavailable,
+		"%w: no LLM key detected (set one of %s, or DARK_JUDGE_PROVIDER=<id>)",
+		ErrLLMUnavailable, strings.Join(envKeys, ", "),
 	)
+}
+
+// supportedProviderIDList returns the supported IDs in canonical
+// order. Used in error messages so operators see the full list.
+func supportedProviderIDList() []string {
+	out := make([]string, 0, len(supportedProviderIDs))
+	for _, id := range autoDetectOrder {
+		if supportedProviderIDs[id] {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // effectiveDialectAndURL applies the DARK_JUDGE_DIALECT override

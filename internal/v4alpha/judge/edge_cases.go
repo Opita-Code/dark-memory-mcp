@@ -78,6 +78,12 @@ type PipelineContext struct {
 	// Populated after step [5] (LLM call).
 	Verdict *Verdict
 
+	// CalibrationCI is the bootstrap-CI bounds for the judge on
+	// this (provider, target_type, eval_type) tuple. Populated by
+	// the pipeline before EC-007b runs. Nil when calibration has
+	// not yet been computed (ShouldRecalibrate returns false; N<50).
+	CalibrationCI *CalibrationCI `json:"calibration_ci,omitempty"`
+
 	// References to the pipeline's registries + LLM client.
 	LLMClient LLMClient
 	Personas  PersonaRegistry
@@ -96,13 +102,15 @@ type EdgeCaseRunner struct {
 	Cases []EdgeCase
 }
 
-// NewDefaultEdgeCaseRunner returns a runner with all 15 ECs in
-// canonical ID order.
+// NewDefaultEdgeCaseRunner returns a runner with all 16 ECs in
+// canonical ID order. ADR-011 splits EC-007 into 007a (binary
+// legacy) + 007b (statistical, bootstrap-CI).
 func NewDefaultEdgeCaseRunner() *EdgeCaseRunner {
 	return &EdgeCaseRunner{Cases: []EdgeCase{
 		EC001EmptyArtifact, EC002LLMUnavailable, EC003PromptInjection,
 		EC004ArtifactTooLarge, EC005PersonaNotRegistered, EC006SpecIntentMissing,
-		EC007SelfReference, EC008PositionBiasPotential, EC009ArithmeticMismatch,
+		EC007aSelfReferenceBinary, EC007bSelfBiasStatistical,
+		EC008PositionBiasPotential, EC009ArithmeticMismatch,
 		EC010DocVsCodeDrift, EC011ScopeOverClaim, EC012ImplicitAssumption,
 		EC013PriorVersionContamination, EC014EvidenceMissing,
 		EC015VerdictReasoningInconsistency,
@@ -126,9 +134,13 @@ func (r *EdgeCaseRunner) Register(ec EdgeCase) error {
 var ErrECAlreadyRegistered = fmt.Errorf("judge: EC already registered")
 
 // RunPreFlight runs ECs 001-014 (everything except EC-015, which
-// needs the LLM verdict). Returns hits in deterministic order.
+// needs the LLM verdict). EC-007b is a pre-flight EC; it inspects
+// pc.CalibrationCI which is populated by the pipeline before this
+// runs. Returns hits in deterministic order.
 func (r *EdgeCaseRunner) RunPreFlight(ctx context.Context, pc *PipelineContext) []EdgeCaseHit {
-	return r.runFiltered(ctx, pc, func(id string) bool { return id != "EC-015" })
+	return r.runFiltered(ctx, pc, func(id string) bool {
+		return id != "EC-015"
+	})
 }
 
 // RunPostLLM runs EC-015 (the only post-LLM EC).
@@ -327,13 +339,17 @@ var EC006SpecIntentMissing = ecDef{
 	},
 }
 
-// EC-007: self-reference (judge == author). Fires when the persona's
-// ProviderHint matches a marker in the artifact content. Commit 1
-// uses a simple heuristic: artifact contains "author: <provider>" and
-// the persona's ProviderHint matches.
-var EC007SelfReference = ecDef{
-	id: "EC-007", severity: "warn", catches: "bias-mitigation",
-	description: "Persona provider matches artifact author provider (self-judge)",
+// EC-007a: self-reference (judge == author) — LEGACY binary check.
+// Fires when the persona's ProviderHint matches a marker in the
+// artifact content. Kept as a retrocompat fallback for uncalibrated
+// rows (ShouldRecalibrate has not yet triggered).
+//
+// Phase 3 (ADR-011) introduces EC-007b as the canonical statistical
+// replacement; EC-007a is preserved for transparency and to catch
+// self-bias on the FIRST evaluation (when N<50, no CI exists yet).
+var EC007aSelfReferenceBinary = ecDef{
+	id: "EC-007a", severity: "warn", catches: "bias-mitigation",
+	description: "Persona provider matches artifact author provider (binary, legacy)",
 	check: func(pc *PipelineContext) *EdgeCaseHit {
 		if pc.PersonaID == "" || pc.Personas == nil {
 			return nil
@@ -345,12 +361,51 @@ var EC007SelfReference = ecDef{
 		marker := fmt.Sprintf("author: %s", p.ProviderHint)
 		if strings.Contains(strings.ToLower(string(pc.ArtifactContent)), strings.ToLower(marker)) {
 			return &EdgeCaseHit{
-				ID: "EC-007", Severity: "warn",
-				Trigger: fmt.Sprintf("persona provider %q matches artifact author marker", p.ProviderHint),
+				ID: "EC-007a", Severity: "warn",
+				Trigger: fmt.Sprintf("persona provider %q matches artifact author marker (binary, legacy)", p.ProviderHint),
 				Catches: "bias-mitigation",
 			}
 		}
 		return nil
+	},
+}
+
+// EC-007b: self-bias statistical — bootstrap-CI per Play Favorites
+// (arxiv:2508.06709). Fires when the LLM's reported Confidence
+// exceeds calibration_ci_high — i.e. the judge is more confident
+// than its own historical CI on the same (provider, target_type,
+// eval_type) tuple suggests is calibrated.
+//
+// Skips silently when pc.CalibrationCI is nil (N < 50; the
+// pipeline hasn't computed a CI yet). EC-007a still runs in that
+// case as a coarser fallback.
+var EC007bSelfBiasStatistical = ecDef{
+	id: "EC-007b", severity: "warn", catches: "bias-mitigation",
+	description: "Statistical self-bias: LLM confidence exceeds calibrated CI high (Play Favorites)",
+	check: func(pc *PipelineContext) *EdgeCaseHit {
+		if pc.Verdict == nil || pc.CalibrationCI == nil {
+			return nil
+		}
+		if pc.Verdict.Confidence <= pc.CalibrationCI.CIHigh {
+			return nil
+		}
+		// Over-confidence: confidence > ciHigh.
+		severity := "warn"
+		excess := pc.Verdict.Confidence - pc.CalibrationCI.CIHigh
+		if excess > 0.20 {
+			// Substantially over-confident → upgrade to error.
+			severity = "error"
+		}
+		return &EdgeCaseHit{
+			ID: "EC-007b", Severity: severity,
+			Trigger: fmt.Sprintf(
+				"llm_confidence=%.3f exceeds calibration_ci_high=%.3f (n=%d, point=%.3f, method=%s)",
+				pc.Verdict.Confidence, pc.CalibrationCI.CIHigh,
+				pc.CalibrationCI.N, pc.CalibrationCI.PointEstimate,
+				"play_favorites_v1",
+			),
+			Catches: "bias-mitigation",
+		}
 	},
 }
 

@@ -161,31 +161,94 @@ func TestEC006_SpecIntentMissing_Negative(t *testing.T) {
 	}
 }
 
-// ---------- EC-007 self_reference ----------
+// ---------- EC-007a self_reference_binary (legacy, ADR-011 retrocompat) ----------
 
-func TestEC007_SelfReference_Positive(t *testing.T) {
+func TestEC007a_SelfReferenceBinary_Positive(t *testing.T) {
 	pc := newPC(t, func(p *PipelineContext) {
 		// judge-logical has ProviderHint=anthropic. If artifact says
 		// "author: anthropic" the EC fires.
 		p.ArtifactContent = []byte("This was written by the author: anthropic and we evaluate it.")
 		p.PersonaID = "judge-logical"
 	})
-	hit := EC007SelfReference.Check(context.Background(), pc)
+	hit := EC007aSelfReferenceBinary.Check(context.Background(), pc)
 	if hit == nil {
-		t.Fatal("expected EC-007 hit")
+		t.Fatal("expected EC-007a hit")
 	}
 	if hit.Severity != "warn" {
 		t.Errorf("severity = %s; want warn", hit.Severity)
 	}
 }
 
-func TestEC007_SelfReference_Negative(t *testing.T) {
+func TestEC007a_SelfReferenceBinary_Negative(t *testing.T) {
 	pc := newPC(t, func(p *PipelineContext) {
 		p.ArtifactContent = []byte("author: deepseek wrote this piece")
 		p.PersonaID = "judge-logical" // anthropic hint
 	})
-	if hit := EC007SelfReference.Check(context.Background(), pc); hit != nil {
+	if hit := EC007aSelfReferenceBinary.Check(context.Background(), pc); hit != nil {
 		t.Errorf("expected nil (different provider), got %+v", hit)
+	}
+}
+
+// ---------- EC-007b self_bias_statistical (ADR-011, Phase 3) ----------
+
+func TestEC007b_SelfBiasStatistical_Positive(t *testing.T) {
+	// LLM reports confidence 0.78 — but the calibrated CI high is
+	// 0.70 (Play Favorites-style statistical over-confidence, mild
+	// excess 0.08 → warn).
+	pc := newPC(t, func(p *PipelineContext) {
+		p.Verdict = &Verdict{Verdict: VerdictAligned, Confidence: 0.78, Reasoning: "ok"}
+		p.CalibrationCI = &CalibrationCI{
+			PointEstimate: 0.6, CILow: 0.5, CIHigh: 0.7, N: 50,
+		}
+	})
+	hit := EC007bSelfBiasStatistical.Check(context.Background(), pc)
+	if hit == nil {
+		t.Fatal("expected EC-007b hit (confidence 0.78 > ciHigh 0.70)")
+	}
+	if hit.Severity != "warn" {
+		t.Errorf("severity = %s; want warn (excess=0.08, <0.20 threshold)", hit.Severity)
+	}
+}
+
+func TestEC007b_SelfBiasStatistical_SubstantiallyOverConfident_UpgradesToError(t *testing.T) {
+	// LLM reports confidence 0.95, calibrated CI high 0.65 — excess 0.30.
+	pc := newPC(t, func(p *PipelineContext) {
+		p.Verdict = &Verdict{Verdict: VerdictAligned, Confidence: 0.95, Reasoning: "ok"}
+		p.CalibrationCI = &CalibrationCI{
+			PointEstimate: 0.55, CILow: 0.45, CIHigh: 0.65, N: 100,
+		}
+	})
+	hit := EC007bSelfBiasStatistical.Check(context.Background(), pc)
+	if hit == nil {
+		t.Fatal("expected EC-007b hit")
+	}
+	if hit.Severity != "error" {
+		t.Errorf("severity = %s; want error (excess > 0.20)", hit.Severity)
+	}
+}
+
+func TestEC007b_SelfBiasStatistical_Negative(t *testing.T) {
+	// LLM reports confidence 0.6, calibrated CI high 0.9 — within bounds.
+	pc := newPC(t, func(p *PipelineContext) {
+		p.Verdict = &Verdict{Verdict: VerdictAligned, Confidence: 0.6, Reasoning: "ok"}
+		p.CalibrationCI = &CalibrationCI{
+			PointEstimate: 0.8, CILow: 0.7, CIHigh: 0.9, N: 50,
+		}
+	})
+	if hit := EC007bSelfBiasStatistical.Check(context.Background(), pc); hit != nil {
+		t.Errorf("expected nil (confidence 0.6 within CI [0.7, 0.9]); got %+v", hit)
+	}
+}
+
+func TestEC007b_SelfBiasStatistical_NoCalibrationData_Skips(t *testing.T) {
+	// N<50 → CalibrationCI is nil → EC-007b is a no-op
+	// (EC-007a handles first-evaluation coverage).
+	pc := newPC(t, func(p *PipelineContext) {
+		p.Verdict = &Verdict{Verdict: VerdictAligned, Confidence: 0.99, Reasoning: "ok"}
+		// CalibrationCI deliberately nil
+	})
+	if hit := EC007bSelfBiasStatistical.Check(context.Background(), pc); hit != nil {
+		t.Errorf("expected nil when CalibrationCI is nil; got %+v", hit)
 	}
 }
 

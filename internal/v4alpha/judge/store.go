@@ -81,6 +81,11 @@ type Audit struct {
 // Note: NonDeterministic is NOT a Verdict field — it lives on
 // LLMResponse. C3 stores 0 by default. A future iteration can
 // extend TemperatureNote with a NonDeterministic flag if needed.
+//
+// ADR-011 (Phase 3): 4 calibration columns (ConfidenceCalibrated,
+// CalibrationCILow, CalibrationCIHigh, CalibrationMethod) are populated
+// by the pipeline's populateCalibration hook. NULL for rows that
+// haven't reached ShouldRecalibrate(N) yet.
 type Evaluation struct {
 	ID          int64     `json:"id"`
 	EvalType    string    `json:"eval_type"`
@@ -100,6 +105,14 @@ type Evaluation struct {
 	TopP        float64   `json:"top_p,omitempty"`
 	SessionID   string    `json:"session_id,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
+
+	// ADR-011 calibration columns. Populated by the pipeline when
+	// ShouldRecalibrate(N) holds (>=50 historical samples for the
+	// same (provider, target_type, eval_type) tuple).
+	ConfidenceCalibrated float64 `json:"confidence_calibrated,omitempty"`
+	CalibrationCILow     float64 `json:"calibration_ci_low,omitempty"`
+	CalibrationCIHigh    float64 `json:"calibration_ci_high,omitempty"`
+	CalibrationMethod    string  `json:"calibration_method,omitempty"`
 
 	// Verdict is the reconstructed v4 Verdict. Populated by
 	// VerdictFromEvaluation on Read; nil when constructing an
@@ -154,7 +167,11 @@ func CreateSchema(db *sql.DB) error {
 			top_p             REAL,
 			non_deterministic INTEGER NOT NULL DEFAULT 0,
 			session_id        TEXT,
-			created_at        TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP
+			created_at        TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			confidence_calibrated REAL,
+			calibration_ci_low    REAL,
+			calibration_ci_high   REAL,
+			calibration_method    TEXT
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_sdd_eval_eval_type
 			ON sdd_evaluations(eval_type)`,
@@ -164,10 +181,67 @@ func CreateSchema(db *sql.DB) error {
 			ON sdd_evaluations(created_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_sdd_eval_session
 			ON sdd_evaluations(session_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_sdd_eval_provider_target
+			ON sdd_evaluations(provider, target_type, eval_type)`,
 	}
 	for _, s := range stmts {
 		if _, err := db.Exec(s); err != nil {
 			return fmt.Errorf("judge CreateSchema (%s): %w", firstLine(s), err)
+		}
+	}
+	return nil
+}
+
+// ApplyCalibrationColumns adds the 4 ADR-011 calibration columns
+// to a pre-Phase-3 sdd_evaluations table (alpha.15 and earlier).
+// Idempotent: uses pragma_table_info to detect presence and skip
+// if the column already exists (same pattern as
+// audit.ApplyChainColumns from Phase 2).
+//
+// New DBs should use CreateSchema (which includes the columns
+// directly). ApplyCalibrationColumns is the migration path for
+// existing DBs that already contain sdd_evaluations rows.
+func ApplyCalibrationColumns(ctx context.Context, db *sql.DB) error {
+	for _, col := range []string{
+		"confidence_calibrated",
+		"calibration_ci_low",
+		"calibration_ci_high",
+		"calibration_method",
+	} {
+		var n int
+		if err := db.QueryRowContext(ctx,
+			"SELECT COUNT(*) FROM pragma_table_info('sdd_evaluations') WHERE name = ?",
+			col,
+		).Scan(&n); err != nil {
+			return fmt.Errorf("judge ApplyCalibrationColumns (pragma %s): %w", col, err)
+		}
+		if n > 0 {
+			continue // already present
+		}
+		var ddl string
+		switch col {
+		case "calibration_method":
+			ddl = "ALTER TABLE sdd_evaluations ADD COLUMN calibration_method TEXT"
+		default:
+			ddl = "ALTER TABLE sdd_evaluations ADD COLUMN " + col + " REAL"
+		}
+		if _, err := db.ExecContext(ctx, ddl); err != nil {
+			return fmt.Errorf("judge ApplyCalibrationColumns (add %s): %w", col, err)
+		}
+	}
+	// Add the provider_target index if missing.
+	var idxN int
+	if err := db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_sdd_eval_provider_target'",
+	).Scan(&idxN); err != nil {
+		return fmt.Errorf("judge ApplyCalibrationColumns (pragma index): %w", err)
+	}
+	if idxN == 0 {
+		if _, err := db.ExecContext(ctx,
+			`CREATE INDEX IF NOT EXISTS idx_sdd_eval_provider_target
+				ON sdd_evaluations(provider, target_type, eval_type)`,
+		); err != nil {
+			return fmt.Errorf("judge ApplyCalibrationColumns (create index): %w", err)
 		}
 	}
 	return nil
@@ -277,8 +351,10 @@ func (s *Store) SaveEvaluation(ctx context.Context, auditMeta *Audit, e *Evaluat
 				eval_type, target_type, target_id, verdict_json, confidence,
 				provider, model, persona_id, rubric_version, schema_version,
 				seed, max_tokens, timeout_ms, temperature, top_p,
-				non_deterministic, session_id
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+				non_deterministic, session_id,
+				confidence_calibrated, calibration_ci_low,
+				calibration_ci_high, calibration_method
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
 		`,
 			e.EvalType, e.TargetType, e.TargetID, e.VerdictJSON, e.Confidence,
 			nullIfEmpty(e.Provider), nullIfEmpty(e.Model),
@@ -287,6 +363,10 @@ func (s *Store) SaveEvaluation(ctx context.Context, auditMeta *Audit, e *Evaluat
 			nullableInt64(e.Seed), nullableInt(e.MaxTokens), nullableInt(e.TimeoutMs),
 			nullableFloat(e.Temperature), nullableFloat(e.TopP),
 			nullIfEmpty(auditMeta.SessionID),
+			nullableFloat(e.ConfidenceCalibrated),
+			nullableFloat(e.CalibrationCILow),
+			nullableFloat(e.CalibrationCIHigh),
+			nullIfEmpty(e.CalibrationMethod),
 		)
 		if err != nil {
 			return fmt.Errorf("judge store SaveEvaluation insert: %w", err)
@@ -433,6 +513,69 @@ func (s *Store) GetEvaluation(ctx context.Context, id int64) (*Evaluation, error
 	return scanEvaluation(row)
 }
 
+// ConfidencesByProviderTarget returns the historical confidence
+// values for the same (provider, target_type, eval_type) tuple,
+// up to limit rows, newest first. Used by the pipeline's
+// populateCalibration hook (ADR-011) to feed BootstrapCI.
+//
+// Empty provider / target_type / eval_type means "no filter on
+// that column" (the operator's choice). limit <= 0 defaults to
+// 1000 (covers the bootstrap N=1000 budget comfortably).
+func (s *Store) ConfidencesByProviderTarget(ctx context.Context, provider, targetType, evalType string, limit int) ([]float64, error) {
+	if limit <= 0 {
+		limit = 1000
+	}
+	q := `SELECT confidence FROM sdd_evaluations WHERE 1=1`
+	args := []interface{}{}
+	if provider != "" {
+		q += ` AND provider = ?`
+		args = append(args, provider)
+	}
+	if targetType != "" {
+		q += ` AND target_type = ?`
+		args = append(args, targetType)
+	}
+	if evalType != "" {
+		q += ` AND eval_type = ?`
+		args = append(args, evalType)
+	}
+	q += ` ORDER BY id DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("judge store ConfidencesByProviderTarget: %w", err)
+	}
+	defer rows.Close()
+	out := make([]float64, 0, limit)
+	for rows.Next() {
+		var c float64
+		if err := rows.Scan(&c); err != nil {
+			return nil, fmt.Errorf("judge store ConfidencesByProviderTarget scan: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// SetCalibration updates the 4 calibration columns for one row.
+// Called by Pipeline.populateCalibration after a BootstrapCI run.
+// Idempotent — overwrites prior values.
+func (s *Store) SetCalibration(ctx context.Context, id int64, ci CalibrationCI, method string) error {
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE sdd_evaluations
+		SET confidence_calibrated = ?,
+		    calibration_ci_low    = ?,
+		    calibration_ci_high   = ?,
+		    calibration_method    = ?
+		WHERE id = ?`,
+		ci.PointEstimate, ci.CILow, ci.CIHigh, method, id,
+	)
+	if err != nil {
+		return fmt.Errorf("judge store SetCalibration: %w", err)
+	}
+	return nil
+}
+
 // LatestEvaluation returns the most recent row matching (evalType,
 // targetType, targetID). Empty evalType / targetType / targetID
 // are treated as wildcards.
@@ -501,7 +644,11 @@ SELECT id, eval_type, target_type, target_id, verdict_json, confidence,
        COALESCE(rubric_version, ''), COALESCE(schema_version, ''),
        COALESCE(seed, 0), COALESCE(max_tokens, 0), COALESCE(timeout_ms, 0),
        COALESCE(temperature, 0), COALESCE(top_p, 0),
-       COALESCE(session_id, ''), created_at
+       COALESCE(session_id, ''), created_at,
+       COALESCE(confidence_calibrated, 0),
+       COALESCE(calibration_ci_low, 0),
+       COALESCE(calibration_ci_high, 0),
+       COALESCE(calibration_method, '')
 FROM sdd_evaluations`
 
 // scanRow is the interface satisfied by both *sql.Row and *sql.Rows.
@@ -522,6 +669,8 @@ func scanEvaluation(row scanRow) (*Evaluation, error) {
 		&e.Seed, &e.MaxTokens, &e.TimeoutMs,
 		&e.Temperature, &e.TopP,
 		&e.SessionID, &createdAt,
+		&e.ConfidenceCalibrated, &e.CalibrationCILow,
+		&e.CalibrationCIHigh, &e.CalibrationMethod,
 	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
