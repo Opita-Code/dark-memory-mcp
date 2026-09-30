@@ -256,7 +256,7 @@ records it).
 
 ## 5. Persistence semantics (sdd_evaluations)
 
-### 5.1 Table layout (18 columns + 4 indexes)
+### 5.1 Table layout (18 + 4 columns + 5 indexes)
 
 `dark-memory.db` has 9 tables; the 9th is `sdd_evaluations` (C3).
 
@@ -282,10 +282,16 @@ records it).
 | `temperature` | REAL | from `TemperatureNote.temperature` |
 | `top_p` | REAL | from `TemperatureNote.top_p` |
 | `created_at` | TIMESTAMP | server-side default `CURRENT_TIMESTAMP` |
+| `confidence_calibrated` ⭐ NEW (alpha.16) | REAL | point estimate (mean of historical confidences for the key tuple); NULL until `ShouldRecalibrate(N)` is true |
+| `calibration_ci_low` ⭐ NEW (alpha.16) | REAL | 2.5th percentile of bootstrap resamples (95% CI default) |
+| `calibration_ci_high` ⭐ NEW (alpha.16) | REAL | 97.5th percentile of bootstrap resamples |
+| `calibration_method` ⭐ NEW (alpha.16) | TEXT | `'play_favorites_v1'` (placeholder for future methods); NULL until calibrated |
 
-4 indexes: `(eval_type, created_at DESC)`, `(target_type, target_id,
-created_at DESC)`, `(session_id, created_at DESC)`,
-`(persona_id, created_at DESC)`.
+5 indexes: 4 original — `(eval_type, created_at DESC)`,
+`(target_type, target_id, created_at DESC)`, `(session_id,
+created_at DESC)`, `(persona_id, created_at DESC)` — plus the
+new `idx_sdd_eval_provider_target` (alpha.16) for the
+calibration key tuple `(provider, target_type, eval_type)`.
 
 ### 5.2 Atomicity
 
@@ -402,7 +408,7 @@ name is stable across v3 and v4 so federation can join on
 
 ## 8. Where to read next
 
-- `docs/decisions/ADR-007-judge-pipeline-v4.md` — design ADR (15 ECs,
+- `docs/decisions/ADR-007-judge-pipeline-v4.md` — design ADR (15 ECs original + EC-007b added alpha.16 = 16 ECs,
   11 personas, 7-step pipeline)
 - `docs/edge-case-catalog.md` — every EC: trigger, severity,
   short-circuit, real failure it catches, file:line refs
@@ -617,7 +623,7 @@ Three places where v4 is **ahead** of the canonical SOTA:
   (weights must sum to 1.0, otherwise EC-005) is operationally
   more robust than SOTA's "edit the system prompt and hope".
 
-- **15 deterministic pre-flight ECs** as a first-class concept
+- **15 deterministic pre-flight ECs** as a first-class concept (16 ECs after alpha.16 added EC-007b)
   (per `edge-case-catalog.md`). Most SOTA LLM-as-judge work is
   "ask the LLM and trust"; v4's pre-flight gates save the LLM
   call on known-bad inputs (EC-001 empty artifact, EC-002 LLM
@@ -632,8 +638,8 @@ Three places where v4 is **ahead** of the canonical SOTA:
   operationally cleaner.
 
 - **Per-provider `TemperatureNote` for reproducibility** (v4
-  `sdd_evaluations` table has 18 columns; 9 are the TemperatureNote
-  fields). SOTA 2026 evaluation datasets often omit
+  `sdd_evaluations` table has 22 columns as of alpha.16; 9 are the
+  TemperatureNote fields). SOTA 2026 evaluation datasets often omit
   model+seed+temperature+top_p+schema_version from the persisted
   record. v4 persists all of them. **Verdict: ahead**.
 
@@ -642,14 +648,16 @@ Three places where v4 is **ahead** of the canonical SOTA:
 The honest list of gaps. Each cites the v4 location and the SOTA
 2026 alternative.
 
-- **Provider allow-list is narrow** — `internal/v4alpha/judge/llm_client.go`
-  (v4-alpha.4, see §2 of this doc) has 4 providers: `anthropic`,
-  `minimax`, `minimax-cn`, `deepseek`. **SOTA 2026** has at least
-  10+ viable providers with native structured outputs: OpenAI
-  GPT-5/5.1/5.2, Google Gemini 2.5/3.0, Anthropic 15+ models
-  (see §9.2 #6), DeepSeek v3.2/v4, Qwen 3, Kimi K2, GLM-4.5,
-  Mistral. **Verdict: behind by ~6 providers**. Remediation:
-  ADR-009 (provider expansion), tracked separately.
+- **Provider allow-list was narrow** — `internal/v4alpha/judge/llm_client.go`
+  (v4-alpha.4, see §2 of this doc) had 4 providers: `anthropic`,
+  `minimax`, `minimax-cn`, `deepseek`. **SHIPPED in alpha.16
+  (commit `8681113`, 2026-09-30)**: extended to 9 providers
+  (added `openai`, `google`, `zhipu`, `moonshot`, `qwen`).
+  Mistral NOT included — requires new `ProviderSpec` entry in
+  `internal/llm/catalog.go` (separate decision; catalog work,
+  not judge-client work). **Verdict (alpha.16)**: aligned in
+  intent; remaining gap is 2 providers (kimi, mistral) requiring
+  catalog work, not judge-client work.
 
 - **No pairwise ranking** — v4 explicitly rejected Prometheus 2's
   pairwise-ranker model (per ADR-007 §7 trade-offs). For "drift"
@@ -658,16 +666,16 @@ The honest list of gaps. Each cites the v4 location and the SOTA
   supports both. **Verdict: behind in the discrimination axis**.
   Remediation: ADR-010 (pairwise ranking) when needed.
 
-- **EC-007 self-bias check is binary, not statistical** — v4's
-  EC-007 (per `edge-case-catalog.md`) flags self-bias as
-  "the artifact is from the same model as the judge" — a binary
-  signal. SOTA Play Favorites (arxiv:2508.06709) provides a
-  **statistical framework** that quantifies self-bias while
-  accounting for genuine quality differences. v4 does not
-  implement the statistical test. **Verdict: behind in the
-  measurement axis**. Remediation: not blocking (binary is
-  good enough for `flagged` action), but documented as a
-  known gap.
+- **EC-007 self-bias check is now BOTH binary and statistical** —
+  v4's EC-007 (per `edge-case-catalog.md`) was a binary signal:
+  "the artifact is from the same model as the judge → flag".
+  **SHIPPED in alpha.16 (commit `8681113`, 2026-09-30)**: EC-007
+  split into EC-007a (binary legacy fallback for uncalibrated
+  rows) and EC-007b (statistical bootstrap-CI per Play Favorites
+  arxiv:2508.06709). EC-007b asks "is this (provider, target_type,
+  eval_type) tuple systematically over-confident?" — evidence-based,
+  not just same-model heuristic. **Verdict (alpha.16)**: aligned in
+  BOTH intent AND measurement axis.
 
 - **`spec_intent` capped at 4 KiB** — v4 caps the hypothesis
   field at 4 KiB (per `docs/judge-pipeline-v4.md` §3.1).
@@ -694,9 +702,16 @@ The honest list of gaps. Each cites the v4 location and the SOTA
   confidence intervals on the judge's accuracy. SOTA 2026
   LLM-as-judge best practice (per the LLM-as-Judge survey
   literature) includes bootstrap-CI on per-judge-call accuracy
-  vs human labels. **Verdict: behind in the calibration
-  axis**. Remediation: ADR-011 (judge calibration with
-  bootstrap-CI), tracked separately.
+  vs human labels. **SHIPPED in alpha.16 (commit `8681113`,
+  2026-09-30)**: 4 new columns on `sdd_evaluations`
+  (`confidence_calibrated`, `calibration_ci_low`,
+  `calibration_ci_high`, `calibration_method`); pure-Go
+  `BootstrapCI` in `internal/v4alpha/judge/calibration.go`;
+  `Server.populateCalibration()` hook stamps each new row.
+  Human-labeled validation set for true accuracy CI is
+  alpha.3 deferred (separate workstream). **Verdict (alpha.16)**:
+  aligned in self-bias-corrected calibration axis. Remaining
+  gap is human-label validation (alpha.3).
 
 - **Rubric is static** — v4 persona rubrics are compiled into
   the binary. SOTA 2025-26 work on **learned / adaptive
@@ -744,12 +759,13 @@ The SOTA criticism is honest about what I don't know:
 ### 10.5 What this section is NOT
 
 - It is **not** a refutation of v4's design. v4 ships
-  substantial, well-cited work (38 tools, 15 ECs, 11 personas,
-  LLM-backed judge with provenance). The gaps in §10.3 are
-  tractable, not architectural.
+  substantial, well-cited work (38 tools, 16 ECs, 11 personas,
+  LLM-backed judge with provenance, bootstrap-CI calibration).
+  The gaps in §10.3 are tractable, not architectural.
 - It is **not** a substitute for ADR-009/010/011/012
   (proposed remediations). Each gap has a proposed ADR; the
-  ADRs are the next step, not this section.
+  ADRs are the next step, not this section. ADR-009 and ADR-011
+  shipped in alpha.16 (commit `8681113`).
 - It is **not** a comprehensive SOTA survey. The
   SOTA-doc chunk 1 scope is the **judge pipeline**. Other
   chunks (agent memory, audit chain, workflow runtime, MCP)
@@ -759,7 +775,7 @@ The SOTA criticism is honest about what I don't know:
 
 ## 11. Where to read next (updated)
 
-- `docs/decisions/ADR-007-judge-pipeline-v4.md` — design ADR (15 ECs,
+- `docs/decisions/ADR-007-judge-pipeline-v4.md` — design ADR (15 ECs original + EC-007b added alpha.16 = 16 ECs,
   11 personas, 7-step pipeline)
 - `docs/edge-case-catalog.md` — every EC: trigger, severity,
   short-circuit, real failure it catches, file:line refs

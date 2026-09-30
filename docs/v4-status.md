@@ -1,7 +1,7 @@
 # v4 Status — current state of the redesign
 
 > **Audience**: anyone touching the `feat/v4-redesign` branch.
-> **TL;DR**: v4-alpha.15 ships **42 of 57 canonical tools** (74% of
+> **TL;DR**: v4-alpha.16 ships **42 of 57 canonical tools** (74% of
 > the surface) plus the full judge pipeline (ADR-007, 4 commits
 > shipped) plus the judge_util + research namespaces (BUG-10 10a)
 > plus the SOTA-doc workstream (7 of 7 chunks, +2,380/-7 lines,
@@ -9,22 +9,24 @@
 > skill_loaded tracking) plus PRE-1 C3 (session_start gains a
 > Loadout of operator startup context) plus BUG-12 (cross-
 > process audit_id monotonicity) plus **Phase 2 (audit hash chain
-> + dark_memory_audit_verify MCP tool, Option B)**.
+> + dark_memory_audit_verify MCP tool, Option B)** plus
+> **Phase 3 (ADR-009: provider allow-list 4 → 9; ADR-011:
+> bootstrap-CI statistical self-bias detection per Play Favorites)**.
 > The package layout is **NOT** what `ARCHITECTURE-V4.md
 > §5 (original)` promised — see "actual layout" below. The operator-
 > facing surface is real and tested.
 > Remaining 15 tools land in BUG-10 10b-e; the judge pipeline was
 > added in 4 commits (commits 1-4 of ADR-007). The next concrete
 > work is the **alpha.11+ plan** (Phase 1 closed, Phase 2 shipped,
-> Phase 3-5 to follow) — see `docs/v4-alpha-11-plan.md`.
+> Phase 3 shipped, Phase 4-5 to follow) — see `docs/v4-alpha-11-plan.md`.
 
 | Field | Value |
 |---|---|
 | Branch | `feat/v4-redesign` (from `v2.20.0`, NOT from `v3.0-void`) |
-| Last reviewed | 2026-09-29 |
-| Status | **alpha.15** — pre-release, local-only, contributors only |
-| Version constant | `v4alpha.15-dev` (resolved via `ldflags` → `debug.ReadBuildInfo` → `"dev"`) |
-| Schema version | `v4alpha/2026-09-27/002` (stamped in `schema_migrations`); audit_log gains `prev_hash`, `row_hash` (alpha.15 in-place migration via `audit.ApplyChainColumns`) |
+| Last reviewed | 2026-09-30 |
+| Status | **alpha.16** — pre-release, local-only, contributors only |
+| Version constant | `v4alpha.16-dev` (resolved via `ldflags` → `debug.ReadBuildInfo` → `"dev"`) |
+| Schema version | `v4alpha/2026-09-30/003` (stamped in `schema_migrations`); audit_log gains `prev_hash`, `row_hash` (alpha.15); sdd_evaluations gains `confidence_calibrated`, `calibration_ci_low`, `calibration_ci_high`, `calibration_method` (alpha.16) |
 | Binary | `dark-memory-v4` (19.5 MB Windows) |
 | Local-only policy | YES — no `git push`/`fetch`/`pull`, no remote tags/releases |
 
@@ -32,7 +34,7 @@
 ## 1. Tools inventory (42 of 57)
 
 The canonical surface is 57 tools (see `ARCHITECTURE-V4.md §6.3
-tool-count target`). v4-alpha.15 registers **42 of those**.
+tool-count target`). v4-alpha.16 registers **42 of those**.
 
 ### 1.1 session_start Loadout (PRE-1 C3, alpha.13)
 
@@ -75,6 +77,59 @@ Per `docs/specs/SPEC-alpha-11-phase2.md` (Option B, 2026-09-29):
 
 Ed25519 (ADR-017) is **deferred** — see §10 of the spec for
 rationale (no external verifier use case today).
+
+### 1.3 Phase 3 — judge improvements (alpha.16) ⭐ NEW
+
+Per `docs/specs/SPEC-alpha-11-phase3.md` (2026-09-30):
+
+**ADR-009 — Provider allow-list 4 → 9**:
+- `internal/v4alpha/judge/llm.go` `supportedProviderIDs` extended
+  with `openai`, `google`, `zhipu`, `moonshot`, `qwen` (was
+  `anthropic`, `minimax`, `minimax-cn`, `deepseek`).
+- Auto-detect chain `autoDetectOrder` iterates all 9.
+- Pin-error enumerates full 9-provider list.
+- Mistral NOT included — requires new `ProviderSpec` entry in
+  `internal/llm/catalog.go` (separate decision; catalog work,
+  not judge-client work).
+- 5 new L1 tests (`TestNewRealLLMClient_*`).
+- **No new MCP tools** (surface stays at 42).
+
+**ADR-011 — Bootstrap-CI statistical self-bias**:
+- **4 new columns on `sdd_evaluations`**:
+  - `confidence_calibrated REAL` — point estimate (mean of historical)
+  - `calibration_ci_low REAL` — 2.5th percentile (95% CI default)
+  - `calibration_ci_high REAL` — 97.5th percentile
+  - `calibration_method TEXT` — `'play_favorites_v1'` (placeholder
+    for future methods)
+- **NEW helper** `internal/v4alpha/judge/calibration.go`:
+  `BootstrapCI(samples, confidence, nResamples) → (point, low, high)`.
+  Efron 1979 percentile method, pure Go, `math/rand/v2`,
+  deterministic seed=42, `defaultResamples=1000`.
+  `ShouldRecalibrate(n) → n >= 50` per Play Favorites §4.3.
+- **NEW migration helper**: `judge.ApplyCalibrationColumns(ctx, db)`
+  idempotent `ALTER TABLE ADD COLUMN × 4` (same pragma_table_info
+  pattern as `audit.ApplyChainColumns` from Phase 2). Also creates
+  `idx_sdd_eval_provider_target`.
+- **EC-007 split** (`internal/v4alpha/judge/edge_cases.go`):
+  - **EC-007a** (renamed from `EC007SelfReference`): binary
+    substring check. Preserved as legacy fallback for uncalibrated
+    rows (`pc.CalibrationCI == nil`).
+  - **EC-007b** (NEW `EC007bSelfBiasStatistical`): fires when
+    `llm_confidence > ci_high`. Severity: `warn` by default,
+    upgrades to `error` when excess > 0.20.
+  - `NewDefaultEdgeCaseRunner` now registers 16 ECs (was 15).
+- **NEW hook**: `Server.populateCalibration()` in
+  `internal/v4alpha/transport/mcp/judge.go` runs after each
+  `SaveEvaluation`. Pulls historical confidences via
+  `Store.ConfidencesByProviderTarget()`; when `ShouldRecalibrate(N)`,
+  stamps the row via `Store.SetCalibration()` with
+  `method='play_favorites_v1'`. Best-effort (failure logged to
+  stderr, NOT fatal).
+- **NEW tests**: 8 L1 (calibration_test.go NEW) + 4 L1 (llm_test.go)
+  + 4 L2 (edge_cases_test.go) + 1 L2 (store_deliberate_breaks_test.go)
+  = 17 new tests + 1 updated pre-existing test.
+
+**Tool count**: 42 → 42 (no new MCP tools; surface unchanged).
 
 ### ✅ Registered (42)
 
@@ -170,7 +225,8 @@ ordering).
 | INV-9 (reserved) | YES (reserved) | — | — |
 | INV-10 (agent_memory lifecycle) | YES | rows survive session close; no auto-bind | inherited |
 | **INV-11** (capability token) | NOT STARTED | alpha.3 | alpha.3 — when transport auth lands |
-| **INV-12** (audit chain) | **YES (hash chain only)** | `internal/v4alpha/audit/canonical.go` (SHA-256 chain); `audit.Verify()`; `dark_memory_audit_verify` MCP tool | **Phase 2 / alpha.15 (this release)** — Ed25519 (ADR-017) deferred; Merkle tree deferred to alpha.3 |
+| **INV-12** (audit chain) | **YES (hash chain only)** | `internal/v4alpha/audit/canonical.go` (SHA-256 chain); `audit.Verify()`; `dark_memory_audit_verify` MCP tool | **Phase 2 / alpha.15** — Ed25519 (ADR-017) deferred; Merkle tree deferred to alpha.3 |
+| **INV-18** (judge calibration) | **YES** (bootstrap-CI) | `internal/v4alpha/judge/calibration.go` (`BootstrapCI`, `ShouldRecalibrate`); `Server.populateCalibration()` hook; `judge.ApplyCalibrationColumns` migration | **Phase 3 / alpha.16 (this release)** — Play Favorites (arxiv:2508.06709) §4.3 percentile method; deterministic seed=42; n=1000 default |
 | **INV-13** (redact-before-log) | NOT STARTED | alpha.3 | alpha.3 — when first OSINT adapter lands |
 | **INV-14** (SSRF guard) | NOT STARTED | alpha.3 | alpha.3 — when first URL-fetching tool lands |
 | **INV-15** (prompt injection scan) | NOT STARTED | alpha.3 | alpha.3 — when first URL-fetching tool lands |
@@ -198,8 +254,11 @@ Implemented in `internal/v4alpha/vibe/pipeline.go`:
 - `Pipeline.Status(artifact_id) → DriftReport`
 - `Pipeline.ResolveDrift(drift_id, decision, note) → void`
 - `Judge` interface (`Evaluate(ctx, artifact_ref, spec_intent) →
-  Verdict`) — LLM-backed `LLMJudge` shipped in **ADR-007 commit 2**
-  (4 supported providers: anthropic, minimax, minimax-cn, deepseek).
+  Verdict`) — LLM-backed `LLMJudge` shipped in **ADR-007 commit 2**.
+  Provider allow-list extended in **Phase 3 (alpha.16)** from 4
+  (anthropic, minimax, minimax-cn, deepseek) to 9 (added openai,
+  google, zhipu, moonshot, qwen). Mistral deferred (not in
+  `internal/llm/catalog.go` yet).
   `NoOpJudge` remains as the fallback when no provider key is set.
 
 ### 4.1 Judge pipeline v4 (ADR-007, 4 commits shipped)
@@ -213,7 +272,7 @@ Implemented in `internal/v4alpha/vibe/pipeline.go`:
 
 Docs:
 - `docs/judge-pipeline-v4.md` — operator's guide
-- `docs/edge-case-catalog.md` — 15 ECs + how to extend
+- `docs/edge-case-catalog.md` — 15 ECs (ADR-007) + 1 added in alpha.16 (EC-007b) = **16 total** + how to extend
 - `docs/persona-registry-v4.md` — 11 personas + override mechanism
 
 The mutable workflow runtime (Workflow struct + modify_workflow
@@ -252,7 +311,7 @@ $ printf "%s\n" \
 
 | Reliability | What's stable |
 |---|---|
-| ✅ Stable (won't change) | Tool wire names, agent_memory schema, FTS5 ordering (INV-17), worker pool size=1, store/WithTx contract (INV-16), `sdd_evaluations` schema (18 cols), 4 judge MCP tool wire shapes, persona registry ids |
+| ✅ Stable (won't change) | Tool wire names, agent_memory schema, FTS5 ordering (INV-17), worker pool size=1, store/WithTx contract (INV-16), `sdd_evaluations` schema (18 → 22 cols; +4 for calibration in alpha.16), 4 judge MCP tool wire shapes, persona registry ids, `BootstrapCI` deterministic seed=42 |
 | ⚠️ Likely to evolve | Package names (still aspirational vs actual drift), Pipeline API (LLM judge swap), Constitution (still hardcoded), persona override mechanism (spec 1155 v14 inheritance) |
 | ❌ Not implemented | security/* (INV-11..15), mutable Workflow, red-team mods, 6 `judge_util_*` tools, research/mindset/delegation/project/context/bootstrap/L6-VLP/admin/agent_memory-c2/session-c2 |
 
@@ -333,7 +392,7 @@ The summary below points to the upstream sources cited in this doc.
 |---|---|---|
 | INV-16 dark-db concurrency uses `journal_mode=WAL` + `busy_timeout=5000ms` + `MaxOpenConns=8` (WAL readers-don't-block-writers, 1000-page auto-checkpoint, 3.51.3 fixes WAL-reset bug) | SQLite WAL docs | <https://sqlite.org/wal.html> |
 | `internal/v4alpha/store/` is backed by the pure-Go driver (no cgo) | modernc.org/sqlite v1.53.0 (pinned in `go.mod`, verified via `grep`) | <https://pkg.go.dev/modernc.org/sqlite> |
-| Judge pipeline (29 tools shipped, 4 commits, 15 ECs, 11 personas) is grounded in SOTA LLM-as-judge literature | `docs/judge-pipeline-v4.md` §9 (4 papers + Anthropic structured outputs + SQLite WAL + pkg.go.dev) | — |
+| Judge pipeline (29 tools shipped, 4 commits, 16 ECs [15 original + EC-007b added alpha.16], 11 personas) is grounded in SOTA LLM-as-judge literature | `docs/judge-pipeline-v4.md` §9 (4 papers + Anthropic structured outputs + SQLite WAL + pkg.go.dev) | — |
 
 ---
 
@@ -344,7 +403,7 @@ The summary below points to the upstream sources cited in this doc.
 - `docs/INVARIANTS.md` — INV-1..INV-17 definitions (INV-16 + INV-17 added 2026-09-27)
 - `docs/AGENT_MEMORY_SCHEMA.md` — table shape, FTS5, indexes
 - `docs/judge-pipeline-v4.md` — operator's guide to the judge (ADR-007)
-- `docs/edge-case-catalog.md` — 15 ECs + how to extend (ADR-007 §4)
+- `docs/edge-case-catalog.md` — 16 ECs (alpha.16 split EC-007 into 007a + 007b) + how to extend (ADR-007 §4)
 - `docs/persona-registry-v4.md` — 11 personas + override mechanism (ADR-007 §2.2)
 - `CONSTITUTION-V4.md` — release-integrity constitution (v4 fork)
 - `docs/sota-critique.md` — meta-doc SOTA criticism (5 chunks
@@ -354,10 +413,11 @@ The summary below points to the upstream sources cited in this doc.
 - `docs/v4-alpha-11-plan.md` — 5 vibe-loops for the next 8-11
   weeks (Phase 1-5: close + cheap wins / audit chain / judge
   improvements / BUG-10 10b namespace / memory subsystem).
+  Phase 1-3 shipped; Phase 4-5 to follow.
 - `docs/specs/SPEC-alpha-11-*.md` — the per-phase vibe-loop
-  specs (chunk 7 + pre1c3 + pre1c4 ship; Phase 2-5 to follow).
-- `CHANGELOG.md` (top of file) — entry `[4.0.0-alpha.13]`
-  (PRE-1 C3, session_start Loadout).
+  specs (chunk 7 + pre1c3 + pre1c4 + Phase 2 + Phase 3 ship).
+- `CHANGELOG.md` (top of file) — entry `[4.0.0-alpha.16]`
+  (Phase 3: judge improvements; provider allow-list + bootstrap-CI).
 - `docs/decisions/ADR-007-judge-pipeline-v4.md` — design ADR
 - `docs/decisions/ADR-008-work-standard.md` — atomic mirror discipline
 - `docs/archive/v3.0-wave-4/` — v3 context (legacy, kept for reference)

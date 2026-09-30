@@ -878,6 +878,54 @@ choice** documented in `v4-status.md:118-122`, not a hidden gap.
 | v4's INV-11, 13, 14, 15 status: NOT STARTED, all planned for alpha.3 | v4-status.md:118-122 | (in-repo) | 2026-09-28 |
 | v4's `audit.Writer` source code (mutex, seq, payload BLOB) | internal/v4alpha/audit/writer.go | (in-repo) | 2026-09-28 |
 
+> **Updates from alpha.15 (commit `f322776`, Phase 2) and
+> alpha.16 (commit `8681113`, Phase 3)**:
+>
+> | Claim above | Current status (2026-09-30) |
+> |---|---|
+> | v4's INV-12 (audit chain) status: NOT STARTED, planned for alpha.3 | **YES (hash chain only)** — `internal/v4alpha/audit/canonical.go` (SHA-256 chain); `audit.Verify()`; `dark_memory_audit_verify` MCP tool — **alpha.15 / commit `f322776`**. Ed25519 (ADR-017) deferred; Merkle tree alpha.3 deferred. |
+> | v4's `audit.Writer` (mutex, seq, payload BLOB) | **Wired to chain** — `Writer` now has `lastHash []byte` mirror; writes `prev_hash` + `row_hash` columns (alpha.15). Docstring on `ZeroHash()` rewritten to match implementation (judge F1 fix, commit `63bdfdf`). |
+>
+> **New alpha.16 work** (commit `8681113`, 2026-09-30, Phase 3):
+>
+> - **EC-007 split** — `internal/v4alpha/judge/edge_cases.go` now
+>   registers **16 ECs** (was 15): EC-007a (renamed binary legacy,
+>   fires when `pc.CalibrationCI == nil`) + EC-007b (NEW statistical,
+>   fires when `llm_confidence > calibration_ci_high` per Play
+>   Favorites arxiv:2508.06709). `NewDefaultEdgeCaseRunner`
+>   registers 16 ECs total. See `docs/edge-case-catalog.md` §EC-007a
+>   and §EC-007b for per-EC cards.
+> - **4 new columns on `sdd_evaluations`**:
+>   `confidence_calibrated REAL`, `calibration_ci_low REAL`,
+>   `calibration_ci_high REAL`, `calibration_method TEXT`.
+>   - `judge.ApplyCalibrationColumns(ctx, db)` idempotent migration
+>     helper (same pragma_table_info pattern as
+>     `audit.ApplyChainColumns` from Phase 2).
+>   - `idx_sdd_eval_provider_target` index added for the calibration
+>     key tuple (provider, target_type, eval_type).
+> - **Bootstrap-CI helper** (`internal/v4alpha/judge/calibration.go`,
+>   ~165 LoC): `BootstrapCI(samples, confidence, nResamples) →
+>   (point, low, high)`. Efron 1979 percentile method, pure Go,
+>   `math/rand/v2`, deterministic seed=42, `defaultResamples=1000`.
+>   `ShouldRecalibrate(n) → n >= 50` per Play Favorites §4.3.
+> - **Populate hook** (`Server.populateCalibration()` in
+>   `internal/v4alpha/transport/mcp/judge.go`): runs after each
+>   `SaveEvaluation`. Pulls historical confidences for the
+>   (provider, target_type, eval_type) tuple; when
+>   `ShouldRecalibrate(N)`, stamps the row via
+>   `Store.SetCalibration()` with `method='play_favorites_v1'`.
+>   Best-effort (failure logged to stderr, NOT fatal).
+> - **Provider allow-list 4 → 9**: `internal/v4alpha/judge/llm.go`
+>   `supportedProviderIDs` extended with `openai`, `google`, `zhipu`,
+>   `moonshot`, `qwen`. Mistral NOT included — requires new
+>   `ProviderSpec` entry in `internal/llm/catalog.go` (separate
+>   decision; catalog work, not judge-client work).
+>
+> **Cross-ref**: `docs/edge-case-catalog.md` §EC-007a + §EC-007b
+> per-EC cards; `docs/judge-pipeline-v4.md` §10.3 (Phase 3
+> closures); `docs/v4-status.md` §1.3 (Phase 3 changelog);
+> `CHANGELOG.md` `[4.0.0-alpha.16]` entry.
+
 All URLs verified via primary fetch 2026-09-28. The
 "couldn't verify" items in §18.5 are NOT in this
 table — they are honestly missing. The QLDB row

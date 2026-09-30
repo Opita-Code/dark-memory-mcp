@@ -11,6 +11,175 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [4.0.0-alpha.16] — 2026-09-30 — Phase 3: judge improvements (ADR-009 + ADR-011)
+
+> Phase 3 of the alpha.11+ plan (Phase 1-2 shipped). Per
+> `docs/specs/SPEC-alpha-11-phase3.md` (commit `8681113`).
+> Operator decision: ship ALL 9 providers in the canonical
+> `internal/llm/catalog.go`; EC-007a preserved as legacy fallback;
+> mistral + kimi deferred (require catalog work).
+
+### Added — `internal/v4alpha/judge/calibration.go` (NEW, ~165 LoC)
+- **`BootstrapCI(samples, confidence, nResamples) → (point, low, high)`**.
+  Efron 1979 percentile method per Play Favorites
+  (Spiliopoulou, Fogliato et al. 2025, arxiv:2508.06709).
+- Pure Go, `math/rand/v2` (Go 1.22+), deterministic seed=42,
+  `defaultResamples=1000`. No external numerics libs.
+- **`ShouldRecalibrate(n) → n >= 50`** per Play Favorites §4.3
+  boundary.
+- **`CalibrationCI` struct**: `{PointEstimate, CILow, CIHigh, N}`.
+- **`Mean(samples) → float64`** + **`percentileIndex(p, n) → int`**
+  helpers.
+
+### Added — 4 columns on `sdd_evaluations`
+- `confidence_calibrated REAL` — point estimate (mean of
+  historical confidences for the (provider, target_type, eval_type)
+  tuple, when `ShouldRecalibrate(N)` is true).
+- `calibration_ci_low REAL` — 2.5th percentile (95% CI default).
+- `calibration_ci_high REAL` — 97.5th percentile.
+- `calibration_method TEXT` — `'play_favorites_v1'` (placeholder
+  for future methods).
+- New index `idx_sdd_eval_provider_target` for the calibration
+  key tuple.
+
+### Added — `judge.ApplyCalibrationColumns(ctx, db)` (NEW migration helper)
+- Idempotent `ALTER TABLE ADD COLUMN × 4` + index creation.
+- Uses `pragma_table_info` to detect column presence and skip
+  if already migrated. Same pattern as `audit.ApplyChainColumns`
+  from alpha.15.
+- New DBs (via `CreateSchema`) get the columns directly. Legacy
+  DBs (alpha.15 and earlier) get the migration via this function.
+- Wired into `applyAllSchemas` in `cmd/dark-memory-v4/serve.go`.
+
+### Added — `internal/v4alpha/transport/mcp/judge.go` `populateCalibration` hook
+- Runs after each `dark_memory_judge` SaveEvaluation succeeds.
+- Pulls historical confidences via `Store.ConfidencesByProviderTarget(ctx, provider, targetType, evalType, limit)`.
+- When `ShouldRecalibrate(N)`, computes `BootstrapCI(samples, 0.95, 1000)`
+  and stamps the row via `Store.SetCalibration(ctx, evalID, ci, "play_favorites_v1")`.
+- **Best-effort**: failure logged to stderr, NOT fatal. The verdict
+  still ships; calibration is enhancement, not gate.
+
+### Changed — `internal/v4alpha/judge/llm.go` provider allow-list (4 → 9)
+- **`supportedProviderIDs` extended** from 4 to 9: `anthropic`,
+  `openai`, `google`, `deepseek`, `minimax`, `minimax-cn`,
+  `zhipu`, `moonshot`, `qwen`.
+- **NEW `autoDetectOrder` slice**: priority chain for env-key
+  detection (anthropic → minimax → minimax-cn → deepseek →
+  openai → google → zhipu → moonshot → qwen).
+- **`resolveProviderFromEnv` iterates all 9** via the new slice.
+- Pin-error enumerates full 9-provider list (was hardcoded 4).
+- File header doc comment updated to state count 4 → 9.
+- **Mistral NOT included** (not in `internal/llm/catalog.go` yet;
+  adding it requires a new `ProviderSpec` entry — separate decision).
+
+### Changed — `internal/v4alpha/judge/edge_cases.go` EC-007 split
+- **EC-007a** (renamed from `EC007SelfReference`): binary substring
+  check. Preserved as legacy fallback for uncalibrated rows
+  (`pc.CalibrationCI == nil`, typically N < 50).
+- **EC-007b** (NEW `EC007bSelfBiasStatistical`): statistical
+  bootstrap-CI check. Fires when `llm_confidence > calibration_ci_high`.
+  - **Severity**: `warn` by default. Upgrades to `error` when
+    `excess = llm_confidence - ci_high > 0.20` (substantial
+    over-confidence).
+- **`PipelineContext` gains `CalibrationCI *CalibrationCI` field**.
+- **`NewDefaultEdgeCaseRunner` registers 16 ECs** (was 15).
+
+### Tests — 17 new tests + 1 updated (commit `8681113`)
+- **L1 calibration tests** (`internal/v4alpha/judge/calibration_test.go`,
+  NEW, 8 tests):
+  - `TestBootstrapCI_Deterministic` — same seed → same result.
+  - `TestBootstrapCI_PointEstimateIsMean` — point estimate is
+    arithmetic mean of inputs.
+  - `TestBootstrapCI_WidthMonotonicInN` — CI narrows with more samples.
+  - `TestBootstrapCI_EdgeCases` — empty, single, two-element,
+    invalid inputs.
+  - `TestBootstrapCI_BiasedSignalDetectable` — biased sample
+    produces CI that does NOT cover 0.
+  - `TestBootstrapCI_ConfidenceControlsWidth` — 99% CI wider than 95%.
+  - `TestShouldRecalibrate` — threshold at N=50.
+  - `TestMean` + edge cases (empty, nil).
+- **L1 provider tests** (`internal/v4alpha/judge/llm_test.go`, 5 new):
+  - `TestNewRealLLMClient_OpenAI`
+  - `TestNewRealLLMClient_Google`
+  - `TestNewRealLLMClient_Qwen_AnthropicDialect`
+  - `TestNewRealLLMClient_UnsupportedProvider` (mistral error)
+  - `TestNewRealLLMClient_AutoDetect_OpenAI`
+  - **Updated**: `TestRealLLMClient_UnsupportedProvider` now uses
+    `mistral` (openai is now supported).
+- **L2 EC-007 tests** (`internal/v4alpha/judge/edge_cases_test.go`,
+  4 new + 2 renamed):
+  - `TestEC007a_SelfReferenceBinary_Positive` (renamed).
+  - `TestEC007a_SelfReferenceBinary_Negative` (renamed).
+  - `TestEC007b_SelfBiasStatistical_Positive` (mild excess → warn).
+  - `TestEC007b_SelfBiasStatistical_SubstantiallyOverConfident_UpgradesToError`.
+  - `TestEC007b_SelfBiasStatistical_Negative` (CI covers LLM conf → no hit).
+  - `TestEC007b_NoCalibrationData_Skips` (no CI → no hit).
+- **L2 store idempotency test**
+  (`internal/v4alpha/judge/store_deliberate_breaks_test.go`, 1 new):
+  - `TestDeliberateBreak_Store_ApplyCalibrationColumns_Idempotent`.
+
+### Verified
+- **`go vet` clean** on `./internal/v4alpha/judge/...` and
+  `./internal/v4alpha/transport/mcp/...`.
+- **All 11 v4alpha packages PASS** (audit, judge, agent_memory,
+  docs_index, manifest, research, security, session, store,
+  transport/mcp, vibe).
+- **Drift check** (spec file judged **ALIGNED** with confidence
+  0.92 against spec_intent — eval 1952).
+- **2 real drifts surfaced and fixed** during iteration:
+  - "9 vs 10+" provider count inconsistency → added explicit
+    explanation paragraph (plan target 10+, catalog has 9,
+    mistral/kimi require catalog work — separate decision).
+  - "3 vs 4 new columns" count inconsistency → fixed in TL;DR.
+
+### Tool count
+- **42 → 42** (no new MCP tools; surface unchanged).
+- Schema changes only (4 columns on `sdd_evaluations`).
+
+### Docs (separate docs-followup commit, this release entry)
+- `docs/v4-status.md` — alpha.15 → alpha.16; new §1.3 Phase 3
+  section; schema version bumped to `v4alpha/2026-09-30/003`;
+  pipeline description updated (4 → 9 providers).
+- `docs/INVARIANTS.md` — table updates (INV-12 stays YES hash chain
+  only; new INV-18 row for bootstrap-CI calibration); §19
+  cross-ref to Phase 3 workstream.
+- `docs/edge-case-catalog.md` — EC-007 split into EC-007a +
+  EC-007b per-EC cards; taxonomy + SOTA criticism §8 updated.
+- `docs/judge-pipeline-v4.md` — §10.3 SOTA criticism updated
+  (Provider allow-list and EC-007 statistical marked SHIPPED in
+  alpha.16).
+- `docs/v4-alpha-11-plan.md` — §3 Phase 3 marked shipped with
+  shipped commit + actual provider count.
+- `CHANGELOG.md` (this entry).
+
+### Cross-references
+- `docs/specs/SPEC-alpha-11-phase3.md` — Phase 3 canonical spec
+  (660 lines).
+- `docs/sota-critique.md` §10.3 — gap analysis for judge
+  pipeline (alpha.16 closures).
+- Row 2201 (dark-memory) — Phase 3 SUMMARY pinned; audit
+  trail at agent_id=`alpha-11-phase3`, session
+  `sess-3391a2ae65ba920c`.
+- Row 2199 (dark-memory) — independent judge verdict on
+  Phase 2 code (Phase 3 baselines here).
+- Row 2200 (dark-memory) — judge fixes F1-F5 applied in 63bdfdf.
+- Eval 1950-1952 (drift_judge) — spec alignment iterations.
+
+### What is NOT in alpha.16 (deferred)
+- **Mistral provider** — requires new `ProviderSpec` entry in
+  `internal/llm/catalog.go` (separate decision; catalog work,
+  not judge-client work).
+- **kimi provider** — same: requires catalog entry.
+- **ADR-010 (pairwise ranking)** — still deferred; v4 explicitly
+  rejected Prometheus 2's pairwise-ranker model per ADR-007 §7.
+- **ADR-012 (RLJF loop)** — not present; out of v4 alpha scope.
+- **Human-labeled validation set** for true accuracy CI — alpha.3
+  deferred (separate workstream).
+- **BUG-10 10b namespace primitive** — Phase 4 of alpha.11+ plan
+  (~500 LoC, ~2-3 weeks).
+
+---
+
 ## [4.0.0-alpha.15] — 2026-09-29 — Phase 2: audit hash chain + dark_memory_audit_verify (alpha.11+ Phase 2, Option B)
 
 ### Added — `internal/v4alpha/audit/canonical.go` (NEW)

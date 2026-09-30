@@ -1,4 +1,4 @@
-# Edge case catalog v1 — 15 deterministic pre-flight checks
+# Edge case catalog v1 — 16 deterministic pre-flight checks
 
 > **Audience**: operators extending the judge pipeline + reviewers
 > debugging surprising verdicts.
@@ -45,7 +45,15 @@ Two `action` values are emitted:
 
 ---
 
-## 2. The 15 ECs (per-EC card)
+## 2. The 16 ECs (per-EC card)
+
+EC-007 was split into EC-007a (binary, legacy fallback) and
+EC-007b (statistical, per Play Favorites arxiv:2508.06709) in
+**alpha.16 (Phase 3 of the alpha.11+ plan, commit `8681113`)**.
+EC-007a fires when `pc.CalibrationCI == nil` (no calibration data
+yet, typically < 50 historical samples). EC-007b fires when
+calibration is available and the LLM reports a confidence that
+exceeds the calibrated CI high.
 
 Each card: **ID** · **Trigger** · **Severity** · **Short-circuit**
 · **Real failure it catches** · **Test coverage**.
@@ -116,22 +124,66 @@ Each card: **ID** · **Trigger** · **Severity** · **Short-circuit**
 - **Catches**: operator forgot to provide intent.
 - **Tests**: `TestEdgeCase006_EmptySpecIntent_*`.
 
-### EC-007 — Self-bias (judge == author)
+### EC-007a — Self-bias (judge == author, binary legacy)
 
 - **Trigger**: `persona_id == "judge-..."` AND `provider ==
   same_as_author_provider` AND model fingerprint matches the operator's
-  own model.
+  own model AND `pc.CalibrationCI == nil` (no calibration data
+  available yet, typically < 50 historical samples for the
+  (provider, target_type, eval_type) tuple).
 - **Severity**: warn (does NOT short-circuit)
 - **Action**: `flagged` — recorded in `edge_case_hits`; verifier
   downgrades confidence by 0.1.
 - **Catches**: "judge and author are the same LLM" — a real and
   empirically documented bias. See Spiliopoulou, Fogliato et al. 2025
-  (arxiv:2508.06709) for a statistical framework that isolates self-bias
-  from genuine quality differences; their empirical study (>5000
+  (arxiv:2508.06709) for the statistical framework that this EC is a
+  coarse approximation of; their empirical study (>5000
   prompt-completion pairs, 9 LLM judges) shows GPT-4o and Claude 3.5
   Sonnet "systematically assign higher scores to their own outputs"
   and exhibit "family-bias" (same-family-model preference).
-- **Tests**: `TestEdgeCase007_SelfBias_*`.
+- **When it runs**: fires ONLY when EC-007b is no-op
+  (`pc.CalibrationCI == nil`). Once N >= 50 historical confidences
+  exist for the key tuple, EC-007a is replaced by EC-007b. EC-007a
+  is the cold-start leg of EC-007b; both cover the same threat but
+  with different precision.
+- **Tests**: `TestEC007a_SelfReferenceBinary_Positive`,
+  `TestEC007a_SelfReferenceBinary_Negative` (alpha.16 renamed).
+
+### EC-007b — Self-bias (judge == author, statistical) ⭐ NEW (alpha.16)
+
+- **Trigger**: `llm_confidence > calibration_ci_high` where the CI
+  comes from `BootstrapCI(historical_confidences, 0.95, 1000)`
+  populated by `Server.populateCalibration()` hook in
+  `internal/v4alpha/transport/mcp/judge.go` after each
+  `SaveEvaluation`. CI is computed on the (provider, target_type,
+  eval_type) tuple.
+- **Severity**: `warn` by default. Upgrades to `error` when
+  `excess = llm_confidence - ci_high > 0.20` (substantial
+  over-confidence past the calibrated upper bound).
+- **Action**: `flagged` (warn) or `drift_detected` (error).
+  Verifier downgrades confidence by `min(0.3, excess * 1.5)` —
+  more aggressive than EC-007a's flat 0.1 because statistical
+  evidence is stronger.
+- **Catches**: LLM-as-judge over-confidence — the SAME threat as
+  EC-007a but with statistical isolation per Play Favorites. EC-007b
+  asks "is this specific (provider, target_type, eval_type) LLM
+  systematically over-confident?", not "are the judge and author the
+  same model?". The latter is a coarse proxy; the former is
+  evidence-based.
+- **Pre-condition**: N >= 50 historical confidences for the key
+  tuple. Below that, `ShouldRecalibrate(N)` returns false and the
+  hook is a no-op (calibration_method stays NULL). EC-007a
+  covers cold start; EC-007b takes over once there is enough
+  data.
+- **Bootstrap implementation**: `internal/v4alpha/judge/calibration.go`
+  — Efron 1979 percentile method, pure Go, `math/rand/v2`,
+  deterministic seed=42, `defaultResamples=1000`. 1000 resamples
+  takes ~0.1ms per calibration pass.
+- **Tests**: `TestEC007b_SelfBiasStatistical_Positive` (mild excess → warn),
+  `TestEC007b_SelfBiasStatistical_SubstantiallyOverConfident_UpgradesToError`
+  (excess > 0.20 → error), `TestEC007b_SelfBiasStatistical_Negative`
+  (confidence within CI → no hit), `TestEC007b_NoCalibrationData_Skips`
+  (`pc.CalibrationCI == nil` → no hit, defers to EC-007a).
 
 ### EC-008 — Pairwise without position swap
 
@@ -247,12 +299,12 @@ Each card: **ID** · **Trigger** · **Severity** · **Short-circuit**
 
 ## 3. EC taxonomy by domain (for new contributors)
 
-The 15 ECs cluster into 4 domains. New ECs should fit one of these:
+The 16 ECs (15 from ADR-007 + EC-007b added in alpha.16) cluster into 4 domains. New ECs should fit one of these:
 
 | Domain | ECs | Characteristic |
 |---|---|---|
 | **Input validity** | EC-001, EC-004, EC-006 | empty / oversized / missing fields |
-| **Config validity** | EC-005, EC-007, EC-008 | bad persona / self-bias / missing mitigation |
+| **Config validity** | EC-005, EC-007a, EC-007b, EC-008 | bad persona / self-bias (binary + statistical) / missing mitigation |
 | **Claim verification** | EC-009, EC-010, EC-011, EC-014 | arithmetic / file:line / scope / evidence |
 | **Safety + consistency** | EC-002, EC-003, EC-012, EC-013, EC-015 | infra failure / injection / hidden assumption / version drift / verdict-reasoning |
 
@@ -364,16 +416,16 @@ This catalog was reviewed against the 2026 state of the art as part
 of the SOTA-doc chunk 1 (see `docs/judge-pipeline-v4.md` §10 for the
 full criticism). The catalog-specific finding:
 
-- **EC-007 is binary, not statistical.** The current EC-007 (self-bias
-  check) is a binary signal: "the artifact was produced by the same
-  model as the judge → flag". SOTA Play Favorites (Spiliopoulou,
-  Fogliato et al. 2025, arxiv:2508.06709 — verified 2026-09-28)
-  provides a **statistical framework** that quantifies self-bias
-  while accounting for genuine quality differences. v4 does not
-  implement the statistical test; it relies on the binary signal.
-  **Verdict: aligned in intent, behind in measurement axis.**
-  Remediation: not blocking (binary is good enough for `flagged`
-  action), documented in `docs/judge-pipeline-v4.md` §10.3.
+- **EC-007 is now BOTH binary AND statistical.** As of alpha.16
+  (commit `8681113`, 2026-09-30), EC-007 is split into EC-007a
+  (binary legacy, fires when N < 50 historical samples) and EC-007b
+  (statistical bootstrap-CI per Play Favorites). EC-007b asks
+  "is this (provider, target_type, eval_type) tuple systematically
+  over-confident?" rather than the binary "same model as judge?".
+  Efron 1979 percentile method, deterministic seed=42,
+  n=1000 default. **Verdict: aligned in intent AND measurement
+  axis (alpha.16).** Pre-alpha.16 criticism in this section is
+  now historical; the gap closed in commit `8681113`.
 
 For the full SOTA criticism (8 gaps with file:line + 4 proposed
 remediation ADRs), see `docs/judge-pipeline-v4.md` §10.

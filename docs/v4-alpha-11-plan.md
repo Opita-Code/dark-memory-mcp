@@ -105,8 +105,8 @@ Ed25519 (ADR-017) deferred to ADR-017-deferred; ADR-019
 
 | # | Item | Complexity | LoC | Risk | Status |
 |---|---|---|---|---|---|
-| 5a | Hash chain (prev_hash + row_hash columns) | x | +~400 | LOW | **SHIPPED alpha.15 (commit pending)** |
-| 5b | `dark_memory_audit_verify` MCP tool | S | ~120 | LOW | **SHIPPED alpha.15 (commit pending)** |
+| 5a | Hash chain (prev_hash + row_hash columns) | x | +~400 | LOW | **SHIPPED alpha.15 (commit `f322776`)** |
+| 5b | `dark_memory_audit_verify` MCP tool | S | ~120 | LOW | **SHIPPED alpha.15 (commit `f322776`)** |
 | 6 | ADR-017 (Ed25519 payload signature) | S | ~120 | LOW | DEFERRED → ADR-017-deferred |
 | 7 | ADR-019 (split payload BLOB into structured columns) | M | ~250 | MEDIUM | DEFERRED → ADR-019-deferred (orthogonal) |
 
@@ -141,24 +141,47 @@ flow in §4; verify semantics in §5; ADR-017 deferred in §10).
 **Vibe-loop**: `alpha-11-phase-3`
 
 **Items**:
-| # | Item | Complexity | LoC | Risk | Spec file |
-|---|---|---|---|---|---|
-| 8 | ADR-009 (provider allow-list 4 → 10+) | S | ~150 | LOW | `SPEC-alpha-11-adr009.md` |
-| 9 | ADR-011 (judge calibration bootstrap-CI) | M | ~250 | MEDIUM (statistical) | `SPEC-alpha-11-adr011.md` |
+| # | Item | Complexity | LoC | Risk | Spec file | Status |
+|---|---|---|---|---|---|---|
+| 8 | ADR-009 (provider allow-list 4 → 9) | S | ~150 | LOW | `SPEC-alpha-11-adr009.md` | **SHIPPED alpha.16 (commit `8681113`)** |
+| 9 | ADR-011 (judge calibration bootstrap-CI) | M | ~250 | MEDIUM (statistical) | `SPEC-alpha-11-adr011.md` | **SHIPPED alpha.16 (commit `8681113`)** |
 
 **Dependency graph**: ADR-009 and ADR-011 are independent.
 
+**Operator decision (2026-09-30)**: ship 9 providers
+(anthropic, minimax, minimax-cn, deepseek, openai, google,
+zhipu, moonshot, qwen) — ALL 9 in the canonical
+`internal/llm/catalog.go`. Mistral + kimi deferred (require
+catalog work, not judge-client work). EC-007a (binary
+substring) preserved as legacy fallback for uncalibrated rows.
+
 **Acceptance criteria**:
-- ADR-009: 10+ providers in the allow-list
-  (anthropic, minimax, minimax-cn, deepseek, openai,
-  google, qwen, kimi, zhipu, moonshot, mistral). Each
-  with native structured outputs (or documented gap).
-- ADR-011: every `sdd_evaluations` row has a
-  `confidence_calibrated` field computed via bootstrap-CI
-  (per Play Favorites arxiv:2508.06709). Calibration is
-  self-bias-corrected.
-- EC-007 (self-bias) now uses the statistical framework,
-  not the binary signal.
+- ✅ ADR-009: **9 providers** in the allow-list
+  (anthropic, openai, google, deepseek, minimax, minimax-cn,
+  zhipu, moonshot, qwen). Each with native structured outputs
+  or documented override. Mistral + kimi deferred (catalog
+  work; separate decision).
+- ✅ ADR-011: every `sdd_evaluations` row has 4 new
+  calibration columns computed via bootstrap-CI
+  (`confidence_calibrated`, `calibration_ci_low`,
+  `calibration_ci_high`, `calibration_method`). Per Play
+  Favorites arxiv:2508.06709. Efron 1979 percentile method,
+  deterministic seed=42, n=1000 default.
+- ✅ EC-007 split into EC-007a (binary, cold start) +
+  EC-007b (statistical bootstrap-CI, N >= 50). 16 ECs total
+  (was 15). EC-007b severity `warn` by default, upgrades to
+  `error` when excess > 0.20.
+- ✅ All 11 v4alpha packages PASS (`go vet` clean; full suite).
+- ✅ Drift check: spec judged ALIGNED with confidence 0.92
+  (eval 1952).
+- ✅ Atomic mirror: 1 SUMMARY pinned (row 2201) + 5 SECTION
+  (rows 2202-2206).
+- ✅ `docs/v4-status.md` §1.3 Phase 3 changelog entry;
+  `docs/INVARIANTS.md` §19 cross-ref; `docs/edge-case-catalog.md`
+  EC-007a/b per-EC cards; `docs/judge-pipeline-v4.md` §10.3
+  SOTA criticism updated; `docs/v4-alpha-11-plan.md` §3
+  Phase 3 marked shipped (this commit); `CHANGELOG.md`
+  `[4.0.0-alpha.16]` entry at top.
 
 ## 4. Phase 4 — BUG-10 10b namespace primitive (2-3 weeks)
 
