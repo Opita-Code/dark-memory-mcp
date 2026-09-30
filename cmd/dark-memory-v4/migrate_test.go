@@ -82,8 +82,8 @@ func TestMigrate_JSON(t *testing.T) {
 	if got.SchemaVersion != schemaVersion {
 		t.Errorf("schema_version = %q; want %q", got.SchemaVersion, schemaVersion)
 	}
-	if len(got.Steps) != 8 {
-		t.Errorf("steps count = %d; want 8 (audit, session, agent_memory, manifest/cap, manifest/meta, vibe/spec, vibe/artifact, vibe/drift)", len(got.Steps))
+	if len(got.Steps) != 9 {
+		t.Errorf("steps count = %d; want 9 (audit, session, agent_memory, manifest/cap, manifest/meta, vibe/spec, vibe/artifact, vibe/drift, project/apply)", len(got.Steps))
 	}
 }
 

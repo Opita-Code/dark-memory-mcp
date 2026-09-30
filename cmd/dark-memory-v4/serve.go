@@ -31,6 +31,7 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/audit"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/judge"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/manifest"
+	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/project"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/session"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/store"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/transport/mcp"
@@ -159,6 +160,17 @@ func applyAllSchemas(ctx context.Context, db *sql.DB) error {
 	// pre-Phase-3 DBs this is the migration.
 	if err := judge.ApplyCalibrationColumns(ctx, db); err != nil {
 		return fmt.Errorf("judge/calibration: %w", err)
+	}
+	// Phase 4 Chunk 4.1: namespace registry + project_id column
+	// on 5 tables (agent_memory, audit_log, sdd_evaluations,
+	// vibe_specs, vibe_artifacts). Idempotent: pragma_table_info
+	// detects pre-existing columns and skips. Seeds the 'default'
+	// project on first boot.
+	if err := project.CreateSchema(db); err != nil {
+		return fmt.Errorf("project: %w", err)
+	}
+	if err := project.ApplyProjectIDColumns(ctx, db); err != nil {
+		return fmt.Errorf("project/apply: %w", err)
 	}
 	return nil
 }

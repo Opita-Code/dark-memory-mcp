@@ -202,6 +202,11 @@ func (w *Writer) Write(ctx context.Context, actor, sessionID string, payload []b
 	} else {
 		sessionIDArg = sessionID
 	}
+	// No projectID — Write is the legacy 4-arg form. The audit_log
+	// row gets project_id='default' via the column DEFAULT. Callers
+	// that need a specific project (e.g., project.Store.Create) use
+	// WriteWithProject. The canonical hash is the SAME — project_id
+	// is metadata, not part of the chain (Phase 2 §3.2 invariant).
 
 	// 1. Generate created_at in Go. Same value goes into both the
 	// INSERT and the row_hash input.
@@ -217,7 +222,8 @@ func (w *Writer) Write(ctx context.Context, actor, sessionID string, payload []b
 	}
 
 	// 3. INSERT with prev_hash and created_at (row_hash populated
-	// in step 5).
+	// in step 5). project_id='default' via column DEFAULT — legacy
+	// callers don't need to know about the namespace primitive.
 	res, err := w.db.ExecContext(ctx,
 		"INSERT INTO audit_log (actor, session_id, payload, prev_hash, created_at) VALUES (?, ?, ?, ?, ?)",
 		actor, sessionIDArg, payload, prevHash, createdAt,
@@ -244,6 +250,89 @@ func (w *Writer) Write(ctx context.Context, actor, sessionID string, payload []b
 		rowHash[:], id,
 	); err != nil {
 		return id, fmt.Errorf("audit Write update row_hash: %w", err)
+	}
+
+	// 6. Update mirrors.
+	w.lastID = id
+	w.lastHash = rowHash[:]
+	return id, nil
+}
+
+// WriteWithProject is the project-tagged variant of Write (Phase 4
+// Chunk 4.1). Same canonical hash (project_id is metadata, NOT
+// part of the chain — Phase 2 §3.2 invariant); same prev_hash
+// resolution; same row_hash computation. The ONLY difference is
+// the INSERT includes the project_id column.
+//
+// Why a separate method (not a Write 5th arg):
+//   - 16 existing callers would have to be updated to pass ""
+//     for projectID. That's a noise commit that adds no semantic
+//     change.
+//   - Old callers' audit rows get project_id='default' via the
+//     column DEFAULT clause. New callers (e.g., project.Store.
+//     Create) use WriteWithProject to stamp a specific project.
+//   - The hash chain is backward-compatible: any pre-Phase-4
+//     audit row continues to verify (project_id was never part
+//     of the hash).
+//
+// projectID is required (non-empty) — INV-1 requires every audit
+// row to identify its scope. Use "default" for system writes.
+func (w *Writer) WriteWithProject(ctx context.Context, actor, sessionID, projectID string, payload []byte) (int64, error) {
+	if actor == "" {
+		return 0, fmt.Errorf("audit WriteWithProject: actor must be non-empty (INV-1)")
+	}
+	if projectID == "" {
+		return 0, fmt.Errorf("audit WriteWithProject: projectID must be non-empty (INV-1)")
+	}
+	var sessionIDArg interface{}
+	if sessionID == "" {
+		sessionIDArg = nil
+	} else {
+		sessionIDArg = sessionID
+	}
+
+	// 1. Generate created_at in Go. Same value goes into both the
+	// INSERT and the row_hash input.
+	createdAt := time.Now().UTC().Format(time.RFC3339Nano)
+
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	// 2. Resolve prev_hash (hot path: mirror; cold: bootstrap from DB).
+	prevHash, err := w.resolvePrevHashLocked(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("audit Write resolvePrevHash: %w", err)
+	}
+
+	// 3. INSERT with prev_hash, project_id, and created_at (row_hash
+	// populated in step 5). project_id is the namespace primitive
+	// (Phase 4); it is queryable metadata but NOT part of the
+	// canonical hash (Phase 2 §3.2 invariant).
+	res, err := w.db.ExecContext(ctx,
+		"INSERT INTO audit_log (actor, session_id, project_id, payload, prev_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+		actor, sessionIDArg, projectID, payload, prevHash, createdAt,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("audit WriteWithProject insert: %w", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		// Rare: INSERT succeeded but LastInsertId is not supported.
+		// Surface the error so the caller knows the row is in the
+		// DB but we couldn't tell them the id.
+		return 0, fmt.Errorf("audit WriteWithProject LastInsertId: %w", err)
+	}
+
+	// 4. Compute row_hash (pure function — canonical.go). Same
+	// canonical hash as Write (project_id is metadata).
+	rowHash := ComputeRowHash(prevHash, id, actor, sessionID, payload, createdAt)
+
+	// 5. UPDATE row_hash on the new row.
+	if _, err := w.db.ExecContext(ctx,
+		"UPDATE audit_log SET row_hash = ? WHERE audit_id = ?",
+		rowHash[:], id,
+	); err != nil {
+		return id, fmt.Errorf("audit WriteWithProject update row_hash: %w", err)
 	}
 
 	// 6. Update mirrors.
