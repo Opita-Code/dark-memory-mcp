@@ -11,6 +11,235 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [4.0.0-alpha.17] — 2026-09-30 — Phase 4: BUG-10 10b namespace primitive (INV-19)
+
+> Phase 4 of the alpha.11+ plan (Phase 1-3 shipped). Per
+> `docs/specs/SPEC-alpha-11-phase4.md` (vibe_loop
+> `alpha-11-phase-4`, spec_id 1811, drift ALIGNED 0.95).
+> Operator decision (2026-09-30): namespace primitive (SOFT
+> workstream scope), NOT multi-tenant — per
+> `docs/sota-critique.md §7.6.9`. HARD isolation is
+> `coexistence_group` (per-MCP dark.db).
+>
+> **3 commits, 0 to 1 service**: foundation + surface + hard
+> isolation enforcement. Tool count: 42 → 46. Schema version:
+> `v4alpha/2026-09-30/003` → `004`. Audit chain invariant
+> preserved (Phase 2 §3.2 — project_id is metadata, NOT part
+> of the hash).
+
+### Added — `internal/v4alpha/project/` package (NEW, ~1,023 LoC)
+
+Foundation commit (`1d39659`):
+
+- **`types.go` (156 LoC)** — `Project` struct (7 fields vs v3's
+  13 minimal viable surface), reserved-id map (`'default'`,
+  `'dark'`), kebab-case regex `^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$`,
+  sentinel errors (`ErrProjectNotFound`, `ErrReservedProjectID`,
+  `ErrInvalidProjectID`, `ErrInvalidProject`,
+  `ErrProjectAlreadyGone`), `Validate()`,
+  `NormalizeDisplayName()`, `IsArchived()`, `IsDefault()`.
+- **`schema.go` (175 LoC)** — `CreateSchema(db)` creates the
+  `projects` table + seeds `'default'` workstream via
+  `INSERT OR IGNORE`. `ApplyProjectIDColumns(ctx, db)`
+  idempotently adds `project_id` column to 5 tables
+  (agent_memory, audit_log, sdd_evaluations, vibe_specs,
+  vibe_artifacts) + 5 indexes. Uses `pragma_table_info` to
+  skip pre-existing columns. Now tolerates missing tables
+  (subset-boot tolerance for tests).
+- **`store.go` (283 LoC)** — `Store.Create` (idempotent on
+  `project_id`, rejects reserved + invalid ids, first-writer
+  wins), `Store.Lookup`, `Store.Archive` (soft delete via
+  `archived_at`), `Store.List`. Every Create emits one INV-1
+  audit row via `audit.Writer.WriteWithProject`.
+- **`doc.go` (51 LoC)** — canonical threat model statement.
+- **`project_test.go` (350 LoC)** — 8 unit tests.
+
+### Added — `audit.Writer.WriteWithProject` (NEW sibling of Write)
+
+- Same canonical hash as Write (Phase 2 §3.2 invariant —
+  `project_id` is metadata, NOT part of the chain).
+- 16 existing Write callers stay unchanged; their rows get
+  `project_id='default'` via column DEFAULT.
+- New caller `project.Store.Create` uses WriteWithProject to
+  stamp the namespace.
+
+### Added — 4 new MCP tools (commit `7d3cdee`, 42 → 46)
+
+- **`dark_memory_project_create(project_id, display_name,
+  description?, default_agent_id?, operator, session_id?)`**
+  — idempotent on project_id (first-writer wins via
+  `project.Store.Create`). Reserved ids ('default', 'dark')
+  rejected via `ErrReservedProjectID`. Invalid kebab-case
+  rejected via `ErrInvalidProjectID`. INV-1 audit row emitted.
+- **`dark_memory_project_lookup(project_id)`** — returns
+  `{found: bool, project: null}` on not-found (NOT error).
+  Matches `agent_memory_get` wire shape.
+- **`dark_memory_mindset_apply(vibe_case, task_description,
+  operator?, model_floor?)` ⭐ STUB** — canned system_prompt
+  that names the role. Validates `vibe_case ∈ {C1..C7}`,
+  `task_description ≥ 10 chars`, `model_floor ∈
+  {sonnet,opus,haiku,inherit}`. Explicit `stub_notice` field
+  makes MVP nature observable. Full implementation: **alpha.18**
+  (when v4 LLMClient is wired into a v4 MCP tool).
+- **`dark_memory_delegate_intent(task_description, vibe_case,
+  operator?)` ⭐ STUB** — always returns `decision='inline'` +
+  `subtasks=[]`. Same input validation as mindset_apply. Full
+  DECIDE→PLAN→MIND→CURATE pipeline: **alpha.18**.
+
+### Added — Hard isolation (commit `badb1a2`)
+
+INV-19 namespace primitive enforcement. Phase 2 §3.2 hash
+chain invariant preserved.
+
+- **`audit.Writer.WriteExecWithProject` (NEW sibling of
+  WriteExec)** — threads project_id inside the tx. Same
+  canonical hash (project_id is metadata).
+- **`session.Store.ProjectValidator` interface + `SetProjectsForTest`
+  seam** — Start validates `project_id` existence via
+  `projects.Lookup`. Missing → `ErrUnknownProject` (NEW sentinel
+  error, `errors.Is` discriminable).
+- **`session.Store.Start` audit emission** uses `WriteWithProject`.
+- **`session_start` tool defaultProjectID**: `'dark-memory-v4'`
+  (legacy) → `'default'` (the seeded catch-all). Backwards-
+  incompat fix needed because hard isolation rejects
+  unregistered projects. Wire shape unchanged.
+- **`agent_memory.Save/Update/Archive`** route through
+  `writeAuditWithProject` helper (NEW, package-local). Empty
+  `auditMeta.ProjectID` falls back to legacy `WriteExec` (audit
+  row gets `project_id='default'` via column DEFAULT).
+- **`vibe.Artifact.ProjectID`** + `ArtifactStore.Insert/Get`
+  thread project_id into the vibe_artifacts column.
+- **`vibe.Pipeline.Publish`** uses `p.writeAuditWithProject`
+  helper. Empty `art.ProjectID` falls back to `audit.Write`.
+- **`judge.Evaluation.ProjectID`** + `SaveEvaluation` /
+  `SaveConsensusSamples` INSERTs include project_id (resolves
+  to `'default'` literal when empty — NOT NULL DEFAULT only
+  fires when column is OMITTED, explicit NULL triggers NOT
+  NULL). selectEvaluationSQL + scanEvaluation include the
+  column.
+- **`judge.Store.ConfidencesByProjectProviderTarget` (NEW)** —
+  project-scoped sibling of `ConfidencesByProviderTarget`.
+  Empty projectID rejected (contract: project-scoped queries
+  must carry scope).
+- **`populateCalibration` hook** (`transport/mcp/judge.go`) —
+  project-scoped first, falls back to global when project
+  has `< 50` samples (cold start). Empty `e.ProjectID` goes
+  through global path (legacy contract).
+- **`project.ApplyProjectIDColumns` tolerance** — now skips
+  tables that don't exist (sqlite_master check). Test setups
+  boot subsets; production unaffected.
+- **`transport/mcp/server.go` wiring** — `projectStoreValidator`
+  adapter bridges `*project.Store.Lookup` to
+  `session.ProjectValidator.Lookup`. `NewServer` wires it
+  after `project.NewStore`.
+
+### Changed — `session.Store` (hard isolation enforcement)
+
+- New `projects *ProjectValidator` field (nil-safe for pre-
+  Phase-4 callers via `SetProjectsForTest` seam).
+- New sentinel error: `ErrUnknownProject` (errors.Is
+  discriminable).
+- `Start` validates project_id BEFORE INSERT (INV-7 hard
+  isolation at the session boundary).
+- Audit emission uses `WriteWithProject` (project_id stamped).
+
+### Changed — `transport/mcp/session.go`
+
+- `defaultProjectID` const: `'dark-memory-v4'` → `'default'`.
+  The legacy literal was not a registered project; with hard
+  isolation enabled, it would fail with `ErrUnknownProject`.
+  Wire shape unchanged (callers may still pass `project_id`
+  explicitly).
+
+### Tests — 14 new isolation tests + 5 new test files (~310 LoC)
+
+- **`audit/writer_tx_project_test.go`** (3 tests):
+  - `TestWriteExecWithProject_StampsColumn` — happy path.
+  - `TestWriteExecWithProject_EmptyActorFailsFast` — INV-1.
+  - `TestWriteExecWithProject_EmptyProjectIDFailsFast` —
+    projectID non-empty invariant.
+- **`session/session_project_test.go`** (3 tests):
+  - `TestSessionStart_UnknownProject_Rejected` — `ErrUnknownProject`.
+  - `TestSessionStart_KnownProject_Accepted`.
+  - `TestSessionStart_NilValidatorAcceptsAny` — backwards compat.
+- **`agent_memory/agent_memory_project_test.go`** (2 tests):
+  - `TestSaveAuditProjectIDSurfaced` — audit_log.project_id matches.
+  - `TestSaveAuditEmptyProjectIDFallsBack` — empty → 'default'.
+- **`vibe/artifact_project_test.go`** (3 tests):
+  - `TestArtifactInsert_ProjectIDPersisted`.
+  - `TestArtifactInsert_EmptyProjectIDDefaults`.
+  - `TestPipelinePublish_AuditStampedWithProjectID`.
+- **`judge/calibration_project_test.go`** (3 tests):
+  - `TestConfidencesByProjectProviderTarget_FiltersCorrectly`.
+  - `TestConfidencesByProjectProviderTarget_EmptyProjectIDFailsFast`.
+  - `TestSaveEvaluation_ProjectIDRoundtrip`.
+
+### Schema — `project_id` column added to 5 tables
+
+```
+ALTER TABLE agent_memory    ADD COLUMN project_id TEXT NOT NULL DEFAULT 'default';
+ALTER TABLE audit_log       ADD COLUMN project_id TEXT NOT NULL DEFAULT 'default';
+ALTER TABLE sdd_evaluations ADD COLUMN project_id TEXT NOT NULL DEFAULT 'default';
+ALTER TABLE vibe_specs      ADD COLUMN project_id TEXT NOT NULL DEFAULT 'default';
+ALTER TABLE vibe_artifacts  ADD COLUMN project_id TEXT NOT NULL DEFAULT 'default';
+```
+
+Plus 5 indexes: `agent_memory_project_idx`, `audit_log_project_idx`,
+`sdd_eval_project_idx`, `vibe_specs_project_idx`, `vibe_artifact_project_idx`.
+
+Idempotent migration via `pragma_table_info` + `INSERT OR IGNORE`
+on the seed. Legacy rows backfill via DEFAULT clause (O(1) — SQLite
+stores default in schema, lazy on read).
+
+Schema version: `v4alpha/2026-09-30/003` → `v4alpha/2026-09-30/004`.
+
+### Cross-version lockstep hash pin
+
+`4e6196a07c7903dc712fd4a96cbc4df49317e0da45b57f939b7e6d12d6606ccb` —
+**unchanged**. Pre-Phase-4 audit rows still verify against their
+original row_hash (project_id was never part of the canonical hash).
+
+### Verified
+
+- `go vet ./...` clean.
+- **12 v4alpha packages PASS**: audit 14s, agent_memory 67s,
+  docs_index 20s, judge 4s, manifest 90s, project 1s, research
+  1s, security 2s, session 3s, store 24s, transport/mcp 40s,
+  vibe 3s.
+- v4 binary rebuilt: `dark-memory-v4.exe` (19.66 MB, was 19.5 MB).
+- Atomic mirror per ADR-008 (3 SUMMARY pinned + 12 SECTION):
+  - Chunk 4.1 SUMMARY (row 2214) + §A-§D (rows 2215-2218).
+  - Chunk 4.2 SUMMARY (row 2220) + §A-§D (rows 2221-2224).
+  - Chunk 4.3 SUMMARY (row 2225) + §A-§D (rows 2226-2229).
+
+### Docs followup (this commit, Chunk 4.4)
+
+- `docs/v4-status.md` §1.4 — Phase 4 changelog (this release).
+- `docs/INVARIANTS.md` INV-19 — namespace primitive invariant.
+- `docs/v4-alpha-11-plan.md` §4 — Phase 4 marked shipped.
+- `docs/sota-critique.md` §7.6.9 — threat model "now enforced".
+- This CHANGELOG entry.
+
+### Operator note (backwards-compat)
+
+`session_start` default `project_id` switched from
+`'dark-memory-v4'` to `'default'` (literal). The legacy default
+was NOT a registered project; with hard isolation enabled, it
+would fail with `ErrUnknownProject`. Callers that relied on the
+literal must pass it explicitly AND register it via
+`project_create`, or accept `'default'`. Wire shape unchanged.
+
+### Cross-refs
+
+- `docs/specs/SPEC-alpha-11-phase4.md` — Phase 4 master plan.
+- `docs/v4-status.md` §1.4 + §3 (INV-19) + §6.6.
+- `docs/INVARIANTS.md` INV-19.
+- `docs/sota-critique.md §7.6.9` — threat model.
+- `docs/v4-alpha-11-plan.md §4` — Phase 4 status.
+- dark-memory rows 2214-2229 (3 SUMMARY + 12 SECTION atomic mirror).
+
+---
+
 ## [4.0.0-alpha.16] — 2026-09-30 — Phase 3: judge improvements (ADR-009 + ADR-011)
 
 > Phase 3 of the alpha.11+ plan (Phase 1-2 shipped). Per

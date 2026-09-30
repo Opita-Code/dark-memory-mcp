@@ -183,39 +183,94 @@ substring) preserved as legacy fallback for uncalibrated rows.
   Phase 3 marked shipped (this commit); `CHANGELOG.md`
   `[4.0.0-alpha.16]` entry at top.
 
-## 4. Phase 4 — BUG-10 10b namespace primitive (2-3 weeks)
+## 4. Phase 4 — BUG-10 10b namespace primitive ✅ SHIPPED (alpha.17, 2026-09-30)
 
 **Vibe-loop**: `alpha-11-phase-4`
 
+**Spec**: `docs/specs/SPEC-alpha-11-phase4.md` (427 LoC, 10
+sections, vibe_loop `alpha-11-phase-4`, spec_id 1811, drift
+ALIGNED 0.95).
+
 **Items**:
-| # | Item | Complexity | LoC | Risk | Spec file |
-|---|---|---|---|---|---|
-| 10 | BUG-10 10b (mindset + delegation + project + namespace) | L | ~500 | MEDIUM (schema) | `SPEC-alpha-11-bug10-10b.md` |
+| # | Item | Complexity | LoC | Risk | Status | Commits |
+|---|---|---|---|---|---|---|
+| 10a | Chunk 4.1 (foundation: projects table + 5-column migration + audit.WriteWithProject) | L | ~1,200 | MEDIUM (schema) | ✅ SHIPPED | `1d39659` |
+| 10b | Chunk 4.2 (4 new MCP tools: project_create, project_lookup, mindset_apply STUB, delegate_intent STUB) | M | ~480 | LOW | ✅ SHIPPED | `7d3cdee` |
+| 10c | Chunk 4.3 (hard isolation enforcement: WriteExecWithProject + session.Store validator + vibe/judge threading + project-scoped calibration) | L | ~600 | MEDIUM (cross-package) | ✅ SHIPPED | `badb1a2` |
+| 10d | Chunk 4.4 (docs followup: v4-status §1.4, INVARIANTS INV-19, CHANGELOG alpha.17, v4-alpha-11-plan §4 marked shipped, sota-critique §7.6.9) | S | ~250 | LOW | ✅ SHIPPED | (this commit) |
 
-**Pre-coding 4-doc plan** (per 10a pattern, row 2112):
-1. `docs/bug10-10b-spec.md` — what 4 tools + namespace.
-2. `docs/bug10-10b-design.md` — schema, package layout,
-   transport wiring.
-3. `docs/bug10-10b-tests.md` — test plan (10-12 tests).
-4. `docs/bug10-10b-risk.md` — risk register, mitigations.
+**Operator decision (2026-09-30)**: namespace primitive (SOFT
+workstream scope), NOT multi-tenant — per `docs/sota-critique.md
+§7.6.9`. HARD isolation is `coexistence_group` (per-MCP dark.db).
+The rename "namespace" (not "tenant") prevents the common bug of
+treating `project_id` as a security boundary in future code.
 
-**Operator approval gate** between docs and code.
+**Spec**: `docs/specs/SPEC-alpha-11-phase4.md` (427 LoC, 10
+sections). vibe_loop `alpha-11-phase-4`. spec_id 1811. Drift
+ALIGNED with confidence 0.95 (eval from vibe_publish 1547).
 
-**Acceptance criteria**:
-- 4 new tools registered: `mindset_apply`, `delegate_intent`,
-  `project_create`, `project_lookup` (38 → 42 tools).
-- `projects` table exists (namespace registry, NOT tenant
-  registry per §7.6.9).
-- `project_id` column on 5 existing tables
-  (agent_memory, audit_log, sdd_evaluations, sessions,
-  writes — or whatever the 5 are in BUG-10 10b's spec).
-- Default `project_id = "default"` for backfill.
-- Threat model statement in `docs/v4-status.md`:
+**Acceptance criteria** (all met, 2026-09-30):
+- ✅ 4 new tools registered (Chunk 4.2, alpha.17):
+  `project_create`, `project_lookup`, `mindset_apply` (STUB),
+  `delegate_intent` (STUB). Tool count: 42 → 46.
+- ✅ `projects` table exists (namespace registry, NOT tenant
+  registry per §7.6.9). Auto-seeds `'default'` via
+  `INSERT OR IGNORE`.
+- ✅ `project_id` column on 5 existing tables
+  (agent_memory, audit_log, sdd_evaluations, vibe_specs,
+  vibe_artifacts) — Chunk 4.1 migration. Idempotent via
+  `pragma_table_info`.
+- ✅ Default `project_id = "default"` for backfill (column
+  DEFAULT clause, O(1) — SQLite stores default in schema).
+- ✅ Threat model statement in `docs/v4-status.md` §6.6 +
+  `docs/INVARIANTS.md` INV-19:
   "v4 assumes the harness session is the only concurrent
   consumer. Project IDs scope workstreams within one
-  operator. For hard isolation between concurrent users,
+  operator. For HARD isolation between concurrent users,
   use separate `coexistence_group`s or separate MCP
-  instances."
+  instances. The `project_id` column is a soft namespace,
+  not a security boundary."
+- ✅ INV-19 (namespace primitive) defined in
+  `docs/INVARIANTS.md`. Enforced at 8 sites (per the Quick
+  Reference table at the bottom of INVARIANTS.md).
+- ✅ Phase 2 §3.2 hash chain invariant preserved:
+  `WriteWithProject` + `WriteExecWithProject` use the same
+  `ComputeRowHash` as `Write` + `WriteExec`. Pre-Phase-4
+  audit rows still verify.
+- ✅ Hard isolation enforcement (Chunk 4.3):
+  `session.Store.Start` validates `project_id` existence
+  (`ErrUnknownProject`); every audit-emitting surface
+  (agent_memory, vibe, judge) threads `project_id` via
+  `WriteWithProject` / `WriteExecWithProject`;
+  `populateCalibration` is project-scoped first, global
+  fallback.
+- ✅ 14 new isolation tests pass (~310 LoC across 5 new
+  test files).
+- ✅ All 12 v4alpha packages PASS (`go vet` clean;
+  full suite).
+- ✅ Atomic mirror per ADR-008 (3 SUMMARY pinned + 12
+  SECTION pinned=false):
+  - Chunk 4.1 SUMMARY (row 2214) + §A-§D (rows 2215-2218).
+  - Chunk 4.2 SUMMARY (row 2220) + §A-§D (rows 2221-2224).
+  - Chunk 4.3 SUMMARY (row 2225) + §A-§D (rows 2226-2229).
+- ✅ `docs/v4-status.md` §1.4 Phase 4 changelog (this
+  release).
+- ✅ `docs/INVARIANTS.md` INV-19 (this commit).
+- ✅ `CHANGELOG.md [4.0.0-alpha.17]` entry (this commit).
+- ✅ `docs/sota-critique.md §7.6.9` — threat model "now
+  enforced" annotation (this commit).
+- ✅ v4 binary rebuilt: `dark-memory-v4.exe` (19.66 MB,
+  was 19.5 MB).
+- ✅ Cross-version lockstep hash pin unchanged (audit chain
+  backward-compatible).
+- ✅ Schema version: `v4alpha/2026-09-30/003` → `004`.
+
+**Backwards-compat note**: `session_start` default `project_id`
+switched from `'dark-memory-v4'` to `'default'` (literal). The
+legacy default was NOT a registered project; with hard isolation
+enabled, it would fail with `ErrUnknownProject`. Callers that
+relied on the literal must pass it explicitly AND register it via
+`project_create`, or accept `'default'`. Wire shape unchanged.
 
 ## 5. Phase 5 — Memory subsystem (3-4 weeks)
 

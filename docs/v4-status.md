@@ -1,7 +1,7 @@
 # v4 Status — current state of the redesign
 
 > **Audience**: anyone touching the `feat/v4-redesign` branch.
-> **TL;DR**: v4-alpha.16 ships **42 of 57 canonical tools** (74% of
+> **TL;DR**: v4-alpha.17 ships **46 of 57 canonical tools** (81% of
 > the surface) plus the full judge pipeline (ADR-007, 4 commits
 > shipped) plus the judge_util + research namespaces (BUG-10 10a)
 > plus the SOTA-doc workstream (7 of 7 chunks, +2,380/-7 lines,
@@ -11,30 +11,32 @@
 > process audit_id monotonicity) plus **Phase 2 (audit hash chain
 > + dark_memory_audit_verify MCP tool, Option B)** plus
 > **Phase 3 (ADR-009: provider allow-list 4 → 9; ADR-011:
-> bootstrap-CI statistical self-bias detection per Play Favorites)**.
+> bootstrap-CI statistical self-bias detection per Play Favorites)**
+> plus **Phase 4 (BUG-10 10b namespace primitive — foundation +
+> 4 MCP tools + hard isolation enforcement, 3 commits, INV-19)**.
 > The package layout is **NOT** what `ARCHITECTURE-V4.md
 > §5 (original)` promised — see "actual layout" below. The operator-
 > facing surface is real and tested.
-> Remaining 15 tools land in BUG-10 10b-e; the judge pipeline was
+> Remaining 11 tools land in BUG-10 10b-e; the judge pipeline was
 > added in 4 commits (commits 1-4 of ADR-007). The next concrete
-> work is the **alpha.11+ plan** (Phase 1 closed, Phase 2 shipped,
-> Phase 3 shipped, Phase 4-5 to follow) — see `docs/v4-alpha-11-plan.md`.
+> work is **Phase 5 (ADR-013/014/015 memory subsystem, gated on
+> OD2=YES)** — see `docs/v4-alpha-11-plan.md`.
 
 | Field | Value |
 |---|---|
 | Branch | `feat/v4-redesign` (from `v2.20.0`, NOT from `v3.0-void`) |
 | Last reviewed | 2026-09-30 |
-| Status | **alpha.16** — pre-release, local-only, contributors only |
-| Version constant | `v4alpha.16-dev` (resolved via `ldflags` → `debug.ReadBuildInfo` → `"dev"`) |
-| Schema version | `v4alpha/2026-09-30/003` (stamped in `schema_migrations`); audit_log gains `prev_hash`, `row_hash` (alpha.15); sdd_evaluations gains `confidence_calibrated`, `calibration_ci_low`, `calibration_ci_high`, `calibration_method` (alpha.16) |
-| Binary | `dark-memory-v4` (19.5 MB Windows) |
+| Status | **alpha.17** — pre-release, local-only, contributors only |
+| Version constant | `v4alpha.17-dev` (resolved via `ldflags` → `debug.ReadBuildInfo` → `"dev"`) |
+| Schema version | `v4alpha/2026-09-30/004` (stamped in `schema_migrations`); audit_log gains `prev_hash`, `row_hash` (alpha.15); sdd_evaluations gains `confidence_calibrated`, `calibration_ci_low`, `calibration_ci_high`, `calibration_method` (alpha.16); 5 tables gain `project_id` (alpha.17) — agent_memory, audit_log, sdd_evaluations, vibe_specs, vibe_artifacts |
+| Binary | `dark-memory-v4` (19.66 MB Windows) |
 | Local-only policy | YES — no `git push`/`fetch`/`pull`, no remote tags/releases |
 
 ---
-## 1. Tools inventory (42 of 57)
+## 1. Tools inventory (46 of 57)
 
 The canonical surface is 57 tools (see `ARCHITECTURE-V4.md §6.3
-tool-count target`). v4-alpha.16 registers **42 of those**.
+tool-count target`). v4-alpha.17 registers **46 of those**.
 
 ### 1.1 session_start Loadout (PRE-1 C3, alpha.13)
 
@@ -131,7 +133,126 @@ Per `docs/specs/SPEC-alpha-11-phase3.md` (2026-09-30):
 
 **Tool count**: 42 → 42 (no new MCP tools; surface unchanged).
 
-### ✅ Registered (42)
+### 1.4 Phase 4 — BUG-10 10b namespace primitive (alpha.17) ⭐ NEW
+
+Per `docs/specs/SPEC-alpha-11-phase4.md` (2026-09-30):
+
+Per the threat model in `docs/sota-critique.md §7.6.9`, v4's
+`project_id` is a SOFT workstream namespace (filter column), NOT
+a multi-tenant primitive. HARD isolation is `coexistence_group`
+(per-MCP `dark.db`). Phase 4 ships the namespace primitive in
+3 commits (foundation + surface + hard isolation):
+
+#### 1.4.1 Chunk 4.1 — foundation (commit `1d39659`)
+
+- **NEW `internal/v4alpha/project/` package** (~1,023 LoC):
+  - `types.go` (156 LoC) — `Project` struct (7 fields vs v3's 13),
+    reserved-id map (`'default'`, `'dark'`), kebab-case regex
+    `^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$`, sentinel errors
+    (`ErrProjectNotFound`, `ErrReservedProjectID`,
+    `ErrInvalidProjectID`, `ErrInvalidProject`,
+    `ErrProjectAlreadyGone`).
+  - `schema.go` (175 LoC) — `CreateSchema` (idempotent, seeds
+    `'default'` via `INSERT OR IGNORE`) +
+    `ApplyProjectIDColumns` (idempotent ALTER ADD COLUMN × 5
+    tables + 5 indexes via `pragma_table_info`).
+  - `store.go` (283 LoC) — `Store.Create` (idempotent,
+    rejects reserved/invalid), `Lookup`, `Archive`, `List`.
+    Every Create emits one INV-1 audit row via
+    `audit.Writer.WriteWithProject`.
+- **`audit.Writer.WriteWithProject` (NEW sibling of Write)**:
+  same canonical hash (project_id is metadata, NOT part of the
+  chain — Phase 2 §3.2 invariant preserved). 16 existing Write
+  callers stay unchanged; their rows get `project_id='default'`
+  via column DEFAULT.
+- **`project_id` column added to 5 tables**:
+  `agent_memory`, `audit_log`, `sdd_evaluations`, `vibe_specs`,
+  `vibe_artifacts` + 5 indexes. Idempotent migration.
+- **8 unit tests** + shared test setup.
+
+#### 1.4.2 Chunk 4.2 — surface (commit `7d3cdee`)
+
+- **4 NEW MCP tools** (42 → 46):
+  - `dark_memory_project_create` — idempotent on `project_id`,
+    rejects reserved ids ('default', 'dark'), rejects invalid
+    kebab-case. INV-1 audit row emitted.
+  - `dark_memory_project_lookup` — returns `{found: bool, project: null}`
+    on not-found (matches `agent_memory_get` wire shape).
+  - `dark_memory_mindset_apply` — **STUB**. Canned system_prompt
+    that names vibe_case + task_description. `stub_notice` field
+    makes MVP nature observable. Full implementation: alpha.18
+    (when v4 LLMClient is wired into a v4 MCP tool).
+  - `dark_memory_delegate_intent` — **STUB**. Always returns
+    `decision='inline'` + `subtasks=[]`. Full DECIDE→PLAN→MIND→
+    CURATE pipeline: alpha.18.
+
+#### 1.4.3 Chunk 4.3 — hard isolation (commit `badb1a2`)
+
+INV-19 namespace primitive enforcement. Phase 2 §3.2 hash chain
+invariant preserved (project_id is metadata, NOT part of the
+hash). The 3 isolation surfaces:
+
+1. **audit / agent_memory / session** (Chunk 4.3 §A):
+   - `audit.Writer.WriteExecWithProject` (NEW sibling of
+     WriteExec, threads project_id inside the tx).
+   - `agent_memory.writeAuditWithProject` + `judge.writeAuditExecWithProject`
+     (local helpers; centralise the policy in one place).
+   - `session.Store.projects` field (`ProjectValidator` interface,
+     nil-safe). Start now calls `projects.Lookup` BEFORE INSERT;
+     missing project → `ErrUnknownProject` (NEW sentinel error).
+   - Session audit emission uses `WriteWithProject`.
+   - **`session_start` defaultProjectID**: `'dark-memory-v4'`
+     (legacy) → `'default'` (the seeded catch-all).
+
+2. **vibe / judge** (Chunk 4.3 §B):
+   - `vibe.Artifact.ProjectID` + `ArtifactStore.Insert/Get`.
+   - `vibe.Pipeline.Publish` uses `writeAuditWithProject` helper.
+   - `judge.Evaluation.ProjectID` + `SaveEvaluation` /
+     `SaveConsensusSamples` INSERTs include `project_id`.
+   - `judge.Store.ConfidencesByProjectProviderTarget` (NEW): the
+     project-scoped sibling of `ConfidencesByProviderTarget`.
+     Empty projectID rejected (project-scoped queries must carry
+     scope).
+
+3. **transport / calibration** (Chunk 4.3 §C):
+   - `populateCalibration` project-scoped first, falls back to
+     global when project has `< 50` samples (cold start).
+   - `transport/mcp/server.go` wires `sessionStore.SetProjectsForTest`
+     via `projectStoreValidator` adapter (avoids session→project
+     import cycle).
+   - `project.ApplyProjectIDColumns` now skips tables that don't
+     exist (subset-boot tolerance; production unaffected).
+
+#### 1.4.4 Verified
+
+- `go vet ./...` clean.
+- **12 v4alpha packages PASS** (audit, agent_memory, docs_index,
+  judge, manifest, project, research, security, session, store,
+  transport/mcp, vibe).
+- **14 new isolation tests** pass + all pre-Phase-4 tests still pass.
+- v4 binary rebuilt: **19.66 MB** (was 19.5 MB).
+- Cross-version lockstep hash pin unchanged (audit chain
+  backward-compatible — pre-Phase-4 audit rows still verify).
+- Tool count: **46** (was 42).
+- Atomic mirror: 1 SUMMARY pinned (row 2225) + 4 SECTION
+  (rows 2226-2229).
+
+#### 1.4.5 Backwards-compat note
+
+`session_start` default `project_id` switched from
+`'dark-memory-v4'` to `'default'` (literal). Callers that
+relied on the legacy literal must pass it explicitly AND
+register it via `project_create`, or accept `'default'`. Wire
+shape unchanged.
+
+#### 1.4.6 Phase 5 preview (ADR-013/014/015 memory subsystem)
+
+Gated on OD2=YES (operator approves vector retrieval). If
+approved: hybrid FTS5 + vector retrieval (ADR-013, Cormack 2009
+RRF k=60), temporal re-ranking (ADR-014), multi-hop graph
+(ADR-015). ~1,280 LoC, 3-4 weeks.
+
+### ✅ Registered (46)
 
 | Namespace | Tools | Count | When |
 |---|---|---|---|
@@ -146,17 +267,15 @@ Per `docs/specs/SPEC-alpha-11-phase3.md` (2026-09-30):
 | **Judge util** | `normalize`, `validate_overrides`, `pattern_descriptions`, `verify`, `verify_hash`, `trace`, `validate_trace` | 7 | BUG-10 10a |
 | **Research** | `topic`, `recall`, `resume_thread` | 3 | BUG-10 10a |
 | **Summarize** | `summarize_session`, `skill_loaded` | 2 | PRE-1 C4 |
-| **Audit verify** ⭐ NEW | `audit_verify` | 1 | **Phase 2 (this release)** |
+| **Audit verify** | `audit_verify` | 1 | Phase 2 (alpha.15) |
+| **Project** ⭐ NEW | `project_create`, `project_lookup` | 2 | **Phase 4 Chunk 4.2 (alpha.17)** |
+| **Mindset** ⭐ NEW (STUB) | `mindset_apply` | 1 | **Phase 4 Chunk 4.2 (alpha.17)** |
+| **Delegation** ⭐ NEW (STUB) | `delegate_intent` | 1 | **Phase 4 Chunk 4.2 (alpha.17)** |
 
-### ⏳ Deferred to BUG-10+ (16)
+### ⏳ Deferred to BUG-10+ (11)
 
 | Namespace | Tools | Count | Defer reason |
 |---|---|---|---|
-| **Research** | `topic`, `recall`, `resume_thread` | 3 | Needs backend stub (will be a no-op that returns "no backends registered") |
-| **Judge util** | 6 `judge_util_*` (normalize, validate_overrides, verify, verify_hash, trace, pattern_descriptions) | 6 | Useful but not on the critical path; lands with BUG-10 |
-| **Mindset** | `mindset_apply` | 1 | Needs procedural composition + judge-validation cache |
-| **Delegation** | `delegate_intent` | 1 | Needs DECIDE→PLAN→MIND→CURATE pipeline |
-| **Project** | `create`, `lookup` | 2 | Needs `projects` table + idempotent-on-project_id |
 | **Context** | `artifact_context`, `spec_context`, `session_context`, `recall` | 4 | Reads from vibe pipeline tables (already exist) |
 | **Agent bootstrap** | `bootstrap`, `recommend_companions`, `detect_environment` | 3 | Needs embedded `dark-memory://docs/*` resources |
 | **L6-VLP** | `vlp_handle_event` | 1 | Needs state machine FSM |
@@ -232,6 +351,7 @@ ordering).
 | **INV-15** (prompt injection scan) | NOT STARTED | alpha.3 | alpha.3 — when first URL-fetching tool lands |
 | **INV-16** (dark-db concurrency) | **YES** | `store.OpenSQLite` + `store.WithTx` (`WAL + busy_timeout=5000ms + MaxOpenConns=8`; upstream docs: <https://sqlite.org/wal.html>) | BUG-5 (this release) |
 | **INV-17** (FTS5 ordering) | **YES** | `agent_memory.Update` ordering (DELETE fts → UPDATE base → re-read → INSERT fts) under SERIALIZABLE; schema stays contentless | BUG-8 (this release) |
+| **INV-19** (namespace primitive) | **YES (soft, NOT multi-tenant)** | `internal/v4alpha/project/` package (`projects` registry, `ApplyProjectIDColumns` migration); `audit.Writer.WriteWithProject` + `WriteExecWithProject` (project_id is metadata, NOT part of the chain); `session.Store.Start` validates project_id existence (INV-7 hard isolation at the session boundary); `vibe.Artifact.ProjectID` + `judge.Evaluation.ProjectID` thread project_id into INSERT + audit; `judge.Store.ConfidencesByProjectProviderTarget` (project-scoped calibration). Per `sota-critique.md §7.6.9`: HARD isolation is `coexistence_group` (per-MCP dark.db), NOT `project_id`. | **Phase 4 (alpha.17, this release)** |
 
 ---
 
@@ -357,7 +477,7 @@ to beta/GA).
 8-11 weeks. See `docs/v4-alpha-11-plan.md` and
 `docs/sota-critique.md` §7.6 + §7.6.9.
 
-## 6.6. Namespace primitive threat model (per row 2173)
+## 6.6. Namespace primitive threat model (per row 2173, ENFORCED in alpha.17)
 
 > v4 assumes the harness session is the only concurrent
 > consumer. Project IDs scope workstreams within one
@@ -369,7 +489,8 @@ to beta/GA).
 - **Hard isolation primitive**: `coexistence_group`
   (per-MCP `dark.db`). Production-grade.
 - **Soft separation primitive**: `project_id` column
-  (BUG-10 10b's namespace registry).
+  (BUG-10 10b's namespace registry — **ENFORCED in
+  alpha.17 / Phase 4** per `INV-19`).
 - SOTA pattern is consistent: Notion workspace=hard,
   page=soft; GitHub org=hard, repo=soft; Snowflake
   account=hard, schema=soft.
@@ -377,6 +498,20 @@ to beta/GA).
 This statement is the canonical threat model for v4. BUG-10
 10b's ADR-025 (or similar) is the "Namespace Primitive"
 ADR, NOT a "Multi-Tenant Primitive" ADR.
+
+**Phase 4 enforcement** (alpha.17, commit `badb1a2`):
+- `session.Store.Start` rejects unknown `project_id` with
+  `ErrUnknownProject` (INV-7 hard isolation at the session
+  boundary).
+- Every audit-emitting surface (agent_memory, vibe, judge)
+  threads `project_id` via `audit.Writer.WriteWithProject`
+  / `WriteExecWithProject`. Phase 2 §3.2 hash chain
+  invariant preserved — `project_id` is metadata, NOT
+  part of the hash.
+- `judge.Store.ConfidencesByProjectProviderTarget` filters
+  the calibration pool by `project_id`. Cold-start fallback
+  to global pool preserves the `ShouldRecalibrate(N)`
+  invariant.
 
 ---
 
@@ -413,7 +548,9 @@ The summary below points to the upstream sources cited in this doc.
 - `docs/v4-alpha-11-plan.md` — 5 vibe-loops for the next 8-11
   weeks (Phase 1-5: close + cheap wins / audit chain / judge
   improvements / BUG-10 10b namespace / memory subsystem).
-  Phase 1-3 shipped; Phase 4-5 to follow.
+  Phase 1-4 shipped (Phase 4 = BUG-10 10b namespace primitive,
+  3 commits: 1d39659, 7d3cdee, badb1a2); Phase 5 (memory
+  subsystem, ADR-013/014/015) to follow — gated on OD2=YES.
 - `docs/specs/SPEC-alpha-11-*.md` — the per-phase vibe-loop
   specs (chunk 7 + pre1c3 + pre1c4 + Phase 2 + Phase 3 ship).
 - `CHANGELOG.md` (top of file) — entry `[4.0.0-alpha.16]`

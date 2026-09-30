@@ -317,6 +317,115 @@ callers expect).
 
 ---
 
+## INV-19 — namespace primitive (project_id is metadata, NOT a security boundary) [`feat/v4-redesign`]
+
+**Statement**: v4's `project_id` column is a SOFT workstream
+namespace (filter column), NOT a multi-tenant primitive. HARD
+isolation is `coexistence_group` (per-MCP `dark.db`). The
+namespace primitive is enforced as follows:
+
+1. The `projects` table is a namespace registry, not a tenant
+   registry. Reserved ids: `'default'` (auto-seeded catch-all)
+   and `'dark'` (reserved for future use). `Store.Create`
+   rejects both reserved ids and invalid kebab-case via
+   `ErrReservedProjectID` / `ErrInvalidProjectID`.
+2. Every tenant-scoped table carries a `project_id TEXT NOT
+   NULL DEFAULT 'default'` column (added in alpha.17):
+   `agent_memory`, `audit_log`, `sdd_evaluations`, `vibe_specs`,
+   `vibe_artifacts`. Idempotent migration via
+   `project.ApplyProjectIDColumns`.
+3. `session.Store.Start` validates `project_id` exists in the
+   `projects` table BEFORE INSERT (INV-7 hard isolation at the
+   session boundary). Missing project → `ErrUnknownProject`.
+4. Every audit-emitting surface (agent_memory, vibe, judge)
+   threads `project_id` into the `audit_log` row via
+   `audit.Writer.WriteWithProject` (standalone) or
+   `WriteExecWithProject` (inside a transaction). Phase 2 §3.2
+   hash chain invariant preserved — `project_id` is metadata,
+   NOT part of the canonical hash.
+5. `judge.Store.ConfidencesByProjectProviderTarget` filters
+   the bootstrap-CI calibration pool by `project_id`. Cold-start
+   fallback to global pool preserves the `ShouldRecalibrate(N)`
+   invariant.
+6. The `populateCalibration` hook (transport/mcp/judge.go) tries
+   project-scoped confidences first, falls back to global when
+   the project has `< 50` samples.
+
+**Why**: per `docs/sota-critique.md §7.6.9`, the MCP reality is
+"one operator, one SQLite file, one process". `project_id` is
+NOT a security boundary — it is a filter column that scopes
+workstreams within one MCP instance. HARD isolation (the
+security boundary) is `coexistence_group` (per-MCP `dark.db`).
+Naming the primitive "namespace" (not "tenant") prevents the
+common bug of treating `project_id` as a security boundary in
+future code.
+
+The rename matters: a future contributor who reads
+"multi-tenant primitive" might assume `project_id` enforces
+isolation, write code that relies on it, and ship a
+vulnerability. The "namespace" name makes the soft nature
+obvious in the type name and the docstring.
+
+**Enforced at**:
+- `internal/v4alpha/project/store.go` — `Store.Create` rejects
+  reserved + invalid ids.
+- `internal/v4alpha/project/schema.go` — `ApplyProjectIDColumns`
+  idempotent migration (5 tables + 5 indexes).
+- `internal/v4alpha/audit/writer.go` + `writer_tx.go` —
+  `WriteWithProject` + `WriteExecWithProject` (sibling methods,
+  same canonical hash).
+- `internal/v4alpha/session/session.go` — `Start` validates
+  project_id via `ProjectValidator.Lookup`; missing →
+  `ErrUnknownProject`.
+- `internal/v4alpha/agent_memory/agent_memory.go` —
+  `writeAuditWithProject` helper threads `auditMeta.ProjectID`.
+- `internal/v4alpha/vibe/pipeline.go` + `artifact.go` —
+  `Pipeline.Publish` threads `art.ProjectID` via
+  `p.writeAuditWithProject` helper.
+- `internal/v4alpha/judge/store.go` — INSERTs include
+  `project_id`; `ConfidencesByProjectProviderTarget` is the
+  project-scoped sibling.
+- `internal/v4alpha/transport/mcp/judge.go` —
+  `populateCalibration` project-scoped first, global fallback.
+
+**Defensive tests** (alpha.17, ~310 LoC, 14 tests across 5
+files):
+- `internal/v4alpha/audit/writer_tx_project_test.go` (3 tests).
+- `internal/v4alpha/session/session_project_test.go` (3 tests).
+- `internal/v4alpha/agent_memory/agent_memory_project_test.go`
+  (2 tests).
+- `internal/v4alpha/vibe/artifact_project_test.go` (3 tests).
+- `internal/v4alpha/judge/calibration_project_test.go` (3 tests).
+
+**Operator signal**: `dark_memory_project_lookup(project_id)`
+returns `{found: false, project: null}` for unregistered
+projects. `dark_memory_session_start` with unknown `project_id`
+returns `session: project_id is not registered (INV-7)`.
+`dark_memory_memory_state` reports the per-table `project_id`
+distribution (future work: add a `projects` panel).
+
+**Threat model** (the canonical statement, per
+`sota-critique.md §7.6.9`):
+
+> v4 assumes the harness session is the only concurrent
+> consumer. Project IDs scope workstreams within one operator.
+> For HARD isolation between concurrent users, use separate
+> `coexistence_group`s or separate MCP instances. The
+> `project_id` column is a soft namespace, not a security
+> boundary.
+
+**Migration cost**: zero — pre-Phase-4 audit rows still verify
+(canonical hash unchanged); 5 tables' `project_id` column gets
+`'default'` via the column DEFAULT for legacy rows (no manual
+UPDATE pass required).
+
+**Source**: Phase 4 (alpha.17), commits `1d39659` (Chunk 4.1
+foundation), `7d3cdee` (Chunk 4.2 surface), `badb1a2` (Chunk 4.3
+hard isolation). Drift check on the Phase 4 spec (id 1811)
+judged ALIGNED with confidence 0.95.
+
+---
+
 # v4-only invariants (added on `feat/v4-redesign`)
 
 The invariants below are introduced on the v4 redesign branch. They
@@ -522,24 +631,27 @@ the test pass + code inspection showed the schema is contentless.
 
 ## Quick reference: which `Save*` enforces which invariant
 
-| Store method | INV-1 | INV-2 | INV-3 | INV-4 | INV-6 | INV-7 | INV-8 | INV-10 | INV-16 | INV-17 |
-|---|---|---|---|---|---|---|---|---|---|---|
-| `SaveSpec` | ✓ | — | — | (read) | — | ✓ | ✓ | — | ✓ | — |
-| `SaveArtifact` | ✓ | — | ✓ | (read) | — | ✓ | ✓ | — | ✓ | — |
-| `SaveDriftReport` | ✓ | — | — | (read) | — | ✓ | ✓ | — | ✓ | — |
-| `SaveSDDEvaluation` | ✓ | — | — | (read) | — | ✓ | ✓ | — | ✓ | — |
-| `SaveRun` | ✓ | — | ✓ | (read) | — | ✓ | ✓ | — | ✓ | — |
-| `SaveSession` | ✓ | ✓ | — | (read) | — | ✓ | ✓ | — | ✓ | — |
-| `SaveMod` / `RecordModLoad` | ✓ | — | ✓ | (read) | ✓ | ✓ | ✓ | — | ✓ | — |
-| `SaveConstitution` | ✓ | — | — | (write) | — | ✓ | ✓ | — | ✓ | — |
-| `SaveAgentMemory` | ✓ | — | — | (read) | — | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `ListAgentMemory` | — | — | — | (read) | — | ✓ | ✓ | ✓ | ✓ | — |
-| `SearchAgentMemory` | — | — | — | (read) | — | ✓ | ✓ | ✓ | ✓ | (FTS5 read) |
-| `UpdateAgentMemory` | ✓ | — | — | (read) | — | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `ArchiveAgentMemory` | ✓ | — | — | (read) | — | ✓ | ✓ | — | ✓ | ✓ |
-| `Recall` | — | ✓ | (read) | (read) | — | ✓ | ✓ | — | ✓ | (FTS5 read) |
-| `Vacuum` | — | — | — | — | — | (filters by project) | ✓ | — | ✓ | — |
-| `Migrate` | — | — | — | refused under drift | — | — | ✓ | — | ✓ | — |
+| Store method | INV-1 | INV-2 | INV-3 | INV-4 | INV-6 | INV-7 | INV-8 | INV-10 | INV-16 | INV-17 | INV-19 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| `SaveSpec` | ✓ | — | — | (read) | — | ✓ | ✓ | — | ✓ | — | ✓ |
+| `SaveArtifact` | ✓ | — | ✓ | (read) | — | ✓ | ✓ | — | ✓ | — | ✓ |
+| `SaveDriftReport` | ✓ | — | — | (read) | — | ✓ | ✓ | — | ✓ | — | ✓ |
+| `SaveSDDEvaluation` | ✓ | — | — | (read) | — | ✓ | ✓ | — | ✓ | — | ✓ |
+| `SaveRun` | ✓ | — | ✓ | (read) | — | ✓ | ✓ | — | ✓ | — | (not in v4) |
+| `SaveSession` | ✓ | ✓ | — | (read) | — | ✓ | ✓ | — | ✓ | — | ✓ |
+| `SaveMod` / `RecordModLoad` | ✓ | — | ✓ | (read) | ✓ | ✓ | ✓ | — | ✓ | — | (not in v4) |
+| `SaveConstitution` | ✓ | — | — | (write) | — | ✓ | ✓ | — | ✓ | — | (not in v4) |
+| `SaveAgentMemory` | ✓ | — | — | (read) | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `ListAgentMemory` | — | — | — | (read) | — | ✓ | ✓ | ✓ | ✓ | — | (filters by project) |
+| `SearchAgentMemory` | — | — | — | (read) | — | ✓ | ✓ | ✓ | ✓ | (FTS5 read) | (filters by project) |
+| `UpdateAgentMemory` | ✓ | — | — | (read) | — | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `ArchiveAgentMemory` | ✓ | — | — | (read) | — | ✓ | ✓ | — | ✓ | ✓ | ✓ |
+| `Recall` | — | ✓ | (read) | (read) | — | ✓ | ✓ | — | ✓ | (FTS5 read) | (filters by project, future) |
+| `Vacuum` | — | — | — | — | — | (filters by project) | ✓ | — | ✓ | — | ✓ |
+| `Migrate` | — | — | — | refused under drift | — | — | ✓ | — | ✓ | — | — |
+| `Store.Create` (project) | ✓ | — | — | (read) | — | ✓ | ✓ | — | ✓ | — | ✓ |
+| `Store.Lookup` (project) | — | — | — | — | — | ✓ | — | — | — | — | ✓ |
+| `session.Store.Start` | ✓ | — | — | (read) | — | ✓ | ✓ | — | ✓ | — | ✓ |
 
 *Legend: ✓ = enforces this invariant; — = not relevant; (read) =
 reads constitution for WriteContext, doesn't enforce a write-side

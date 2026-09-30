@@ -712,7 +712,7 @@ Phase 1 starts)**
 | OD6 | `project_id` framing | namespace (soft) / multi-tenant (hard) | **namespace (soft)** per §7.6.9 threat model |
 
 **§7.6.9 Namespace primitive threat model (the hard/soft
-distinction)**
+distinction)** — **NOW ENFORCED in alpha.17 (Phase 4)**
 
 This subsection formalizes the threat model that the
 `project_id` column implements. It exists because the
@@ -770,6 +770,20 @@ a security boundary.
 > use separate `coexistence_group`s or separate MCP
 > instances. The `project_id` column is a soft namespace,
 > not a security boundary.
+
+**Status**: enforced as of alpha.17 (Phase 4, commits
+`1d39659` + `7d3cdee` + `badb1a2` + this docs followup).
+`session.Store.Start` rejects unknown `project_id` with
+`ErrUnknownProject`; every audit-emitting surface
+(agent_memory, vibe, judge) threads `project_id` via
+`audit.Writer.WriteWithProject` / `WriteExecWithProject`;
+`judge.Store.ConfidencesByProjectProviderTarget` filters
+the calibration pool. INV-19 (namespace primitive) defined in
+`docs/INVARIANTS.md`. See `docs/v4-status.md §1.4` for the
+Phase 4 changelog and §6.6 for the threat model "now
+enforced" annotation. Phase 2 §3.2 hash chain invariant
+preserved — `project_id` is metadata, NOT part of the canonical
+hash (pre-Phase-4 audit rows still verify).
 
 **SOTA consistency check** (the pattern is universal):
 - Notion: workspace=hard, page=soft.
