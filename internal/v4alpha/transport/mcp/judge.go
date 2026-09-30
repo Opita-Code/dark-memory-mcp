@@ -136,19 +136,43 @@ func registerJudge(s *Server) {
 // is logged at debug level (no audit row; calibration is metadata,
 // not state).
 //
-// Triggers only when ShouldRecalibrate(N) holds for the
-// (provider, target_type, eval_type) tuple — i.e., at least 50
+// Triggers only when ShouldRecalibrate(N) holds — i.e., at least 50
 // historical confidences. Below that threshold we leave the
 // calibration columns NULL (EC-007a handles the cold-start case).
+//
+// Phase 4 Chunk 4.3 — project-scoped calibration:
+//   1. Try project-scoped confidences first
+//      (ConfidencesByProjectProviderTarget) — calibration stays
+//      within the workstream and never bleeds across namespaces.
+//   2. If the project has < ShouldRecalibrate(N) samples (cold
+//      start), fall back to the global pool
+//      (ConfidencesByProviderTarget). Empty e.ProjectID (legacy
+//      callers) also goes through the global path.
 func (s *Server) populateCalibration(ctx context.Context, evalID int64, e *judge.Evaluation, v *judge.Verdict) {
 	provider := ""
 	if v != nil {
 		provider = v.TemperatureNote.Provider
 	}
-	confidences, err := s.judgeStore.ConfidencesByProviderTarget(
-		ctx, provider, e.TargetType, e.EvalType, 1000,
-	)
-	if err != nil || !judge.ShouldRecalibrate(len(confidences)) {
+
+	var confidences []float64
+	if e.ProjectID != "" {
+		// Project-scoped path.
+		confidences, _ = s.judgeStore.ConfidencesByProjectProviderTarget(
+			ctx, e.ProjectID, provider, e.TargetType, e.EvalType, 1000,
+		)
+		if !judge.ShouldRecalibrate(len(confidences)) {
+			// Cold start: fall back to the global pool.
+			confidences, _ = s.judgeStore.ConfidencesByProviderTarget(
+				ctx, provider, e.TargetType, e.EvalType, 1000,
+			)
+		}
+	} else {
+		// Legacy / no-project path: global pool only.
+		confidences, _ = s.judgeStore.ConfidencesByProviderTarget(
+			ctx, provider, e.TargetType, e.EvalType, 1000,
+		)
+	}
+	if !judge.ShouldRecalibrate(len(confidences)) {
 		return
 	}
 	ci := judge.BootstrapCI(confidences, 0.95, 1000)

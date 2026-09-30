@@ -72,14 +72,14 @@ func runServe(ctx context.Context, args []string, stdout, stderr *os.File) int {
 	}
 
 	startedAt := time.Now().UTC()
-	bootReport := bootStatus{
+bootReport := bootStatus{
 		DSN:           dsn,
 		SchemaVersion: schemaVersion,
 		StartedAt:     startedAt.Format(time.RFC3339Nano),
 		GoVersion:     goVersion(),
 		ServerVersion: Version,
 		Operator:      defaultOperator(),
-		Notes:         []string{"BUG-7: JSON-RPC transport wired (mcp-go v0.40.0). MVP tool set: 46 tools (Phase 4 Chunk 4.2: +project_create, +project_lookup, +mindset_apply STUB, +delegate_intent STUB)."},
+		Notes:         []string{"BUG-7: JSON-RPC transport wired (mcp-go v0.40.0). MVP tool set: 46 tools (Phase 4 Chunk 4.2: +project_create, +project_lookup, +mindset_apply STUB, +delegate_intent STUB). Phase 4 Chunk 4.3: hard isolation enforced (session validates project_id; audit/agent_memory/judge/vibe threads project_id; drift_judge calibration scoped by project)."},
 	}
 
 	if flags.JSON {
@@ -95,7 +95,7 @@ func runServe(ctx context.Context, args []string, stdout, stderr *os.File) int {
 		fmt.Fprintf(stdout, "  operator        %s\n", bootReport.Operator)
 		fmt.Fprintf(stdout, "  started_at      %s\n", bootReport.StartedAt)
 fmt.Fprintf(stdout, "  ready\n")
-	fmt.Fprintf(stdout, "  serving MCP on stdio (mcp-go v0.40.0, 46 tools)\n")
+fmt.Fprintf(stdout, "  serving MCP on stdio (mcp-go v0.40.0, 46 tools)\n")
 	}
 
 	// 4. Construct the MCP server + drive the JSON-RPC loop on

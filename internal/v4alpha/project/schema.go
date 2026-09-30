@@ -147,6 +147,24 @@ func ApplyProjectIDColumns(ctx context.Context, db *sql.DB) error {
 	}
 
 	for _, t := range targets {
+		// 0. Skip tables that don't exist in this DB. Tolerates
+		//    test setups that boot only a subset of v4 packages
+		//    (e.g., the judge test setup creates only audit_log +
+		//    sdd_evaluations — agent_memory, vibe_artifacts are
+		//    absent). Production calls applyAllSchemas which
+		//    creates every package's schema first, so this skip
+		//    path never fires in production.
+		var tableExists int
+		if err := db.QueryRowContext(ctx,
+			"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name = ?",
+			t.table,
+		).Scan(&tableExists); err != nil {
+			return fmt.Errorf("project ApplyProjectIDColumns (exists %s): %w", t.table, err)
+		}
+		if tableExists == 0 {
+			continue
+		}
+
 		// 1. Add the column if missing.
 		var n int
 		if err := db.QueryRowContext(ctx,

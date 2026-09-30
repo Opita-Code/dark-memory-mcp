@@ -69,9 +69,15 @@ type ArtifactRef struct {
 //   - SpecID > 0 (INV-3 cross-spec consistency; existence checked
 //     by ArtifactStore.Insert)
 //   - At least one of URL, Text, or Ref is set (no empty artifacts)
+//
+// Phase 4 Chunk 4.3: ProjectID is the namespace primitive stamped
+// on the artifact row + propagated to the audit_log emission by
+// vibe.Pipeline.Publish. Empty falls back to 'default' via the
+// column DEFAULT clause (same pattern as audit_log).
 type Artifact struct {
 	ID        int64
 	SpecID    int64
+	ProjectID string // Phase 4 Chunk 4.3: namespace primitive
 	Type      string
 	URL       string
 	Text      string
@@ -198,6 +204,11 @@ func (s *ArtifactStore) specExists(ctx context.Context, specID int64) (bool, err
 //
 // INV-3 enforcement: looks up the spec row before insert; returns
 // ErrSpecNotFound if missing.
+//
+// Phase 4 Chunk 4.3: a.ProjectID is threaded to the project_id
+// column. Empty falls back to 'default' via the column DEFAULT
+// clause (preserves the pre-Phase-4 contract for callers that
+// don't set ProjectID).
 func (s *ArtifactStore) Insert(ctx context.Context, a *Artifact) (int64, error) {
 	if err := a.Validate(); err != nil {
 		return 0, fmt.Errorf("artifact Insert: %w", err)
@@ -245,13 +256,19 @@ func (s *ArtifactStore) Insert(ctx context.Context, a *Artifact) (int64, error) 
 		}
 	}
 
+	// Resolve project_id: caller-provided wins; else 'default' via DEFAULT.
+	projectID := a.ProjectID
+	if projectID == "" {
+		projectID = "default"
+	}
+
 	res, err := s.db.ExecContext(ctx,
 		`INSERT INTO vibe_artifacts
-		 (spec_id, artifact_type, artifact_url, text,
+		 (spec_id, project_id, artifact_type, artifact_url, text,
 		  ref_kind, ref_path, ref_git_sha, ref_git_repo,
 		  ref_url, ref_spec_id, ref_artifact_id, ref_max_bytes)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		a.SpecID, a.Type, a.URL, a.Text,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.SpecID, projectID, a.Type, a.URL, a.Text,
 		refKind, refPath, refSHA, refRepo,
 		refURL, refSpecID, refArtID, refMax,
 	)
@@ -269,7 +286,7 @@ func (s *ArtifactStore) Insert(ctx context.Context, a *Artifact) (int64, error) 
 // Get returns the artifact by id, or ErrNotFound if not present.
 func (s *ArtifactStore) Get(ctx context.Context, id int64) (*Artifact, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, spec_id, artifact_type, artifact_url, text,
+		`SELECT id, spec_id, project_id, artifact_type, artifact_url, text,
 		        ref_kind, ref_path, ref_git_sha, ref_git_repo,
 		        ref_url, ref_spec_id, ref_artifact_id, ref_max_bytes,
 		        created_at
@@ -278,10 +295,11 @@ func (s *ArtifactStore) Get(ctx context.Context, id int64) (*Artifact, error) {
 	var (
 		refKind, refPath, refSHA, refRepo, refURL sql.NullString
 		refSpecID, refArtID, refMax               sql.NullInt64
-		createdAt                                string
+		projectID                                 sql.NullString
+		createdAt                                 string
 	)
 	err := row.Scan(
-		&a.ID, &a.SpecID, &a.Type, &a.URL, &a.Text,
+		&a.ID, &a.SpecID, &projectID, &a.Type, &a.URL, &a.Text,
 		&refKind, &refPath, &refSHA, &refRepo,
 		&refURL, &refSpecID, &refArtID, &refMax, &createdAt,
 	)
@@ -290,6 +308,9 @@ func (s *ArtifactStore) Get(ctx context.Context, id int64) (*Artifact, error) {
 	}
 	if err != nil {
 		return nil, fmt.Errorf("artifact Get: %w", err)
+	}
+	if projectID.Valid {
+		a.ProjectID = projectID.String
 	}
 	a.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
 	if refKind.Valid {

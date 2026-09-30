@@ -25,6 +25,7 @@ import (
 
 	am "github.com/dark-agents/dark-memory-mcp/internal/v4alpha/agent_memory"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/audit"
+	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/project"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/session"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/store"
 )
@@ -58,6 +59,12 @@ func newTestSummarizeEnv(t *testing.T) *summarizeEnv {
 	}
 	if err := am.CreateSchema(db); err != nil {
 		t.Fatalf("am.CreateSchema: %v", err)
+	}
+	// Phase 4 Chunk 4.3: apply project_id columns so audit_log +
+	// agent_memory writes succeed (matches production boot via
+	// applyAllSchemas).
+	if err := project.ApplyProjectIDColumns(ctx, db); err != nil {
+		t.Fatalf("project.ApplyProjectIDColumns: %v", err)
 	}
 
 	w := audit.NewWriter(db)

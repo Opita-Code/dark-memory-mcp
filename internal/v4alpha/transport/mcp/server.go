@@ -114,6 +114,16 @@ func NewServer(db *sql.DB) (*Server, error) {
 		return nil, fmt.Errorf("mcp NewServer: project.NewStore: %w", err)
 	}
 
+	// Phase 4 Chunk 4.3: wire the project validator into the
+	// session Store. Start rejects unknown project_id with
+	// ErrUnknownProject (INV-7 hard isolation at the session
+	// boundary). The validator is the project.Store itself,
+	// adapted via a small adapter (projectStoreValidator) because
+	// session.Store's ProjectValidator interface returns (any,
+	// error) — keeps session.Store independent of the project
+	// package (no import cycle).
+	sessStore.SetProjectsForTest(projectStoreValidator{projStore})
+
 	// PRE-1 C2: index operator-facing docs so recall() can
 	// find them. Defensive: per-doc failures are logged to
 	// stderr; the server still starts in degraded mode.
@@ -279,6 +289,30 @@ var goRuntimeVersion = runtime.Version()
 // (researchExecutor, judgePipeline, etc.).
 func (s *Server) SetProjectsForTest(p *project.Store) {
 	s.projects = p
+}
+
+// projectStoreValidator adapts *project.Store to the
+// session.ProjectValidator interface. Lets session.Store validate
+// project_id existence without importing project directly. Returns
+// (any, error) — session.Store ignores it (just checks err != nil
+// for ErrProjectNotFound, which the adapter passes through).
+//
+// Lives here (transport/mcp) because that's where both deps are
+// already imported. Inline (not in a separate file) because it's a
+// 5-line adapter.
+type projectStoreValidator struct {
+	s *project.Store
+}
+
+// Lookup delegates to project.Store.Lookup. The *project.Project value
+// is returned as `any` (interface signature is loose-typed by
+// design — session.Store only cares about the error).
+func (p projectStoreValidator) Lookup(ctx context.Context, projectID string) (any, error) {
+	proj, err := p.s.Lookup(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	return proj, nil
 }
 
 // ProjectsForTest returns the wired *project.Store. Returns nil

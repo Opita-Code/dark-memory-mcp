@@ -54,6 +54,13 @@ var ErrSessionClosed = errors.New("session: closed (no further lifecycle)")
 // ErrEmptyOperator is returned by Start when operator is empty.
 var ErrEmptyOperator = errors.New("session: operator must be non-empty")
 
+// ErrUnknownProject is returned by Start when the requested
+// project_id does not exist in the `projects` registry (Phase 4
+// Chunk 4.3 — hard isolation enforcement). Sessions may only be
+// opened against a known project; unknown projects are rejected at
+// the boundary so operator queries against sessions stay scoped.
+var ErrUnknownProject = errors.New("session: project_id is not registered (INV-7)")
+
 // ErrNotFound is returned by Read/Get when no session matches.
 var ErrNotFound = errors.New("session: not found")
 
@@ -78,15 +85,39 @@ type Summary struct {
 }
 
 // Store is the session repository. Bound to a DB and an audit Writer.
+// The optional `projects` field (set via SetProjectsForTest or
+// SetProjects in production wiring) enforces INV-7 hard isolation:
+// Start rejects project_ids that are not registered in the projects
+// table. Nil `projects` skips validation (test-only — keeps the
+// pre-Phase-4 test suite green without spinning up the project
+// package).
 type Store struct {
-	db    *sql.DB
-	audit *audit.Writer
+	db       *sql.DB
+	audit    *audit.Writer
+	projects ProjectValidator // optional, nil-safe
+}
+
+// ProjectValidator is the minimum interface session.Store needs from
+// the project registry to enforce INV-7 hard isolation on Start.
+// The interface lives here (not in the project package) so session
+// does not import project — keeps the dependency graph acyclic and
+// tests trivial.
+type ProjectValidator interface {
+	Lookup(ctx context.Context, projectID string) (any, error)
 }
 
 // NewStore returns a Store wired to db and w. Both must be initialized
 // (CreateSchema called on db; NewWriter called on w).
 func NewStore(db *sql.DB, w *audit.Writer) *Store {
 	return &Store{db: db, audit: w}
+}
+
+// SetProjectsForTest wires a ProjectValidator into the Store.
+// Called from production wiring (cmd/dark-memory-v4/serve.go) AFTER
+// both the session Store and the project Store are constructed.
+// Tests that don't need INV-7 validation can skip this; nil is safe.
+func (s *Store) SetProjectsForTest(p ProjectValidator) {
+	s.projects = p
 }
 
 // CreateSchema creates the sessions table. Idempotent.
@@ -110,12 +141,34 @@ func CreateSchema(db *sql.DB) error {
 
 // Start creates a new session, emits one INV-1 audit row, and returns
 // the Session view.
+//
+// INV-7 hard isolation (Phase 4 Chunk 4.3): when projects is wired
+// (SetProjectsForTest), Start validates that projectID exists in the
+// projects registry. Unknown project_id returns ErrUnknownProject
+// WITHOUT inserting a session row. When projects is nil (legacy /
+// test-only path), validation is skipped and the pre-Phase-4
+// behavior is preserved.
+//
+// The audit emission uses WriteWithProject (project_id='<projectID>')
+// so the lifecycle row in audit_log is scoped to the same project
+// as the session itself. Pre-Phase-4 audit rows get project_id=
+// 'default' via the column DEFAULT.
 func (s *Store) Start(ctx context.Context, operator, projectID string) (*Session, error) {
 	if operator == "" {
 		return nil, ErrEmptyOperator
 	}
 	if projectID == "" {
 		return nil, fmt.Errorf("session: project_id must be non-empty")
+	}
+	if s.projects != nil {
+		// INV-7 hard isolation: unknown project_id is rejected
+		// at the session boundary. We swallow the Lookup error
+		// surface to ErrUnknownProject so callers can
+		// errors.Is(err, ErrUnknownProject) reliably.
+		_, err := s.projects.Lookup(ctx, projectID)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %s", ErrUnknownProject, projectID)
+		}
 	}
 
 	id, err := newSessionID()
@@ -132,7 +185,7 @@ func (s *Store) Start(ctx context.Context, operator, projectID string) (*Session
 		return nil, fmt.Errorf("session Start insert: %w", err)
 	}
 
-	if _, err := s.audit.Write(ctx, operator, id, []byte(`{"event":"session.start"}`)); err != nil {
+	if _, err := s.audit.WriteWithProject(ctx, operator, id, projectID, []byte(`{"event":"session.start"}`)); err != nil {
 		return nil, fmt.Errorf("session Start audit: %w", err)
 	}
 

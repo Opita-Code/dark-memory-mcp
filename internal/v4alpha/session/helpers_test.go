@@ -11,6 +11,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/audit"
+	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/project"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/session"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/store"
 )
@@ -25,6 +26,12 @@ type storeCleanupper interface {
 // newTestStoreAny opens in-memory SQLite, creates audit + session
 // schemas, wires Store + Writer, and registers cleanup. Uses
 // store.OpenSQLite so the connection setup matches production.
+//
+// Phase 4 Chunk 4.3: applies project.ApplyProjectIDColumns so the
+// audit_log table has the project_id column (matches production
+// boot via cmd/dark-memory-v4/serve.go:applyAllSchemas). Without
+// it, session.Start fails on WriteWithProject because audit_log is
+// missing the column.
 func newTestStoreAny(t storeCleanupper) *session.Store {
 	db, err := store.OpenSQLite(context.Background(), ":memory:")
 	if err != nil {
@@ -38,6 +45,9 @@ func newTestStoreAny(t storeCleanupper) *session.Store {
 	if err := session.CreateSchema(db); err != nil {
 		t.Fatalf("session.CreateSchema: %v", err)
 	}
+	if err := project.ApplyProjectIDColumns(context.Background(), db); err != nil {
+		t.Fatalf("project.ApplyProjectIDColumns: %v", err)
+	}
 
 	w := audit.NewWriter(db)
 	return session.NewStore(db, w)
@@ -45,6 +55,9 @@ func newTestStoreAny(t storeCleanupper) *session.Store {
 
 // newTestStoreAudit returns (Store, *auditWriterExposed) so property
 // tests can assert on audit_id directly.
+//
+// Phase 4 Chunk 4.3: applies project.ApplyProjectIDColumns (see
+// newTestStoreAny for rationale).
 func newTestStoreAudit(t *rapid.T) (*session.Store, *auditWriterExposed) {
 	db, err := store.OpenSQLite(context.Background(), ":memory:")
 	if err != nil {
@@ -57,6 +70,9 @@ func newTestStoreAudit(t *rapid.T) (*session.Store, *auditWriterExposed) {
 	}
 	if err := session.CreateSchema(db); err != nil {
 		t.Fatalf("session.CreateSchema: %v", err)
+	}
+	if err := project.ApplyProjectIDColumns(context.Background(), db); err != nil {
+		t.Fatalf("project.ApplyProjectIDColumns: %v", err)
 	}
 
 	w := audit.NewWriter(db)

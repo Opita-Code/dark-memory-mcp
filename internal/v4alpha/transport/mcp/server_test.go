@@ -23,7 +23,9 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/agent_memory"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/audit"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/docs_index"
+	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/judge"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/manifest"
+	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/project"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/session"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/store"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/vibe"
@@ -73,6 +75,17 @@ func newTestDB(t *testing.T) (cleanup func()) {
 // already in the CREATE TABLE); for legacy DBs (created in
 // alpha.14 and earlier) it's the migration that adds
 // prev_hash + row_hash to audit_log. Idempotent either way.
+//
+// Phase 3 (alpha.16): judge.CreateSchema + judge.ApplyCalibrationColumns
+// are added so the sdd_evaluations persistence layer is wired
+// (the dark_memory_judge tool persists verdicts to sdd_evaluations).
+//
+// Phase 4 (alpha.17): project.CreateSchema (seeds 'default'
+// workstream) + project.ApplyProjectIDColumns (adds project_id
+// column to the 5 v4 core tables: agent_memory, audit_log,
+// sdd_evaluations, vibe_specs, vibe_artifacts). Chunk 4.3 wired
+// hard isolation (session.Start validates project_id; agent_memory /
+// judge / vibe thread project_id into audit_log rows).
 func applyAllSchemas(ctx context.Context, d *sql.DB) error {
 	for _, fn := range []struct {
 		name string
@@ -87,6 +100,10 @@ func applyAllSchemas(ctx context.Context, d *sql.DB) error {
 		{"vibe/spec", func() error { return vibe.CreateSpecSchema(d) }},
 		{"vibe/artifact", func() error { return vibe.CreateArtifactSchema(d) }},
 		{"vibe/drift", func() error { return vibe.CreateDriftSchema(d) }},
+		{"judge", func() error { return judge.CreateSchema(d) }},
+		{"judge/calibration", func() error { return judge.ApplyCalibrationColumns(ctx, d) }},
+		{"project", func() error { return project.CreateSchema(d) }},
+		{"project/apply", func() error { return project.ApplyProjectIDColumns(ctx, d) }},
 	} {
 		if err := fn.f(); err != nil {
 			return fmt.Errorf("%s schema: %w", fn.name, err)
@@ -163,6 +180,10 @@ func driveServer(t *testing.T, inputLines []string) []mcpResponse {
 		{"vibe/spec", func() error { return vibe.CreateSpecSchema(db) }},
 		{"vibe/artifact", func() error { return vibe.CreateArtifactSchema(db) }},
 		{"vibe/drift", func() error { return vibe.CreateDriftSchema(db) }},
+		{"judge", func() error { return judge.CreateSchema(db) }},
+		{"judge/calibration", func() error { return judge.ApplyCalibrationColumns(ctx, db) }},
+		{"project", func() error { return project.CreateSchema(db) }},
+		{"project/apply", func() error { return project.ApplyProjectIDColumns(ctx, db) }},
 	} {
 		if err := fn.f(); err != nil {
 			t.Fatalf("%s schema: %v", fn.name, err)
@@ -467,6 +488,10 @@ func TestSessionStartClose_FullLifecycle(t *testing.T) {
 		{"vibe/spec", func() error { return vibe.CreateSpecSchema(db) }},
 		{"vibe/artifact", func() error { return vibe.CreateArtifactSchema(db) }},
 		{"vibe/drift", func() error { return vibe.CreateDriftSchema(db) }},
+		{"judge", func() error { return judge.CreateSchema(db) }},
+		{"judge/calibration", func() error { return judge.ApplyCalibrationColumns(ctx, db) }},
+		{"project", func() error { return project.CreateSchema(db) }},
+		{"project/apply", func() error { return project.ApplyProjectIDColumns(ctx, db) }},
 	} {
 		if err := fn.f(); err != nil {
 			t.Fatalf("%s schema: %v", fn.name, err)

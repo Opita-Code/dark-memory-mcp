@@ -91,6 +91,7 @@ type Evaluation struct {
 	EvalType    string    `json:"eval_type"`
 	TargetType  string    `json:"target_type"`
 	TargetID    string    `json:"target_id"`
+	ProjectID   string    `json:"project_id,omitempty"` // Phase 4 Chunk 4.3: namespace primitive
 	VerdictJSON string    `json:"verdict_json"`
 	Confidence  float64   `json:"confidence"`
 	Provider    string    `json:"provider,omitempty"`
@@ -346,17 +347,28 @@ func (s *Store) SaveEvaluation(ctx context.Context, auditMeta *Audit, e *Evaluat
 
 	var id int64
 	err := store.WithTx(ctx, s.db, func(tx *sql.Tx) error {
+		// project_id resolves to 'default' literal when empty
+		// (auditMeta.ProjectID == ""). The sdd_evaluations table
+		// declares project_id NOT NULL with DEFAULT 'default',
+		// but the DEFAULT only fires when the column is OMITTED
+		// from the INSERT — passing NULL explicitly triggers the
+		// NOT NULL constraint. Always pass a non-null value.
+		projectID := auditMeta.ProjectID
+		if projectID == "" {
+			projectID = "default"
+		}
 		res, err := tx.ExecContext(ctx, `
 			INSERT INTO sdd_evaluations (
-				eval_type, target_type, target_id, verdict_json, confidence,
+				eval_type, target_type, target_id, project_id, verdict_json, confidence,
 				provider, model, persona_id, rubric_version, schema_version,
 				seed, max_tokens, timeout_ms, temperature, top_p,
 				non_deterministic, session_id,
 				confidence_calibrated, calibration_ci_low,
 				calibration_ci_high, calibration_method
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?)
 		`,
-			e.EvalType, e.TargetType, e.TargetID, e.VerdictJSON, e.Confidence,
+			e.EvalType, e.TargetType, e.TargetID, projectID,
+			e.VerdictJSON, e.Confidence,
 			nullIfEmpty(e.Provider), nullIfEmpty(e.Model),
 			nullIfEmpty(e.PersonaID), nullIfEmpty(e.RubricVer),
 			nullIfEmpty(e.SchemaVer),
@@ -377,12 +389,15 @@ func (s *Store) SaveEvaluation(ctx context.Context, auditMeta *Audit, e *Evaluat
 		}
 		id = n
 
-		// INV-1 audit emission inside the same tx.
+		// INV-1 audit emission inside the same tx. When
+		// auditMeta.ProjectID is non-empty, stamp the audit row
+		// with the same project_id (Phase 4 Chunk 4.3 hard
+		// isolation). Empty falls back to legacy WriteExec.
 		payload := []byte(fmt.Sprintf(
 			`{"event":"judge.save","id":%d,"eval_type":%q,"target_type":%q,"target_id":%q}`,
 			id, e.EvalType, e.TargetType, e.TargetID,
 		))
-		if _, err := s.audit.WriteExec(ctx, tx, auditMeta.Actor, auditMeta.SessionID, payload); err != nil {
+		if err := writeAuditExecWithProject(ctx, s.audit, tx, auditMeta, payload); err != nil {
 			return fmt.Errorf("judge store SaveEvaluation audit: %w", err)
 		}
 		return nil
@@ -435,17 +450,25 @@ func (s *Store) SaveConsensusSamples(ctx context.Context, auditMeta *Audit, samp
 
 	var modalID int64
 	err := store.WithTx(ctx, s.db, func(tx *sql.Tx) error {
+		// project_id resolves to 'default' when empty (NOT NULL
+		// column; SQLite DEFAULT only fires when the column is
+		// OMITTED). Same fix as SaveEvaluation above.
+		projectID := auditMeta.ProjectID
+		if projectID == "" {
+			projectID = "default"
+		}
 		// N per-sample inserts.
 		for i, e := range samples {
 			res, err := tx.ExecContext(ctx, `
 				INSERT INTO sdd_evaluations (
-					eval_type, target_type, target_id, verdict_json, confidence,
+					eval_type, target_type, target_id, project_id, verdict_json, confidence,
 					provider, model, persona_id, rubric_version, schema_version,
 					seed, max_tokens, timeout_ms, temperature, top_p,
 					non_deterministic, session_id
-				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+				) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
 			`,
-				e.EvalType, e.TargetType, e.TargetID, e.VerdictJSON, e.Confidence,
+				e.EvalType, e.TargetType, e.TargetID, projectID,
+				e.VerdictJSON, e.Confidence,
 				nullIfEmpty(e.Provider), nullIfEmpty(e.Model),
 				nullIfEmpty(e.PersonaID), nullIfEmpty(e.RubricVer),
 				nullIfEmpty(e.SchemaVer),
@@ -462,7 +485,7 @@ func (s *Store) SaveConsensusSamples(ctx context.Context, auditMeta *Audit, samp
 				`{"event":"judge.save.consensus.sample","id":%d,"sample_index":%d,"eval_type":%q}`,
 				sampleID, i, e.EvalType,
 			))
-			if _, err := s.audit.WriteExec(ctx, tx, auditMeta.Actor, auditMeta.SessionID, payload); err != nil {
+			if err := writeAuditExecWithProject(ctx, s.audit, tx, auditMeta, payload); err != nil {
 				return fmt.Errorf("judge store SaveConsensusSamples audit sample[%d]: %w", i, err)
 			}
 		}
@@ -470,13 +493,14 @@ func (s *Store) SaveConsensusSamples(ctx context.Context, auditMeta *Audit, samp
 		// 1 modal insert.
 		res, err := tx.ExecContext(ctx, `
 			INSERT INTO sdd_evaluations (
-				eval_type, target_type, target_id, verdict_json, confidence,
+				eval_type, target_type, target_id, project_id, verdict_json, confidence,
 				provider, model, persona_id, rubric_version, schema_version,
 				seed, max_tokens, timeout_ms, temperature, top_p,
 				non_deterministic, session_id
-			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
 		`,
 			modalCopy.EvalType, modalCopy.TargetType, modalCopy.TargetID,
+			projectID,
 			modalCopy.VerdictJSON, modalCopy.Confidence,
 			nullIfEmpty(modalCopy.Provider), nullIfEmpty(modalCopy.Model),
 			nullIfEmpty(modalCopy.PersonaID), nullIfEmpty(modalCopy.RubricVer),
@@ -496,7 +520,7 @@ func (s *Store) SaveConsensusSamples(ctx context.Context, auditMeta *Audit, samp
 			`{"event":"judge.save.consensus.modal","id":%d,"sample_count":%d}`,
 			modalID, len(samples),
 		))
-		if _, err := s.audit.WriteExec(ctx, tx, auditMeta.Actor, auditMeta.SessionID, modalPayload); err != nil {
+		if err := writeAuditExecWithProject(ctx, s.audit, tx, auditMeta, modalPayload); err != nil {
 			return fmt.Errorf("judge store SaveConsensusSamples audit modal: %w", err)
 		}
 		return nil
@@ -521,6 +545,13 @@ func (s *Store) GetEvaluation(ctx context.Context, id int64) (*Evaluation, error
 // Empty provider / target_type / eval_type means "no filter on
 // that column" (the operator's choice). limit <= 0 defaults to
 // 1000 (covers the bootstrap N=1000 budget comfortably).
+//
+// This is the GLOBAL variant — it does NOT scope by project_id.
+// Phase 4 Chunk 4.3 added ConfidencesByProjectProviderTarget for
+// project-scoped calibration. The populateCalibration hook uses
+// the project-scoped variant first and falls back to this global
+// variant when the project has fewer than ShouldRecalibrate(N)
+// samples (cold start).
 func (s *Store) ConfidencesByProviderTarget(ctx context.Context, provider, targetType, evalType string, limit int) ([]float64, error) {
 	if limit <= 0 {
 		limit = 1000
@@ -551,6 +582,57 @@ func (s *Store) ConfidencesByProviderTarget(ctx context.Context, provider, targe
 		var c float64
 		if err := rows.Scan(&c); err != nil {
 			return nil, fmt.Errorf("judge store ConfidencesByProviderTarget scan: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// ConfidencesByProjectProviderTarget is the project-scoped variant
+// of ConfidencesByProviderTarget (Phase 4 Chunk 4.3 — hard
+// isolation enforcement). Adds a project_id filter so per-project
+// calibration never bleeds across workstreams.
+//
+// projectID is REQUIRED (non-empty) — callers that don't know the
+// project should use ConfidencesByProviderTarget (the global
+// variant) directly. This keeps the contract explicit: project-
+// scoped queries must always carry the scope.
+//
+// Same signature shape as ConfidencesByProviderTarget. limit <= 0
+// defaults to 1000 (bootstrap-CI budget).
+func (s *Store) ConfidencesByProjectProviderTarget(ctx context.Context, projectID, provider, targetType, evalType string, limit int) ([]float64, error) {
+	if projectID == "" {
+		return nil, fmt.Errorf("judge store ConfidencesByProjectProviderTarget: projectID required")
+	}
+	if limit <= 0 {
+		limit = 1000
+	}
+	q := `SELECT confidence FROM sdd_evaluations WHERE project_id = ?`
+	args := []interface{}{projectID}
+	if provider != "" {
+		q += ` AND provider = ?`
+		args = append(args, provider)
+	}
+	if targetType != "" {
+		q += ` AND target_type = ?`
+		args = append(args, targetType)
+	}
+	if evalType != "" {
+		q += ` AND eval_type = ?`
+		args = append(args, evalType)
+	}
+	q += ` ORDER BY id DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("judge store ConfidencesByProjectProviderTarget: %w", err)
+	}
+	defer rows.Close()
+	out := make([]float64, 0, limit)
+	for rows.Next() {
+		var c float64
+		if err := rows.Scan(&c); err != nil {
+			return nil, fmt.Errorf("judge store ConfidencesByProjectProviderTarget scan: %w", err)
 		}
 		out = append(out, c)
 	}
@@ -639,7 +721,7 @@ func (s *Store) ListEvaluations(ctx context.Context, f ListFilter) ([]Evaluation
 }
 
 const selectEvaluationSQL = `
-SELECT id, eval_type, target_type, target_id, verdict_json, confidence,
+SELECT id, eval_type, target_type, target_id, project_id, verdict_json, confidence,
        COALESCE(provider, ''), COALESCE(model, ''), COALESCE(persona_id, ''),
        COALESCE(rubric_version, ''), COALESCE(schema_version, ''),
        COALESCE(seed, 0), COALESCE(max_tokens, 0), COALESCE(timeout_ms, 0),
@@ -659,10 +741,12 @@ type scanRow interface {
 func scanEvaluation(row scanRow) (*Evaluation, error) {
 	var (
 		e         Evaluation
+		projectID string
 		createdAt string
 	)
 	if err := row.Scan(
-		&e.ID, &e.EvalType, &e.TargetType, &e.TargetID, &e.VerdictJSON,
+		&e.ID, &e.EvalType, &e.TargetType, &e.TargetID, &projectID,
+		&e.VerdictJSON,
 		&e.Confidence,
 		&e.Provider, &e.Model, &e.PersonaID,
 		&e.RubricVer, &e.SchemaVer,
@@ -677,6 +761,7 @@ func scanEvaluation(row scanRow) (*Evaluation, error) {
 		}
 		return nil, fmt.Errorf("judge store scan: %w", err)
 	}
+	e.ProjectID = projectID
 	if t, err := time.Parse(time.RFC3339Nano, createdAt); err == nil {
 		e.CreatedAt = t
 	} else if t, err := time.Parse("2006-01-02 15:04:05", createdAt); err == nil {
@@ -713,6 +798,28 @@ func nullableFloat(f float64) interface{} {
 		return nil
 	}
 	return f
+}
+
+// writeAuditExecWithProject (Phase 4 Chunk 4.3) emits one audit_log
+// row inside the caller's transaction. When auditMeta.ProjectID is
+// non-empty, the row is stamped with that project_id via
+// audit.Writer.WriteExecWithProject. Empty project_id falls back
+// to audit.Writer.WriteExec (the row gets project_id='default' via
+// the column DEFAULT clause).
+//
+// Same pattern as agent_memory.writeAuditWithProject, kept separate
+// because the judge package doesn't import agent_memory (would
+// create a cycle). The audit package's `sqlExec` interface is
+// unexported, so we accept *sql.Tx directly — the only concrete
+// type passed by SaveEvaluation / SaveConsensusSamples (both are
+// inside store.WithTx).
+func writeAuditExecWithProject(ctx context.Context, w *audit.Writer, tx *sql.Tx, meta *Audit, payload []byte) error {
+	if meta.ProjectID != "" {
+		_, err := w.WriteExecWithProject(ctx, tx, meta.Actor, meta.SessionID, meta.ProjectID, payload)
+		return err
+	}
+	_, err := w.WriteExec(ctx, tx, meta.Actor, meta.SessionID, payload)
+	return err
 }
 
 func boolToInt(b bool) int {

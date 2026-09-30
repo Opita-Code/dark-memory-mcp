@@ -172,9 +172,14 @@ var ErrNotFound = errors.New("agent_memory: not found")
 // If pinned is true the row is surfaced first by Recall (until
 // it's archived or unpinned).
 //
-// audit is the INV-1 metadata: Actor must be non-empty. The audit
-// row, the agent_memory row, and the FTS5 sync all commit
-// atomically; a failure at any step rolls back all three.
+// audit is the INV-1 metadata: Actor must be non-empty. When
+// auditMeta.ProjectID is non-empty, the audit row is stamped with
+// that project_id via audit.Writer.WriteExecWithProject (Phase 4
+// Chunk 4.3 hard isolation). Empty project_id falls back to the
+// legacy WriteExec (audit row gets project_id='default' via column
+// DEFAULT). The audit row, the agent_memory row, and the FTS5 sync
+// all commit atomically; a failure at any step rolls back all
+// three.
 func (s *Store) Save(ctx context.Context, auditMeta *Audit, op, kind, title, content, tags string, pinned bool) (int64, error) {
 	if op == "" {
 		return 0, ErrEmptyOperator
@@ -222,7 +227,7 @@ func (s *Store) Save(ctx context.Context, auditMeta *Audit, op, kind, title, con
 			`{"event":"agent_memory.save","id":%d,"operator":%q,"kind":%q}`,
 			id, op, kind,
 		))
-		if _, err := s.audit.WriteExec(ctx, tx, auditMeta.Actor, auditMeta.SessionID, payload); err != nil {
+		if err := writeAuditWithProject(ctx, s.audit, tx, auditMeta, payload); err != nil {
 			return fmt.Errorf("agent_memory Save audit: %w", err)
 		}
 		return nil
@@ -479,7 +484,10 @@ func scanRows(rows *sql.Rows) ([]Row, error) {
 // follow-up Recall doesn't see the row AND a follow-up audit
 // query shows the archive event. All three operations are atomic.
 //
-// audit is the INV-1 metadata; Actor must be non-empty.
+// audit is the INV-1 metadata; Actor must be non-empty. When
+// auditMeta.ProjectID is non-empty, the audit row is stamped via
+// WriteExecWithProject (Phase 4 Chunk 4.3); empty falls back to
+// WriteExec.
 //
 // FTS5 quirk (resolved): earlier revisions used a contentless
 // FTS5 table (`content='agent_memory'`) which required the FTS5
@@ -511,7 +519,7 @@ func (s *Store) Archive(ctx context.Context, auditMeta *Audit, id int64) error {
 		// INV-1 audit emission inside the same tx.
 		payload := []byte(fmt.Sprintf(
 			`{"event":"agent_memory.archive","id":%d}`, id))
-		if _, err := s.audit.WriteExec(ctx, tx, auditMeta.Actor, auditMeta.SessionID, payload); err != nil {
+		if err := writeAuditWithProject(ctx, s.audit, tx, auditMeta, payload); err != nil {
 			return fmt.Errorf("agent_memory Archive audit: %w", err)
 		}
 		return nil
@@ -576,7 +584,7 @@ func (s *Store) Update(ctx context.Context, auditMeta *Audit, id int64, title, c
 			// changed — record the attempt for the audit trail).
 			payload := []byte(fmt.Sprintf(
 				`{"event":"agent_memory.update.noop","id":%d}`, id))
-			if _, err := s.audit.WriteExec(ctx, tx, auditMeta.Actor, auditMeta.SessionID, payload); err != nil {
+			if err := writeAuditWithProject(ctx, s.audit, tx, auditMeta, payload); err != nil {
 				return fmt.Errorf("agent_memory Update audit: %w", err)
 			}
 			return nil
@@ -634,7 +642,7 @@ func (s *Store) Update(ctx context.Context, auditMeta *Audit, id int64, title, c
 		payload := []byte(fmt.Sprintf(
 			`{"event":"agent_memory.update","id":%d,"fields":%q}`,
 			id, strings.Join(fields, ",")))
-		if _, err := s.audit.WriteExec(ctx, tx, auditMeta.Actor, auditMeta.SessionID, payload); err != nil {
+		if err := writeAuditWithProject(ctx, s.audit, tx, auditMeta, payload); err != nil {
 			return fmt.Errorf("agent_memory Update audit: %w", err)
 		}
 		return nil
@@ -661,4 +669,28 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// writeAuditWithProject (Phase 4 Chunk 4.3) emits one audit_log
+// row inside the caller's transaction. When auditMeta.ProjectID is
+// non-empty, the row is stamped with that project_id via
+// audit.Writer.WriteExecWithProject. Empty project_id falls back
+// to audit.Writer.WriteExec (the row gets project_id='default' via
+// the column DEFAULT clause).
+//
+// The audit package's `sqlExec` interface is unexported, so we
+// can't re-declare it here. Instead we accept *sql.Tx directly:
+// *sql.Tx is the only concrete type passed by Save/Update/Archive
+// (all three are inside store.WithTx). It satisfies audit.sqlExec
+// implicitly.
+//
+// Centralised so Save/Update/Archive share the same branching
+// logic — keeps the audit emission policy in one place.
+func writeAuditWithProject(ctx context.Context, w *audit.Writer, tx *sql.Tx, meta *Audit, payload []byte) error {
+	if meta.ProjectID != "" {
+		_, err := w.WriteExecWithProject(ctx, tx, meta.Actor, meta.SessionID, meta.ProjectID, payload)
+		return err
+	}
+	_, err := w.WriteExec(ctx, tx, meta.Actor, meta.SessionID, payload)
+	return err
 }

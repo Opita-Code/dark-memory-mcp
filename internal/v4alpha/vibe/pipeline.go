@@ -61,12 +61,20 @@ func (p *Pipeline) Drifts() *DriftStore { return p.drifts }
 // persisted in v4-alpha (it lives in the spec row, accessed via
 // artifact.SpecID → spec.Intent in a later slice).
 //
+// Phase 4 Chunk 4.3: art.ProjectID is propagated to the audit_log
+// row via audit.Writer.WriteWithProject (when non-empty). Empty
+// falls back to audit.Writer.Write (audit row gets project_id=
+// 'default' via column DEFAULT). Same pattern as audit_log +
+// session.Start hard isolation.
+//
 // Lifecycle:
 //   1. Validate artifact (defense-in-depth; caller may have skipped).
-//   2. Insert artifact → artID.
+//   2. Insert artifact → artID (artifact row's project_id column
+//      is also set, via ArtifactStore.Insert).
 //   3. Judge.Evaluate → verdict.
 //   4. Insert drift with verdict → driftID.
-//   5. Emit one INV-1 audit row tagged with "pipeline".
+//   5. Emit one INV-1 audit row tagged with "pipeline" and
+//      art.ProjectID (when set).
 func (p *Pipeline) Publish(ctx context.Context, art *Artifact, specIntent string) (*DriftReport, error) {
 	if err := art.Validate(); err != nil {
 		return nil, fmt.Errorf("pipeline Publish: %w", err)
@@ -97,15 +105,29 @@ func (p *Pipeline) Publish(ctx context.Context, art *Artifact, specIntent string
 		return nil, fmt.Errorf("pipeline Publish drift: %w", err)
 	}
 
-	if _, err := p.audit.Write(ctx, "pipeline", "",
-		[]byte(fmt.Sprintf(
-			`{"event":"vibe.publish","artifact_id":%d,"drift_id":%d,"verdict":%q,"confidence":%f}`,
-			artID, driftID, verdict.Verdict, verdict.Confidence,
-		))); err != nil {
+	payload := []byte(fmt.Sprintf(
+		`{"event":"vibe.publish","artifact_id":%d,"drift_id":%d,"verdict":%q,"confidence":%f}`,
+		artID, driftID, verdict.Verdict, verdict.Confidence,
+	))
+	if err := p.writeAuditWithProject(ctx, art.ProjectID, payload); err != nil {
 		return nil, fmt.Errorf("pipeline Publish audit: %w", err)
 	}
 
 	return drift, nil
+}
+
+// writeAuditWithProject emits one audit_log row with the project_id
+// stamped (Phase 4 Chunk 4.3). Empty projectID falls back to
+// audit.Write (the row gets project_id='default' via the column
+// DEFAULT — pre-Phase-4 contract preserved for callers that don't
+// set ProjectID).
+func (p *Pipeline) writeAuditWithProject(ctx context.Context, projectID string, payload []byte) error {
+	if projectID != "" {
+		_, err := p.audit.WriteWithProject(ctx, "pipeline", "", projectID, payload)
+		return err
+	}
+	_, err := p.audit.Write(ctx, "pipeline", "", payload)
+	return err
 }
 
 // Status returns the latest drift report for an artifact, or

@@ -30,12 +30,19 @@ import (
 	"testing"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/audit"
+	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/project"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/store"
 )
 
 // newTestStore opens an in-memory SQLite with both audit_log and
 // sdd_evaluations schemas applied. Returns the Store + the *sql.DB
 // (so tests can SELECT directly) + a cleanup.
+//
+// Phase 4 Chunk 4.3: applies project.ApplyProjectIDColumns so the
+// sdd_evaluations table has the project_id column (matches
+// production boot via cmd/dark-memory-v4/serve.go:applyAllSchemas).
+// Without it, SaveEvaluation fails on INSERT because the column
+// is missing.
 func newTestStore(t *testing.T) (*Store, *sql.DB, func()) {
 	t.Helper()
 	db, err := store.OpenSQLite(context.Background(), "file::memory:?cache=shared")
@@ -47,6 +54,9 @@ func newTestStore(t *testing.T) (*Store, *sql.DB, func()) {
 	}
 	if err := CreateSchema(db); err != nil {
 		t.Fatalf("judge.CreateSchema: %v", err)
+	}
+	if err := project.ApplyProjectIDColumns(context.Background(), db); err != nil {
+		t.Fatalf("project.ApplyProjectIDColumns: %v", err)
 	}
 	w := audit.NewWriter(db)
 	return NewStore(db, w), db, func() { _ = db.Close() }

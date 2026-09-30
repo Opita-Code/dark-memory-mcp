@@ -40,7 +40,16 @@ const (
 	sessionHeartbeatToolName = "dark_memory_session_heartbeat"
 )
 
-const defaultProjectID = "dark-memory-v4"
+// defaultProjectID is the project_id used when session_start is
+// called without one. Phase 4 Chunk 4.3 made it the literal
+// "default" because the 'default' workstream is auto-seeded by
+// project.CreateSchema (INSERT OR IGNORE on first boot). Pre-Phase-4
+// defaulted to "dark-memory-v4" (the v4-alpha.1 server identity);
+// hard isolation rejected unknown project_ids, so we switched to
+// the seeded catch-all. Callers that want a non-default namespace
+// must pass project_id explicitly AND register it first via
+// dark_memory_project_create.
+const defaultProjectID = "default"
 
 func registerSessionTools(s *Server) {
 	registerSessionStart(s)

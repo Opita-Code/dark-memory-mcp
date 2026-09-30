@@ -19,6 +19,10 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/store"
 )
 
+// Compile-time guard that the test references types from this package.
+var _ = (*Audit)(nil)
+var _ = (*Evaluation)(nil)
+
 func TestDeliberateBreak_Store_AuditActorMissingFailsFast(t *testing.T) {
 	// INV-1: empty actor rejected before any DB I/O.
 	s, db, cleanup := newTestStore(t)
@@ -203,21 +207,51 @@ func TestDeliberateBreak_Store_ConsensusSamplesRejectsReservedEvalType(t *testin
 }
 
 func TestDeliberateBreak_Store_ProjectIDColumnReadyForFuture(t *testing.T) {
-	// INV-7 readiness: the schema does NOT yet carry project_id
-	// (legacy has it). This test asserts the current absence and
-	// documents the forward-compat plan.
+	// Phase 4 Chunk 4.3 SHIPPED (2026-09-30, commits 1d39659 +
+	// followup). sdd_evaluations now carries project_id as the
+	// namespace primitive. This test, originally asserting
+	// absence, was inverted to assert presence + roundtrip:
+	//   - column exists (project_id)
+	//   - SaveEvaluation persists it (via auditMeta.ProjectID)
+	//   - GetEvaluation roundtrips it
 	//
-	// When C4 (or BUG-9) extends sdd_evaluations with project_id,
-	// this test must be updated to assert presence + roundtrip.
-	_, db, cleanup := newTestStore(t)
+	// Pre-Phase-4 expectation was absence; the test now catches
+	// regressions in either direction.
+	store, db, cleanup := newTestStore(t)
 	defer cleanup()
 
 	var nCols int
 	if err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('sdd_evaluations') WHERE name = 'project_id'").Scan(&nCols); err != nil {
 		t.Fatalf("pragma_table_info: %v", err)
 	}
-	if nCols != 0 {
-		t.Fatalf("project_id column already exists (nCols=%d); update this test to assert presence", nCols)
+	if nCols != 1 {
+		t.Fatalf("project_id column absent (nCols=%d); Phase 4 Chunk 4.3 ships it", nCols)
+	}
+
+	// Roundtrip: SaveEvaluation with ProjectID, then GetEvaluation,
+	// expect ProjectID == 'proj-huila'.
+	ctx := context.Background()
+	e := &Evaluation{
+		EvalType:   "drift_judge",
+		TargetType: "file",
+		TargetID:   "test://foo.go",
+		ProjectID:  "proj-huila",
+		VerdictJSON: `{"verdict":"aligned","confidence":0.9}`,
+		Confidence:  0.9,
+	}
+	id, err := store.SaveEvaluation(ctx, &Audit{
+		Actor:     "operator-test",
+		ProjectID: "proj-huila",
+	}, e)
+	if err != nil {
+		t.Fatalf("SaveEvaluation: %v", err)
+	}
+	got, err := store.GetEvaluation(ctx, id)
+	if err != nil {
+		t.Fatalf("GetEvaluation: %v", err)
+	}
+	if got.ProjectID != "proj-huila" {
+		t.Fatalf("ProjectID roundtrip: want proj-huila, got %q", got.ProjectID)
 	}
 }
 
