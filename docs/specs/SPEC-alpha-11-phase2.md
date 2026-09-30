@@ -168,8 +168,12 @@ Why this encoding:
 - **Trailing `0x00`**: prevents "field N and field N+1 concatenated into a
   new field" attacks (e.g., payload ending in something that looks like a
   valid RFC3339 string).
-- **`created_at` from DB**: stored as ISO8601 via SQLite's
-  `CURRENT_TIMESTAMP` default, so all writers serialize the same way.
+- **`created_at` generated in Go**: `time.Now().UTC().Format(time.RFC3339Nano)`.
+  The SAME value is stored in the row AND fed to the hash, so Write and
+  Verify agree on the bytes. Uniform format across writers (no SQLite
+  `CURRENT_TIMESTAMP`, which is second-granularity and would need an
+  extra SELECT per Write). Judge fix F1 (2026-09-30): spec originally
+  said DB-generated; implementation ships Go-generated.
 
 ### 3.3 Why SHA-256
 
@@ -177,7 +181,8 @@ Why this encoding:
 - ~1μs per hash on modern hardware — well under our 5μs budget.
 - 32 bytes per row is acceptable (10k rows = 320 KB extra).
 - No surprises: deterministic across platforms (the encoding above
-  excludes `time.Now()` and any process-local state).
+  excludes process-local state; `created_at` is generated once per Write
+  and stored, so Verify reads back the identical bytes).
 
 ### 3.4 The chain
 

@@ -57,17 +57,19 @@ import (
 //
 // # Phase 2 chain queries
 //
-// The chain flow needs 4 queries per WriteExec:
-//   1. SELECT row_hash FROM audit_log ORDER BY audit_id DESC LIMIT 1
-//      (resolve prev_hash; cold start only)
-//   2. INSERT INTO audit_log (...)
-//   3. SELECT created_at FROM audit_log WHERE audit_id = ?
-//   4. UPDATE audit_log SET row_hash = ? WHERE audit_id = ?
+// The chain flow needs 2 queries per WriteExec on the hot path:
+//   1. INSERT INTO audit_log (actor, session_id, payload, prev_hash,
+//      created_at) — created_at generated in Go (RFC3339Nano), no SELECT.
+//   2. UPDATE audit_log SET row_hash = ? WHERE audit_id = ?
 //
-// Queries 1, 3 need QueryRowContext; the interface below exposes
-// only ExecContext because they share the same QueryRow/QueryRowContext
-// surface. Callers using *sql.DB or *sql.Tx get both for free; we
-// only need to widen the interface for the package's tests.
+// Cold start only (lastHash mirror empty): one extra SELECT for the
+// bootstrap — SELECT row_hash FROM audit_log ORDER BY audit_id DESC
+// LIMIT 1 via the executor (consistent snapshot at tx BEGIN when the
+// executor is a *sql.Tx).
+//
+// sqlExec exposes ExecContext + QueryRowContext: ExecContext for the
+// INSERT/UPDATE, QueryRowContext for the cold-start bootstrap SELECT.
+// Both *sql.DB and *sql.Tx satisfy it.
 type sqlExec interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
@@ -184,21 +186,6 @@ func (w *Writer) resolvePrevHashExecLocked(ctx context.Context, ex sqlExec) ([]b
 	return prev, nil
 }
 
-// fetchCreatedAtExecLocked is the executor-aware variant of
-// fetchCreatedAtLocked. Deprecated: WriteExec now generates
-// created_at in Go (time.Now().UTC().Format(time.RFC3339Nano)) and
-// passes it directly to INSERT — no DB read needed. Kept here for
-// backward compatibility with tests that pre-date the optimization;
-// new code should not call it.
-//
-// MUST be called with w.mu held.
-func (w *Writer) fetchCreatedAtExecLocked(ctx context.Context, ex sqlExec, id int64) (string, error) {
-	var createdAt string
-	err := ex.QueryRowContext(ctx,
-		"SELECT created_at FROM audit_log WHERE audit_id = ?", id,
-	).Scan(&createdAt)
-	if err != nil {
-		return "", err
-	}
-	return createdAt, nil
-}
+// NOTE (judge fix F3, 2026-09-30): no fetchCreatedAt helper exists —
+// created_at is generated in Go (WriteExec step 1), so no DB read is
+// ever needed. resolvePrevHashExecLocked above is the only helper.

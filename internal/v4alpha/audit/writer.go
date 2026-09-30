@@ -280,29 +280,6 @@ func (w *Writer) resolvePrevHashLocked(ctx context.Context) ([]byte, error) {
 	return prev, nil
 }
 
-// fetchCreatedAtLocked returns the created_at of the row just
-// inserted. Must be called after a successful INSERT so the row
-// is visible. Returns the SQLite CURRENT_TIMESTAMP value (UTC,
-// RFC3339) as a string — identical across writers, deterministic.
-//
-// Deprecated: Write now generates created_at in Go (time.Now() and
-// RFC3339Nano) and passes it directly to INSERT. The hash uses the
-// same value. There is no need to fetch from the DB. Kept for the
-// WriteExec path (which still queries the executor); new code
-// should use Go-side generation.
-//
-// MUST be called with w.mu held.
-func (w *Writer) fetchCreatedAtLocked(ctx context.Context, id int64) (string, error) {
-	var createdAt string
-	err := w.db.QueryRowContext(ctx,
-		"SELECT created_at FROM audit_log WHERE audit_id = ?", id,
-	).Scan(&createdAt)
-	if err != nil {
-		return "", err
-	}
-	return createdAt, nil
-}
-
 // LastID returns the most recent audit_id emitted by THIS Writer
 // process, or 0 if no Write has been performed yet. Diagnostic
 // helper used by tests and operators to inspect this process's

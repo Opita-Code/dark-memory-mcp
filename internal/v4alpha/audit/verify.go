@@ -99,6 +99,15 @@ func Verify(ctx context.Context, db *sql.DB, startID, endID int64) (VerifyResult
 
 	res := VerifyResult{StartID: startID, EndID: endID}
 
+	// Empty table: MAX(audit_id) resolves to 0, so endID==0 means
+	// "no rows at all". Vacuous truth — verified with count 0.
+	// (Judge fix F5, 2026-09-30: previously returned the inverted-range
+	// error below, so dark_memory_audit_verify on a fresh DB errored.)
+	if endID == 0 {
+		res.Verified = true
+		return res, nil
+	}
+
 	if startID > endID {
 		// Inverted range is a caller bug. Empty range (endID < startID
 		// before resolution was wrong; we resolved them so this is

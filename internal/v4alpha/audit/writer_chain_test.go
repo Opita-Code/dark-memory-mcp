@@ -463,6 +463,32 @@ func TestExample_HashChain_VerifyInvertedRange(t *testing.T) {
 	}
 }
 
+// TestExample_HashChain_VerifyEmptyTable — judge fix F5 (2026-09-30).
+// Verify on an empty audit_log returns verified=true with count=0
+// (vacuous truth), NOT the inverted-range error. Fresh DBs must pass
+// dark_memory_audit_verify out of the box.
+func TestExample_HashChain_VerifyEmptyTable(t *testing.T) {
+	db, err := sqlOpenMemory()
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := audit.CreateSchema(db); err != nil {
+		t.Fatalf("CreateSchema: %v", err)
+	}
+
+	res, err := audit.Verify(context.Background(), db, 0, 0)
+	if err != nil {
+		t.Fatalf("Verify on empty table returned error: %v", err)
+	}
+	if !res.Verified {
+		t.Fatalf("Verify on empty table: verified=false, want true (vacuous truth)")
+	}
+	if res.Count != 0 {
+		t.Fatalf("count = %d; want 0", res.Count)
+	}
+}
+
 // contains is a tiny helper (substrings.Contains style) to avoid
 // importing strings here just for one assertion.
 func contains(s, sub string) bool {

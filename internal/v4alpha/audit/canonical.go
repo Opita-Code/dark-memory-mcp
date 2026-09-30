@@ -24,7 +24,8 @@
 //       || 0x00            // separator
 //       || payload         // raw bytes (may be empty)
 //       || 0x00            // separator
-//       || created_at      // RFC3339 string from SQLite CURRENT_TIMESTAMP
+//       || created_at      // RFC3339Nano string generated in Go at Write time,
+//                           // stored in the row; Verify reads the stored value
 //       || 0x00            // trailing separator
 //   )
 //
@@ -34,8 +35,11 @@
 //     "fo" + "o" vs "foo" + "" ambiguity (test: TestSeparatorDisambiguation).
 //   - Trailing 0x00: prevents payload ending in ASCII that looks
 //     like RFC3339 from fusing with created_at (test: TestTrailingSeparatorFuseAttack).
-//   - created_at is the SQLite CURRENT_TIMESTAMP — UTC, RFC3339, identical
-//     across writers. No time.Now() in the hash input.
+//   - created_at is generated in Go at Write time (time.Now().UTC()
+//     formatted RFC3339Nano). The SAME string is stored in the row and
+//     fed to the hash, so Write and Verify always agree on the bytes.
+//     Uniform across writers; no per-Write SELECT needed. (Judge fix F1:
+//     earlier revision of this comment said SQLite CURRENT_TIMESTAMP.)
 package audit
 
 import (
@@ -72,7 +76,8 @@ const HashLen = 32
 //   - actor: non-empty per INV-1; UTF-8 bytes (writer validates non-empty)
 //   - sessionID: empty string if not bound to a session
 //   - payload: raw bytes; may be empty
-//   - createdAt: the SQLite CURRENT_TIMESTAMP value (RFC3339, UTC)
+//   - createdAt: the string stored in the row's created_at column
+//     (Go-generated RFC3339Nano at Write time; Verify reads it back).
 //
 // The returned [32]byte is intended to be stored as BLOB(32) — the
 // writer converts via result[:] for the SQL bind.

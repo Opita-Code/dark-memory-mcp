@@ -304,6 +304,74 @@ func TestWriteExecEmptySessionIDStoredAsNULL(t *testing.T) {
 	}
 }
 
+// TestWriteExecChain_MixedPathsVerify — judge fix F4 (2026-09-30).
+//
+// WriteExec is the PRODUCTION hot path for audit emission
+// (agent_memory.Save/Update/Archive, judge.Store.SaveEvaluation all
+// emit via WriteExec inside a tx). Before this test, every chain test
+// used Write — a tx-snapshot prev_hash bug in WriteExec would have
+// shipped silently.
+//
+// 5 rows via Write + 5 via WriteExec(db) + 5 via WriteExec(tx),
+// then Verify must pass with count=15. Then a deliberate break on a
+// tx-path row (id=12) must be detected at 12 — proving WriteExec rows
+// are really chained, not merely present.
+func TestWriteExecChain_MixedPathsVerify(t *testing.T) {
+	w, db := newTestWriterWithDB(t)
+	ctx := context.Background()
+
+	for i := 0; i < 5; i++ {
+		if _, err := w.Write(ctx, "operator-w", "sess-mix", []byte{byte(i)}); err != nil {
+			t.Fatalf("Write[%d]: %v", i, err)
+		}
+	}
+	for i := 0; i < 5; i++ {
+		if _, err := w.WriteExec(ctx, db, "operator-x", "sess-mix", []byte{byte(i + 50)}); err != nil {
+			t.Fatalf("WriteExec(db)[%d]: %v", i, err)
+		}
+	}
+	err := store.WithTx(ctx, db, func(tx *sql.Tx) error {
+		for i := 0; i < 5; i++ {
+			if _, err := w.WriteExec(ctx, tx, "operator-t", "sess-mix", []byte{byte(i + 100)}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("WithTx: %v", err)
+	}
+
+	res, err := audit.Verify(ctx, db, 0, 0)
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if !res.Verified {
+		t.Fatalf("mixed-path chain not verified: broken_at=%d, count=%d", res.BrokenAt, res.Count)
+	}
+	if res.Count != 15 {
+		t.Fatalf("count = %d; want 15 (5 Write + 5 WriteExec(db) + 5 WriteExec(tx))", res.Count)
+	}
+
+	// DELIBERATE BREAK on a tx-path row (id=12): rewrite payload.
+	if _, err := db.ExecContext(ctx,
+		"UPDATE audit_log SET payload = ? WHERE audit_id = 12",
+		[]byte{0xFF},
+	); err != nil {
+		t.Fatalf("rewrite: %v", err)
+	}
+	res2, err := audit.Verify(ctx, db, 0, 0)
+	if err != nil {
+		t.Fatalf("Verify after break: %v", err)
+	}
+	if res2.Verified {
+		t.Fatalf("Verify verified=true after payload rewrite at tx-path id=12; expected detected")
+	}
+	if res2.BrokenAt != 12 {
+		t.Fatalf("broken_at = %d; want 12", res2.BrokenAt)
+	}
+}
+
 // --- helpers ---
 
 // itoaInt64 converts an int64 to its base-10 string representation.
