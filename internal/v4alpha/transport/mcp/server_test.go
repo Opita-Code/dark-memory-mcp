@@ -300,7 +300,8 @@ func TestInitialize_RespondsWithServerInfo(t *testing.T) {
 // count. ADR-007 C2 adds 4 judge tools (judge + consensus +
 // judgment_history + list_personas). PRE-1 C4 adds 2 tools
 // (summarize_session + skill_loaded). Phase 2 adds 1 tool
-// (audit_verify) — total now 42.
+// (audit_verify). Phase 4 Chunk 4.2 adds 4 tools (project_create,
+// project_lookup, mindset_apply, delegate_intent) — total now 46.
 func TestToolsList_ReturnsSixTools(t *testing.T) {
 	responses := driveServer(t, handshake())
 	// handshake has 3 messages; the server emits responses for
@@ -317,8 +318,8 @@ func TestToolsList_ReturnsSixTools(t *testing.T) {
 	if err := json.Unmarshal(list.Result, &result); err != nil {
 		t.Fatalf("parse tools/list: %v", err)
 	}
-	if len(result.Tools) != 42 {
-		t.Errorf("tool count = %d; want 42 (BUG-7 MVP + BUG-8 batch 1 + ADR-007 C2 judge + BUG-10 10a judge_util + research + PRE-1 C4 summarize + Phase 2 audit_verify)", len(result.Tools))
+	if len(result.Tools) != 46 {
+		t.Errorf("tool count = %d; want 46 (BUG-7 MVP + BUG-8 batch 1 + ADR-007 C2 judge + BUG-10 10a judge_util + research + PRE-1 C4 summarize + Phase 2 audit_verify + Phase 4 Chunk 4.2 project*2 + mindset + delegation)", len(result.Tools))
 	}
 	wantNames := map[string]bool{
 		// BUG-7 MVP
@@ -355,6 +356,11 @@ func TestToolsList_ReturnsSixTools(t *testing.T) {
 		"dark_memory_judge_list_personas":   false,
 		// Phase 2 (alpha.15, INV-12 audit chain)
 		"dark_memory_audit_verify":          false,
+		// Phase 4 Chunk 4.2 (alpha.17, namespace primitive surface)
+		"dark_memory_project_create":        false,
+		"dark_memory_project_lookup":        false,
+		"dark_memory_mindset_apply":         false,
+		"dark_memory_delegate_intent":       false,
 	}
 	for _, t1 := range result.Tools {
 		if _, ok := wantNames[t1.Name]; ok {

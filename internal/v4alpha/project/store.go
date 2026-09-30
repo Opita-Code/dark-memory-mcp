@@ -158,7 +158,13 @@ func (s *Store) lookupByID(ctx context.Context, projectID string) (*Project, err
 		return nil, fmt.Errorf("project Store.lookupByID scan: %w", err)
 	}
 
-	if t, perr := time.Parse(time.RFC3339Nano, createdAt); perr == nil {
+	// SQLite's default CURRENT_TIMESTAMP produces "YYYY-MM-DD HH:MM:SS"
+	// (UTC, second precision) — NOT RFC3339Nano. Try that format
+	// first; fall back to RFC3339Nano for rows written via the
+	// Store.Archive path (which uses RFC3339Nano).
+	if t, perr := time.Parse("2006-01-02 15:04:05", createdAt); perr == nil {
+		p.CreatedAt = t.UTC()
+	} else if t, perr := time.Parse(time.RFC3339Nano, createdAt); perr == nil {
 		p.CreatedAt = t.UTC()
 	}
 	if archivedAt.Valid && archivedAt.String != "" {
@@ -259,7 +265,11 @@ func (s *Store) List(ctx context.Context, includeArchived bool) ([]*Project, err
 			&p.DefaultAgentID, &createdAt, &archivedAt); err != nil {
 			return nil, fmt.Errorf("project Store.List scan: %w", err)
 		}
-		if t, perr := time.Parse(time.RFC3339Nano, createdAt); perr == nil {
+		// See lookupByID: SQLite CURRENT_TIMESTAMP uses second-
+		// precision format. Try it first, then RFC3339Nano.
+		if t, perr := time.Parse("2006-01-02 15:04:05", createdAt); perr == nil {
+			p.CreatedAt = t.UTC()
+		} else if t, perr := time.Parse(time.RFC3339Nano, createdAt); perr == nil {
 			p.CreatedAt = t.UTC()
 		}
 		if archivedAt.Valid && archivedAt.String != "" {

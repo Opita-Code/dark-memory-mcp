@@ -4,21 +4,24 @@
 // canonical mcp-go library (mark3labs/mcp-go v0.40.0, pinned by
 // the parent module) into a thin wrapper that:
 //
-//   - constructs an mcp-go MCPServer with the BUG-7 MVP tool set
-//     (health_ping, session_start/close/status, agent_memory_save/recall)
+//   - constructs an mcp-go MCPServer with the full v4 tool set
+//     (BUG-7 MVP + BUG-8 + ADR-007 C2/C3 + BUG-10 10a + PRE-1 C4
+//     + Phase 2 + Phase 3 + Phase 4 Chunks 4.1+4.2 = 46 tools).
 //   - drives the JSON-RPC loop on a configurable io.Reader/io.Writer
 //     so the transport is testable in-process (production uses
 //     os.Stdin/os.Stdout)
 //
 // The Server type holds shared dependencies (audit writer, session
-// store, agent_memory store) so each tool handler is a small
-// closure over the *sql.DB rather than re-wiring from scratch.
+// store, agent_memory store, project store, etc.) so each tool
+// handler is a small closure over the *sql.DB rather than re-wiring
+// from scratch.
 //
-// The MVP tool set is deliberately small (6 tools) — the
-// remaining 69 tools (vibe-loop, governance, observability,
-// research, security, admin, update) land in subsequent BUG-8
-// commits. The transport package structure stays the same; only
-// the registration calls in NewServer grow.
+// Tool count progression (2026-09-30):
+//   v3.0.0-docfix canonical: 57 tools
+//   v4 alpha.16 (Phase 3):    42 tools
+//   v4 alpha.17 (Phase 4 +1): 46 tools (project_create,
+//                              project_lookup, mindset_apply,
+//                              delegate_intent)
 package mcp
 
 import (
@@ -29,12 +32,14 @@ import (
 	"os"
 	"runtime"
 
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/agent_memory"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/audit"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/docs_index"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/judge"
+	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/project"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/research"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/session"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/vibe"
@@ -65,6 +70,7 @@ type Server struct {
 	audit           *audit.Writer
 	session         *session.Store
 	memories        *agent_memory.Store
+	projects        *project.Store // Phase 4 Chunk 4.1: namespace primitive
 	pipeline        *vibe.Pipeline
 	judgePipeline   *judge.Pipeline // ADR-007 C2: LLM-backed judge surface
 	judgePersonas   judge.PersonaRegistry
@@ -97,6 +103,16 @@ func NewServer(db *sql.DB) (*Server, error) {
 	auditW := audit.NewWriter(db)
 	sessStore := session.NewStore(db, auditW)
 	memStore := agent_memory.NewStore(db, auditW) // ADR-007 C3: INV-1 audit emission
+
+	// Phase 4 Chunk 4.1: namespace primitive (project.Store).
+	// INV-1 audit emission on Create via audit.Writer.WriteWithProject.
+	// The projects table is created by applyAllSchemas before
+	// NewServer is called (cmd/dark-memory-v4/serve.go), so this
+	// Store has its schema ready.
+	projStore, err := project.NewStore(db, auditW)
+	if err != nil {
+		return nil, fmt.Errorf("mcp NewServer: project.NewStore: %w", err)
+	}
 
 	// PRE-1 C2: index operator-facing docs so recall() can
 	// find them. Defensive: per-doc failures are logged to
@@ -148,6 +164,7 @@ func NewServer(db *sql.DB) (*Server, error) {
 		audit:            auditW,
 		session:          sessStore,
 		memories:         memStore,
+		projects:         projStore,
 		pipeline:         pipe,
 		judgePipeline:    judgePipe,
 		judgePersonas:    judgePersonas,
@@ -155,20 +172,38 @@ func NewServer(db *sql.DB) (*Server, error) {
 		researchExecutor: researchExec,
 	}
 
-	// BUG-7 + BUG-8 + C2 + C3 + 10a + PRE-1 C4 + Phase 2 tool set.
-	// 29 + 7 judge_util + 3 research + 2 summarize + 1 audit_verify = 42 tools.
+	// Tool count breakdown (alpha.17, 2026-09-30, 46 tools total):
+	//   health                 = 1
+	//   session_*              = 5 (start, close, status, resume, heartbeat)
+	//   agent_memory_*         = 6 (save, recall, list, get, update, archive)
+	//   observability_*        = 3 (memory_state, writes, anomalies)
+	//   error_obs_*            = 4 (summary, list, get, resolve)
+	//   policy_*               = 2 (active_policy, load_constitution)
+	//   vibe_*                 = 4 (spec, publish, pipeline_status, resolve_drift)
+	//   judge_*                = 4 (judge, consensus, judgment_history, list_personas)
+	//   judge_util_*           = 7 (normalize, validate_overrides, pattern_descriptions, verify, verify_hash, trace, validate_trace)
+	//   research_*             = 3 (topic, recall, resume_thread)
+	//   summarize_*            = 2 (summarize_session, skill_loaded) — PRE-1 C4
+	//   audit_verify           = 1 — Phase 2 alpha.15
+	//   project_* (NEW)        = 2 (create, lookup) — Phase 4 Chunk 4.2
+	//   mindset_apply (NEW)    = 1 — Phase 4 Chunk 4.2 STUB
+	//   delegate_intent (NEW)  = 1 — Phase 4 Chunk 4.2 STUB
+	//   TOTAL                  = 46 tools
 	registerHealthTool(s)         // 1
-	registerSessionTools(s)       // 5 (start, close, status, resume, heartbeat)
-	registerAgentMemoryTools(s)   // 6 (save, recall, list, get, update, archive)
-	registerObservabilityTools(s) // 3 (memory_state, writes, anomalies)
-	registerErrorObsTools(s)      // 4 (summary, list, get, resolve)
-	registerPolicyTools(s)        // 2 (active_policy, load_constitution)
-	registerVibeTools(s)          // 4 (spec, publish, pipeline_status, resolve_drift)
-	registerJudgeTools(s)         // 4 (judge, consensus, judgment_history, list_personas)
-	registerJudgeUtilTools(s)     // 7 (normalize, validate_overrides, pattern_descriptions, verify, verify_hash, trace, validate_trace)
-	registerResearchTools(s)      // 3 (topic, recall, resume_thread)
-	registerSummarizeTools(s)     // 2 (summarize_session, skill_loaded) — PRE-1 C4
-	registerAuditVerifyTool(s)    // 1 (audit_verify) — Phase 2 alpha.15
+	registerSessionTools(s)       // 5
+	registerAgentMemoryTools(s)   // 6
+	registerObservabilityTools(s) // 3
+	registerErrorObsTools(s)      // 4
+	registerPolicyTools(s)        // 2
+	registerVibeTools(s)          // 4
+	registerJudgeTools(s)         // 4
+	registerJudgeUtilTools(s)     // 7
+	registerResearchTools(s)      // 3
+	registerSummarizeTools(s)     // 2 — PRE-1 C4
+	registerAuditVerifyTool(s)    // 1 — Phase 2 alpha.15
+	registerProjectTools(s)       // 2 — Phase 4 Chunk 4.2
+	registerMindsetTools(s)       // 1 — Phase 4 Chunk 4.2 STUB
+	registerDelegationTools(s)     // 1 — Phase 4 Chunk 4.2 STUB
 
 	return s, nil
 }
@@ -229,3 +264,39 @@ type runtimeInfo struct {
 
 // goRuntimeVersion is captured at package init for fast access.
 var goRuntimeVersion = runtime.Version()
+
+// --- test seams (Phase 4 Chunk 4.2) ---
+//
+// These methods exist ONLY so external test files (project_test.go
+// in package mcp_test) can wire a Server with the minimum state
+// needed to exercise the project/mindset/delegation handlers. They
+// are not part of the public API; production code MUST use
+// NewServer instead.
+
+// SetProjectsForTest injects a *project.Store into the Server.
+// Used by tests that need the project handlers (project_create,
+// project_lookup) without spinning up the full dependency graph
+// (researchExecutor, judgePipeline, etc.).
+func (s *Server) SetProjectsForTest(p *project.Store) {
+	s.projects = p
+}
+
+// ProjectsForTest returns the wired *project.Store. Returns nil
+// when NewServer has not been called (e.g., in tests that
+// construct a Server with only SetProjectsForTest).
+func (s *Server) ProjectsForTest() *project.Store {
+	return s.projects
+}
+
+// HandleMindsetApplyForTest returns the unexported handler
+// registered for dark_memory_mindset_apply. Tests invoke it
+// directly via callHandler (skips the mcp-go transport overhead).
+func (s *Server) HandleMindsetApplyForTest() func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	return s.handleMindsetApply
+}
+
+// HandleDelegateIntentForTest returns the unexported handler
+// registered for dark_memory_delegate_intent.
+func (s *Server) HandleDelegateIntentForTest() func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	return s.handleDelegateIntent
+}
