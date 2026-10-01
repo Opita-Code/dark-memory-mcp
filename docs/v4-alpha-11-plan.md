@@ -521,7 +521,111 @@ Closes the deferred `internal/recall` 45.3% gap.
   pinned + 19 SECTION pinned=false, agent_id `alpha-11-phase7`,
   session `sess-a4c92524784e1891`).
 
-## 8. The vibe-loop pattern, restated
+## 8. Phase 8 — v4alpha wiring close + embedder pilot 📋 PLANNED (alpha.20, target 2026-10-09)
+
+**Pre-flight**: Phase 7 alpha.19 shipped + tagged local `v4.0.0-alpha.19` on commit `1ed7bc5`. **Phase 8 e2e EXHAUSTIVE run** (17 tests, 12 min, ~$0.30) verified production-grade behavior with **2 CRITICAL wiring gaps** discovered — these gaps BLOCK operator access to Phase 7 improvements and MUST close first.
+
+### §8.1 Wire v4alpha Server into MCP public registry 🚨 CRITICAL
+
+- **Gap (e2e T7)**: `dark_memory_delegate_intent` routes to `internal/orchestration` (v2 router alpha.18.1, 1 subtask "bundle"). The v4alpha EXTRACT pipeline (Chunk 7.1) is implemented in `internal/v4alpha/transport/mcp/delegation.go` but has NO MCP public tool registration. Chunk 7.1 is shipped + tagged but **inaccessible to MCP consumers**.
+- **Goal**: `dark_memory_delegate_intent` routes to `internal/v4alpha/transport/mcp.Server.HandleDelegateIntent` (wire shape v2 unchanged). LLM-extracted sub-tasks, judge-delegator persona, drift_judge validation, needs_human surface with `alternatives[]` all become reachable.
+- **Architecture**: extend `internal/tools/registry.go` to accept a v4alpha handler registration; replace `BindOrchestrator("delegate_intent", ...)` with `BindV4AlphaDelegateIntent(...)`; OR add a feature flag (`DARK_DELEGATION_BACKEND=v2|v4alpha`).
+- **Tests**: re-run Phase 8 e2e T7 with v4alpha surface; new `internal/v4alpha/transport/mcp/delegation_e2e_test.go` (8 tests via mcp-go + httptest) covering LLM-extract path, drift_judge validation, refine+retry, needs_human surface.
+- **Estimated LoC**: +120 LoC (registry update + delegation handler swap) + 8 tests.
+- **Closes**: Phase 8 e2e T7 critical finding (row 2327).
+
+### §8.2 Expose v4alpha persona registry in MCP public API 🚨 CRITICAL
+
+- **Gap (e2e T3)**: `dark_memory_judge_list_personas` returns 8 v2 personas only. The v4alpha registry (internal/v4alpha/judge/personas_v4.go) contains 14 personas = 8 legacy + 6 v4-new (judge-cross-modal C5, judge-pipeline C6, judge-opinion reserved, judge-decision C3, judge-research C4, judge-delegator EXTRACT). Phase 7 alpha.19 added judge-delegator (was 13 in alpha.18.1, now 14).
+- **Goal**: `judge_list_personas` returns 14 (8 legacy + 6 v4-new). Operators can see the full registry.
+- **Architecture**: extend `internal/tools/registry.go` `personas` handler to consult both v2 `orchestration/judge_personas_default.go` AND v4alpha `internal/v4alpha/judge/personas_v4.go`; merge with `source` discriminator (`compiled` for v2, `v4alpha` for v4-new).
+- **Tests**: new `judge_list_personas_test.go` (5 tests) verifying count=14 + 6 v4-new presence with `source: v4alpha` discriminator.
+- **Estimated LoC**: +60 LoC (registry merge logic) + 5 tests.
+- **Closes**: Phase 8 e2e T3 critical finding (row 2323).
+
+### §8.3 Embedder integration (ADR-013) — BGE-large text via ONNX pluggable adapter
+
+- **Goal**: alpha.18 stub vector path closes. Vectors move from FTS5-absorbed to real embedding space.
+- **Architecture**: `internal/embedder/{bge,imagebind,wav2vec,onnx}.go` — pluggable adapter pattern. BGE-large for text (1024-dim), ImageBind for image (1024-dim), wav2vec 2.0 for audio (768-dim). ONNX runtime for inference. Cross-modal similarity search across modalities.
+- **Tests**: integration tests against ONNX runtime with synthetic tensors; `internal/embedder/bge_test.go` covers BGE-large encoding + cosine similarity. 20 new tests.
+- **Estimated LoC**: +800 LoC (4 adapters + ONNX bridge) + 20 tests.
+- **Closes**: sota-critique.md §5.2.3 alpha.20 follow-up #1 (deferred from alpha.19).
+
+### §8.4 ProGraph 2-layer entity extraction (ADR-015)
+
+- **Goal**: multi-hop retrieval stub closes. C1/C2/C5/C6 stay 1-hop; C3/C4 promote to 2-hop entity traversal.
+- **Architecture**: `internal/recall/prograph.go` — entity graph traversal (Layer 1: typed entities from extraction; Layer 2: relationships). `ExtractEntities` + `MultiHopRetrieve` functions. Integrated with `policy.FrameSource` for cross-frame entity linking.
+- **Tests**: 15 new tests covering 1-hop vs 2-hop behavior, entity deduplication, relationship cycle detection.
+- **Estimated LoC**: +600 LoC (graph traversal + entity store) + 15 tests.
+- **Closes**: sota-critique.md §5.2.3 alpha.20 follow-up #2.
+
+### §8.5 Audit gaps (ADR-016 transparency log + ADR-018 audit verify tool)
+
+- **Goal**: `dark_memory_audit_export` + `dark_memory_audit_verify` exposed publicly. Operators can dump and verify the audit chain offline.
+- **Architecture**: `internal/audit/export.go` (ADR-016) emits JSONL stream of all write_audit rows with HMAC chain verification. `internal/audit/verify.go` (ADR-018) reads JSONL stream + recomputes HMAC + verifies monotonicity.
+- **Tests**: 12 new tests covering chain integrity (forward + backward), cross-DB verification, broken-chain detection.
+- **Estimated LoC**: +400 LoC (export + verify) + 12 tests.
+- **Closes**: sota-critique.md §5.2.3 alpha.20 follow-up #5 (deferred from Phase 6 per SPEC D2).
+
+### §8.6 internal/recall 82.1% → 95%+ polish
+
+- **Goal**: finish the chunk 7.6 remaining gap (Render/Hash error branches hard to trigger).
+- **Architecture**: add tests for `Render()` failures (corrupted JSON input), `Hash()` collisions, `persistRaw` error propagation paths not covered in chunk 7.6.
+- **Tests**: 8 new tests targeting the remaining uncovered branches.
+- **Estimated LoC**: +250 LoC (test-only) + 8 tests.
+- **Closes**: sota-critique.md §5.2.3 alpha.20 follow-up #6.
+
+### §8.7 Bitemporal (ADR-014) — transaction_time + valid_time
+
+- **Goal**: alpha.18 DecayScore precursor (ScrubJay-MEM π_i + τ_i). Each agent_memory row gains `transaction_time` (write clock) and `valid_time` (semantic clock).
+- **Architecture**: `internal/store/bitemporal.go` — adds two new NOT NULL columns to agent_memory; migration 31 (schema_version 30→31). `RecallAtTime(t, kind)` for time-travel queries.
+- **Tests**: 15 new tests covering transaction_time monotonicity, valid_time settability, time-travel consistency.
+- **Estimated LoC**: +500 LoC (schema migration + time-travel APIs) + 15 tests.
+- **Closes**: sota-critique.md §5.2.3 alpha.20 follow-up #3.
+
+### §8.8 Docs + alpha.20 tag local
+
+- `CHANGELOG.md [4.0.0-alpha.20]` entry covering all 8 chunks.
+- `docs/v4-status.md §1.8` Phase 8 changelog.
+- `docs/v4-alpha-11-plan.md §8` this section (renumbered — old §8 → §9, old §9 → §10, old §10 → §11).
+- `docs/sota-critique.md §5.2.4` Phase 8 per-gap closure evidence table (closes both §8.1 + §8.2 critical gaps + alpha.20 follow-ups).
+- `git tag v4.0.0-alpha.20` LOCAL ONLY on final commit (chunks 8.1-8.7 + this).
+- Atomic mirror: 1 SUMMARY pinned + 7 SECTION pinned=false (8 chunks × 1 SECTION).
+
+### §8.9 Document `fake_authority` pattern examples
+
+- **Caveat (e2e T12)**: 5 attempted phrasings of `fake_authority` pattern all missed the validator. Other 9 patterns (no_needs_human, auto_sign, self_modify, ignore_invariant, disable_audit, skip_injection, always_aligned, remove_safety, trust_unconditional) trigger with reasonable phrasing. fake_authority is intentionally narrow (privilege escalation requires sophisticated phrasing).
+- **Goal**: add to `docs/sota-critique.md §5.2.4` an "override validator patterns" appendix with examples of phrasings that DO and DO NOT trigger each pattern, plus design rationale (fake_authority is intentionally narrow per security review).
+- **Estimated LoC**: +40 LoC doc-only.
+- **Closes**: Phase 8 e2e T12 caveat (row 2344).
+
+### §8.10 E2E production-grade gate — meta-decision
+
+- **Lesson (Phase 8 e2e)**: exhaustive e2e found 2 critical wiring gaps that unit tests missed. Future phases MUST include exhaustive e2e gate before SHIP.
+- **Decision (operator-approved)**: alpha.21+ must include exhaustive e2e before SHIP. Required tests at minimum: (a) session lifecycle chain; (b) vibe_publish + drift_judge round-trip; (c) audit chain cross-process monotonicity; (d) override pattern sweep; (e) persona registry count; (g) concurrent write stress (≥10 parallel); (h) cross-session atomic mirror survival; (i) needs_human surface for any tool with failure modes.
+- **Acceptance**: 0 critical findings before SHIP. Caveats documented but not blocking.
+- **Cost budget**: ~$5-10 per phase e2e gate (LLM judge calls).
+
+### Acceptance criteria (Phase 8 / alpha.20 SHIP)
+
+1. §8.1 + §8.2 critical gaps closed (re-run Phase 8 e2e T7+T3 in alpha.20 — both MUST show v4alpha exposed).
+2. §8.3-§8.7 alpha.20 follow-ups shipped.
+3. §8.8 docs+tag local.
+4. §8.9 fake_authority documentation closed.
+5. §8.10 meta-decision: future phases require e2e gate (codified in §10 below).
+6. All v4alpha packages PASS, 0 regressions.
+7. Phase 8 e2e re-run with 0 critical findings.
+8. Cross-version lockstep hash pin unchanged.
+
+### Cross-references
+
+- `docs/sota-critique.md §5.2.3` — Phase 20 follow-ups (6 items, 5 closed in §8.3-§8.7, 1 carried to §8.6).
+- `docs/sota-critique.md §5.2.4` — Phase 8 per-gap closure evidence (added by §8.8).
+- Phase 8 e2e final report — dark-memory row 2345 (pinned, agent_id `alpha-11-phase8`, session `sess-961aa31e58a94f22`).
+- Phase 8 e2e critical findings — rows 2323 (T3 persona gap) + 2327 (T7 EXTRACT gap) (both pinned).
+- Phase 8 e2e caveats — rows 2344 (T12 fake_authority) + 2340 (T13 adversarial) + 2324 (T4 drift_detected).
+
+## 9. The vibe-loop pattern, restated
 
 For each phase, the workflow is:
 
@@ -545,7 +649,7 @@ For each phase, the workflow is:
    - `drift_detected` → fix and re-publish.
    - `needs_human` → STOP, surface to operator.
 
-## 9. Operator decisions (recap from sota-critique.md §7.6.8)
+## 10. Operator decisions (recap from sota-critique.md §7.6.8)
 
 | # | Decision | Default |
 |---|---|---|
@@ -556,7 +660,7 @@ For each phase, the workflow is:
 | OD5 | ADR-013 strategy (if OD2=YES) | FRESH |
 | OD6 | `project_id` framing | **namespace (soft)** per §7.6.9 |
 
-## 10. Cross-references
+## 11. Cross-references
 
 - `docs/sota-critique.md` §7.6 — the source meta-doc
   (this file summarizes it for execution).
