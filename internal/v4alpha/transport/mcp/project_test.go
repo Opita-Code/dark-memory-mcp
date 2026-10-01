@@ -17,6 +17,8 @@ package mcp_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -85,6 +87,7 @@ func newTestServerWithProject(t *testing.T) *mcpt.Server {
 	// Other fields stay nil — the project handlers don't touch them.
 	srv := &mcpt.Server{}
 	srv.SetProjectsForTest(projStore)
+	srv.SetExtractCacheForTest(mcpt.NewExtractCacheForTest())
 	return srv
 }
 
@@ -414,18 +417,22 @@ func TestDelegateIntent_FullImplInline(t *testing.T) {
 }
 
 // TestDelegateIntent_FullImplDelegate verifies the Phase 6 alpha.18.1
-// DECIDE rule for a long multi-sentence task: returns decision="delegate"
-// with multiple subtasks (one per sentence via PLAN).
+// DECIDE rule for a multi-sentence task with a delegation marker:
+// returns decision="delegate" with multiple subtasks (one per sentence
+// via PLAN). Uses C2 vibe_case + short task so the EXTRACT step (Phase 7
+// alpha.19 Chunk 7.1) does NOT fire — PLAN handles short "delegate"
+// tasks. The "step by step" marker triggers DECIDE=delegate.
 func TestDelegateIntent_FullImplDelegate(t *testing.T) {
 	srv := newTestServerWithProject(t)
 
-	longTask := "First, write the release notes for alpha.18. Then, update the docs site. " +
-		"Finally, post a tweet about the new memory capabilities."
+	// Task uses "step by step" delegation marker + 3 sentences.
+	// C2 + len<200 means EXTRACT is skipped → PLAN runs.
+	task := "Step by step: 1) deploy to staging. 2) run smoke tests. 3) update the changelog."
 
 	res, _ := callHandler(t, srv.HandleDelegateIntentForTest(),
 		map[string]any{
-			"vibe_case":        "C7",
-			"task_description": longTask,
+			"vibe_case":        "C2",
+			"task_description": task,
 			"operator":         "nico",
 		})
 
@@ -439,6 +446,8 @@ func TestDelegateIntent_FullImplDelegate(t *testing.T) {
 			DelegationContext string `json:"delegation_context"`
 		} `json:"subtasks"`
 		Reasoning string `json:"reasoning"`
+		CacheHit  bool   `json:"cache_hit"`
+		Verdict   string `json:"verdict"`
 	}
 	if err := json.Unmarshal([]byte(text), &payload); err != nil {
 		t.Fatalf("parse: %v", err)
@@ -459,6 +468,13 @@ func TestDelegateIntent_FullImplDelegate(t *testing.T) {
 		if st.Model != "inherit" {
 			t.Errorf("subtask[%d] model = %q; want inherit", i, st.Model)
 		}
+	}
+	// Phase 7 alpha.19 wire shape v2: deterministic PLAN path → verdict="aligned"
+	if payload.Verdict != "aligned" {
+		t.Errorf("Verdict = %q; want \"aligned\" (deterministic PLAN path)", payload.Verdict)
+	}
+	if payload.CacheHit {
+		t.Errorf("CacheHit = true; want false (PLAN path does not use extract cache)")
 	}
 }
 
@@ -488,6 +504,240 @@ func TestDelegateIntent_FullImplRefused(t *testing.T) {
 	}
 	if len(payload.Subtasks) != 0 {
 		t.Errorf("Subtasks should be empty for refused; got %d", len(payload.Subtasks))
+	}
+}
+
+// --- delegate_intent Phase 7 alpha.19 EXTRACT path tests (Chunk 7.1) ---
+
+// fakeLLMClient is a deterministic mock judge.LLMClient for the
+// EXTRACT path tests. Returns canned responses based on substring
+// matching in the UserPrompt. Mirrors the FakeLLM in the delegation
+// package but lives here so it can be wired via SetLLMClientForTest.
+type fakeLLMClient struct {
+	extractJSON string
+	validateJSON string
+	calls      int
+	err        error
+}
+
+func (f *fakeLLMClient) Complete(ctx context.Context, req judge.LLMRequest) (*judge.LLMResponse, error) {
+	f.calls++
+	if f.err != nil {
+		return nil, f.err
+	}
+	// Pick based on substring match: extract asks "Decompose", validate asks "Validate".
+	switch {
+	case strings.Contains(req.UserPrompt, "Decompose into atomic subtasks") && f.extractJSON != "":
+		return &judge.LLMResponse{Content: f.extractJSON, Provider: "fake", Model: "fake-1"}, nil
+	case strings.Contains(req.UserPrompt, "Validate.") && f.validateJSON != "":
+		return &judge.LLMResponse{Content: f.validateJSON, Provider: "fake", Model: "fake-1"}, nil
+	default:
+		return &judge.LLMResponse{Content: `{"decision":"inline","reasoning":"default","subtasks":[]}`, Provider: "fake"}, nil
+	}
+}
+
+// TestDelegateIntent_ExtractPath_C7 verifies that a C7 task routes to
+// the EXTRACT step (Phase 7 alpha.19 Chunk 7.1). The fake LLM returns
+// 2 subtasks + judge aligned.
+func TestDelegateIntent_ExtractPath_C7(t *testing.T) {
+	srv := newTestServerWithProject(t)
+
+	extractJSON := `{
+		"decision": "delegate",
+		"reasoning": "compound C7 multi-vibe",
+		"subtasks": [
+			{"id": "subtask-1", "description": "deploy new memory subsystem to staging"},
+			{"id": "subtask-2", "description": "monitor latency p95 for one hour"}
+		]
+	}`
+	validateJSON := `{"verdict": "aligned", "reasoning": "good coverage, no overlap"}`
+
+	fake := &fakeLLMClient{extractJSON: extractJSON, validateJSON: validateJSON}
+	srv.SetLLMClientForTest(fake)
+
+	res, _ := callHandler(t, srv.HandleDelegateIntentForTest(),
+		map[string]any{
+			"vibe_case":        "C7",
+			"task_description": "deploy the new memory subsystem and monitor latency",
+			"operator":         "nico",
+		})
+
+	text := resultText(t, res)
+	var payload struct {
+		Decision  string `json:"decision"`
+		Subtasks  []struct {
+			ID                string `json:"id"`
+			SystemPrompt      string `json:"system_prompt"`
+			Model             string `json:"model"`
+			DelegationContext string `json:"delegation_context"`
+		} `json:"subtasks"`
+		CacheHit bool   `json:"cache_hit"`
+		Verdict  string `json:"verdict"`
+	}
+	if err := json.Unmarshal([]byte(text), &payload); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if payload.Decision != "delegate" {
+		t.Errorf("Decision = %q; want delegate", payload.Decision)
+	}
+	if len(payload.Subtasks) != 2 {
+		t.Errorf("Subtasks = %d; want 2 (from fake LLM)", len(payload.Subtasks))
+	}
+	if payload.Verdict != "aligned" {
+		t.Errorf("Verdict = %q; want aligned", payload.Verdict)
+	}
+	if payload.CacheHit {
+		t.Errorf("CacheHit = true; want false (first call)")
+	}
+	if len(payload.Subtasks) >= 2 {
+		for i, st := range payload.Subtasks {
+			if st.SystemPrompt == "" {
+				t.Errorf("subtask[%d] missing system_prompt", i)
+			}
+		}
+	}
+	// Verify the LLM was called (extract + validate).
+	if fake.calls != 2 {
+		t.Errorf("fake LLM calls = %d; want 2 (extract + validate)", fake.calls)
+	}
+}
+
+// TestDelegateIntent_ExtractPath_LongTask verifies that a non-C7 task
+// with len>200 ALSO triggers EXTRACT (per SPEC §3.1 P1=C guard rule).
+func TestDelegateIntent_ExtractPath_LongTask(t *testing.T) {
+	srv := newTestServerWithProject(t)
+
+	extractJSON := `{
+		"decision": "delegate",
+		"reasoning": "long compound",
+		"subtasks": [
+			{"id": "subtask-1", "description": "first atomic unit description here"},
+			{"id": "subtask-2", "description": "second atomic unit description here"},
+			{"id": "subtask-3", "description": "third atomic unit description here"}
+		]
+	}`
+	validateJSON := `{"verdict": "aligned", "reasoning": "ok"}`
+
+	fake := &fakeLLMClient{extractJSON: extractJSON, validateJSON: validateJSON}
+	srv.SetLLMClientForTest(fake)
+
+	longTask := strings.Repeat("This is a long compound task with lots of context. ", 5) // ~250 chars
+
+	res, _ := callHandler(t, srv.HandleDelegateIntentForTest(),
+		map[string]any{
+			"vibe_case":        "C1",
+			"task_description": longTask,
+			"operator":         "nico",
+		})
+
+	text := resultText(t, res)
+	var payload struct {
+		Decision string `json:"decision"`
+		Subtasks []any  `json:"subtasks"`
+		Verdict  string `json:"verdict"`
+	}
+	if err := json.Unmarshal([]byte(text), &payload); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if payload.Decision != "delegate" {
+		t.Errorf("Decision = %q; want delegate", payload.Decision)
+	}
+	if len(payload.Subtasks) != 3 {
+		t.Errorf("Subtasks = %d; want 3 (from fake LLM)", len(payload.Subtasks))
+	}
+	if payload.Verdict != "aligned" {
+		t.Errorf("Verdict = %q; want aligned", payload.Verdict)
+	}
+}
+
+// TestDelegateIntent_ExtractPath_CacheHit verifies the cache layer:
+// same inputs → cache hit, no second LLM call.
+func TestDelegateIntent_ExtractPath_CacheHit(t *testing.T) {
+	srv := newTestServerWithProject(t)
+
+	extractJSON := `{"decision":"delegate","reasoning":"r","subtasks":[{"id":"subtask-1","description":"first subtask description here"}]}`
+	validateJSON := `{"verdict":"aligned","reasoning":"ok"}`
+
+	fake := &fakeLLMClient{extractJSON: extractJSON, validateJSON: validateJSON}
+	srv.SetLLMClientForTest(fake)
+
+	callInput := map[string]any{
+		"vibe_case":        "C7",
+		"task_description": "unique cache hit test task alpha.19.1 chunk7.1 unique",
+		"operator":         "nico",
+	}
+
+	// First call: cache miss.
+	res1, _ := callHandler(t, srv.HandleDelegateIntentForTest(), callInput)
+	var p1 struct {
+		CacheHit bool   `json:"cache_hit"`
+		Verdict  string `json:"verdict"`
+	}
+	_ = json.Unmarshal([]byte(resultText(t, res1)), &p1)
+	if p1.CacheHit {
+		t.Fatal("first call should NOT be cache hit")
+	}
+	if p1.Verdict != "aligned" {
+		t.Errorf("first call Verdict = %q; want aligned", p1.Verdict)
+	}
+
+	callsAfter1 := fake.calls // expect 2 (extract + validate)
+
+	// Second call: cache hit, no new LLM calls.
+	res2, _ := callHandler(t, srv.HandleDelegateIntentForTest(), callInput)
+	var p2 struct {
+		CacheHit bool   `json:"cache_hit"`
+		Verdict  string `json:"verdict"`
+	}
+	_ = json.Unmarshal([]byte(resultText(t, res2)), &p2)
+	if !p2.CacheHit {
+		t.Error("second call should be cache hit")
+	}
+	if p2.Verdict != "cached" {
+		t.Errorf("second call Verdict = %q; want cached", p2.Verdict)
+	}
+	if fake.calls != callsAfter1 {
+		t.Errorf("LLM calls after cache hit = %d; want %d (no new calls)", fake.calls, callsAfter1)
+	}
+}
+
+// TestDelegateIntent_ExtractPath_NeedsHuman verifies that an LLM error
+// surfaces as needs_human with alternatives[] in the wire shape.
+func TestDelegateIntent_ExtractPath_NeedsHuman(t *testing.T) {
+	srv := newTestServerWithProject(t)
+
+	fake := &fakeLLMClient{err: errors.New("connection refused")}
+	srv.SetLLMClientForTest(fake)
+
+	res, _ := callHandler(t, srv.HandleDelegateIntentForTest(),
+		map[string]any{
+			"vibe_case":        "C7",
+			"task_description": "task that triggers EXTRACT then fails at LLM",
+			"operator":         "nico",
+		})
+
+	text := resultText(t, res)
+	var payload struct {
+		Decision     string `json:"decision"`
+		Subtasks     []any  `json:"subtasks"`
+		Verdict      string `json:"verdict"`
+		Alternatives []struct {
+			ID    string `json:"id"`
+			Label string `json:"label"`
+		} `json:"alternatives"`
+	}
+	if err := json.Unmarshal([]byte(text), &payload); err != nil {
+		t.Fatalf("parse: %v\ntext: %s", err, text)
+	}
+	if payload.Verdict != "needs_human" {
+		t.Errorf("Verdict = %q; want needs_human", payload.Verdict)
+	}
+	if len(payload.Alternatives) == 0 {
+		t.Fatal("Alternatives should be non-empty on needs_human")
+	}
+	// First alternative should be fallback-plan.
+	if payload.Alternatives[0].ID != "fallback-plan" {
+		t.Errorf("Alternatives[0].ID = %q; want fallback-plan", payload.Alternatives[0].ID)
 	}
 }
 

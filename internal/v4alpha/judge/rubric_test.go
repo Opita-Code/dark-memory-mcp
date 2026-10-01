@@ -150,16 +150,18 @@ func TestRubricRegistry_Register_Validation(t *testing.T) {
 	})
 }
 
-func TestNewPersonaRegistry_HasAllThirteen(t *testing.T) {
+func TestNewPersonaRegistry_HasAllFourteen(t *testing.T) {
 	r := NewPersonaRegistry()
 	// Phase 6 alpha.18.1: added judge-decision + judge-research
 	// (canonical C3 + C4 mapping). 13 total.
+	// Phase 7 alpha.19: added judge-delegator (EXTRACT step in
+	// delegate_intent). 14 total. Breaks Phase 6 §6.1 canon.
 	want := []string{
 		"judge-compositional", "judge-coverage", "judge-cross-modal",
-		"judge-decision", "judge-evidential", "judge-logical",
-		"judge-mutation", "judge-opinion", "judge-pipeline",
-		"judge-research", "judge-resilience", "judge-security",
-		"judge-visual",
+		"judge-decision", "judge-delegator", "judge-evidential",
+		"judge-logical", "judge-mutation", "judge-opinion",
+		"judge-pipeline", "judge-research", "judge-resilience",
+		"judge-security", "judge-visual",
 	}
 	if !stringSliceEq(r.List(), want) {
 		t.Errorf("List() = %v; want %v", r.List(), want)

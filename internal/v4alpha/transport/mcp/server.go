@@ -37,6 +37,7 @@ import (
 
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/agent_memory"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/audit"
+	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/delegation"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/docs_index"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/judge"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/project"
@@ -73,6 +74,8 @@ type Server struct {
 	projects        *project.Store // Phase 4 Chunk 4.1: namespace primitive
 	pipeline        *vibe.Pipeline
 	judgePipeline   *judge.Pipeline // ADR-007 C2: LLM-backed judge surface
+	llmClient       judge.LLMClient // Phase 7 alpha.19 Chunk 7.1: EXTRACT step in delegate_intent
+	extractCache    *delegation.ExtractCache // Phase 7 alpha.19 Chunk 7.1: hoist for cross-call caching
 	judgePersonas   judge.PersonaRegistry
 	judgeStore      *judge.Store // ADR-007 C3: sdd_evaluations persistence
 	researchExecutor *research.Executor // BUG-10 10a: 17-backend research fan-out
@@ -145,6 +148,10 @@ func NewServer(db *sql.DB) (*Server, error) {
 	// with verdict=errored → matches the NoOpJudge contract per
 	// ADR-007 §6 backwards compat).
 	llmClient, err := buildV4JudgeClient()
+	// Phase 7 alpha.19 Chunk 7.1: expose llmClient on Server so the
+	// delegate_intent EXTRACT step can call it directly (delegation.Extractor
+	// needs an LLMClient for the sub-task decomposition call). Assigned
+	// to the Server struct literal below.
 	judgePersonas := judge.NewPersonaRegistry()
 	judgePipe, err := judge.New(judge.PipelineConfig{
 		LLMClient: llmClient,
@@ -177,6 +184,8 @@ func NewServer(db *sql.DB) (*Server, error) {
 		projects:         projStore,
 		pipeline:         pipe,
 		judgePipeline:    judgePipe,
+		llmClient:        llmClient,            // Phase 7 alpha.19 Chunk 7.1: EXTRACT step
+		extractCache:     delegation.NewExtractCache(delegation.CacheTTLFromEnv()), // hoisted for cross-call cache hits
 		judgePersonas:    judgePersonas,
 		judgeStore:       judgeStore,
 		researchExecutor: researchExec,
@@ -333,4 +342,36 @@ func (s *Server) HandleMindsetApplyForTest() func(context.Context, mcp.CallToolR
 // registered for dark_memory_delegate_intent.
 func (s *Server) HandleDelegateIntentForTest() func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return s.handleDelegateIntent
+}
+
+// SetLLMClientForTest injects a judge.LLMClient into the Server. Used
+// by Chunk 7.1 (delegate_intent EXTRACT) tests that wire a FakeLLM
+// without spinning up the full HTTP-based RealLLMClient.
+func (s *Server) SetLLMClientForTest(c judge.LLMClient) {
+	s.llmClient = c
+}
+
+// LLMClientForTest returns the wired LLMClient (nil when not set).
+func (s *Server) LLMClientForTest() judge.LLMClient {
+	return s.llmClient
+}
+
+// SetMemoriesForTest injects an agent_memory.Store. Used by Chunk 7.1
+// tests that need the persistent delegation cache wired.
+func (s *Server) SetMemoriesForTest(m *agent_memory.Store) {
+	s.memories = m
+}
+
+// SetExtractCacheForTest injects a delegation.ExtractCache. Used by
+// Chunk 7.1 tests that need the EXTRACT path's cache layer wired
+// (without this, s.extractCache is nil and every call is a cache miss).
+func (s *Server) SetExtractCacheForTest(c *delegation.ExtractCache) {
+	s.extractCache = c
+}
+
+// NewExtractCacheForTest returns a fresh in-memory ExtractCache for use
+// in tests. Mirrors delegation.NewExtractCache but is exposed here so
+// the test seam doesn't force callers to import the delegation package.
+func NewExtractCacheForTest() *delegation.ExtractCache {
+	return delegation.NewExtractCache(delegation.DefaultCacheTTL)
 }

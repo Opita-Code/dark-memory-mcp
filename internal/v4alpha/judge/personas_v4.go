@@ -1,4 +1,4 @@
-// Package judge — extended persona content for the 3 v4-new personas.
+// Package judge — extended persona content for the v4-new personas.
 //
 // Commit 1 (rubric.go) registered 11 personas (8 legacy + 3 v4 new per
 // ADR-007 §3) with thin 1-line descriptions. Commit 2 wires the v4
@@ -10,13 +10,15 @@
 //
 // Backwards compat: 8 legacy personas have no PersonaContent; the
 // LLMAdapter falls back to the generic system prompt template (see
-// buildSystemPrompt). The 3 v4-new personas (judge-cross-modal,
-// judge-pipeline, judge-opinion) MUST have content (compile-time
-// invariant at the bottom of this file).
+// buildSystemPrompt). The 6 v4-new personas (judge-cross-modal,
+// judge-pipeline, judge-opinion, judge-decision, judge-research,
+// judge-delegator) MUST have content (compile-time invariant at the
+// bottom of this file). Phase 7 alpha.19 added judge-delegator; the
+// total registry is now 14 personas (was 13 in Phase 6 alpha.18.1).
 //
 // Source of truth: ADR-007 §3 (persona registry) + §5 (anti-injection
 // L3 = persona-specific prompt templates) + §6 (persona-aware bias
-// controls).
+// controls) + SPEC-alpha-11-phase7.md §3.1 (judge-delegator).
 package judge
 
 import (
@@ -148,8 +150,9 @@ func UnregisterPersonaContent(personaID string) {
 
 // ---------- Default content for the 3 v4-new personas ----------
 
-// defaultPersonaContents holds the rich content for the 5 v4-new
-// personas (ADR-007 §3). The 8 legacy personas have no entry.
+// defaultPersonaContents holds the rich content for the 6 v4-new
+// personas (ADR-007 §3 + Phase 6 + Phase 7). The 8 legacy personas
+// have no entry. Phase 7 alpha.19 raised 5 → 6 (added judge-delegator).
 //
 // Content sources:
 //   - judge-cross-modal: agent_memory row 2047 §3 + ADR-007 §5 L3
@@ -158,6 +161,9 @@ func UnregisterPersonaContent(personaID string) {
 //     future use; content is a placeholder)
 //   - judge-decision:    Phase 6 alpha.18.1 (Chunk 6.1) — C3 default
 //   - judge-research:    Phase 6 alpha.18.1 (Chunk 6.1) — C4 default
+//   - judge-delegator:   Phase 7 alpha.19 (Chunk 7.1) — EXTRACT step
+//     in delegate_intent (delegation/extract.go:78). Breaks Phase 6
+//     §6.1 canon of 13 personas (total = 14).
 var defaultPersonaContents = map[string]*PersonaContent{
 	"judge-decision": {
 		PromptTemplate: "You are a decision judge. " +
@@ -281,15 +287,54 @@ var defaultPersonaContents = map[string]*PersonaContent{
 			"the artifact's stated stance (verbatim quote)",
 		},
 	},
+
+	// Phase 7 alpha.19 (Chunk 7.1) — judge-delegator.
+	// New persona: 14 total (was 13 in Phase 6 alpha.18.1). Per
+	// SPEC-alpha-11-phase7.md §3.1 P2=III, breaks Phase 6 §6.1
+	// canon of 13 personas. Honest about it — see sota-critique
+	// §5.2.3 follow-up.
+	//
+	// Lens: atomic decomposition. Used for sub-task extraction in
+	// delegate_intent's EXTRACT step (delegation/extract.go:78).
+	"judge-delegator": {
+		PromptTemplate: "You are a task decomposition agent. " +
+			"You specialize in splitting compound tasks into atomic, non-overlapping subtasks " +
+			"that together cover the original work. Your primary lens is ATOMICITY: a subtask " +
+			"that contains hidden sub-work is not a subtask, it's a container. When in doubt, " +
+			"prefer FEWER subtasks that are explicitly atomic over MORE subtasks that are " +
+			"merely sentence fragments.",
+		EvaluationLens: "Weight non_overlap and coverage over granularity. " +
+			"5 subtasks that overlap are drift; 3 subtasks that completely cover the original " +
+			"task are aligned. Granularity is the floor — subtasks like 'write h' or " +
+			"'open file' are too granular even if non-overlapping. " +
+			"Dependencies are second-order: prefer independent subtasks (empty dependencies) " +
+			"when the order is not strictly required.",
+		BiasControls: []string{
+			"Do not decompose a single-step task into multiple subtasks just because the " +
+				"user wrote multiple sentences. Write the task in one subtask with decision=inline.",
+			"When the original task is impossible or out-of-scope, return decision=refused " +
+				"with 0 subtasks. Do NOT invent plausible subtasks for a task you cannot do.",
+			"Reject subtasks with description shorter than 10 characters — they are too " +
+				"vague to execute. Cite the specific subtask when you reject it.",
+			"Reject subtasks that depend on themselves or form cycles. Topological sort " +
+				"must succeed. Cite the specific edge when you flag a cycle.",
+		},
+		RequiredEvidence: []string{
+			"the original task (verbatim quote)",
+			"the proposed subtasks (with ids + descriptions + dependencies)",
+			"the vibe_case (drives granularity: C1/C2 prefer fewer, C7 accepts more)",
+		},
+	},
 }
 
 // ---------- Compile-time invariants ----------
 
-// _ ensures the 3 v4-new personas each have valid rich content.
+// _ ensures the 6 v4-new personas each have valid rich content.
 // Catches "added a persona to rubric.go defaultPersonas but forgot
-// to add it here" bugs at compile time.
+// to add it here" bugs at compile time. Phase 7 alpha.19 (Chunk 7.1)
+// added judge-delegator (6th v4-new persona; total registry = 14).
 var _ = func() error {
-	for _, id := range []string{"judge-cross-modal", "judge-pipeline", "judge-opinion", "judge-decision", "judge-research"} {
+	for _, id := range []string{"judge-cross-modal", "judge-pipeline", "judge-opinion", "judge-decision", "judge-research", "judge-delegator"} {
 		c := LookupPersonaContent(id)
 		if c == nil {
 			return &personaContentError{Field: "registry missing entry for " + id}

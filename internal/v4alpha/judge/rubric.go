@@ -11,12 +11,15 @@
 //   - ThresholdToVerdict (score -> label, ADR-007 §4 thresholds)
 //   - ApplyPerCriterionOverride (weight>=0.20 AND score<0.30 -> force needs_human)
 //
-// The 7 default rubrics (C1-C7) and 13 default personas are the
-// canonical registry (Phase 6 alpha.18.1: added judge-decision +
-// judge-research for C3+C4 canonical mapping per
-// internal/v4alpha/vibe/spec.go:14-16). Operators can Register
-// additional rubrics via the Registry API (future: Markdown override
-// per spec 1155 v14).
+// The 7 default rubrics (C1-C7) and 14 default personas are the
+// canonical registry (Phase 6 alpha.18.1: 13 personas with judge-decision
+// + judge-research for C3+C4 canonical mapping per
+// internal/v4alpha/vibe/spec.go:14-16. Phase 7 alpha.19: 14 personas
+// after adding judge-delegator for the EXTRACT step in
+// delegate_intent — breaks Phase 6 §6.1 canon of 13. Honest about
+// it; see SPEC-alpha-11-phase7.md §3.1 P2=III).
+// Operators can Register additional rubrics via the Registry API
+// (future: Markdown override per spec 1155 v14).
 package judge
 
 import (
@@ -72,6 +75,8 @@ type CriterionDef struct {
 //
 // Commit 1 registers 11 default personas (8 legacy + 3 v4 new).
 // Commit 2 wires Markdown override (spec 1155 v14).
+// Phase 6 alpha.18.1 added 2 more (judge-decision + judge-research) = 13.
+// Phase 7 alpha.19 added 1 more (judge-delegator) = 14.
 type Persona struct {
 	// ID is the registry identifier (e.g. "judge-logical",
 	// "judge-cross-modal"). Stable across versions.
@@ -246,8 +251,10 @@ type defaultPersonaRegistry struct {
 	byID  map[string]*Persona
 }
 
-// NewPersonaRegistry returns a registry pre-populated with the 11
-// canonical personas (8 legacy + 3 v4 new per ADR-007 §3).
+// NewPersonaRegistry returns a registry pre-populated with the 14
+// canonical personas (8 legacy + 3 v4 new + 2 Phase 6 + 1 Phase 7).
+// Phase 6 alpha.18.1 raised 11 → 13 (judge-decision + judge-research).
+// Phase 7 alpha.19 raised 13 → 14 (judge-delegator).
 func NewPersonaRegistry() PersonaRegistry {
 	r := &defaultPersonaRegistry{byID: make(map[string]*Persona)}
 	for _, p := range defaultPersonas {
@@ -461,8 +468,10 @@ var defaultRubricDefs = []*Rubric{
 	},
 }
 
-// defaultPersonas are the 11 canonical personas (8 legacy + 3 v4 new).
-// Source: row 2047 atomic mirror + ADR-007 §3.
+// defaultPersonas are the 14 canonical personas (8 legacy + 3 v4 new
+// + 2 Phase 6 + 1 Phase 7). Phase 6 raised 11 → 13. Phase 7 raised
+// 13 → 14 (judge-delegator). Source: row 2047 atomic mirror +
+// ADR-007 §3 + SPEC-alpha-11-phase7.md §3.1 P2=III.
 var defaultPersonas = []*Persona{
 	// 8 legacy personas (preserve v4-alpha.1 registry semantics).
 	{ID: "judge-logical", DisplayName: "Logical Reasoning Judge", ProviderHint: "anthropic", Description: "Scores textual/code logic, faithfulness, tests, correctness."},
@@ -482,6 +491,11 @@ var defaultPersonas = []*Persona{
 	// 2 Phase 6 personas (alpha.18.1, Chunk 6.1) — C3 + C4 canonical.
 	{ID: "judge-decision", DisplayName: "Decision Judge", ProviderHint: "anthropic", Description: "Scores decision artifacts (C3): rationale clarity, evidence quality, alternatives considered, reversibility, stakeholder impact."},
 	{ID: "judge-research", DisplayName: "Research Judge", ProviderHint: "anthropic", Description: "Scores research artifacts (C4): source diversity, citation quality, methodology, novelty, reproducibility."},
+
+	// 1 Phase 7 persona (alpha.19, Chunk 7.1) — judge-delegator.
+	// Breaks Phase 6 §6.1 canon of 13 personas. Total = 14.
+	// Used by delegation/extract.go EXTRACT step (not query).
+	{ID: "judge-delegator", DisplayName: "Delegator Judge", ProviderHint: "minimax", Description: "Decomposes compound tasks into atomic, non-overlapping subtasks for delegate_intent (Phase 7 alpha.19). Lens: atomicity, coverage, granularity floor (≥10 chars)."},
 }
 
 // ---------- Compile-time defaults check ----------
