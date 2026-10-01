@@ -38,33 +38,37 @@ carry-overs from spec 1155 v14).
 | Persona id | eval_types | Default for vibe_case | Notes v4 |
 |---|---|---|---|
 | `judge-logical` | `drift_judge`, `spec_test_alignment`, `grounding_check`, **`arithmetic_mismatch`** | **C1 code**, **C2 text** | Gains EC-009 as `arithmetic_mismatch` eval_type. The workhorse. The direct-assessment + custom-criteria pattern follows Prometheus 2 (Kim et al. 2024, arxiv:2405.01535, EMNLP 2024). |
-| `judge-visual` | `brand_match`, `visual_artifact_eval` | C3 image | unchanged from spec 1155 |
+| `judge-visual` | `brand_match`, `visual_artifact_eval` | (none — legacy, kept for backwards compat) | unchanged from spec 1155 |
 | `judge-security` | `pii_detect`, `prompt_injection_scan`, `security_coverage` | (none — operator-pick) | Gains EC-003 as the canonical prompt-injection scanner. Catches F-injection. |
 | `judge-compositional` | `mindset_compose`, `mindset_quality` | (none) | unchanged |
 | `judge-mutation` | `mutation_score_check` | (none) | unchanged |
 | `judge-resilience` | `resilience_check` | (none) | unchanged |
-| `judge-evidential` | `grounding_check`, **`doc_vs_code_drift`** | **C7 governance** | Gains EC-010 + EC-011 as `doc_vs_code_drift` eval_type. The real-failure catcher. |
-| `judge-coverage` | `edge_case_catalog_audit` | **C5 bundle** | Now also: the persona that audits the EC catalog itself (chicken-and-egg solved by only running on manual trigger) |
+| `judge-evidential` | `grounding_check`, **`doc_vs_code_drift`** | **C7 multi** | Gains EC-010 + EC-011 as `doc_vs_code_drift` eval_type. The real-failure catcher. Phase 6 alpha.18.1: default changed from C7 governance → C7 multi (canonical mapping). |
+| `judge-coverage` | `edge_case_catalog_audit` | (none — legacy, kept for backwards compat) | Now also: the persona that audits the EC catalog itself (chicken-and-egg solved by only running on manual trigger). Phase 6: removed from default for C5 (canonical C5=video uses judge-cross-modal). |
 
-### 2.2 New 3 (v4-alpha.3)
+### 2.2 New 5 (v4-alpha.3 + Phase 6 alpha.18.1)
 
 | Persona id | eval_types | Default for vibe_case | Lens |
 |---|---|---|---|
-| `judge-cross-modal` | `visual_artifact_eval`, `audio_artifact_eval`, `video_artifact_eval` | **C3 image**, **C4 video** | "You are a multimodal critic. Score the artifact on visual composition, color theory, subject consistency. Do NOT trust artist descriptions — verify against pixel-level evidence." |
-| `judge-pipeline` | `pipeline_eval`, `workflow_eval` | **C6 infra** | "You evaluate CI/CD, deployment, and orchestration pipelines. Test for idempotence, observability, rollback safety, blast radius. Failure mode: human reviewer missing a step where a partial state persists." |
+| `judge-cross-modal` | `video_artifact_eval`, `audio_artifact_eval` | **C5 video** | "You are a cross-modal judge. Score the artifact on subject consistency, scene transitions, audio sync, narrative, duration match. Do NOT trust artist descriptions — verify against frame-level evidence." Phase 6: default changed from C3 image → C5 video (canonical). |
+| `judge-pipeline` | `pipeline_eval`, `workflow_eval` | **C6 audio** | "You evaluate audio artifacts. Test for speech clarity, noise floor, voice consistency, pacing, timbre preservation. Failure mode: human reviewer missing a section where the speaker identity shifts." Phase 6: default changed from C6 infra → C6 audio (canonical). |
 | `judge-opinion` | `opinion_eval`, `claim_audit` | (none — operator-pick when `spec_intent` is opinion/argument) | "You audit opinions and argumentative claims. Score on faithfulness to cited evidence, logical structure, and counterfactual robustness. Do NOT score style." |
+| `judge-decision` ⭐ NEW | `drift_judge`, `grounding_check` | **C3 decision** | "You evaluate decision artifacts — ADRs, INV entries, lifecycle records. Weight rationale clarity and evidence quality over alternatives considered. Reversibility is the floor — an irreversible decision with weak rationale is the worst case." Phase 6 alpha.18.1: replaces the legacy v3 C3=image mapping. |
+| `judge-research` ⭐ NEW | `drift_judge`, `grounding_check` | **C4 research** | "You evaluate research artifacts — literature reviews, OSINT syntheses, benchmark studies. Weight source diversity and citation quality over methodology. Reproducibility is the floor — research that cannot be reproduced is speculation, not research." Phase 6 alpha.18.1: replaces the legacy v3 C4=video mapping. |
 
 ### 2.3 Cross-reference table (vibe_case → default persona)
+
+**Canonical per `internal/v4alpha/vibe/spec.go:14-16`. Phase 6 alpha.18.1 reconciled.**
 
 | Vibe case | Persona | Default eval_type |
 |---|---|---|
 | C1 code | `judge-logical` | `drift_judge` |
 | C2 text | `judge-logical` | `grounding_check` |
-| C3 image | `judge-cross-modal` | `visual_artifact_eval` |
-| C4 video | `judge-cross-modal` | `visual_artifact_eval` |
-| C5 bundle | `judge-coverage` | `edge_case_catalog_audit` |
-| C6 infra | `judge-pipeline` | `pipeline_eval` |
-| C7 governance | `judge-evidential` | `doc_vs_code_drift` |
+| C3 decision | `judge-decision` ⭐ NEW | `drift_judge` |
+| C4 research | `judge-research` ⭐ NEW | `grounding_check` |
+| C5 video | `judge-cross-modal` | `video_artifact_eval` |
+| C6 audio | `judge-pipeline` | `audio_artifact_eval` |
+| C7 multi | `judge-evidential` | `doc_vs_code_drift` |
 
 ---
 

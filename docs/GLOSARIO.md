@@ -763,8 +763,17 @@ correspondiente".
 
 **Inglés**: vibe_case.
 
-**Definición**: Categoría de trabajo en el vibe-loop. C1=código,
-C2=texto, C3=imagen, C4=video, C5=audio, C6=multimodal, C7=mixto.
+**Definición**: Categoría de trabajo en el vibe-loop. **Canonical
+mapping (Phase 6 alpha.18.1)** per `internal/v4alpha/vibe/spec.go:14-16`:
+C1=código, C2=texto, C3=decisión, C4=investigación, C5=video,
+C6=audio, C7=multi-modal.
+
+> ⚠️ **DEPRECATED v3 mapping** (pre-Phase 6): C3=imagen, C4=video,
+> C5=audio, C6=multimodal, C7=mixto. The legacy mapping was used in
+> `judge/rubric.go` until Phase 6 alpha.18.1 and caused the
+> `populateCalibration` hook to apply image/video/bundle/infra/governance
+> rubrics to decision/research/video/audio/multi specs — a LIVE BUG.
+> See `docs/specs/SPEC-alpha-11-phase6.md` §3.1 for the full reconciliation.
 
 **Ejemplo**: "La documentación es vibe_case C2 (texto)".
 

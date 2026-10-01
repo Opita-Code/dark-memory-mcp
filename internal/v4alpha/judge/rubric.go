@@ -11,9 +11,12 @@
 //   - ThresholdToVerdict (score -> label, ADR-007 §4 thresholds)
 //   - ApplyPerCriterionOverride (weight>=0.20 AND score<0.30 -> force needs_human)
 //
-// The 7 default rubrics (C1-C7) and 11 default personas are the
-// canonical registry. Operators can Register additional rubrics via
-// the Registry API (future: Markdown override per spec 1155 v14).
+// The 7 default rubrics (C1-C7) and 13 default personas are the
+// canonical registry (Phase 6 alpha.18.1: added judge-decision +
+// judge-research for C3+C4 canonical mapping per
+// internal/v4alpha/vibe/spec.go:14-16). Operators can Register
+// additional rubrics via the Registry API (future: Markdown override
+// per spec 1155 v14).
 package judge
 
 import (
@@ -393,19 +396,32 @@ var defaultRubricDefs = []*Rubric{
 	},
 	{
 		VibeCase:         "C3",
-		PersonaID:        "judge-cross-modal",
+		PersonaID:        "judge-decision",
 		AlignedThreshold: 0.85,
 		DriftThreshold:   0.50,
 		Criteria: []CriterionDef{
-			{Name: "composition", Weight: 0.25},
-			{Name: "color_palette", Weight: 0.20},
-			{Name: "subject_match", Weight: 0.25},
-			{Name: "accessibility", Weight: 0.15},
-			{Name: "no_artifact", Weight: 0.15},
+			{Name: "rationale_clarity", Weight: 0.30},
+			{Name: "evidence_quality", Weight: 0.25},
+			{Name: "alternatives_considered", Weight: 0.20},
+			{Name: "reversibility", Weight: 0.15},
+			{Name: "stakeholder_impact", Weight: 0.10},
 		},
 	},
 	{
 		VibeCase:         "C4",
+		PersonaID:        "judge-research",
+		AlignedThreshold: 0.85,
+		DriftThreshold:   0.50,
+		Criteria: []CriterionDef{
+			{Name: "source_diversity", Weight: 0.25},
+			{Name: "citation_quality", Weight: 0.25},
+			{Name: "methodology", Weight: 0.20},
+			{Name: "novelty", Weight: 0.15},
+			{Name: "reproducibility", Weight: 0.15},
+		},
+	},
+	{
+		VibeCase:         "C5",
 		PersonaID:        "judge-cross-modal",
 		AlignedThreshold: 0.85,
 		DriftThreshold:   0.50,
@@ -418,29 +434,16 @@ var defaultRubricDefs = []*Rubric{
 		},
 	},
 	{
-		VibeCase:         "C5",
-		PersonaID:        "judge-coverage",
-		AlignedThreshold: 0.85,
-		DriftThreshold:   0.50,
-		Criteria: []CriterionDef{
-			{Name: "provenance", Weight: 0.30},
-			{Name: "lockfile_parity", Weight: 0.25},
-			{Name: "transitive_safety", Weight: 0.20},
-			{Name: "manifests_consistent", Weight: 0.15},
-			{Name: "audit_chain", Weight: 0.10},
-		},
-	},
-	{
 		VibeCase:         "C6",
 		PersonaID:        "judge-pipeline",
 		AlignedThreshold: 0.85,
 		DriftThreshold:   0.50,
 		Criteria: []CriterionDef{
-			{Name: "idempotence", Weight: 0.25},
-			{Name: "observability", Weight: 0.20},
-			{Name: "rollback", Weight: 0.20},
-			{Name: "blast_radius", Weight: 0.20},
-			{Name: "security", Weight: 0.15},
+			{Name: "speech_clarity", Weight: 0.25},
+			{Name: "noise_floor", Weight: 0.20},
+			{Name: "voice_consistency", Weight: 0.20},
+			{Name: "pacing", Weight: 0.20},
+			{Name: "timbre_preservation", Weight: 0.15},
 		},
 	},
 	{
@@ -472,9 +475,13 @@ var defaultPersonas = []*Persona{
 	{ID: "judge-coverage", DisplayName: "Coverage Judge", ProviderHint: "anthropic", Description: "Scores coverage of a bundle (C5): provenance, lockfile parity, transitive safety."},
 
 	// 3 v4 new personas (ADR-007 §3).
-	{ID: "judge-cross-modal", DisplayName: "Cross-Modal Judge", ProviderHint: "minimax", Description: "Scores image + video (C3, C4): subject consistency, scene transitions, audio sync, composition. Multi-modal provider preferred."},
-	{ID: "judge-pipeline", DisplayName: "Pipeline Judge", ProviderHint: "anthropic", Description: "Scores infra artifacts (C6): idempotence, observability, rollback, blast radius, security."},
+	{ID: "judge-cross-modal", DisplayName: "Cross-Modal Judge", ProviderHint: "minimax", Description: "Scores video artifacts (C5): subject consistency, scene transitions, audio sync, narrative, duration match. Multi-modal provider preferred."},
+	{ID: "judge-pipeline", DisplayName: "Pipeline Judge", ProviderHint: "anthropic", Description: "Scores audio artifacts (C6): speech clarity, noise floor, voice consistency, pacing, timbre preservation."},
 	{ID: "judge-opinion", DisplayName: "Opinion Judge", ProviderHint: "anthropic", Description: "Scores subjective artifacts where multiple valid framings exist (ADR-007 §3 reserved for future use)."},
+
+	// 2 Phase 6 personas (alpha.18.1, Chunk 6.1) — C3 + C4 canonical.
+	{ID: "judge-decision", DisplayName: "Decision Judge", ProviderHint: "anthropic", Description: "Scores decision artifacts (C3): rationale clarity, evidence quality, alternatives considered, reversibility, stakeholder impact."},
+	{ID: "judge-research", DisplayName: "Research Judge", ProviderHint: "anthropic", Description: "Scores research artifacts (C4): source diversity, citation quality, methodology, novelty, reproducibility."},
 }
 
 // ---------- Compile-time defaults check ----------

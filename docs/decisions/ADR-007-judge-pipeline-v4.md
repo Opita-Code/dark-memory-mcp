@@ -432,7 +432,11 @@ callers in `vibe/pipeline.go`.
 
 ## Apéndice C: Glosario
 
-- **vibe_case**: enum C1..C7 que categoriza el artifact (code, text, image, video, bundle, infra, governance).
+- **vibe_case**: enum C1..C7 que categoriza el artifact. **Canonical
+  mapping per `internal/v4alpha/vibe/spec.go:14-16`** (Phase 6 alpha.18.1):
+  C1=code, C2=text, C3=decision, C4=research, C5=video, C6=audio,
+  C7=multi. (Legacy v3 mapping: C3=image, C4=video, C5=bundle,
+  C6=infra, C7=governance — DEPRECATED.)
 - **rubric**: lista de criterios atómicos con pesos (sum=1.0) usados por una persona para evaluar un vibe_case.
 - **persona**: system prompt especializado + lens + rubric + constraints + voice que el LLM adopta como juez.
 - **edge case (EC)**: condición de input que dispara un short-circuit deterministic antes del LLM call.

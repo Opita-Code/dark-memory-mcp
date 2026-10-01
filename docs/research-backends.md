@@ -12,9 +12,12 @@ The executor picks backends by `(intent, vibe_case, tier)`:
 
 1. **Intent** is the operator's input. Each backend declares
    exactly one intent.
-2. **Vibe_case** is the operator's `vibe_case` field
-   (C1=code, C2=text, C3=image, C4=video, C5=bundle,
-   C6=infra, C7=governance). A backend with no
+2. **Vibe_case** is the operator's `vibe_case` field.
+   **Canonical mapping per `internal/v4alpha/vibe/spec.go:14-16`**
+   (Phase 6 alpha.18.1): C1=code, C2=text, C3=decision, C4=research,
+   C5=video, C6=audio, C7=multi. (Legacy v3 mapping: C3=image,
+   C4=video, C5=bundle, C6=infra, C7=governance — DEPRECATED.)
+   A backend with no
    `ServesVibeCases` is a utility and is callable from any
    vibe case.
 3. **Tier** sets the fan-out order:
@@ -39,17 +42,17 @@ The executor picks backends by `(intent, vibe_case, tier)`:
 | `code` | `npm` | T1 | C1 | `https://registry.npmjs.org/{name}` | Public registry |
 | `code` | `crates` | T1 | C1 | `https://crates.io/api/v1/crates/{name}` | Public registry |
 | `code` | `github` | T2 | C1 | `https://api.github.com/repos/{name}` | Public, 60 req/h unauthenticated |
-| `academic` | `openalex` | T1 | C2, C7 | `https://api.openalex.org/works?search={q}` | CC0 data dump, open API |
-| `academic` | `crossref` | T2 | C2, C7 | `https://api.crossref.org/works?query={q}` | Public REST API |
-| `academic` | `arxiv` | T1 | C2, C7 | `http://export.arxiv.org/api/query?search_query={q}` | Public, no key |
-| `domain` | `rdap` | T1 | C6, C7 | `https://rdap.org/domain/{name}` | Public RDAP bootstrap |
-| `dns` | `doh-google` | T1 | C6 | `https://dns.google/resolve?name={name}&type=A` | Google's DoH, public |
-| `dns` | `doh-cloudflare` | T2 | C6 | `https://cloudflare-dns.com/dns-query?name={name}&type=A` | Cloudflare's DoH, public |
-| `ip` | `ip-api` | T1 | C6 | `http://ip-api.com/json/{ip}` | Free for < 45 req/min |
-| `ip` | `ripe-db` | T2 | C6 | `https://stat.ripe.net/data/whois/data.json?resource={ip}` | RIPE public, no key |
-| `cert` | `crt` | T1 | C6 | `https://crt.sh/?q={name}&output=json` | Public CT log search |
-| `email` | `hibp-range` | T2 | C6 | `https://api.pwnedpasswords.com/range/{prefix}` | k-anonymity, 5-char prefix; we do not send full email |
-| `geo` | `nominatim` | T1 | C6, C7 | `https://nominatim.openstreetmap.org/search?q={q}&format=json` | 1 req/s rate limit; User-Agent required |
+| `academic` | `openalex` | T1 | C2, C4, C7 | `https://api.openalex.org/works?search={q}` | CC0 data dump, open API |
+| `academic` | `crossref` | T2 | C2, C4, C7 | `https://api.crossref.org/works?query={q}` | Public REST API |
+| `academic` | `arxiv` | T1 | C2, C4, C7 | `http://export.arxiv.org/api/query?search_query={q}` | Public, no key |
+| `domain` | `rdap` | T1 | C4, C7 | `https://rdap.org/domain/{name}` | Public RDAP bootstrap |
+| `dns` | `doh-google` | T1 | C4 | `https://dns.google/resolve?name={name}&type=A` | Google's DoH, public |
+| `dns` | `doh-cloudflare` | T2 | C4 | `https://cloudflare-dns.com/dns-query?name={name}&type=A` | Cloudflare's DoH, public |
+| `ip` | `ip-api` | T1 | C4 | `http://ip-api.com/json/{ip}` | Free for < 45 req/min |
+| `ip` | `ripe-db` | T2 | C4 | `https://stat.ripe.net/data/whois/data.json?resource={ip}` | RIPE public, no key |
+| `cert` | `crt` | T1 | C4 | `https://crt.sh/?q={name}&output=json` | Public CT log search |
+| `email` | `hibp-range` | T2 | C4 | `https://api.pwnedpasswords.com/range/{prefix}` | k-anonymity, 5-char prefix; we do not send full email |
+| `geo` | `nominatim` | T1 | C4, C7 | `https://nominatim.openstreetmap.org/search?q={q}&format=json` | 1 req/s rate limit; User-Agent required |
 | `news` | `hn-algolia` | T1 | C4, C7 | `https://hn.algolia.com/api/v1/search?query={q}` | Public, no key |
 | `news` | `gdelt` | T2 | C4, C7 | `https://api.gdeltproject.org/api/v2/doc/doc?query={q}&format=json` | Rate-limited; stale-while-revalidate handles 429s |
 | `web` | `ddg-html` | T3 | (any) | `https://html.duckduckgo.com/html/?q={q}` | HTML scrape; DDG's own ToS prefers this over the JSON API |

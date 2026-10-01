@@ -471,25 +471,25 @@ func TestPipeline_AllC2_DefaultsToJudgeLogical(t *testing.T) {
 	}
 }
 
-func TestPipeline_C3_DefaultsToJudgeCrossModal(t *testing.T) {
+func TestPipeline_C3_DefaultsToJudgeDecision(t *testing.T) {
 	p, err := New(PipelineConfig{LLMClient: &FakeLLMClient{Response: fakeResponse(nil, "ok")}})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	// fakeResponse is C1-shaped, but for C3 the LLM is expected to
-	// return C3 criteria. We just check the persona.
+	// Phase 6 alpha.18.1: C3 canonical = decision (per spec.go:14).
+	// Pre-Phase 6: C3 defaulted to judge-cross-modal (v3 legacy).
 	req := EvaluateRequest{
-		EvalType:        "image_drift",
-		SpecIntent:      "evaluate this image for composition and color palette",
+		EvalType:        "decision_drift",
+		SpecIntent:      "evaluate this ADR for rationale clarity and evidence quality",
 		VibeCase:        "C3",
-		ArtifactContent: []byte("hello"),
+		ArtifactContent: []byte("decision text"),
 	}
 	v, err := p.Evaluate(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Evaluate: %v", err)
 	}
-	if v.PersonaID != "judge-cross-modal" {
-		t.Errorf("PersonaID = %q; want judge-cross-modal (C3 default)", v.PersonaID)
+	if v.PersonaID != "judge-decision" {
+		t.Errorf("PersonaID = %q; want judge-decision (C3 canonical)", v.PersonaID)
 	}
 }
 
