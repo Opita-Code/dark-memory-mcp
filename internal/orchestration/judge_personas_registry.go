@@ -38,6 +38,16 @@ type RegistryOptions struct {
 	// IncludeMarkdownOverrides reads DARK_JUDGE_PERSONAS_DIR and merges
 	// any *.md files with the compiled defaults. Default true.
 	IncludeMarkdownOverrides bool
+
+	// IncludeV4Alpha merges the 6 v4-new personas from v4alpha/judge
+	// (PersonaContent registry) into the registry. Source discriminator
+	// is "v4alpha". When false (legacy / backwards compat), the
+	// registry contains only the 8 v2 compiled personas.
+	//
+	// Phase 9 alpha.20 Chunk 8.2: defaulted OFF (legacy); Orchestrator
+	// opts in via WithV4AlphaPersonas(true) so the v3 binary's
+	// judge_list_personas returns 14 personas instead of 8.
+	IncludeV4Alpha bool
 }
 
 // NewPersonaRegistry constructs the registry from the compiled default
@@ -56,8 +66,14 @@ func NewPersonaRegistry(opts RegistryOptions) (*PersonaRegistry, error) {
 		}
 	}
 
+	// Optional v4alpha personas (Chunk 8.2).
+	var v4alphas []*Persona
+	if opts.IncludeV4Alpha {
+		v4alphas = v4alphaPersonas()
+	}
+
 	r := &PersonaRegistry{
-		personas: make(map[string]*Persona, len(compiled)),
+		personas: make(map[string]*Persona, len(compiled)+len(overridden)+len(v4alphas)),
 		byEval:   make(map[string][]*Persona),
 	}
 
@@ -71,14 +87,23 @@ func NewPersonaRegistry(opts RegistryOptions) (*PersonaRegistry, error) {
 		r.personas[merged.ID] = merged
 	}
 
-	// Step 3: require judge-logical as the fallback.
+	// Step 3: register v4alpha personas (after overrides so a future
+	// operator-installed Markdown override can shadow a v4alpha persona
+	// if needed). v4alpha personas never collide with compiled defaults
+	// because their IDs are unique (judge-cross-modal etc. — none of
+	// the 8 v2 IDs overlap).
+	for _, p := range v4alphas {
+		r.personas[p.ID] = p
+	}
+
+	// Step 4: require judge-logical as the fallback.
 	fallback, ok := r.personas["judge-logical"]
 	if !ok {
 		return nil, errors.New("NewPersonaRegistry: judge-logical is the mandatory fallback; cannot be missing")
 	}
 	r.fallback = fallback
 
-	// Step 4: index by eval_type.
+	// Step 5: index by eval_type.
 	r.reindex()
 
 	return r, nil

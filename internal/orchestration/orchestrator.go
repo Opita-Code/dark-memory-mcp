@@ -61,6 +61,16 @@ type Orchestrator struct {
 	personaRegistry *PersonaRegistry    // lazy-initialized
 	personaBuilder  *JudgePromptBuilder // lazy-initialized, depends on registry
 
+	// Phase 9 alpha.20 Chunk 8.2: when true, the lazy PersonaRegistry
+	// constructor (ensurePersonaRegistry) passes IncludeV4Alpha=true so
+	// the 6 v4-new personas from v4alpha/judge (PersonaContent registry)
+	// are merged into the registry. The legacy 8-person compiled set
+	// stays unchanged; the merge adds 6 more personas with Source
+	// discriminator "v4alpha". Default false → operator opts in via
+	// WithV4AlphaPersonas(true). Wired by cmd/dark-mem-mcp/legacy_main.go
+	// at boot so dark_memory_judge_list_personas returns 14 instead of 8.
+	includeV4AlphaPersonas bool
+
 	// v2.20.0 T08 (spec 1276): NLI Router for drift_judge artifact
 	// pipeline. Lazy-initialized via EnsureNLIRouter from
 	// Project.NLIConfig (added in T07). When nil, DriftJudge uses the
@@ -381,6 +391,11 @@ func (o *Orchestrator) ensureLLMSelector() LLMSelector {
 // $DARK_JUDGE_PERSONAS_DIR). The registry is read-only after this
 // returns.
 //
+// Phase 9 alpha.20 Chunk 8.2: when WithV4AlphaPersonas(true) was
+// called, the registry also merges the 6 v4-new personas from
+// v4alpha/judge.PersonaContent. The 14-persona surface (8 v2 + 6
+// v4-new) closes Phase 8 e2e critical finding #2 (row 2323 — T3).
+//
 // On construction error (e.g., missing judge-logical fallback), the
 // error is returned to the caller; the registry is NOT cached on
 // error so the next call retries.
@@ -390,12 +405,38 @@ func (o *Orchestrator) ensurePersonaRegistry() (*PersonaRegistry, error) {
 	}
 	r, err := NewPersonaRegistry(RegistryOptions{
 		IncludeMarkdownOverrides: true,
+		IncludeV4Alpha:          o.includeV4AlphaPersonas,
 	})
 	if err != nil {
 		return nil, err
 	}
 	o.personaRegistry = r
 	return r, nil
+}
+
+// WithV4AlphaPersonas controls whether the lazy PersonaRegistry
+// includes the 6 v4-new personas from v4alpha/judge (Phase 9 alpha.20
+// Chunk 8.2). When enabled, dark_memory_judge_list_personas returns
+// 14 personas (8 v2 compiled + 6 v4alpha) with Source discriminator
+// "v4alpha" for the v4-new entries.
+//
+// Default false → operator opts in. The v3 binary's legacy_main.go
+// enables it at boot so the persona registry surface matches what
+// the v4alpha Server advertises.
+//
+// Nil-safe: when called with enabled=false, the registry behaves as
+// the legacy 8-person compiled set. Idempotent — calling multiple
+// times with the same value is a no-op.
+func (o *Orchestrator) WithV4AlphaPersonas(enabled bool) *Orchestrator {
+	o.includeV4AlphaPersonas = enabled
+	return o
+}
+
+// V4AlphaPersonasEnabled reports whether the lazy registry will
+// include v4alpha personas when constructed. Returns the value set
+// by WithV4AlphaPersonas (default false).
+func (o *Orchestrator) V4AlphaPersonasEnabled() bool {
+	return o.includeV4AlphaPersonas
 }
 
 // ensurePersonaBuilder lazily returns the JudgePromptBuilder backed by

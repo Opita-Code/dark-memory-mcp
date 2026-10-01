@@ -121,6 +121,13 @@ func legacyMain() {
 		ExtractCache: v4delegation.NewExtractCache(v4delegation.CacheTTLFromEnv()),
 		Memories:     nil, // CURATE no-op in v3 binary until Store.RawDB() lands
 	}
+	// Phase 9 alpha.20 Chunk 8.2: enable v4alpha personas in the lazy
+	// PersonaRegistry. After this call, dark_memory_judge_list_personas
+	// returns 14 personas (8 v2 compiled + 6 v4alpha) instead of 8.
+	// The registry is read-only after the first construction; calling
+	// this BEFORE the first persona resolution (i.e., before any
+	// judge call) ensures the 6 v4-new entries are included.
+	bootState.Orchestrator.WithV4AlphaPersonas(true)
 	frameSrc, err := tools.RegisterAllWithDeps(srv.Registry(), bootState.Orchestrator, bootState.Store, safetyFP, v4DelegateBackend)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "dark-mem-mcp: tools.RegisterAll failed: %v\n", err)

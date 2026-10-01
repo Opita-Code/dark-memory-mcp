@@ -62,6 +62,18 @@ const (
 	PersonaSourceCompiled    = "compiled"
 	PersonaSourceFilePrefix  = "file:" // followed by the path
 	PersonaSourceAgentMemory = "agent_memory"
+	// PersonaSourceV4Alpha marks personas that came from the v4alpha
+	// judge package's PersonaContent registry (Phase 7 alpha.19 Chunks 7.1
+	// + Phase 9 alpha.20 Chunk 8.2). The 6 v4-new personas
+	// (judge-cross-modal, judge-pipeline, judge-opinion, judge-decision,
+	// judge-research, judge-delegator) carry rich PersonaContent
+	// (PromptTemplate + EvaluationLens + BiasControls + RequiredEvidence)
+	// that is converted to orchestration.Persona fields at merge time.
+	//
+	// Operators can use the Source discriminator to identify v4alpha-only
+	// personas (e.g., for tooling that knows how to render rich content
+	// vs compiled-only personas).
+	PersonaSourceV4Alpha = "v4alpha"
 )
 
 // EffectiveConstraints returns the persona's Constraints list with
