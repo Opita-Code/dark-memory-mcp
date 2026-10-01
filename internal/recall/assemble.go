@@ -100,7 +100,7 @@ const DefaultToolGrants = "project_create," + // PROJECT (1)
 	"llm_key_add,llm_key_list,llm_key_remove,llm_provider_status," + // LLM_CONFIG (4) — v2.20.0 (spec 1188 T7: OS-keyring LLM key management + routing status)
 	"judge,consensus,judgment_history,judge_list_personas," + // JUDGE (4) — v2.17.0 (spec 1155: persona registry)
 	"active_policy,load_constitution," + // POLICY (2)
-	"memory_state,writes,anomalies,health_ping," + // OBSERVABILITY (4)
+	"memory_state,writes,anomalies,health_ping,audit_export,audit_verify," + // OBSERVABILITY (6) — v1.3.0 (4) + alpha.20 Chunk 8.5 (2: audit_export + audit_verify, ADR-016 + ADR-018)
 	"error_list,error_get,error_summary,error_resolve," + // ERROR_OBS (4) — v2.11.0 (spec 757: Error Observatory backlog + triage)
 	"admin_migrate,admin_schema_status,admin_vacuum," + // ADMIN (3)
 	"vlp_handle_event," + // L6-VLP (1) — DMAP v1.1

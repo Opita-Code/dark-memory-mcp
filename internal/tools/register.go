@@ -7,7 +7,9 @@ package tools
 import (
 	"errors"
 	"fmt"
+	"os"
 
+	"github.com/dark-agents/dark-memory-mcp/internal/audit"
 	"github.com/dark-agents/dark-memory-mcp/internal/orchestration"
 	"github.com/dark-agents/dark-memory-mcp/internal/policy"
 	"github.com/dark-agents/dark-memory-mcp/internal/recall"
@@ -152,8 +154,19 @@ func RegisterAllWithDeps(reg *Registry, orch *orchestration.Orchestrator, st sto
 	RegisterJudge(reg, orch, st)
 	// POLICY (2)
 	RegisterPolicy(reg, orch, st)
-	// OBSERVABILITY (4) — v1.3.0 grew from 3 to 4 with health_ping.
-	RegisterObservability(reg, orch, st)
+	// OBSERVABILITY (4-6) — v1.3.0 grew from 3 to 4 with health_ping;
+	// v4.0.0-alpha.20 (Chunk 8.5) grew from 4 to 6 with audit_export
+	// + audit_verify (ADR-016 + ADR-018). The audit tools are
+	// registered when DARK_AUDIT_HMAC_KEY is set; otherwise they're
+	// silently skipped (legacy behavior for operators who don't care
+	// about audit chain verification). The keyring is constructed
+	// here from the env var so callers don't need to thread it through.
+	auditKr, _ := audit.KeyringFromEnv(os.Getenv("DARK_AUDIT_HMAC_KEY"))
+	if len(auditKr.IDs()) > 0 {
+		RegisterObservabilityWithKeyring(reg, orch, st, auditKr)
+	} else {
+		RegisterObservability(reg, orch, st)
+	}
 	// ERROR_OBS (4) — v2.11.0 (spec 757, Wave 5D). Error Observatory
 	// backlog + triage: error_list, error_get, error_summary,
 	// error_resolve. Store-bound (no orchestrator — the Store exposes

@@ -23,11 +23,27 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 )
 
-// RegisterObservability wires the 4 OBSERVABILITY tools into the registry.
-// v1.3.0: registers health_ping as the 4th tool. health_ping is
-// intentionally sibling to memory_state (not a replacement) — see
-// health.go for the rationale.
+// RegisterObservability wires the OBSERVABILITY tools into the registry.
+// v1.3.0: registers health_ping. health_ping is intentionally sibling to
+// memory_state (not a replacement) — see health.go for the rationale.
+// v4.0.0-alpha.20 (Chunk 8.5): registers audit_export + audit_verify
+// (ADR-016 transparency log + ADR-018 audit verify tool) — see
+// audit.go for the rationale.
+//
+// Phase 9 follow-ups: when chunk 8.5 audit tools ship, this function
+// needs the keyring. Pass nil here to keep the legacy 4-tool signature
+// for callers that haven't migrated; the canonical path uses
+// RegisterObservabilityWithKeyring below.
 func RegisterObservability(reg *Registry, orch *orchestration.Orchestrator, st store.Store) {
+	RegisterObservabilityWithKeyring(reg, orch, st, nil)
+}
+
+// RegisterObservabilityWithKeyring is the full-signature variant.
+// kr may be nil; when nil, the audit_export + audit_verify tools are
+// skipped (legacy callers that don't care about audit chain
+// verification). Production wiring at cmd/dark-mem-mcp/legacy_main.go
+// passes a keyring constructed from DARK_AUDIT_HMAC_KEY.
+func RegisterObservabilityWithKeyring(reg *Registry, orch *orchestration.Orchestrator, st store.Store, kr *audit.Keyring) {
 	// health_ping — v1.3.0. Operator-facing liveness probe; sits FIRST
 	// in the namespace so monitoring rules can pattern-match on
 	// "memory_state" or "health_ping" by index without confusing them.
@@ -162,6 +178,18 @@ func RegisterObservability(reg *Registry, orch *orchestration.Orchestrator, st s
 				Note:      "backed by error_events (Error Observatory, spec 757): severity=fatal + domain=gate clusters, unresolved only",
 			}, nil
 		}))
+
+	// audit_export + audit_verify (Phase 9 Chunk 8.5, ADR-016 + ADR-018).
+	// Always registered (canonical surface requirement) — calls return
+	// ErrAuditNoKeyring when kr is nil and the env var wasn't set.
+	// The keyring is threaded through so operators can rotate keys
+	// without restarting the server.
+	if err := RegisterAudit(reg, st, kr); err != nil {
+		// RegisterAudit only returns an error for nil reg/st, both of
+		// which would already have caused earlier panics. Keep the
+		// error path for completeness.
+		return
+	}
 }
 
 // WritesInput is the input for writes.

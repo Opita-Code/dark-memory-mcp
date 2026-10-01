@@ -125,13 +125,13 @@ func TestCanonicalOrder_WirePrefixConsistent(t *testing.T) {
 // schema version constant moves to 29 to reflect the new floor.
 func TestCanonicalOrder_Frozen_57_17_28(t *testing.T) {
 	const (
-		frozenToolCount      = 57
-		frozenNamespaceCount = 17
+		frozenToolCount      = 59 // 57 base + 2 from alpha.20 Chunk 8.5 (audit_export, audit_verify)
+		frozenNamespaceCount = 17 // no new namespace — audit tools live in OBSERVABILITY
 		frozenSchemaVersion  = 29 // v29 = sdd_evaluations audit_anchor (T10)
 	)
 
 	if got := len(CanonicalOrder()); got != frozenToolCount {
-		t.Errorf("CanonicalOrder() len = %d, want %d (freeze SPEC 1276)", got, frozenToolCount)
+		t.Errorf("CanonicalOrder() len = %d, want %d (freeze SPEC 1276 + alpha.20 Chunk 8.5)", got, frozenToolCount)
 	}
 	if got := NamespaceCount(); got != frozenNamespaceCount {
 		t.Errorf("NamespaceCount() = %d, want %d (freeze SPEC 1276)", got, frozenNamespaceCount)

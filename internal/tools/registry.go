@@ -360,8 +360,14 @@ var canonicalNamespaces = []NamespaceGroup{
 	},
 	{
 		// v1.3.0: health_ping added
+		// v4.0.0-alpha.20 (Chunk 8.5): audit_export + audit_verify
+		// added (ADR-016 transparency log + ADR-018 audit verify
+		// tool). Operators can dump the write_audit chain as a
+		// HMAC-chained JSONL stream and verify it offline. The tools
+		// are read-only but emit their own audit rows so even the
+		// act of dumping is auditable (INV-1 compliance).
 		Name:  "OBSERVABILITY",
-		Tools: []string{"memory_state", "writes", "anomalies", "health_ping"},
+		Tools: []string{"memory_state", "writes", "anomalies", "health_ping", "audit_export", "audit_verify"},
 	},
 	{
 		// v2.11.0 (spec 757, Wave 5D). Error Observatory: durable,

@@ -20,6 +20,15 @@ package audit
 // the v12 schema are: NULL, 'open', 'heartbeat', 'idle_timeout',
 // 'close_clean', 'close_aborted', 'resurrect', 'recover'. NULL for
 // non-session writes (drift_log, artifact_log, spec_log, etc.).
+//
+// ChainPrev, ChainSelf, ChainKeyID (Phase 9 Chunk 8.5, ADR-016): HMAC
+// chain integrity fields for the audit JSONL stream. They are NOT
+// persisted in the write_audit table (the JSONL stream is a derived
+// view; the canonical truth is the SQL rows). They are populated by
+// the exporter (audit.ExportJSONL) and verified by the consumer
+// (audit.VerifyJSONL). Operators may safely ignore them when querying
+// write_audit directly via dark_memory_writes; they only appear in
+// the audit_export JSONL stream.
 type WriteEvent struct {
 	ID              int64  `json:"id"`
 	TableName       string `json:"table_name"`     // research_items | vibe_specs | ...
@@ -35,6 +44,10 @@ type WriteEvent struct {
 	SessionEvent    string `json:"session_event,omitempty"` // v12; see const list in type doc above
 	Notes           string `json:"notes,omitempty"`
 	CreatedAt       string `json:"created_at"`
+	// Phase 9 Chunk 8.5 — HMAC chain fields. Never persisted to DB.
+	ChainPrev  string `json:"chain_prev,omitempty"`
+	ChainSelf  string `json:"chain_self,omitempty"`
+	ChainKeyID string `json:"chain_key_id,omitempty"`
 }
 
 // ListFilters holds optional filters for ListWrites.
