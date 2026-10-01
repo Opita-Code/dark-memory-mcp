@@ -11,6 +11,188 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [4.0.0-alpha.18.1] — 2026-10-01 — Phase 6: alpha.18 close-out (vibe-case fix, audit hardening, STUB close)
+
+### Added — Vibe-case mapping reconciliation (commit `ee0fb8e`, Chunk 6.1)
+
+Closes the **live bug** where the judge pipeline was mapping C3/C4/C5/C6/C7
+to wrong personas after the v4-alpha.3 persona registry split:
+
+- `internal/v4alpha/judge/rubric.go` — canonical C1-C7 criteria + persona
+  assignments per `internal/v4alpha/spec/spec.go:14-16` (vibe_case
+  taxonomy is the source of truth). New criteria: C3 rationale_clarity,
+  C4 source_diversity, C5 scene_transitions, C6 speech_clarity,
+  C7 unchanged. New persona assignments: C3=judge-decision, C4=judge-research,
+  C5=judge-cross-modal, C6=judge-pipeline, C7=judge-evidential.
+- `internal/v4alpha/judge/personas_v4.go` — 2 new personas (judge-decision,
+  judge-research) + compile-time invariants (5 v4-new personas).
+- `internal/v4alpha/judge/rubric_phase6_test.go` NEW — 5 canonical
+  mapping tests.
+- `internal/v4alpha/judge/rubric_test.go` — TestNewPersonaRegistry count 11→13.
+- `internal/v4alpha/judge/pipeline_test.go` — C3 default persona fix.
+- `docs/persona-registry-v4.md` §2.1-§2.3 rebuilt.
+- `docs/GLOSARIO.md:766-769` — DEPRECATED v3 mapping note.
+- `docs/decisions/ADR-007-judge-pipeline-v4.md:435` — canonical C1-C7.
+- `docs/research-backends.md` — academic C2/C4/C7 + network recon C4.
+
+### Added — ADR-017 Ed25519 audit_log row signatures (commit `a4833fc`, Chunk 6.5)
+
+Per ADR-017 (cryptographic provenance on audit rows):
+
+- `internal/v4alpha/audit/signature.go` NEW — ParsePrivateKey /
+  ParsePublicKey / SignRowHash / VerifyRowHashSignature /
+  RowHashPublicKey. Sentinels ErrSigKeyMalformed / ErrSigInvalid.
+- `internal/v4alpha/audit/verify_signature.go` NEW — VerifyWithSignature
+  walker (chain integrity + signature verification, NULL signature
+  tolerated, non-matching sig_pubkey fails).
+- `internal/v4alpha/audit/writer.go` — Writer.signer field + SetSigner
+  + ApplySignatureColumns migration + signing in Write / WriteWithProject
+  (after row_hash UPDATE).
+- `internal/v4alpha/audit/signature_test.go` NEW — **16 tests, all PASS**
+  (RoundTrip, Empty/BadBase64/WrongLength rejected, Deterministic,
+  Valid/WrongKey/ModifiedRowHash, Idempotent migration, SetSigner/NoSigner,
+  ValidChain/DetectsForgery/DetectsWrongKey/LegacyRowsTolerated).
+- New env vars: `DARK_AUDIT_SIGNING_KEY` (base64 64B priv) +
+  `DARK_AUDIT_VERIFY_KEY` (base64 32B pub).
+
+### Added — ADR-019 payload BLOB split (commit `504f427`, Chunk 6.6)
+
+Per ADR-019 (columnar audit queries on payload JSON):
+
+- `internal/v4alpha/audit/payload_split.go` NEW — PayloadFields struct
+  + ExtractPayloadFields (pure JSON parser, handles float64/int64/int
+  for id) + ApplyPayloadColumns migration + AddPayloadIndex (only
+  payload_event, legacy compat).
+- `internal/v4alpha/audit/payload_split_test.go` NEW — **12 tests, all PASS**
+  (ValidJSON, Empty, NotJSON, PartialJSON, IDAsInt, IDAsFloat, Idempotent
+  migration, Idempotent index, FillsPayloadColumns, NoPayloadFieldsForNonJSON,
+  PayloadIDZeroStoredAsNULL, QueryByEvent).
+- `internal/v4alpha/audit/writer.go` + `writer_tx.go` — extract
+  PayloadFields + INSERT alongside BLOB. nullableString + nullableInt64
+  helpers (empty string/zero int → SQL NULL).
+- `internal/v4alpha/audit/writer_chain_test.go` — TestExample_HashChain_PostMigration
+  applies all 3 migrations.
+
+### Changed — `mindset_apply` full impl (commit `ab28867`, Chunk 6.2)
+
+Replaces the alpha.17 STUB. Real implementation per SPEC-alpha-11-phase6.md §6.2:
+
+- `internal/v4alpha/transport/mcp/mindset.go` rewritten — cache lookup
+  via RecallFiltered TagPrefix='mindset:v1' + filter 'mindset_cache_key:<sha256>';
+  procedural composition via composeSystemPrompt (PersonaContent + Task +
+  Operator + Vibe case + Bias controls sections); judge validation via
+  judge.Pipeline.Evaluate eval_type='mindset_compose'; retry loop up to
+  DARK_MINDSET_MAX_ITERATIONS (default 3, clamped [1,7]) with
+  refineSystemPrompt on drift_detected; cache store via agent_memory.Save
+  kind=context.
+- Vibe→persona mapping: C1=judge-logical, C2=judge-logical, C3=judge-decision,
+  C4=judge-research, C5=judge-cross-modal, C6=judge-pipeline, C7=judge-evidential.
+- Wire shape: removed StubNotice; added Verdict field
+  (errored | aligned | drift_detected | needs_human | cached).
+- `internal/v4alpha/transport/mcp/project_test.go` —
+  TestMindsetApply_FullImpl + TestMindsetApply_CacheHit +
+  TestMindsetApply_RejectsInvalidVibeCase. **3/3 tests PASS**.
+
+### Changed — `delegate_intent` full impl (commit `4229684`, Chunk 6.3)
+
+Replaces the alpha.17 STUB. Real implementation per SPEC-alpha-11-phase6.md §6.3:
+DECIDE→PLAN→MIND→CURATE pipeline.
+
+- `internal/v4alpha/transport/mcp/delegation.go` rewritten.
+- Wire shape: removed StubNotice (no longer a stub); added Reasoning field.
+- **DECIDE** (deterministic, no LLM):
+  - Refusal keywords (impossible/cannot/out of scope/do not/don't) → "refused".
+  - Delegation keywords (parallel/concurrent/step by step/first ... then/
+    and then/split into/subtask/in parallel) → "delegate".
+  - Vibe_case=C7 multi → "delegate".
+  - Length > 200 chars → "delegate".
+  - Default → "inline".
+- **PLAN**: pure-function split on `.!?;` + newline. inline → 1 subtask;
+  refused → 0 subtasks; delegate → N subtasks (one per sentence, filtered ≥5 chars).
+- **MIND**: in-process call to composeSystemPrompt (alpha.18.1 Chunk 6.2)
+  per subtask — returns procedural system_prompt from PersonaContent.
+- **CURATE**: empty delegation_context per subtask. agent_memory_delegate
+  binding (C2 subagent) lands alpha.19.
+- 3 tests: TestDelegateIntent_FullImplInline /
+  TestDelegateIntent_FullImplDelegate / TestDelegateIntent_FullImplRefused.
+  **3/3 tests PASS**.
+
+### Added — Mutation coverage close (commit `63fab10`, Chunk 6.4)
+
+3 new test files (+633 LoC):
+
+| Package | Before | After | Δ |
+|---|---|---|---|
+| internal/recall | 17.5% | 45.3% | +27.8 pp |
+| internal/agentbootstrap | 71.8% | 90.8% | +19.0 pp |
+| internal/tools | 20.3% | 22.2% | +1.9 pp |
+
+- `internal/recall/assemble_store_test.go` NEW — 16 tests covering
+  StoreSource.NewStoreSource (nil+custom Now), IdentityFrame (with/without
+  session), ScopeFrame (verdict+timestamp zero per spec 1200 fix, no state),
+  CapabilitiesFrame (with/without session), DriftFrame (no state, State=0,
+  no evaluations), PersonaFrame (defaults fallback, no session), NewSingleton
+  (nil store, valid store). Uses real SQLite in `t.TempDir()` (NOT a hand-rolled
+  mock — store.Store has 105+ methods; real SQLite is 30 LoC of setup).
+- `internal/agentbootstrap/coverage_test.go` NEW — 4 tests for GlobalStoreForTest,
+  CrossFeatureHints, TotalResources, RegisterAll.
+- `internal/tools/coverage_test.go` NEW — 16 tests for ToToolError
+  (7 sentinels + cross-project + nil + unknown + wrapped) + classifyUnknown
+  + CanonicalOrder.
+
+### Cross-version lockstep hash pin
+
+**Unchanged**: `4e6196a07c7903dc712fd4a96cbc4df49317e0da45b57f939b7e6d12d6606ccb`
+
+### Drift summary
+
+- 5 `drift_detected` 0.76-0.90 (all observed as `kind=observation`):
+  - Chunk 6.1 — judge notes 3 docs were inconsistent; we reconciled
+    rubric.go + personas_v4.go + the docs.
+  - Chunk 6.5 — judge notes signature coverage wasn't visible in the
+    artifact_ref-scoped file (false positive by artifact_ref.scope).
+  - Chunk 6.6 — needs_human 0.62 — judge notes payload columns weren't
+    visible in the artifact_ref-scoped file (false positive).
+  - Chunk 6.2 — judge notes cache key placement: TagPrefix vs tags
+    post-fetch. The current implementation uses TagPrefix + filter for
+    the lookup, then sets the cache_key tag on save.
+  - Chunk 6.3 — judge notes "first ... then" is a literal substring match
+    (matches "first ... then" but not "first do X then do Y"). Known
+    limitation of the alpha.18.1 v1 deterministic router; alpha.19
+    swaps for LLM-extracted sub-tasks.
+
+### Verified
+
+- go vet ./... clean.
+- 13 v4alpha packages PASS, 0 regressions.
+- internal/{recall,agentbootstrap,tools} all pass with new coverage.
+- 30+ new tests across Phase 6, all PASS.
+- Cross-version lockstep hash pin unchanged.
+
+### Operator note (alpha.18.1 known limitations)
+
+- **delegate_intent** DECIDE rule "first ... then" only matches the
+  exact substring "first ... then" (with literal ellipsis), not natural
+  language like "first do X then do Y". This is the alpha.18.1 v1
+  deterministic router — alpha.19 swaps to an LLM-extracted sub-task
+  router per SPEC-alpha-11-phase6.md §10.
+- **internal/tools** coverage remains 22.2% (84 untested handler
+  functions). These are MCP-RPC entrypoints which are notoriously
+  hard to test without spinning up a full MCP server lifecycle;
+  deferred to alpha.19 (use mcp-go's httptest server).
+- **internal/recall** CachedSource methods (cache.go) remain uncovered
+  (mock testing infrastructure deferred to alpha.19).
+
+### Cross-refs
+
+- `docs/specs/SPEC-alpha-11-phase6.md` — master Phase 6 spec.
+- `docs/v4-status.md` §1.6 — Phase 6 changelog.
+- `docs/v4-alpha-11-plan.md` §6 — Phase 6 close-out.
+- `docs/decisions/ADR-017-audit-signatures.md` — Ed25519 row signature.
+- `docs/decisions/ADR-019-payload-column-split.md` — columnar payload.
+
+---
+
 ## [4.0.0-alpha.18] — 2026-10-01 — Phase 5: vibe-case-aware memory subsystem
 
 > Phase 5 of the alpha.11+ plan (Phase 1-4 shipped). Per

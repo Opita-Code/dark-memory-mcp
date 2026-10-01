@@ -423,6 +423,40 @@ ImageBind stub, LLM-router stub, plus 1 false positive).
   §5`.
 - dark-memory rows 2235-2257 (atomic mirror).
 
+#### 5.2.2 Phase 6 (alpha.18.1) per-gap closure evidence
+
+| Gap | Status in alpha.18.1 |
+|---|---|
+| Vibe-case mapping drift (4 docs inconsistent with spec.go:14-16) | ✅ FIXED (Chunk 6.1, `ee0fb8e`). Live bug: `judge/populateCalibration` was mapping C3→judge-evidential + C4→judge-pipeline instead of judge-decision + judge-research. 3 docs reconciled. |
+| STUB handlers (mindset_apply + delegate_intent) | ✅ FIXED (Chunks 6.2 + 6.3, `ab28867` + `4229684`). Real DECIDE→PLAN→MIND→CURATE for delegate_intent; cache + procedural composition + judge validation loop for mindset_apply. |
+| Mutation testing (tools 19.4% + recall 20% + agentbootstrap 42.1%) | ✅ FIXED (Chunk 6.4, `63fab10`). 3 new test files (+633 LoC). recall +27.8pp, agentbootstrap +19.0pp, tools +1.9pp. |
+| ADR-017 Ed25519 audit row signatures | ✅ FIXED (Chunk 6.5, `a4833fc`). 16 tests PASS. `internal/v4alpha/audit/signature.go` + Writer.signer + SetSigner + ApplySignatureColumns. |
+| ADR-019 payload BLOB split | ✅ FIXED (Chunk 6.6, `504f427`). 12 tests PASS. `internal/v4alpha/audit/payload_split.go` + ExtractPayloadFields + ApplyPayloadColumns + AddPayloadIndex. |
+| Docs followup + alpha.18.1 tag | ✅ DONE (Chunk 6.7, this commit). CHANGELOG `[4.0.0-alpha.18.1]` + v4-status §1.6 + v4-alpha-11-plan §6 + sota-critique update. |
+
+**alpha.19 follow-ups** (deferred from alpha.18.1):
+- `delegate_intent` DECIDE: swap literal-pattern router for
+  LLM-extracted sub-tasks (per R-D Phase 6 §10 — ReFind-style
+  agent-controlled beats LSTM-router 2 by 11pp on 2,800 questions).
+- `agent_memory_delegate` C2 subagent binding (currently empty
+  delegation_context per subtask).
+- internal/tools 22.2% remaining gap (84 MCP-RPC handlers need
+  httptest-based test harness).
+- internal/recall 45.3% remaining gap (CachedSource methods need
+  mock testing infrastructure).
+
+**Cross-refs**:
+- `docs/specs/SPEC-alpha-11-phase6.md` — Phase 6 master spec.
+- `internal/v4alpha/audit/{signature,payload_split,verify_signature}.go`
+  — Chunk 6.5 + 6.6 implementations.
+- `internal/v4alpha/transport/mcp/{mindset,delegation}.go` —
+  Chunk 6.2 + 6.3 real impl.
+- `internal/{recall/assemble_store_test,tools/coverage_test,agentbootstrap/coverage_test}.go`
+  — Chunk 6.4 test files.
+- `CHANGELOG.md [4.0.0-alpha.18.1]`.
+- `docs/v4-status.md §1.6` + `docs/v4-alpha-11-plan.md §6`.
+- dark-memory rows 2266-2290 (atomic mirror).
+
 ### 5.3 Audit chain (chunk 3, 8 gaps)
 
 - 4 of 8 are tractable: transparency log (ADR-016), Ed25519

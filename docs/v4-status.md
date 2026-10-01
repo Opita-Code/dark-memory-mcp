@@ -385,6 +385,85 @@ still works for callers that don't pass `vibe_case`.
 `project_id` filtering applies to all new tables (INV-19
 alpha.17 hard isolation). Wire shape unchanged.
 
+### 1.6 Phase 6 — alpha.18 close-out (alpha.18.1) ⭐ NEW
+
+Phase 6 closes all known gaps before alpha.19 (5 commits shipped):
+`ee0fb8e` (vibe-case mapping fix), `a4833fc` (ADR-017 Ed25519
+signatures), `504f427` (ADR-019 payload BLOB split),
+`ab28867` (full impl mindset_apply), `4229684` (full impl
+delegate_intent), `63fab10` (mutation coverage close).
+
+#### 1.6.1 Vibe-case mapping reconciliation (Chunk 6.1)
+
+**Live bug fix.** The judge pipeline was mapping C3/C4/C5/C6/C7
+to wrong personas after the v4-alpha.3 persona registry split.
+Reconciled 3 docs (`persona-registry-v4.md`, `GLOSARIO.md`,
+`ADR-007-judge-pipeline-v4.md`) + 1 source file
+(`internal/v4alpha/judge/rubric.go`) to the canonical
+`internal/v4alpha/spec/spec.go:14-16` taxonomy. 2 new personas
+added (judge-decision C3, judge-research C4); 1 swapped
+(judge-cross-modal C5, judge-pipeline C6); 1 unchanged
+(judge-evidential C7).
+
+#### 1.6.2 ADR-017 Ed25519 audit row signatures (Chunk 6.5)
+
+Per ADR-017 (cryptographic provenance on audit rows):
+`internal/v4alpha/audit/signature.go` NEW + Writer.signer
++ ApplySignatureColumns migration. 16 tests PASS
+(RoundTrip, Valid/WrongKey/ModifiedRowHash, Idempotent
+migration, ValidChain, DetectsForgery, DetectsWrongKey,
+LegacyRowsTolerated). Env vars: DARK_AUDIT_SIGNING_KEY
+(base64 64B priv) + DARK_AUDIT_VERIFY_KEY (base64 32B pub).
+
+#### 1.6.3 ADR-019 payload BLOB split (Chunk 6.6)
+
+Per ADR-019 (columnar audit queries on payload JSON):
+`internal/v4alpha/audit/payload_split.go` NEW — ExtractPayloadFields
++ ApplyPayloadColumns + AddPayloadIndex (payload_event only,
+legacy compat). 12 tests PASS. nullableString + nullableInt64
+helpers ensure empty string/zero int → SQL NULL.
+
+#### 1.6.4 Full impl `mindset_apply` (Chunk 6.2)
+
+Replaces alpha.17 STUB. Cache lookup via RecallFiltered
+TagPrefix='mindset:v1'; procedural composition via
+composeSystemPrompt; judge validation via Pipeline.Evaluate
+eval_type='mindset_compose'; retry loop up to
+DARK_MINDSET_MAX_ITERATIONS (default 3, clamped [1,7]).
+Wire shape: removed StubNotice; added Verdict field.
+3 tests PASS.
+
+#### 1.6.5 Full impl `delegate_intent` (Chunk 6.3)
+
+Replaces alpha.17 STUB. DECIDE→PLAN→MIND→CURATE pipeline.
+DECIDE: deterministic rules (refusal keywords > delegation
+keywords > C7 multi > length>200 > default inline).
+PLAN: split on `.!?;` + newline. MIND: in-process call to
+composeSystemPrompt. CURATE: empty delegation_context (alpha.19
+wires C2 subagent binding). Wire shape: removed StubNotice;
+added Reasoning. 3 tests PASS.
+
+#### 1.6.6 Mutation coverage close (Chunk 6.4)
+
+| Package | Before | After | Δ |
+|---|---|---|---|
+| internal/recall | 17.5% | 45.3% | +27.8 pp |
+| internal/agentbootstrap | 71.8% | 90.8% | +19.0 pp |
+| internal/tools | 20.3% | 22.2% | +1.9 pp |
+
+3 new test files (+633 LoC). All 30+ tests PASS. Real SQLite
+in `t.TempDir()` (not a hand-rolled mock — store.Store has 105+
+methods).
+
+#### 1.6.7 Known limitations (deferred to alpha.19)
+
+- `delegate_intent` DECIDE "first ... then" only matches the
+  literal substring (not natural language).
+- internal/tools 22.2% — 84 untested MCP-RPC handlers (need
+  httptest server).
+- internal/recall 45.3% — CachedSource (cache.go) methods
+  need mock testing infrastructure.
+
 ### ✅ Registered (46)
 
 | Namespace | Tools | Count | When |

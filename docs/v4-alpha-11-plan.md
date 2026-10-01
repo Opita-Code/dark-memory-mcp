@@ -372,7 +372,70 @@ evolution path captured in
   1 meta, agent_id `alpha-11-phase5`, session
   `sess-7e6f313abd9818cd`).
 
-## 6. The vibe-loop pattern, restated
+## 6. Phase 6 — alpha.18 close-out ✅ SHIPPED (alpha.18.1, 2026-10-01)
+
+Phase 6 is the close-out before alpha.19. Six master spec items in
+`docs/specs/SPEC-alpha-11-phase6.md`:
+
+### 6.1 Vibe-case mapping reconciliation (commit `ee0fb8e`)
+
+**Live bug fix.** Closes the drift in 3 docs (`persona-registry-v4.md`,
+`GLOSARIO.md`, `ADR-007-judge-pipeline-v4.md`) and the
+`judge/populateCalibration` function (the persona registry had drifted
+from the canonical `spec.go:14-16` taxonomy after the v4-alpha.3 split).
+5 changes: rubric.go canonical, personas_v4.go (2 new),
+persona-registry-v4.md §2.1-§2.3 rebuild, GLOSARIO.md deprecation note,
+ADR-007 canonical C1-C7, research-backends.md academic + network recon.
+
+### 6.2 Full impl `mindset_apply` (commit `ab28867`)
+
+Replaces alpha.17 STUB. Real cache + procedural composition + judge
+validation loop. Wire shape change: removed StubNotice; added Verdict
+field. Vibe→persona mapping per the canonical taxonomy.
+
+### 6.3 Full impl `delegate_intent` (commit `4229684`)
+
+Replaces alpha.17 STUB. DECIDE→PLAN→MIND→CURATE pipeline. DECIDE is
+deterministic (no LLM); PLAN splits by sentence boundaries; MIND calls
+composeSystemPrompt in-process; CURATE empty delegation_context for
+alpha.19 (C2 subagent binding). Wire shape: removed StubNotice; added
+Reasoning.
+
+### 6.4 Mutation coverage close (commit `63fab10`)
+
+| Package | Before | After | Δ |
+|---|---|---|---|
+| internal/recall | 17.5% | 45.3% | +27.8 pp |
+| internal/agentbootstrap | 71.8% | 90.8% | +19.0 pp |
+| internal/tools | 20.3% | 22.2% | +1.9 pp |
+
+3 new test files (+633 LoC). Real SQLite in `t.TempDir()` for the
+recall package (NOT a hand-rolled mock — store.Store has 105+ methods).
+
+### 6.5 ADR-017 Ed25519 audit row signatures (commit `a4833fc`)
+
+`audit/signature.go` + `audit/verify_signature.go` + Writer.signer
++ SetSigner + ApplySignatureColumns migration. 16 tests PASS. Env
+vars: DARK_AUDIT_SIGNING_KEY (base64 64B priv) + DARK_AUDIT_VERIFY_KEY
+(base64 32B pub).
+
+### 6.6 ADR-019 payload BLOB split (commit `504f427`)
+
+`audit/payload_split.go` + PayloadFields struct + ExtractPayloadFields
+(pure JSON parser) + ApplyPayloadColumns + AddPayloadIndex (payload_event
+only). 12 tests PASS. nullableString + nullableInt64 helpers.
+
+### 6.7 Docs + tag (commit pending, this commit)
+
+- `CHANGELOG.md [4.0.0-alpha.18.1]` — release entry.
+- `docs/v4-status.md §1.6` — Phase 6 changelog.
+- `docs/v4-alpha-11-plan.md §6` — Phase 6 close-out (this section).
+- `docs/sota-critique.md` updates — reference ADR-017 + 019 followups.
+- `git tag v4.0.0-alpha.18.1` LOCAL ONLY.
+- dark-memory rows 2266-2290 (6 SUMMARY + 19 SECTION, agent_id
+  `alpha-11-phase6`, session `sess-4fffa0428c585cd0`).
+
+## 7. The vibe-loop pattern, restated
 
 For each phase, the workflow is:
 
