@@ -154,6 +154,9 @@ func init() {
 	RegisterStrategy(&C2TextRecall{})
 	RegisterStrategy(&C3DecisionRecall{})
 	RegisterStrategy(&C4ResearchRecall{})
+	RegisterStrategy(&C5VideoRecall{})
+	RegisterStrategy(&C6AudioRecall{})
+	RegisterStrategy(&C7MultiRecall{})
 }
 
 // annotatedColumns is the canonical column list for SELECT statements

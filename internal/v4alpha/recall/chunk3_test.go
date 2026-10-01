@@ -250,14 +250,20 @@ func TestAllStrategiesRegistered(t *testing.T) {
 	}
 }
 
-// TestRecallFor_NoStrategyForRemaining verifies C5/C6/C7 still return
-// ErrNoStrategyRegistered after Chunk 3 ships (they come in Chunk 4).
+// TestRecallFor_NoStrategyForRemaining is a Chunk-3-era test that
+// verified C5/C6/C7 were not yet registered. After Chunk 4 ships
+// all 7 are registered, so the assertion flips to confirm they DO
+// have strategies now (and the test name is preserved for
+// git-blame continuity).
 func TestRecallFor_NoStrategyForRemaining(t *testing.T) {
 	db, _, _ := newTestDB(t)
 	for _, vc := range []string{VibeCaseVideo, VibeCaseAudio, VibeCaseMulti} {
 		_, err := RecallFor(context.Background(), db, vc, "anything", "default", 10)
-		if !errors.Is(err, ErrNoStrategyRegistered) {
-			t.Errorf("vibe_case=%q: expected ErrNoStrategyRegistered, got %v", vc, err)
+		// After Chunk 4: ErrNoStrategyRegistered is gone for these
+		// three. The dispatch succeeds (or returns ErrUnknownVibeCase
+		// if misspelled — but they're canonical).
+		if errors.Is(err, ErrNoStrategyRegistered) {
+			t.Errorf("vibe_case=%q should have a registered strategy now (Chunk 4), got ErrNoStrategyRegistered", vc)
 		}
 	}
 }

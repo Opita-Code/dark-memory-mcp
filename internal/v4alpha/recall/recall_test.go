@@ -146,18 +146,18 @@ func TestRecallFor_EmptyVibeCase(t *testing.T) {
 	}
 }
 
-// TestRecallFor_NoStrategy verifies that valid vibe_cases with no
-// strategy yet return ErrNoStrategyRegistered (not a panic).
+// TestRecallFor_NoStrategy verifies that an unknown-but-syntactically-
+// valid vibe_case triggers ErrUnknownVibeCase (not a panic).
 //
-// In alpha.18 Chunks 2-3 ship C1, C2, C3, C4. C5/C6/C7 land in
-// Chunk 4 and should fail gracefully today.
+// As of Chunk 4 all 7 canonical vibe_cases have a registered strategy,
+// so the only remaining no-strategy path is the unknown-vibe-case path.
+// (We don't keep a "no strategy" test once all 7 ship — the registry
+// completeness is checked by TestAllStrategiesRegisteredChunk4.)
 func TestRecallFor_NoStrategy(t *testing.T) {
 	db, _, _ := newTestDB(t)
-	for _, vc := range []string{"video", "audio", "multi"} {
-		_, err := RecallFor(context.Background(), db, vc, "anything", "default", 10)
-		if !errors.Is(err, ErrNoStrategyRegistered) {
-			t.Errorf("vibe_case=%q: expected ErrNoStrategyRegistered, got %v", vc, err)
-		}
+	_, err := RecallFor(context.Background(), db, "unknown-future-vibe-case", "anything", "default", 10)
+	if !errors.Is(err, ErrUnknownVibeCase) {
+		t.Errorf("expected ErrUnknownVibeCase, got %v", err)
 	}
 }
 
@@ -175,28 +175,26 @@ func TestRecallFor_DecisionDispatch(t *testing.T) {
 }
 
 // TestRegisteredVibeCases verifies init() registered all canonical
-// strategies for which a Chunk ships. alpha.18 chunks 2-3 ship C1, C2,
-// C3, C4; chunks 4 ships C5, C6, C7.
+// strategies for which a Chunk ships. After Chunk 4 all 7 vibe_cases
+// are registered; the test now checks completeness rather than the
+// per-chunk progression.
 //
-// The assertion checks presence of each shipped strategy + absence of
-// each not-yet-shipped strategy, so a regression in init() doesn't go
-// unnoticed (e.g., if a future chunk forgets to register its strategy).
+// The test name is preserved (it was Chunk-2 era) for git-blame
+// continuity. The assertion is updated for the current state.
 func TestRegisteredVibeCases(t *testing.T) {
 	got := RegisteredVibeCases()
 	have := make(map[string]bool, len(got))
 	for _, v := range got {
 		have[v] = true
 	}
-	shipped := []string{VibeCaseCode, VibeCaseText, VibeCaseDecision, VibeCaseResearch}
-	for _, v := range shipped {
-		if !have[v] {
-			t.Errorf("vibe_case %q expected to be registered (alpha.18 Chunk 2-3 ship), got %v", v, got)
-		}
+	// After Chunk 4 all 7 canonical vibe_cases must be registered.
+	all := []string{
+		VibeCaseCode, VibeCaseText, VibeCaseDecision, VibeCaseResearch,
+		VibeCaseVideo, VibeCaseAudio, VibeCaseMulti,
 	}
-	notYetShipped := []string{VibeCaseVideo, VibeCaseAudio, VibeCaseMulti}
-	for _, v := range notYetShipped {
-		if have[v] {
-			t.Errorf("vibe_case %q not yet shipped (alpha.18 Chunk 4), got %v", v, got)
+	for _, v := range all {
+		if !have[v] {
+			t.Errorf("vibe_case %q expected to be registered (all 7 ship in alpha.18), got %v", v, got)
 		}
 	}
 }
