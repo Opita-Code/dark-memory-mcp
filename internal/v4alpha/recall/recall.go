@@ -147,11 +147,13 @@ func RegisteredVibeCases() []string {
 	return out
 }
 
-// init registers the canonical strategies. C3 (decision) is the
-// first-implemented per SPEC §15 (sign-off order). C1/C2/C4/C5/C6/C7
-// land in Chunks 3-4.
+// init registers the canonical strategies. C3 (decision) ships in
+// Chunk 2; C1, C2, C4 ship in Chunk 3; C5, C6, C7 ship in Chunk 4.
 func init() {
+	RegisterStrategy(&C1CodeRecall{})
+	RegisterStrategy(&C2TextRecall{})
 	RegisterStrategy(&C3DecisionRecall{})
+	RegisterStrategy(&C4ResearchRecall{})
 }
 
 // annotatedColumns is the canonical column list for SELECT statements

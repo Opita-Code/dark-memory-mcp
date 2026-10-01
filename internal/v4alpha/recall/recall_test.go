@@ -149,11 +149,11 @@ func TestRecallFor_EmptyVibeCase(t *testing.T) {
 // TestRecallFor_NoStrategy verifies that valid vibe_cases with no
 // strategy yet return ErrNoStrategyRegistered (not a panic).
 //
-// In alpha.18 only "decision" has a strategy. C1/C2/C4/C5/C6/C7
-// land in Chunks 3-4 and should fail gracefully today.
+// In alpha.18 Chunks 2-3 ship C1, C2, C3, C4. C5/C6/C7 land in
+// Chunk 4 and should fail gracefully today.
 func TestRecallFor_NoStrategy(t *testing.T) {
 	db, _, _ := newTestDB(t)
-	for _, vc := range []string{"code", "text", "research", "video", "audio", "multi"} {
+	for _, vc := range []string{"video", "audio", "multi"} {
 		_, err := RecallFor(context.Background(), db, vc, "anything", "default", 10)
 		if !errors.Is(err, ErrNoStrategyRegistered) {
 			t.Errorf("vibe_case=%q: expected ErrNoStrategyRegistered, got %v", vc, err)
@@ -174,12 +174,30 @@ func TestRecallFor_DecisionDispatch(t *testing.T) {
 	}
 }
 
-// TestRegisteredVibeCases verifies init() registered exactly one
-// strategy (C3) at package load time.
+// TestRegisteredVibeCases verifies init() registered all canonical
+// strategies for which a Chunk ships. alpha.18 chunks 2-3 ship C1, C2,
+// C3, C4; chunks 4 ships C5, C6, C7.
+//
+// The assertion checks presence of each shipped strategy + absence of
+// each not-yet-shipped strategy, so a regression in init() doesn't go
+// unnoticed (e.g., if a future chunk forgets to register its strategy).
 func TestRegisteredVibeCases(t *testing.T) {
 	got := RegisteredVibeCases()
-	if len(got) != 1 || got[0] != VibeCaseDecision {
-		t.Errorf("registered vibe_cases = %v, want [%s]", got, VibeCaseDecision)
+	have := make(map[string]bool, len(got))
+	for _, v := range got {
+		have[v] = true
+	}
+	shipped := []string{VibeCaseCode, VibeCaseText, VibeCaseDecision, VibeCaseResearch}
+	for _, v := range shipped {
+		if !have[v] {
+			t.Errorf("vibe_case %q expected to be registered (alpha.18 Chunk 2-3 ship), got %v", v, got)
+		}
+	}
+	notYetShipped := []string{VibeCaseVideo, VibeCaseAudio, VibeCaseMulti}
+	for _, v := range notYetShipped {
+		if have[v] {
+			t.Errorf("vibe_case %q not yet shipped (alpha.18 Chunk 4), got %v", v, got)
+		}
 	}
 }
 
