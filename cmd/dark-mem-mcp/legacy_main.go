@@ -21,6 +21,7 @@ import (
 	"syscall"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/drift"
+	"github.com/dark-agents/dark-memory-mcp/internal/embedder"
 	"github.com/dark-agents/dark-memory-mcp/internal/errorobs"
 	"github.com/dark-agents/dark-memory-mcp/internal/federation"
 	"github.com/dark-agents/dark-memory-mcp/internal/orchestration"
@@ -128,6 +129,22 @@ func legacyMain() {
 	// this BEFORE the first persona resolution (i.e., before any
 	// judge call) ensures the 6 v4-new entries are included.
 	bootState.Orchestrator.WithV4AlphaPersonas(true)
+	// Phase 9 alpha.20 Chunk 8.3: wire the embedder at boot.
+	// FactoryAuto walks the ladder (manual → harness → ONNX → OPENAI
+	// → stub); Store.WithEmbedder records the chosen backend so
+	// SearchAgentMemory Mode=vector|rrf has a real embedder to call.
+	// Without this, the Store always boots with embedder.None()
+	// and Mode=vector returns embedder.ErrDisabled → falls back to
+	// BM25-only. Now: any operator with DARK_MEMORY_EMBEDDER set,
+	// or Ollama running on localhost:11434, or bundled ONNX loadable,
+	// gets hybrid retrieval for free.
+	embedderKind := embedder.FactoryAuto().Kind()
+	bootState.Store.WithEmbedder(embedder.FactoryAuto())
+	fmt.Fprintf(os.Stderr,
+		"dark-mem-mcp: embedder kind=%q dim=%d (DARK_MEMORY_EMBEDDER=%q)\n",
+		embedderKind,
+		bootState.Store.Embedder().Dim(),
+		os.Getenv("DARK_MEMORY_EMBEDDER"))
 	frameSrc, err := tools.RegisterAllWithDeps(srv.Registry(), bootState.Orchestrator, bootState.Store, safetyFP, v4DelegateBackend)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "dark-mem-mcp: tools.RegisterAll failed: %v\n", err)

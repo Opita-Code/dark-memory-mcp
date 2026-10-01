@@ -342,7 +342,11 @@ type Store struct {
 // WithEmbedder returns s after recording e as the active embedder.
 // Mirrors the sqlite Store.WithEmbedder exactly; the two Store
 // implementations are wire-equal from the operator's POV.
-func (s *Store) WithEmbedder(e embedder.Embedder) *Store {
+//
+// Phase 9 Chunk 8.3: returns store.Store (the interface) instead
+// of *Store so callers that only have the interface can chain
+// after NewStore.
+func (s *Store) WithEmbedder(e embedder.Embedder) store.Store {
 	if e == nil {
 		e = embedder.None()
 	}

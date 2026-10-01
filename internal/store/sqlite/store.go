@@ -392,8 +392,12 @@ type Store struct {
 // pattern is `store.WithEmbedder(embedder.FactoryAuto())` once at
 // boot, before any Search call that uses Mode="vector" or Mode="rrf".
 //
+// Phase 9 Chunk 8.3: returns store.Store (the interface) instead
+// of *Store so callers that only have the interface can chain
+// after NewStore. The concrete receiver type is still *sqlite.Store.
+//
 // Returns s so the call can be chained after NewStore.
-func (s *Store) WithEmbedder(e embedder.Embedder) *Store {
+func (s *Store) WithEmbedder(e embedder.Embedder) store.Store {
 	if e == nil {
 		e = embedder.None()
 	}

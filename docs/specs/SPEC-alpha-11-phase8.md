@@ -234,55 +234,100 @@ surface with alternatives[] all become reachable).
 3. `source: v4alpha` discriminator visible for 6 v4-new.
 4. No regression in v2 persona enumeration.
 
-### 3.3 Chunk 8.3 — Embedder integration (ADR-013)
+### 3.3 Chunk 8.3 — Embedder text integration (ADR-013 — RECORT)
 
-**Goal**: alpha.18 stub vector path closes. Vectors
-move from FTS5-absorbed to real embedding space.
-Pluggable adapter pattern: BGE-large text (1024-dim),
-ImageBind image (1024-dim), wav2vec 2.0 audio (768-dim),
-ONNX runtime for inference. Cross-modal similarity
-search across modalities.
+> **Operator decision 2026-10-01 (Option A)**: Recort to text-only.
+> ImageBind + wav2vec deferred until agent_memory schema gains
+> attachment columns (BLOB + storage). Honest reason: encoding
+> images/audio without a place to store them = wasted compute.
+> BGE-large 1024-dim and BGE-small 384-dim become **operator-vendored
+> opt-ins** (vendor model + tokenizer via env vars), not bundled —
+> the bundled ONNX adapter keeps shipping
+> **Xenova/all-MiniLM-L6-v2 INT8** (384-dim, sha-pinned, ~25MB
+> on disk after extraction).
 
-**Files** (estimado ~800 LoC + 20 tests):
+**Goal**: close the alpha.18 stub vector path. Vectors move from
+FTS5-absorbed to real embedding space via the existing
+`internal/embedder/` factory + `Store.WithEmbedder()` seam +
+`SearchAgentMemory` Mode dispatch (bm25/vector/rrf). All the
+plumbing ships in v2.9.0-alpha PR-2; Chunk 8.3 wires it at boot +
+tests the hybrid path end-to-end.
 
-- `internal/embedder/embedder.go` NEW — interface
-  `Embedder` with `Encode(ctx, input []byte) ([]float32, error)`
-  + `Modality() string`.
-- `internal/embedder/bge.go` NEW — BGE-large
-  implementation (1024-dim text embeddings).
-- `internal/embedder/imagebind.go` NEW — ImageBind
-  implementation (1024-dim image embeddings).
-- `internal/embedder/wav2vec.go` NEW — wav2vec 2.0
-  implementation (768-dim audio embeddings).
-- `internal/embedder/onnx.go` NEW — ONNX runtime
-  bridge (loads model, runs inference).
-- `internal/embedder/{bge,imagebind,wav2vec}_test.go`
-  NEW — 20 tests: encoding correctness, dimensionality,
-  cosine similarity, ONNX runtime integration.
-- `internal/recall/vector_search.go` MODIFIED —
-  integrate Embedder for cross-modal search.
+**Pre-existing assets (NOT new in Chunk 8.3)**:
 
-**Strategy**:
+- `internal/embedder/embedder.go:79` — `Embedder` interface
+  (`Kind`/`Dim`/`Embed`/`Close`).
+- `internal/embedder/embedder.go:258` — `FactoryAuto()` walks
+  manual → harness-detected → bundled ONNX → OPENAI_API_KEY → stub.
+- `internal/embedder/embedder.go:127` — `DefaultKind()` reads
+  `$DARK_MEMORY_EMBEDDER` (none|onnx|openai|voyage|ollama).
+- `internal/embedder/onnx/` — bundled
+  `Xenova/all-MiniLM-L6-v2 INT8` (384-dim, sha-pinned, libonnxruntime
+  binaries per platform).
+- `internal/embedder/ollama/` — HTTP to local Ollama
+  (`nomic-embed-text` 768d default, override via
+  `DARK_MEMORY_OLLAMA_MODEL`).
+- `internal/embedder/openai/`, `internal/embedder/voyage/` —
+  cloud backends (env-key gated).
+- `internal/store/sqlite/store.go:396` — `Store.WithEmbedder(e)`
+  builder.
+- `internal/store/sqlite/store.go:4904` — `SearchAgentMemory`
+  Mode dispatch (bm25|vector|rrf) — fully implemented in v2.9.0
+  PR-2.
+- `internal/store/sqlite/vector.go:240` — `searchByVector`
+  (brute-force cosine, 1024/384/768/1536-dim aware).
+- `internal/store/sqlite/vector.go:306` — `searchByRRF`
+  (BM25 + vector arms fused via RRF k=60).
+- `internal/migrate/sqlite/ddl.go:983` — `embedding BLOB` column
+  already on `agent_memory` (migration v23).
 
-1. Define `Embedder` interface in
-   `internal/embedder/embedder.go`.
-2. Implement BGE-large first (text is most common
-   modality).
-3. ONNX runtime bridge for inference
-   (gorgonia/gonnx or similar).
-4. ImageBind + wav2vec adapters pluggable via
-   Embedder interface.
-5. Vector_search uses Embedder for queries.
-6. 20 integration tests with synthetic tensors.
+**Files** (Chunk 8.3 NEW work — estim ~150 LoC + 6 tests):
+
+- `cmd/dark-mem-mcp/legacy_main.go` MODIFIED — call
+  `embedder.FactoryAuto()` + `bootState.Store.WithEmbedder(...)`
+  ONCE at boot, BEFORE the first `SearchAgentMemory` call.
+  Currently the Store always boots with `embedder.None()` (BM25-only).
+- `internal/embedder/bge.go` NEW — thin wrapper that re-exports
+  the existing ONNX adapter with BGE-large INT8 (1024-dim) or
+  BGE-small (384-dim) configurations. Operator-vendored: must
+  supply `$DARK_MEMORY_BGE_MODEL_PATH` pointing at their
+  pre-downloaded model.onnx + tokenizer.json. **NOT bundled** —
+  the operator downloads from HuggingFace
+  (`Xenova/bge-large-en-v1.5` or `Xenova/bge-small-en-v1.5`) and
+  pins the SHA via `DARK_MEMORY_BGE_MODEL_SHA256`.
+- `internal/embedder/bge_test.go` NEW — 3 unit tests: load
+  synthetic 384-dim ONNX stub, verify Encode returns correct
+  shape, verify SHA mismatch returns typed error.
+- `internal/store/sqlite/embedder_integration_test.go` NEW —
+  3 e2e tests using the mock embedder: (1) `save` populates
+  `embedding` BLOB, (2) `Mode=rrf` returns hybrid result that
+  lexical alone would miss, (3) `Mode=vector` returns cosine
+  ranking when no lexical overlap.
+- `docs/embedder-ops.md` NEW — operator-facing runbook
+  (~80 LoC): when FactoryAuto picks each one, how to vendor
+  BGE-large, how to point at a local Ollama, what the perf
+  trade-offs are per backend.
 
 **Acceptance criteria**:
 
-1. 20 tests PASS.
-2. BGE-large encodes text to 1024-dim float32.
-3. ImageBind encodes images to 1024-dim.
-4. wav2vec encodes audio to 768-dim.
-5. Cross-modal cosine similarity works across modalities.
-6. ONNX runtime integration tested with synthetic model.
+1. `go build ./...` clean (parent + cmd/dark-mem-mcp).
+2. 6 new tests PASS (3 unit + 3 e2e integration).
+3. `Store.Embedder().Kind() != "none"` after `legacy_main.go`
+   boot when ANY backend is reachable (Ollama running OR
+   `DARK_MEMORY_EMBEDDER` set).
+4. `health_ping` reports `embedder_kind` field with the active
+   backend (currently absent — 1 LoC add).
+5. Hybrid search smoke: `save` 3 rows with semantically similar
+   but textually distinct content, recall via `Mode=rrf` returns
+   the most-similar row even with 0 token overlap.
+6. `go vet ./...` clean.
+7. Cross-version hash pin `4e6196a07c...` unchanged.
+
+**Out of scope (deferred)**:
+
+- ImageBind / wav2vec adapters (until attachment schema lands).
+- sqlite-vec vector index (until dataset size > 50k rows).
+- Embedder auth via OCAIS RS256 + tenant binding (separate ADR).
 
 ### 3.4 Chunk 8.4 — ProGraph 2-layer entity extraction (ADR-015)
 

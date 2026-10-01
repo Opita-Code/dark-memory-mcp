@@ -32,6 +32,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/dark-agents/dark-memory-mcp/internal/embedder"
 	"github.com/dark-agents/dark-memory-mcp/internal/errorobs"
 	"github.com/dark-agents/dark-memory-mcp/internal/version"
 )
@@ -210,10 +211,25 @@ type healthPingResult struct {
 	Drift     bool    `json:"drift,omitempty"`
 	LatencyMS float64 `json:"latency_ms"`
 	CheckedAt string  `json:"checked_at"`
+	// Embedder (Phase 9 Chunk 8.3) — reports which hybrid-retrieval
+	// backend is active. Omitted when the embedder is the disabled
+	// stub ("none") so operators can detect hybrid-arm availability
+	// at a glance. When present, Kind is one of: onnx, openai, voyage,
+	// ollama, mock. Dim is the vector dimensionality (384 / 768 /
+	// 1024 / 1536 typical).
+	Embedder *embedderInfo `json:"embedder,omitempty"`
 	// ErrorSummary (v2.11.0, spec 757) — aggregate Error Observatory
 	// metrics. Omitted when the store doesn't expose the summary (test
 	// fakes) or the query fails (degraded health read, not fatal).
 	ErrorSummary *errorobs.ErrorSummary `json:"error_summary,omitempty"`
+}
+
+// embedderInfo is the subset of embedder.Embedder that health_ping
+// reports. Kept as a tiny local struct so the wire shape is frozen
+// even if the embedder package grows new methods.
+type embedderInfo struct {
+	Kind string `json:"kind"`
+	Dim  int    `json:"dim"`
 }
 
 // RegisterHealth wires the dark_memory_health_ping tool into the
@@ -315,6 +331,17 @@ func RegisterHealth(reg *Registry, st storeBridge) {
 						out.ErrorSummary = sum
 					}
 				}
+
+				// Phase 9 Chunk 8.3: report the active embedder
+				// (or omit when the disabled stub is in place).
+				// Operators use this field to detect hybrid
+				// retrieval availability at a glance.
+				if emb := st.Embedder(); emb != nil && emb.Kind() != embedder.KindNone {
+					out.Embedder = &embedderInfo{
+						Kind: emb.Kind(),
+						Dim:  emb.Dim(),
+					}
+				}
 			}
 
 			// --- runtime ---
@@ -357,6 +384,12 @@ type storeBridge interface {
 	SchemaVersion(ctx context.Context) (int, error)
 	CanaryPresent() bool
 	ActiveProject() string
+	// Embedder is the active embedder (Phase 9 Chunk 8.3). Test
+	// fakes that don't implement it return embedder.None() and the
+	// embedder_kind field is omitted from health_ping output.
+	// The concrete *sqlite.Store / *postgres.Store both implement
+	// it via the store.Store interface (Embedder() embedder.Embedder).
+	Embedder() embedder.Embedder
 }
 
 // storeErrorSummarizer is the OPTIONAL extension of storeBridge

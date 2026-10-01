@@ -217,6 +217,16 @@ type Store interface {
 	Ping(ctx context.Context) error
 	DriverName() string
 
+	// WithEmbedder records e as the active embedder for hybrid
+	// retrieval (v2.9.0-alpha PR-2). Nil e is treated as
+	// embedder.None() so the call is always safe. Returns the
+	// receiver so callers can chain after Open. Phase 9 Chunk 8.3
+	// promotes this from concrete-type-only to interface-level so
+	// cmd/dark-mem-mcp/legacy_main.go can wire the embedder through
+	// the store.Store seam (was previously only reachable via the
+	// concrete *sqlite.Store / *postgres.Store types).
+	WithEmbedder(e embedder.Embedder) Store
+
 	// Embedder returns the active embedder for hybrid retrieval
 	// (v2.9.0-alpha PR-2, agent_memory row 163/164). Default impl
 	// returns embedder.None() when none is wired. Operators wire
