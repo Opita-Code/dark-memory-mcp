@@ -380,9 +380,10 @@ func TestMindsetApply_RejectsInvalidVibeCase(t *testing.T) {
 	}
 }
 
-// TestDelegateIntent_StubReturnsInline verifies the canned
-// decision="inline" + empty subtasks surface.
-func TestDelegateIntent_StubReturnsInline(t *testing.T) {
+// TestDelegateIntent_FullImplInline verifies the Phase 6 alpha.18.1
+// DECIDE rule for a short single-vibe task: returns decision="inline"
+// with exactly 1 subtask (the whole task, processed by MIND).
+func TestDelegateIntent_FullImplInline(t *testing.T) {
 	srv := newTestServerWithProject(t)
 
 	res, _ := callHandler(t, srv.HandleDelegateIntentForTest(),
@@ -394,9 +395,9 @@ func TestDelegateIntent_StubReturnsInline(t *testing.T) {
 
 	text := resultText(t, res)
 	var payload struct {
-		Decision   string `json:"decision"`
-		Subtasks   []any  `json:"subtasks"`
-		StubNotice string `json:"stub_notice"`
+		Decision  string `json:"decision"`
+		Subtasks  []any  `json:"subtasks"`
+		Reasoning string `json:"reasoning"`
 	}
 	if err := json.Unmarshal([]byte(text), &payload); err != nil {
 		t.Fatalf("parse: %v\ntext: %s", err, text)
@@ -404,11 +405,89 @@ func TestDelegateIntent_StubReturnsInline(t *testing.T) {
 	if payload.Decision != "inline" {
 		t.Errorf("Decision = %q; want \"inline\"", payload.Decision)
 	}
-	if len(payload.Subtasks) != 0 {
-		t.Errorf("Subtasks should be empty in MVP STUB; got %d", len(payload.Subtasks))
+	if len(payload.Subtasks) != 1 {
+		t.Errorf("Subtasks should be exactly 1 (whole task via MIND); got %d", len(payload.Subtasks))
 	}
-	if payload.StubNotice == "" {
-		t.Error("StubNotice should be non-empty to make MVP nature explicit")
+	if payload.Reasoning == "" {
+		t.Error("Reasoning should be non-empty (DECIDE explanation)")
+	}
+}
+
+// TestDelegateIntent_FullImplDelegate verifies the Phase 6 alpha.18.1
+// DECIDE rule for a long multi-sentence task: returns decision="delegate"
+// with multiple subtasks (one per sentence via PLAN).
+func TestDelegateIntent_FullImplDelegate(t *testing.T) {
+	srv := newTestServerWithProject(t)
+
+	longTask := "First, write the release notes for alpha.18. Then, update the docs site. " +
+		"Finally, post a tweet about the new memory capabilities."
+
+	res, _ := callHandler(t, srv.HandleDelegateIntentForTest(),
+		map[string]any{
+			"vibe_case":        "C7",
+			"task_description": longTask,
+			"operator":         "nico",
+		})
+
+	text := resultText(t, res)
+	var payload struct {
+		Decision string `json:"decision"`
+		Subtasks []struct {
+			ID                string `json:"id"`
+			SystemPrompt      string `json:"system_prompt"`
+			Model             string `json:"model"`
+			DelegationContext string `json:"delegation_context"`
+		} `json:"subtasks"`
+		Reasoning string `json:"reasoning"`
+	}
+	if err := json.Unmarshal([]byte(text), &payload); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if payload.Decision != "delegate" {
+		t.Errorf("Decision = %q; want \"delegate\"", payload.Decision)
+	}
+	if len(payload.Subtasks) < 2 {
+		t.Errorf("Subtasks should be >=2 (3 sentences via PLAN); got %d", len(payload.Subtasks))
+	}
+	for i, st := range payload.Subtasks {
+		if st.ID == "" {
+			t.Errorf("subtask[%d] missing id", i)
+		}
+		if st.SystemPrompt == "" {
+			t.Errorf("subtask[%d] missing system_prompt (MIND must run)", i)
+		}
+		if st.Model != "inherit" {
+			t.Errorf("subtask[%d] model = %q; want inherit", i, st.Model)
+		}
+	}
+}
+
+// TestDelegateIntent_FullImplRefused verifies the Phase 6 alpha.18.1
+// DECIDE rule for a task containing refusal markers: returns
+// decision="refused" with empty subtasks.
+func TestDelegateIntent_FullImplRefused(t *testing.T) {
+	srv := newTestServerWithProject(t)
+
+	res, _ := callHandler(t, srv.HandleDelegateIntentForTest(),
+		map[string]any{
+			"vibe_case":        "C3",
+			"task_description": "Do not attempt this: it is impossible to reverse the migration safely.",
+			"operator":         "nico",
+		})
+
+	text := resultText(t, res)
+	var payload struct {
+		Decision string `json:"decision"`
+		Subtasks []any  `json:"subtasks"`
+	}
+	if err := json.Unmarshal([]byte(text), &payload); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if payload.Decision != "refused" {
+		t.Errorf("Decision = %q; want \"refused\"", payload.Decision)
+	}
+	if len(payload.Subtasks) != 0 {
+		t.Errorf("Subtasks should be empty for refused; got %d", len(payload.Subtasks))
 	}
 }
 
