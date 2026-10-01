@@ -49,6 +49,7 @@ package audit
 
 import (
 	"context"
+	"crypto/ed25519"
 	"database/sql"
 	"fmt"
 	"sync"
@@ -73,6 +74,7 @@ type Writer struct {
 	mu       sync.Mutex
 	lastID   int64
 	lastHash []byte // 32 bytes; nil until first Write or bootstrap
+	signer   ed25519.PrivateKey // optional (Phase 6 alpha.18.1 ADR-017); nil = no signing
 }
 
 // NewWriter returns a Writer bound to the given DB. The DB must have
@@ -80,6 +82,19 @@ type Writer struct {
 // on it before any Write calls.
 func NewWriter(db *sql.DB) *Writer {
 	return &Writer{db: db}
+}
+
+// SetSigner attaches an Ed25519 private key. Subsequent Writes will
+// sign row_hash with this key and store the signature in the
+// `signature` column. Pass nil to disable signing. Backward-compatible:
+// pre-Phase-6 callers that never call SetSigner get the same behavior
+// as before (no signature column, no signing).
+//
+// (Phase 6 alpha.18.1 ADR-017)
+func (w *Writer) SetSigner(priv ed25519.PrivateKey) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.signer = priv
 }
 
 // CreateSchema creates the audit_log table. Idempotent (IF NOT EXISTS).
@@ -106,7 +121,9 @@ func CreateSchema(db *sql.DB) error {
 			payload    BLOB,
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			prev_hash  BLOB,
-			row_hash   BLOB
+			row_hash   BLOB,
+			signature  BLOB,
+			sig_pubkey BLOB
 		)
 	`)
 	if err != nil {
@@ -144,6 +161,33 @@ func ApplyChainColumns(ctx context.Context, db *sql.DB) error {
 			"ALTER TABLE audit_log ADD COLUMN "+col+" BLOB",
 		); err != nil {
 			return fmt.Errorf("audit ApplyChainColumns (add %s): %w", col, err)
+		}
+	}
+	return nil
+}
+
+// ApplySignatureColumns adds the signature + sig_pubkey columns to a
+// pre-Phase-6 audit_log table (Phase 2 alpha.15 / Phase 4 alpha.17
+// era). Idempotent via pragma_table_info. The columns are nullable;
+// legacy rows have NULL for both. Signing is opt-in (Writer.SetSigner).
+//
+// (Phase 6 alpha.18.1 ADR-017)
+func ApplySignatureColumns(ctx context.Context, db *sql.DB) error {
+	for _, col := range []string{"signature", "sig_pubkey"} {
+		var n int
+		if err := db.QueryRowContext(ctx,
+			"SELECT COUNT(*) FROM pragma_table_info('audit_log') WHERE name = ?",
+			col,
+		).Scan(&n); err != nil {
+			return fmt.Errorf("audit ApplySignatureColumns (pragma %s): %w", col, err)
+		}
+		if n > 0 {
+			continue // already present
+		}
+		if _, err := db.ExecContext(ctx,
+			"ALTER TABLE audit_log ADD COLUMN "+col+" BLOB",
+		); err != nil {
+			return fmt.Errorf("audit ApplySignatureColumns (add %s): %w", col, err)
 		}
 	}
 	return nil
@@ -252,7 +296,22 @@ func (w *Writer) Write(ctx context.Context, actor, sessionID string, payload []b
 		return id, fmt.Errorf("audit Write update row_hash: %w", err)
 	}
 
-	// 6. Update mirrors.
+	// 6. (Phase 6 alpha.18.1 ADR-017) If a signer is configured,
+	// sign row_hash and store the signature + sig_pubkey identifier.
+	// Best-effort: if signing fails, log but do NOT fail the Write
+	// (audit row is still valid; signature is enhancement, not gate).
+	if w.signer != nil {
+		sig := SignRowHash(rowHash[:], w.signer)
+		pubKeyHash := RowHashPublicKey(w.signer.Public().(ed25519.PublicKey))
+		if _, err := w.db.ExecContext(ctx,
+			"UPDATE audit_log SET signature = ?, sig_pubkey = ? WHERE audit_id = ?",
+			sig, pubKeyHash, id,
+		); err != nil {
+			return id, fmt.Errorf("audit Write update signature: %w", err)
+		}
+	}
+
+	// 7. Update mirrors.
 	w.lastID = id
 	w.lastHash = rowHash[:]
 	return id, nil
@@ -335,7 +394,19 @@ func (w *Writer) WriteWithProject(ctx context.Context, actor, sessionID, project
 		return id, fmt.Errorf("audit WriteWithProject update row_hash: %w", err)
 	}
 
-	// 6. Update mirrors.
+	// 6. (Phase 6 alpha.18.1 ADR-017) Optional Ed25519 signature.
+	if w.signer != nil {
+		sig := SignRowHash(rowHash[:], w.signer)
+		pubKeyHash := RowHashPublicKey(w.signer.Public().(ed25519.PublicKey))
+		if _, err := w.db.ExecContext(ctx,
+			"UPDATE audit_log SET signature = ?, sig_pubkey = ? WHERE audit_id = ?",
+			sig, pubKeyHash, id,
+		); err != nil {
+			return id, fmt.Errorf("audit WriteWithProject update signature: %w", err)
+		}
+	}
+
+	// 7. Update mirrors.
 	w.lastID = id
 	w.lastHash = rowHash[:]
 	return id, nil
