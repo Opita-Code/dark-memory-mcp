@@ -140,10 +140,11 @@ func (w *Writer) WriteExec(ctx context.Context, ex sqlExec, actor, sessionID str
 	}
 
 	// 3. INSERT with prev_hash + created_at (row_hash populated
-	// in step 5).
+	// in step 5) + structured payload columns (Phase 6 ADR-019).
+	pf := ExtractPayloadFields(payload)
 	res, err := ex.ExecContext(ctx,
-		"INSERT INTO audit_log (actor, session_id, payload, prev_hash, created_at) VALUES (?, ?, ?, ?, ?)",
-		actor, sessionIDArg, payload, prevHash, createdAt,
+		"INSERT INTO audit_log (actor, session_id, payload, prev_hash, created_at, payload_event, payload_id, payload_kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		actor, sessionIDArg, payload, prevHash, createdAt, nullableString(pf.Event), nullableInt64(pf.ID), nullableString(pf.Kind),
 	)
 	if err != nil {
 		return 0, fmt.Errorf("audit WriteExec insert: %w", err)
@@ -223,12 +224,14 @@ func (w *Writer) WriteExecWithProject(ctx context.Context, ex sqlExec, actor, se
 	}
 
 	// 3. INSERT with prev_hash, project_id, created_at (row_hash
-	// populated in step 5). project_id is the namespace primitive
-	// (Phase 4); it is queryable metadata but NOT part of the
-	// canonical hash (Phase 2 §3.2 invariant).
+	// populated in step 5) + structured payload columns (Phase 6
+	// ADR-019). project_id is the namespace primitive (Phase 4);
+	// queryable metadata but NOT part of the canonical hash
+	// (Phase 2 §3.2 invariant).
+	pf := ExtractPayloadFields(payload)
 	res, err := ex.ExecContext(ctx,
-		"INSERT INTO audit_log (actor, session_id, project_id, payload, prev_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-		actor, sessionIDArg, projectID, payload, prevHash, createdAt,
+		"INSERT INTO audit_log (actor, session_id, project_id, payload, prev_hash, created_at, payload_event, payload_id, payload_kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		actor, sessionIDArg, projectID, payload, prevHash, createdAt, nullableString(pf.Event), nullableInt64(pf.ID), nullableString(pf.Kind),
 	)
 	if err != nil {
 		return 0, fmt.Errorf("audit WriteExecWithProject insert: %w", err)

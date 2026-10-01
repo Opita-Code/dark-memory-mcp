@@ -84,9 +84,17 @@ func TestExample_HashChain_PostMigration(t *testing.T) {
 		}
 	}
 
-	// Apply the Phase 2 migration.
+	// Apply the Phase 2 + Phase 6 migrations (chain columns,
+	// signature columns, payload split columns). Pre-Phase-6 writes
+	// assumed only the 5-column legacy schema.
 	if err := audit.ApplyChainColumns(ctx, db); err != nil {
 		t.Fatalf("ApplyChainColumns: %v", err)
+	}
+	if err := audit.ApplySignatureColumns(ctx, db); err != nil {
+		t.Fatalf("ApplySignatureColumns: %v", err)
+	}
+	if err := audit.ApplyPayloadColumns(ctx, db); err != nil {
+		t.Fatalf("ApplyPayloadColumns: %v", err)
 	}
 
 	// Verify the columns exist now.

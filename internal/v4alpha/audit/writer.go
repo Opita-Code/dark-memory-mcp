@@ -115,15 +115,18 @@ func (w *Writer) SetSigner(priv ed25519.PrivateKey) {
 func CreateSchema(db *sql.DB) error {
 	_, err := db.Exec(`
 		CREATE TABLE IF NOT EXISTS audit_log (
-			audit_id   INTEGER PRIMARY KEY AUTOINCREMENT,
-			actor      TEXT    NOT NULL CHECK (actor <> ''),
-			session_id TEXT,
-			payload    BLOB,
-			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			prev_hash  BLOB,
-			row_hash   BLOB,
-			signature  BLOB,
-			sig_pubkey BLOB
+			audit_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+			actor         TEXT    NOT NULL CHECK (actor <> ''),
+			session_id    TEXT,
+			payload       BLOB,
+			created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			prev_hash     BLOB,
+			row_hash      BLOB,
+			signature     BLOB,
+			sig_pubkey    BLOB,
+			payload_event TEXT,
+			payload_id    INTEGER,
+			payload_kind  TEXT
 		)
 	`)
 	if err != nil {
@@ -265,12 +268,14 @@ func (w *Writer) Write(ctx context.Context, actor, sessionID string, payload []b
 		return 0, fmt.Errorf("audit Write resolvePrevHash: %w", err)
 	}
 
-	// 3. INSERT with prev_hash and created_at (row_hash populated
-	// in step 5). project_id='default' via column DEFAULT — legacy
-	// callers don't need to know about the namespace primitive.
+	// 3. INSERT with prev_hash, created_at, and (Phase 6 ADR-019)
+	// structured payload columns. project_id='default' via column
+	// DEFAULT — legacy callers don't need to know about the namespace
+	// primitive.
+	pf := ExtractPayloadFields(payload)
 	res, err := w.db.ExecContext(ctx,
-		"INSERT INTO audit_log (actor, session_id, payload, prev_hash, created_at) VALUES (?, ?, ?, ?, ?)",
-		actor, sessionIDArg, payload, prevHash, createdAt,
+		"INSERT INTO audit_log (actor, session_id, payload, prev_hash, created_at, payload_event, payload_id, payload_kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+		actor, sessionIDArg, payload, prevHash, createdAt, nullableString(pf.Event), nullableInt64(pf.ID), nullableString(pf.Kind),
 	)
 	if err != nil {
 		return 0, fmt.Errorf("audit Write insert: %w", err)
@@ -363,13 +368,14 @@ func (w *Writer) WriteWithProject(ctx context.Context, actor, sessionID, project
 		return 0, fmt.Errorf("audit Write resolvePrevHash: %w", err)
 	}
 
-	// 3. INSERT with prev_hash, project_id, and created_at (row_hash
-	// populated in step 5). project_id is the namespace primitive
-	// (Phase 4); it is queryable metadata but NOT part of the
-	// canonical hash (Phase 2 §3.2 invariant).
+	// 3. INSERT with prev_hash, project_id, created_at, and
+	// (Phase 6 ADR-019) structured payload columns. project_id is
+	// the namespace primitive (Phase 4); it is queryable metadata
+	// but NOT part of the canonical hash (Phase 2 §3.2 invariant).
+	pf := ExtractPayloadFields(payload)
 	res, err := w.db.ExecContext(ctx,
-		"INSERT INTO audit_log (actor, session_id, project_id, payload, prev_hash, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-		actor, sessionIDArg, projectID, payload, prevHash, createdAt,
+		"INSERT INTO audit_log (actor, session_id, project_id, payload, prev_hash, created_at, payload_event, payload_id, payload_kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		actor, sessionIDArg, projectID, payload, prevHash, createdAt, nullableString(pf.Event), nullableInt64(pf.ID), nullableString(pf.Kind),
 	)
 	if err != nil {
 		return 0, fmt.Errorf("audit WriteWithProject insert: %w", err)
@@ -469,4 +475,29 @@ func (w *Writer) LastHash() []byte {
 	out := make([]byte, len(w.lastHash))
 	copy(out, w.lastHash)
 	return out
+}
+
+// nullableInt64 converts a zero int64 to a SQL NULL interface, so
+// INSERT ... VALUES (?, NULL) preserves the "absent" semantic for
+// payload_id (when the JSON payload has no "id" key).
+//
+// (Phase 6 alpha.18.1 ADR-019)
+func nullableInt64(v int64) interface{} {
+	if v == 0 {
+		return nil
+	}
+	return v
+}
+
+// nullableString converts an empty string to a SQL NULL interface, so
+// INSERT ... VALUES (?, NULL) preserves the "absent" semantic for
+// payload_event / payload_kind (when the JSON payload has no event
+// or kind key).
+//
+// (Phase 6 alpha.18.1 ADR-019)
+func nullableString(s string) interface{} {
+	if s == "" {
+		return nil
+	}
+	return s
 }
