@@ -40,6 +40,8 @@ package mcp
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 
@@ -52,11 +54,17 @@ import (
 const delegateIntentToolName = "dark_memory_delegate_intent"
 
 // delegateIntentInput is the wire shape for dark_memory_delegate_intent.
-// Same as alpha.18.1 — operator-facing input is unchanged.
+//
+// Phase 7 alpha.19 v2 adds two optional fields (parent_session_id,
+// parent_agent_id) for CURATE subagent binding (Chunk 7.2). They are
+// additive — alpha.18.1 callers omitting them continue to work; the
+// binding rows are still persisted but with empty parent fields.
 type delegateIntentInput struct {
 	TaskDescription string `json:"task_description" jsonschema:"required" jsonschema_description:"≥10 char description of the work to be routed"`
 	VibeCase        string `json:"vibe_case" jsonschema:"required" jsonschema_description:"One of C1..C7 (canonical vibe_case taxonomy per spec.go:14-16)"`
 	Operator        string `json:"operator" jsonschema:"required" jsonschema_description:"Operator id (INV-1 audit owner; defaults to active session operator when empty)"`
+	ParentSessionID string `json:"parent_session_id,omitempty" jsonschema_description:"Optional parent session id (CURATE subagent binding — empty when delegate_intent runs outside a session context)"`
+	ParentAgentID   string `json:"parent_agent_id,omitempty" jsonschema_description:"Optional parent agent id (CURATE subagent binding — empty when delegate isn't chained from a vibe_publish)"`
 }
 
 // delegateIntentSubtask is one planned subtask. v2 (alpha.19): adds
@@ -160,6 +168,13 @@ func (s *Server) handleDelegateIntent(ctx context.Context, req mcp.CallToolReque
 		subtasks = delegation.PlanSubtasks(in.VibeCase, in.TaskDescription, decision)
 	}
 
+	// Initial verdict: aligned for PLAN/INLINE/REFUSED, or whatever
+	// the EXTRACT step returned. CURATE may downgrade to errored.
+	verdict := extractVerdict
+	if verdict == "" {
+		verdict = "aligned"
+	}
+
 	// 5. MIND — invoke composeSystemPrompt per subtask.
 	out := make([]delegateIntentSubtask, 0, len(subtasks))
 	for i, st := range subtasks {
@@ -171,19 +186,49 @@ func (s *Server) handleDelegateIntent(ctx context.Context, req mcp.CallToolReque
 			SystemPrompt:      sp,
 			Tools:             st.Tools,
 			Model:             st.Model,
-			SubagentID:        st.SubagentID,        // empty in Chunk 7.1
-			DelegationContext: st.DelegationContext, // empty in Chunk 7.1
+			SubagentID:        st.SubagentID,
+			DelegationContext: st.DelegationContext,
 		})
 		_ = i
 	}
 
-	// 6. CURATE stub — Chunk 7.2 wires subagent_register per subtask.
+	// 6. CURATE — register a subagent binding per subtask (Phase 7
+	// Chunk 7.2). Per SPEC-alpha-11-phase7.md §3.2, this persists
+	// an agent_memory row (kind=link, tag=subagent:v1) per subtask
+	// so the orchestrator can audit/replay/prove provenance.
+	//
+	// Skip when verdict != aligned (a needs_human / cached / errored
+	// response doesn't have stable subtasks to bind).
+	taskID := newTaskID(in.Operator, in.TaskDescription)
+	if verdict == "aligned" && len(out) > 0 {
+		// Convert delegateIntentSubtask slice back to delegation.Subtask
+		// slice so we can call BindSubtasksToSubagents.
+		stSlice := make([]delegation.Subtask, len(out))
+		for i, st := range out {
+			stSlice[i] = delegation.Subtask{
+				ID:                st.ID,
+				Description:       st.Description,
+				VibeCase:          in.VibeCase,
+				SubagentID:        st.SubagentID,
+				DelegationContext: st.DelegationContext,
+			}
+		}
+		bound, err := BindSubtasksToSubagents(ctx, s.memories, in.Operator,
+			in.ParentSessionID, in.ParentAgentID, taskID, stSlice, DefaultSubagentTTLSeconds)
+		if err != nil {
+			// CURATE failure is non-fatal — surface verdict=errored
+			// with empty subagent_ids so the caller can decide.
+			verdict = "errored"
+		} else {
+			// Merge bound.SubagentID + DelegationContext back into out.
+			for i, b := range bound {
+				out[i].SubagentID = b.SubagentID
+				out[i].DelegationContext = b.DelegationContext
+			}
+		}
+	}
 
 	// 7. Return wire shape v2.
-	verdict := extractVerdict
-	if verdict == "" {
-		verdict = "aligned" // deterministic PLAN path = aligned by default
-	}
 	altOut := make([]delegateIntentAlternative, 0, len(alternatives))
 	for _, a := range alternatives {
 		var alt delegateIntentAlternative
@@ -267,4 +312,16 @@ func (a *agentMemoryStoreAdapter) Save(ctx context.Context, audit any, operator,
 	// concrete audit.Audit; pass nil (audit emission is handled by the
 	// caller via audit.Writer when needed).
 	return a.store.Save(ctx, nil, operator, kind, title, content, tags, pinned)
+}
+
+// newTaskID builds the task_id used in subagent binding rows so the
+// orchestrator can group bindings originating from the same delegate
+// call. Stable across repeated calls (operator+task -> same id).
+//
+// Format: sha256 hex of operator + \x00 + task_description. Truncated
+// to 16 chars for log readability. This is NOT a cryptographic
+// guarantee — it's a correlation key for agent_memory.Recall queries.
+func newTaskID(operator, taskDescription string) string {
+	h := sha256.Sum256([]byte(operator + "\x00" + taskDescription))
+	return hex.EncodeToString(h[:8])
 }

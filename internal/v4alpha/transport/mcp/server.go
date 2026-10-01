@@ -362,6 +362,12 @@ func (s *Server) SetMemoriesForTest(m *agent_memory.Store) {
 	s.memories = m
 }
 
+// MemoriesForTest returns the wired *agent_memory.Store. Returns nil
+// when SetMemoriesForTest has not been called.
+func (s *Server) MemoriesForTest() *agent_memory.Store {
+	return s.memories
+}
+
 // SetExtractCacheForTest injects a delegation.ExtractCache. Used by
 // Chunk 7.1 tests that need the EXTRACT path's cache layer wired
 // (without this, s.extractCache is nil and every call is a cache miss).
