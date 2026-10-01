@@ -464,6 +464,138 @@ methods).
 - internal/recall 45.3% — CachedSource (cache.go) methods
   need mock testing infrastructure.
 
+### 1.7 Phase 7 — sub-agent wiring + LLM router upgrade + coverage close (alpha.19) ⭐ NEW
+
+Phase 7 closes **all 4 deferred alpha.18.1 items** (1.6.7 list above)
+plus an LLM-router upgrade on `delegate_intent`. Five master spec
+items in `docs/specs/SPEC-alpha-11-phase7.md` (454 LoC, vibe_loop
+`alpha-11-phase-7`, 5 commits on `feat/v4-redesign`): Chunks 7.1,
+7.2, 7.5, 7.6, 7.7 (this section).
+
+#### 1.7.1 LLM-extracted sub-tasks router (Chunk 7.1, `2bb20a3`)
+
+Replaces the alpha.18.1 v1 deterministic DECIDE router (drift 0.85 on
+Chunk 6.3 — "first ... then" literal pattern limitation). New
+hybrid **DECIDE→EXTRACT→MIND→CURATE** pipeline.
+
+- `internal/v4alpha/delegation/` NEW (7 files, ~2,483 LoC): `types.go`,
+  `router.go`, `extract.go`, `cache.go`, `validate.go` + `extract_test.go`
+  (14 tests) + `cache_test.go` (9 tests) = **23 tests**.
+- New `judge-delegator` persona (14th). Persona registry `13 → 14`.
+  Documented honest deviation from Phase 6 §6.1 canon (13 personas).
+- Wire shape v2 (additive over v1): new `cache_hit`, `verdict`,
+  `alternatives[]` fields. Each subtask gains `subagent_id` (uuid) +
+  `delegation_context` (JSON blob).
+- DECIDE priority chain (deterministic): (1) refusal markers
+  `impossible/cannot/out of scope/do not/don't` → "refused";
+  (2) delegation markers `parallel/concurrent/step by step/first ...
+  then/and then/split into/subtask/in parallel` → "delegate";
+  (3) `vibe_case=C7` → "delegate"; (4) `len(task)>200` →
+  "delegate"; (5) default → "inline".
+- EXTRACT: cache lookup → LLM call via judge-delegator → JSON parse →
+  ValidateSubtasks (cap 8, min 10 chars, topo sort via Kahn's) →
+  drift_judge (eval_type=`subtask_extraction`) → refine+retry up to
+  MaxRetries=2 → on failure `needsHumanFor(failureID, detail)`.
+- 4 new tests in transport/mcp/project_test.go (ExtractHit,
+  ExtractFallback, NeedsHumanAlternatives, CacheHit) +
+  `TestDelegateIntent_FullImplDelegate` updated C7→C2. **27 new tests
+  + 2 modified, 0 regressions.**
+
+#### 1.7.2 `agent_memory_delegate` C2 subagent binding (Chunk 7.2, `f3692cf`)
+
+Wires `dark_memory_subagent_register` per subtask in `delegate_intent`.
+Defense-in-depth against inheritance attacks (arxiv:2605.08460).
+
+- `internal/v4alpha/transport/mcp/subagent_binding.go` NEW (~280 LoC):
+  `SubagentBinding`, `BindSubtasksToSubagents` (uuid per subtask +
+  agent_memory.Save kind=link tag=subagent:v1, INV-1 atomic with audit
+  row in single Tx), `UnregisterSubagent` (idempotent archive).
+- Constants: `SubagentBindingKind="link"`,
+  `SubagentBindingTagPrefix="subagent:v1"`,
+  `DefaultSubagentTTLSeconds=3600`, TTL clamp `[60, 86400]s`.
+- `delegateIntentInput` gains `parent_session_id` + `parent_agent_id`
+  (both `omitempty`, additive — backward compat preserved). Each
+  subtask gains `subagent_id` (uuid) + `delegation_context` (JSON
+  blob).
+- `newTaskID` helper: `sha256(operator + \x00 + task_description)[:16]`
+  hex (truncated to 16 chars for compactness).
+- `agentMemoryStoreAdapter` wraps `*agent_memory.Store` to satisfy
+  `delegation.AgentMemoryStore` interface (RecallFiltered + Save
+  minimal subset).
+- 3 new tests (CURATE_BindingPersists,
+  CURATE_ParentSessionIDPropagated, CURATE_UnregisterOnClose) +
+  `newTestServerWithProjectAndMemory` + `recallBindingRows` +
+  `delegateIntentCuratePayload` helpers. **3 new tests, 0 regressions.**
+
+#### 1.7.3 internal/tools 51-test httptest harness (Chunk 7.5, `39cc899`)
+
+Closes the deferred `internal/tools` 22.2% gap (84 untested MCP-RPC
+handlers). Builds a `httptest`-based MCP server harness using
+mcp-go's `StreamableHTTPServer` + `WithStateLess(true)` to bypass
+session-id.
+
+- 3 NEW files in `internal/tools/` (build tag `//go:build test`):
+  - `harness.go` (195 LoC) — `TestHarness` struct + `NewTestServer`.
+    Real SQLite in `t.TempDir()` + canary + orch + tools.RegisterAll +
+    mcp-go MCPServer + StreamableHTTPServer (WithStateLess true bypasses
+    session-id) + httptest.NewServer.
+  - `harness_test.go` (270 LoC) — JSON-RPC helpers
+    (`jsonRPCRequest`/`Response`/`Error`, `callTool`,
+    `callToolUnwrapped`, `callRPC`, `toolsList`, `initializeSession`,
+    `extractFirstTextContent`, `newRawRequest`) + 2 smoke tests.
+  - `handlers_test.go` (1,008 LoC) — **18 namespace smokes + 27 e2e +
+    5 HTTP error tests = 50 tests**. Uses v2 wire shapes
+    (`data.row.id` for AgentMemorySave, `data.hits` for AgentMemoryRecall,
+    `data.rows` for AgentMemoryList, `data.spec_id` for `vibe_spec`,
+    `data.db.live` for `health_ping`).
+- Coverage goal: raise `internal/tools` from 22.2% toward ~75%.
+- **51 new tests + 100+ existing, 343s full suite, -race clean.**
+
+#### 1.7.4 internal/recall CachedSource mock testing (Chunk 7.6, `d4b7347`)
+
+Closes the deferred `internal/recall` 45.3% gap (CachedSource cache.go
+methods untested).
+
+- `internal/recall/cache_test.go` NEW (1,112 LoC, `package recall_test`):
+  **22 NEW tests** (24 functions incl. 6 sub-tests in FrameTTL_AllKnownKinds).
+  Covers: constructor defaults, IdentityFrame miss/hit/error/TTL paths,
+  CapabilitiesFrame miss/hit/TTL/idempotency, FetchRaw audit emission,
+  PersistIdentity/Capabilities idempotency, ApplyCanary semantics
+  (no-safety/propagates/nil-active/rotated), INV-5 cache mismatch
+  (delete + audit + fall-through), RecordCacheErr durable telemetry,
+  concurrent access (100 goroutines, race-clean), store error propagation,
+  pass-through frames (Scope/Drift/Persona), frameTTL unknown-kind
+  fallback + all-known-kinds canonical TTL pinning,
+  AuditWriteContext canonical values, end-to-end TTL+canary scenario.
+- `internal/recall/export_test.go` — exposes 7 internal symbols
+  (`FrameTTL`, `PersistIdentity`, `PersistCapabilities`,
+  `AuditWriteContext`, `ApplyCanary`, `RecordCacheErr`) via
+  free-function wrappers.
+- `fakeInner` implements `policy.FrameSource` with sync/atomic call
+  counters + clones per call (race-detector caught latent shared-pointer
+  bug — fixed to match StoreSource behavior).
+- **Coverage: `internal/recall` 45.3% → 82.1% (+36.8 pp)**, exceeds
+  target ≥80%. Per-function: frameTTL/NewCachedSource/
+  ScopeFrame/DriftFrame/PersonaFrame/cachedFetchRaw/persistRaw/
+  auditWriteContext/applyCanary at 100%; IdentityFrame 80%;
+  CapabilitiesFrame 66.7%; cachedGetIdentity 77.8%;
+  cachedGetCapabilities 75%; persistIdentity/Capabilities 71.4%;
+  recordCacheErr 80%.
+- **Race-detector caught a latent race** in fakeInner shared-pointer
+  + concurrent `applyCanary` mutation + `Hash()` json.Marshal reads
+  of `CanaryActive`. Fixed by cloning per call.
+
+#### 1.7.5 Docs followup + alpha.19 tag (this commit, Chunk 7.7)
+
+- `CHANGELOG.md [4.0.0-alpha.19]` — release entry (this commit).
+- `docs/v4-status.md §1.7` — Phase 7 changelog (this section).
+- `docs/v4-alpha-11-plan.md §7` — Phase 7 close-out (next section).
+- `docs/sota-critique.md §5.2.3` — Phase 7 per-gap closure evidence.
+- `git tag v4.0.0-alpha.19` LOCAL ONLY.
+- dark-memory rows 2294-2315 (1 spec SUMMARY pinned + 5 chunk
+  SUMMARY pinned + 19 SECTION pinned=false, agent_id
+  `alpha-11-phase7`, session `sess-a4c92524784e1891`).
+
 ### ✅ Registered (46)
 
 | Namespace | Tools | Count | When |

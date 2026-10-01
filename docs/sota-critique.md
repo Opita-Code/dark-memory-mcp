@@ -457,6 +457,53 @@ ImageBind stub, LLM-router stub, plus 1 false positive).
 - `docs/v4-status.md §1.6` + `docs/v4-alpha-11-plan.md §6`.
 - dark-memory rows 2266-2290 (atomic mirror).
 
+#### 5.2.3 Phase 7 (alpha.19) per-gap closure evidence
+
+| Gap | Status in alpha.19 |
+|---|---|
+| `delegate_intent` DECIDE literal-pattern router | ✅ DONE (Chunk 7.1, `2bb20a3`). New LLM-extracted sub-tasks router (DECIDE→EXTRACT→MIND→CURATE) with `judge-delegator` persona (14th) + drift_judge validation + needs_human surface with alternatives[]. Closes Chunk 6.3 drift 0.85. |
+| `agent_memory_delegate` C2 subagent binding (empty `delegation_context` per subtask) | ✅ DONE (Chunk 7.2, `f3692cf`). `internal/v4alpha/transport/mcp/subagent_binding.go` NEW (~280 LoC). uuid per subtask via google/uuid v1.6.0 + agent_memory.Save kind=link tag=subagent:v1 + INV-1 atomic with audit row. Defense-in-depth vs arxiv:2605.08460 inheritance attacks. |
+| `internal/tools` 22.2% remaining gap (84 MCP-RPC handlers) | ✅ DONE (Chunk 7.5, `39cc899`). 3 NEW files (`harness.go` 195 LoC + `harness_test.go` 270 LoC + `handlers_test.go` 1,008 LoC) in `internal/tools/` with build tag `//go:build test`. 51 new tests (2 smoke + 18 namespace + 27 e2e + 5 http-error). Uses mcp-go `StreamableHTTPServer` + `WithStateLess(true)` + httptest. |
+| `internal/recall` 45.3% remaining gap (CachedSource methods) | ✅ DONE (Chunk 7.6, `d4b7347`). 22 new tests in `internal/recall/cache_test.go` (1,112 LoC). Coverage `45.3% → 82.1%` (+36.8 pp), exceeds target ≥80%. Race-detector caught a latent race in fakeInner (shared pointer + concurrent `applyCanary` mutation + `Hash()` json.Marshal reads of `CanaryActive`) — fixed by cloning per call. |
+| Docs followup + alpha.19 tag | ✅ DONE (Chunk 7.7, this commit). CHANGELOG `[4.0.0-alpha.19]` + v4-status §1.7 + v4-alpha-11-plan §7 (this section's parent) + sota-critique §5.2.3 (this section) + local tag `v4.0.0-alpha.19`. |
+
+**alpha.20 follow-ups** (deferred from alpha.19):
+
+- **Embedder integration** (ADR-013 follow-up): BGE-large text, ImageBind
+  1024-dim image, wav2vec 2.0 audio, ONNX pluggable adapter. This closes
+  the alpha.18 stub vector + cross-modal paths (currently absorbed into
+  FTS5). Per `docs/specs/SPEC-alpha-11-phase5.md §3` and Chunk 5.5
+  per-vibe-case weights table.
+- **ProGraph 2-layer entity extraction** (ADR-015 follow-up): closes the
+  multi-hop retrieval alpha.18 stub (C1/C2/C5/C6 1-hop + C3/C4 2-hop).
+- **Bitemporal** (ADR-014 follow-up): transaction_time + valid_time. The
+  alpha.18 DecayScore (ScrubJay-MEM π_i + τ_i) is the precursor.
+- **BUG-12 cross-process monotonicity** (audit chain): Spec 757 follow-up
+  that the alpha.18 chunked-monotonicity contract didn't fully resolve
+  for cross-process writes (separate dark.db → different store ids).
+- **Audit gaps**: ADR-016 transparency log + ADR-018 audit verify tool
+  (deferred from Phase 6 per SPEC D2 decision).
+- **Internal/recall 82.1% → 95%+**: close the remaining gap on
+  `Render()`/`Hash()` error branches (hard to trigger from outside) +
+  `persistRaw` error propagation (already covered indirectly via
+  `StoreError_FallsThroughToErrorPath`).
+
+**Cross-refs**:
+
+- `docs/specs/SPEC-alpha-11-phase7.md` — Phase 7 master spec.
+- `internal/v4alpha/delegation/*.go` — Chunk 7.1 implementation
+  (7 files, ~2,483 LoC, 23 tests).
+- `internal/v4alpha/transport/mcp/subagent_binding.go` — Chunk 7.2
+  (~280 LoC, 3 tests).
+- `internal/tools/{harness,harness_test,handlers_test}.go` — Chunk 7.5
+  (3 files, ~1,476 LoC, 51 tests).
+- `internal/recall/cache_test.go` + `export_test.go` — Chunk 7.6
+  (2 files, ~1,148 LoC, 22 tests).
+- `CHANGELOG.md [4.0.0-alpha.19]`.
+- `docs/v4-status.md §1.7` + `docs/v4-alpha-11-plan.md §7`.
+- dark-memory rows 2294-2315 (atomic mirror: 1 spec SUMMARY pinned +
+  5 chunk SUMMARY pinned + 19 SECTION pinned=false).
+
 ### 5.3 Audit chain (chunk 3, 8 gaps)
 
 - 4 of 8 are tractable: transparency log (ADR-016), Ed25519

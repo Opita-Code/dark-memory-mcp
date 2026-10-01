@@ -435,7 +435,93 @@ only). 12 tests PASS. nullableString + nullableInt64 helpers.
 - dark-memory rows 2266-2290 (6 SUMMARY + 19 SECTION, agent_id
   `alpha-11-phase6`, session `sess-4fffa0428c585cd0`).
 
-## 7. The vibe-loop pattern, restated
+## 7. Phase 7 — sub-agent wiring + LLM router upgrade + coverage close ✅ SHIPPED (alpha.19, 2026-10-02)
+
+Phase 7 closes all 4 alpha.18.1 deferred items (per §1.6.7) plus
+an LLM-router upgrade on `delegate_intent`. Five master spec items
+in `docs/specs/SPEC-alpha-11-phase7.md` (454 LoC, vibe_loop
+`alpha-11-phase-7`, 5 commits on `feat/v4-redesign` + 1 docs commit
++ 1 local tag). 14 v4alpha packages PASS, 0 regressions.
+Cross-version lockstep hash pin unchanged.
+
+### 7.1 LLM-extracted sub-tasks router for `delegate_intent` (commit `2bb20a3`)
+
+Replaces the alpha.18.1 v1 deterministic DECIDE router. New hybrid
+**DECIDE→EXTRACT→MIND→CURATE** pipeline. Closes Chunk 6.3 drift 0.85.
+
+- `internal/v4alpha/delegation/` NEW (7 files, ~2,483 LoC).
+- New `judge-delegator` persona (14th). Registry 13 → 14.
+- Wire shape v2 (additive over v1): `cache_hit`, `verdict`,
+  `alternatives[]`, `subagent_id`, `delegation_context` per subtask.
+- DECIDE priority chain: refusal markers > delegation markers > C7
+  multi > length>200 > default inline.
+- EXTRACT cache + LLM call via judge-delegator + drift_judge
+  (eval_type=`subtask_extraction`) + refine+retry up to 2x + needs_human
+  on failure.
+- **27 new tests + 2 modified (TestDelegateIntent_FullImplDelegate
+  C7→C2).**
+
+### 7.2 `agent_memory_delegate` C2 subagent binding (commit `f3692cf`)
+
+Wires `dark_memory_subagent_register` per subtask. Defense-in-depth
+vs arxiv:2605.08460 inheritance.
+
+- `internal/v4alpha/transport/mcp/subagent_binding.go` NEW (~280 LoC):
+  uuid per subtask + agent_memory.Save kind=link tag=subagent:v1,
+  INV-1 atomic with audit row in single Tx.
+- TTL clamp `[60, 86400]s` default 3600.
+- `parent_session_id` + `parent_agent_id` (additive).
+- **3 new CURATE tests** (BindingPersists,
+  ParentSessionIDPropagated, UnregisterOnClose).
+
+### 7.3 — *skipped* (originally Chunk 7.3 / 7.4 reserved; Chunk 7.5 is the next numbered chunk per SPEC §3.5)
+
+Per `SPEC-alpha-11-phase7.md` §2, Chunk 7.5 is the third active
+chunk (after 7.1 + 7.2); 7.3 + 7.4 were reserved for audit gaps
+that we deferred to alpha.20 (per SPEC D2 decision).
+
+### 7.5 internal/tools 51-test httptest harness (commit `39cc899`)
+
+Closes the deferred `internal/tools` 22.2% gap. mcp-go
+`StreamableHTTPServer` + `WithStateLess(true)` + httptest.
+
+- 3 NEW files (`harness.go` 195 LoC + `harness_test.go` 270 LoC +
+  `handlers_test.go` 1,008 LoC) in `internal/tools/` with build tag
+  `//go:build test`.
+- **51 new tests** (2 smoke + 18 namespace + 27 e2e + 5 http-error).
+- Uses v2 wire shapes (`data.row.id`, `data.hits`, `data.rows`,
+  `data.spec_id`, `data.db.live`).
+
+### 7.6 internal/recall CachedSource mock testing (commit `d4b7347`)
+
+Closes the deferred `internal/recall` 45.3% gap.
+
+- `internal/recall/cache_test.go` NEW (1,112 LoC, `package recall_test`).
+- **22 NEW tests** (24 functions incl. 6 sub-tests in
+  FrameTTL_AllKnownKinds): identity/capabilities miss/hit/error/TTL,
+  applyCanary semantics, INV-5 cache mismatch, error observatory,
+  concurrent access (100 goroutines, race-clean), store error
+  propagation, pass-through frames, frameTTL unknown-kind fallback.
+- `internal/recall/export_test.go` — exposes 7 internal symbols
+  via free-function wrappers.
+- **Coverage: `internal/recall` 45.3% → 82.1% (+36.8 pp)**, exceeds
+  target ≥80%.
+- **Race-detector caught a latent race** in fakeInner shared-pointer
+  + concurrent `applyCanary` mutation + `Hash()` json.Marshal reads
+  of `CanaryActive`. Fixed by cloning per call.
+
+### 7.7 Docs followup + alpha.19 tag (this commit)
+
+- `CHANGELOG.md [4.0.0-alpha.19]` — release entry (this commit).
+- `docs/v4-status.md §1.7` — Phase 7 changelog.
+- `docs/v4-alpha-11-plan.md §7` — Phase 7 close-out (this section).
+- `docs/sota-critique.md §5.2.3` — Phase 7 per-gap closure evidence.
+- `git tag v4.0.0-alpha.19` LOCAL ONLY.
+- dark-memory rows 2294-2315 (1 spec SUMMARY pinned + 5 chunk SUMMARY
+  pinned + 19 SECTION pinned=false, agent_id `alpha-11-phase7`,
+  session `sess-a4c92524784e1891`).
+
+## 8. The vibe-loop pattern, restated
 
 For each phase, the workflow is:
 
@@ -459,7 +545,7 @@ For each phase, the workflow is:
    - `drift_detected` → fix and re-publish.
    - `needs_human` → STOP, surface to operator.
 
-## 7. Operator decisions (recap from sota-critique.md §7.6.8)
+## 9. Operator decisions (recap from sota-critique.md §7.6.8)
 
 | # | Decision | Default |
 |---|---|---|
@@ -470,7 +556,7 @@ For each phase, the workflow is:
 | OD5 | ADR-013 strategy (if OD2=YES) | FRESH |
 | OD6 | `project_id` framing | **namespace (soft)** per §7.6.9 |
 
-## 8. Cross-references
+## 10. Cross-references
 
 - `docs/sota-critique.md` §7.6 — the source meta-doc
   (this file summarizes it for execution).
@@ -478,7 +564,7 @@ For each phase, the workflow is:
   threat model.
 - `docs/specs/SPEC-alpha-11-chunk7.md` — the first spec
   (chunk 7 close).
-- `docs/sota-critique.md` §8 — per-chunk SOTA criticism
+- `docs/sota-critique.md §8` — per-chunk SOTA criticism
   cross-references (chunks 1-5 shipped).
 - Row 2173 (dark-memory) — namespace reframe decision.
 - Row 1578 (dark-memory) — v2.9.x embedder ABANDONED.
