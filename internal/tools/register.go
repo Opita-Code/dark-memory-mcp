@@ -20,6 +20,11 @@ import (
 // Layer 6). Safe to call once per Registry; subsequent calls are
 // no-ops if the tools are already registered.
 //
+// Deprecated signature: RegisterAll(reg, orch, st, safety). Still
+// works (calls RegisterAllWithDeps with delegateBackend=nil).
+// Production wiring at cmd/dark-mem-mcp/legacy_main.go now uses
+// RegisterAllWithDeps to pass the v4alpha delegate_intent deps.
+//
 // The split into per-namespace Register* functions lets tests pull
 // in a subset (e.g. only the JUDGE tools for an eval-pipeline test).
 // The canonical surface is the union of canonicalNamespaces (see
@@ -39,6 +44,21 @@ import (
 // recall tool and the gate now share the same CachedSource instance;
 // per-call construction is gone.
 func RegisterAll(reg *Registry, orch *orchestration.Orchestrator, st store.Store, safety *store.SafetyHolder) (policy.FrameSource, error) {
+	return RegisterAllWithDeps(reg, orch, st, safety, nil)
+}
+
+// RegisterAllWithDeps is the full-signature variant of RegisterAll.
+// delegateBackend carries the v4alpha delegate_intent dependencies
+// (LLMClient, ExtractCache, Memories). When delegateBackend is nil,
+// the v4alpha backend short-circuits to needs_human with alternatives[].
+//
+// Phase 9 alpha.20 Chunk 8.1: the v3 binary's legacy_main.go calls
+// this with the wired v4alpha deps so dark_memory_delegate_intent
+// runs the v4alpha DECIDE→EXTRACT→MIND→CURATE pipeline. Tests that
+// don't need EXTRACT can pass nil (the v4alpha path then surfaces
+// needs_human — which is the safe default per Phase 8 e2e critical
+// finding #1 row 2327: never silently downgrade to v2).
+func RegisterAllWithDeps(reg *Registry, orch *orchestration.Orchestrator, st store.Store, safety *store.SafetyHolder, delegateBackend *DelegateIntentBackend) (policy.FrameSource, error) {
 	if reg == nil {
 		return nil, fmt.Errorf("tools: RegisterAll: nil registry")
 	}
@@ -88,12 +108,15 @@ func RegisterAll(reg *Registry, orch *orchestration.Orchestrator, st store.Store
 	// through the Judge orchestrator (eval_type=mindset_compose +
 	// eval_type=mindset_quality) for full audit trail.
 	RegisterMindset(reg, orch, st)
-	// DELEGATION (1) — Wave 5C. delegate_intent runs the
-	// DelegationRouter pipeline (DECIDE→PLAN→MIND→CURATE) and
-	// returns ready-to-spawn material per subtask. Consumes
-	// mindset_apply (MIND) + agent_memory_delegate (CURATE, C2
-	// binding). Gated by DARK_MEMORY_V280=1.
-	RegisterDelegation(reg, orch, st)
+	// DELEGATION (1) — Phase 9 alpha.20 Chunk 8.1: routed via
+	// RegisterDelegationWithBackend. Backend = v4alpha (default) or
+	// v2 (DARK_DELEGATION_BACKEND=v2). When delegateBackend is nil
+	// AND backend=v4alpha, the adapter falls back to needs_human
+	// with alternatives[] (does NOT silently downgrade to v2 — the
+	// operator sees the failure mode and can pick fallback-plan).
+	// Chunk 7.1 (EXTRACT) + Chunk 7.2 (CURATE subagent_register)
+	// from alpha.19 are now reachable through the v3 MCP surface.
+	RegisterDelegationWithBackend(reg, orch, st, delegateBackend)
 	// LLM_CONFIG (4) — v2.20.0 (spec 1188 T7). llm_key_add /
 	// llm_key_list / llm_key_remove / llm_provider_status. Pure
 	// operators over the OS keystore + health registry + failover

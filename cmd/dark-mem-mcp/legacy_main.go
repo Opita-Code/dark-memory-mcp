@@ -6,7 +6,8 @@
 // boot path.
 //
 // Boot sequence: server.New → register MCP research backend →
-// set runtime context → wire tools + drift gate (M6) + federation
+// set runtime context → wire v4alpha delegate_intent deps (alpha.20
+// Chunk 8.1) → wire tools + drift gate (M6) + federation
 // peer + sweeper → startup-recover → ServeStdio. See
 // ARCHITECTURE.md §boot path for the multi-bin timeline.
 package main
@@ -26,6 +27,10 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/server"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 	"github.com/dark-agents/dark-memory-mcp/internal/tools"
+	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/agent_memory"
+	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/audit"
+	v4delegation "github.com/dark-agents/dark-memory-mcp/internal/v4alpha/delegation"
+	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/judge"
 )
 
 // legacyMain is invoked from main(). It is the v2.18.0-and-earlier
@@ -79,7 +84,44 @@ func legacyMain() {
 		Active:          func() string { return string(bootState.Safety.Active()) },
 		ValidatePayload: func(payload string) error { return bootState.Safety.ValidatePayload(payload) },
 	}
-	frameSrc, err := tools.RegisterAll(srv.Registry(), bootState.Orchestrator, bootState.Store, safetyFP)
+	// Phase 9 alpha.20 Chunk 8.1: wire v4alpha delegate_intent deps
+	// so dark_memory_delegate_intent runs the v4alpha DECIDE→EXTRACT→
+	// MIND→CURATE pipeline (alpha.19 Chunk 7.1). The deps are:
+	//   - v4judge.LLMClient: from env keys (same as the v4alpha Server
+	//     boot); nil when no provider key is configured.
+	//   - ExtractCache: hoisted for cross-call cache hits
+	//     (DARK_DELEGATION_CACHE_TTL env or default 1h).
+	//   - agent_memory.Store: for CURATE subagent binding rows
+	//     (kind=link, tag=subagent:v1, Chunk 7.2). NOTE: the v3
+	//     Store interface deliberately hides *sql.DB, so the v3
+	//     binary cannot construct v4alpha's agent_memory.Store
+	//     without an interface change. We leave Memories=nil for
+	//     the v3 binary in Chunk 8.1; CURATE becomes a no-op
+	//     (subagent_id empty in subtasks). Chunk 8.1.1 (or a
+	//     later alpha.20 chunk) will add Store.RawDB() so CURATE
+	//     is fully wired.
+	// Operators without an LLM key can roll back to v2 with
+	// DARK_DELEGATION_BACKEND=v2.
+	v4LLM, v4LLMErr := judge.NewRealLLMClient()
+	if v4LLMErr != nil {
+		// No provider key — fall through. The v4alpha adapter
+		// will surface needs_human with llm_network_error
+		// alternatives. Operators without keys should set
+		// DARK_DELEGATION_BACKEND=v2 to use the deterministic
+		// router. We log once and continue.
+		fmt.Fprintf(os.Stderr,
+			"dark-mem-mcp: v4alpha delegate_intent LLM not configured (%v); "+
+				"EXTRACT will surface needs_human. Set DARK_DELEGATION_BACKEND=v2 "+
+				"for the deterministic router.\n", v4LLMErr)
+	}
+	_ = audit.Writer{}     // referenced for compile-time dep (CURATE follow-up)
+	_ = agent_memory.Store{} // ditto.
+	v4DelegateBackend := &tools.DelegateIntentBackend{
+		LLMClient:    v4LLM,
+		ExtractCache: v4delegation.NewExtractCache(v4delegation.CacheTTLFromEnv()),
+		Memories:     nil, // CURATE no-op in v3 binary until Store.RawDB() lands
+	}
+	frameSrc, err := tools.RegisterAllWithDeps(srv.Registry(), bootState.Orchestrator, bootState.Store, safetyFP, v4DelegateBackend)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "dark-mem-mcp: tools.RegisterAll failed: %v\n", err)
 		os.Exit(1)

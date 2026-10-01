@@ -42,8 +42,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
-	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 
@@ -53,13 +51,16 @@ import (
 
 const delegateIntentToolName = "dark_memory_delegate_intent"
 
-// delegateIntentInput is the wire shape for dark_memory_delegate_intent.
+// DelegateIntentInput is the wire shape for dark_memory_delegate_intent.
 //
 // Phase 7 alpha.19 v2 adds two optional fields (parent_session_id,
 // parent_agent_id) for CURATE subagent binding (Chunk 7.2). They are
 // additive — alpha.18.1 callers omitting them continue to work; the
 // binding rows are still persisted but with empty parent fields.
-type delegateIntentInput struct {
+//
+// Phase 9 alpha.20 Chunk 8.1: exported (capitalized) so v3 binary
+// can construct the input without re-declaring the schema.
+type DelegateIntentInput struct {
 	TaskDescription string `json:"task_description" jsonschema:"required" jsonschema_description:"≥10 char description of the work to be routed"`
 	VibeCase        string `json:"vibe_case" jsonschema:"required" jsonschema_description:"One of C1..C7 (canonical vibe_case taxonomy per spec.go:14-16)"`
 	Operator        string `json:"operator" jsonschema:"required" jsonschema_description:"Operator id (INV-1 audit owner; defaults to active session operator when empty)"`
@@ -67,21 +68,25 @@ type delegateIntentInput struct {
 	ParentAgentID   string `json:"parent_agent_id,omitempty" jsonschema_description:"Optional parent agent id (CURATE subagent binding — empty when delegate isn't chained from a vibe_publish)"`
 }
 
-// delegateIntentSubtask is one planned subtask. v2 (alpha.19): adds
+// DelegateIntentSubtask is one planned subtask. v2 (alpha.19): adds
 // subagent_id + delegation_context fields (populated by CURATE in
 // Chunk 7.2 — empty in Chunk 7.1).
-type delegateIntentSubtask struct {
+//
+// Phase 9 alpha.20 Chunk 8.1: exported.
+type DelegateIntentSubtask struct {
 	ID                string   `json:"id"`
 	Description       string   `json:"description"`
 	SystemPrompt      string   `json:"system_prompt"`
 	Tools             []string `json:"tools"`
-	Model             string   `json:"model"`
+	Model             string             `json:"model"`
 	SubagentID        string   `json:"subagent_id,omitempty"`
 	DelegationContext string   `json:"delegation_context,omitempty"`
 }
 
-// delegateIntentAlternative mirrors delegation.Alternative for the wire shape.
-type delegateIntentAlternative struct {
+// DelegateIntentAlternative mirrors delegation.Alternative for the wire shape.
+//
+// Phase 9 alpha.20 Chunk 8.1: exported.
+type DelegateIntentAlternative struct {
 	ID      string `json:"id"`
 	Label   string `json:"label"`
 	Outcome struct {
@@ -90,16 +95,19 @@ type delegateIntentAlternative struct {
 	} `json:"outcome"`
 }
 
-// delegateIntentOutput is the wire shape returned by
+// DelegateIntentOutput is the wire shape returned by
 // dark_memory_delegate_intent. Phase 7 alpha.19 v2 adds cache_hit,
 // verdict, and alternatives[] on top of alpha.18.1 v1.
-type delegateIntentOutput struct {
-	Decision     string                       `json:"decision"`     // "inline"|"delegate"|"refused"
-	Reasoning    string                       `json:"reasoning"`   // multi-phase trace
-	Subtasks     []delegateIntentSubtask      `json:"subtasks"`    // 0..N subtasks
-	CacheHit     bool                         `json:"cache_hit"`   // NEW alpha.19
-	Verdict      string                       `json:"verdict"`     // NEW alpha.19
-	Alternatives []delegateIntentAlternative  `json:"alternatives,omitempty"` // NEW alpha.19 (needs_human only)
+//
+// Phase 9 alpha.20 Chunk 8.1: exported (capitalized) so v3 binary
+// can decode the output without re-declaring the schema.
+type DelegateIntentOutput struct {
+	Decision     string                      `json:"decision"`     // "inline"|"delegate"|"refused"
+	Reasoning    string                      `json:"reasoning"`   // multi-phase trace
+	Subtasks     []DelegateIntentSubtask      `json:"subtasks"`    // 0..N subtasks
+	CacheHit     bool                        `json:"cache_hit"`   // NEW alpha.19
+	Verdict      string                      `json:"verdict"`     // NEW alpha.19
+	Alternatives []DelegateIntentAlternative `json:"alternatives,omitempty"` // NEW alpha.19 (needs_human only)
 }
 
 func registerDelegationTools(s *Server) {
@@ -114,139 +122,43 @@ func buildDelegateIntentTool() mcp.Tool {
 			"DECIDE uses deterministic rules (short task=inline, C7 multi or coordination keywords=delegate, "+
 			"explicit refusal=refused). EXTRACT (NEW) invokes the LLM via the judge-delegator persona when "+
 			"DECIDE=delegate AND length>200 OR vibe_case=C7; validated by drift_judge (eval_type=subtask_extraction). "+
-			"MIND calls mindset_apply per subtask. CURATE prepares delegation context (subagent_register live in Chunk 7.2)."),
-		mcp.WithInputSchema[delegateIntentInput](),
+			"MIND calls mindset_apply per subtask. CURATE prepares delegation context (subagent_register live in Chunk 7.2). "+
+			"Phase 9 alpha.20 Chunk 8.1: pipeline also exposed to v3 binary via DARK_DELEGATION_BACKEND=v4alpha."),
+		mcp.WithInputSchema[DelegateIntentInput](),
 	)
 }
 
-// handleDelegateIntent is the JSON-RPC handler (Phase 7 alpha.19).
+// handleDelegateIntent is the JSON-RPC handler (Phase 7 alpha.19,
+// refactored Phase 9 alpha.20 Chunk 8.1).
 //
-// Flow:
-//  1. Validate input.
-//  2. DECIDE via delegation package (deterministic).
-//  3. EXTRACT via delegation.Extractor when ShouldExtract returns true.
-//  4. PLAN (deterministic) when EXTRACT is skipped.
-//  5. MIND: composeSystemPrompt per subtask.
-//  6. CURATE stub (Chunk 7.2 wires subagent_register).
-//  7. Return wire shape v2.
+// As of Chunk 8.1 this is a thin adapter over RunDelegateIntentCore:
+// the mcp-go transport (bindArgs + resultJSON) wraps the pure
+// pipeline function. Code that lived in handleDelegateIntent pre-Chunk
+// 8.1 was moved verbatim to wire.go:RunDelegateIntentCore; the
+// Server handleDelegateIntent is kept (NOT removed) because:
+//   - Existing v4alpha tests (project_test.go) invoke it via
+//     HandleDelegateIntentForTest. Removing it would break those tests.
+//   - v4alpha's mcp-go MCPServer registration still calls it via
+//     AddTool at server.go:225.
+//
+// Flow (unchanged from previous):
+//  1. bindArgs unmarshal.
+//  2. Delegate to RunDelegateIntentCore (DECIDE→EXTRACT→MIND→CURATE).
+//  3. Map wire shape to mcp.CallToolResult via resultJSON.
 func (s *Server) handleDelegateIntent(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	var in delegateIntentInput
+	var in DelegateIntentInput
 	if err := bindArgs(req, &in); err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}
-	if !validVibeCases[in.VibeCase] {
-		return mcp.NewToolResultError(fmt.Sprintf(
-			"delegate_intent: vibe_case %q not in canonical allow-list (C1..C7)", in.VibeCase)), nil
+	// Delegate to the shared pipeline. Server fields are the v4alpha
+	// dependency graph (llmClient, extractCache, memories). nil-safe:
+	// the pipeline falls back to needs_human when llmClient is nil and
+	// no-ops the CURATE step when memories is nil.
+	out, err := RunDelegateIntentCore(ctx, in, s.llmClient, s.extractCache, s.memories)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
 	}
-	if len(strings.TrimSpace(in.TaskDescription)) < 10 {
-		return mcp.NewToolResultError("delegate_intent: task_description must be ≥10 chars"), nil
-	}
-	if in.Operator == "" {
-		in.Operator = "orchestrator_delegate"
-	}
-
-	// 1+2+3+4. DECIDE → optional EXTRACT → PLAN.
-	decision, reason := delegation.DecideDelegation(in.VibeCase, in.TaskDescription)
-
-	var subtasks []delegation.Subtask
-	var extractVerdict string
-	var alternatives []delegation.Alternative
-	cacheHit := false
-
-	if delegation.ShouldExtract(decision, in.VibeCase, in.TaskDescription) {
-		// EXTRACT via the LLM (per SPEC P1=C + P4=drift_judge).
-		ex := s.buildDelegationExtractor(ctx, in.Operator)
-		result, _ := ex.Extract(ctx, in.VibeCase, in.TaskDescription)
-		subtasks = result.Subtasks
-		extractVerdict = result.Verdict
-		alternatives = result.Alternatives
-		cacheHit = result.CacheHit
-		// Reasoning combines DECIDE + EXTRACT (when EXTRACT ran).
-		reason = reason + " | " + result.Reasoning
-	} else {
-		// PLAN (deterministic) for short delegate + inline + refused.
-		subtasks = delegation.PlanSubtasks(in.VibeCase, in.TaskDescription, decision)
-	}
-
-	// Initial verdict: aligned for PLAN/INLINE/REFUSED, or whatever
-	// the EXTRACT step returned. CURATE may downgrade to errored.
-	verdict := extractVerdict
-	if verdict == "" {
-		verdict = "aligned"
-	}
-
-	// 5. MIND — invoke composeSystemPrompt per subtask.
-	out := make([]delegateIntentSubtask, 0, len(subtasks))
-	for i, st := range subtasks {
-		personaID := defaultPersonaForVibeCase[st.VibeCase]
-		sp := composeSystemPrompt(personaID, st.VibeCase, st.Description, in.Operator)
-		out = append(out, delegateIntentSubtask{
-			ID:                st.ID,
-			Description:       st.Description,
-			SystemPrompt:      sp,
-			Tools:             st.Tools,
-			Model:             st.Model,
-			SubagentID:        st.SubagentID,
-			DelegationContext: st.DelegationContext,
-		})
-		_ = i
-	}
-
-	// 6. CURATE — register a subagent binding per subtask (Phase 7
-	// Chunk 7.2). Per SPEC-alpha-11-phase7.md §3.2, this persists
-	// an agent_memory row (kind=link, tag=subagent:v1) per subtask
-	// so the orchestrator can audit/replay/prove provenance.
-	//
-	// Skip when verdict != aligned (a needs_human / cached / errored
-	// response doesn't have stable subtasks to bind).
-	taskID := newTaskID(in.Operator, in.TaskDescription)
-	if verdict == "aligned" && len(out) > 0 {
-		// Convert delegateIntentSubtask slice back to delegation.Subtask
-		// slice so we can call BindSubtasksToSubagents.
-		stSlice := make([]delegation.Subtask, len(out))
-		for i, st := range out {
-			stSlice[i] = delegation.Subtask{
-				ID:                st.ID,
-				Description:       st.Description,
-				VibeCase:          in.VibeCase,
-				SubagentID:        st.SubagentID,
-				DelegationContext: st.DelegationContext,
-			}
-		}
-		bound, err := BindSubtasksToSubagents(ctx, s.memories, in.Operator,
-			in.ParentSessionID, in.ParentAgentID, taskID, stSlice, DefaultSubagentTTLSeconds)
-		if err != nil {
-			// CURATE failure is non-fatal — surface verdict=errored
-			// with empty subagent_ids so the caller can decide.
-			verdict = "errored"
-		} else {
-			// Merge bound.SubagentID + DelegationContext back into out.
-			for i, b := range bound {
-				out[i].SubagentID = b.SubagentID
-				out[i].DelegationContext = b.DelegationContext
-			}
-		}
-	}
-
-	// 7. Return wire shape v2.
-	altOut := make([]delegateIntentAlternative, 0, len(alternatives))
-	for _, a := range alternatives {
-		var alt delegateIntentAlternative
-		alt.ID = a.ID
-		alt.Label = a.Label
-		alt.Outcome.Kind = a.Outcome.Kind
-		alt.Outcome.Reasoning = a.Outcome.Reasoning
-		altOut = append(altOut, alt)
-	}
-
-	return resultJSON(delegateIntentOutput{
-		Decision:     decision,
-		Reasoning:    reason,
-		Subtasks:     out,
-		CacheHit:     cacheHit,
-		Verdict:      verdict,
-		Alternatives: altOut,
-	})
+	return resultJSON(out)
 }
 
 // buildDelegationExtractor constructs a delegation.Extractor wired to

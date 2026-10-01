@@ -64,14 +64,40 @@ type DelegateSubTaskOutput struct {
 	TodoCount         int      `json:"todo_count,omitempty"`
 }
 
+// DelegateIntentAlternative is one option presented to the operator
+// when the v4alpha backend returns verdict=needs_human. Each
+// alternative has a stable ID + a human-readable label + a
+// deterministic Kind + Reasoning that the orchestrator can apply
+// automatically if the operator picks it.
+//
+// Phase 9 alpha.20 Chunk 8.1 — NEW. Populated only by the v4alpha
+// backend (alpha.19+); the v2 backend leaves the field nil.
+type DelegateIntentAlternative struct {
+	ID        string `json:"id"`
+	Label     string `json:"label"`
+	Kind      string `json:"kind,omitempty"`      // "accept-as-is"|"fallback-plan"|"fallback-refuse"|"refine-and-retry"|"custom-instructions"
+	Reasoning string `json:"reasoning,omitempty"` // deterministic outcome description
+}
+
 // DelegateIntentOutput is the router's decision + the ready-to-spawn
 // plan (nil plan when handler != DELEGATE).
+//
+// Phase 9 alpha.20 Chunk 8.1 — adds four additive fields populated
+// by the v4alpha backend only (alpha.19+ DECIDE→EXTRACT→MIND→CURATE
+// pipeline). v2 backend (alpha.18.1 deterministic router) leaves
+// these fields at zero values — existing consumers ignore them
+// (omitempty).
 type DelegateIntentOutput struct {
 	Handler   string                  `json:"handler"`
 	Reasoning string                  `json:"reasoning"`
 	Case      string                  `json:"case"`
 	Plan      []DelegateSubTaskOutput `json:"plan,omitempty"`
 	Operator  string                  `json:"operator"`
+	// --- Phase 9 alpha.20 Chunk 8.1 additive fields (omitempty) ---
+	Decision     string                      `json:"decision,omitempty"`     // "delegate"|"inline"|"refused" (lowercase)
+	CacheHit     bool                        `json:"cache_hit,omitempty"`    // true when EXTRACT result served from cache
+	Verdict      string                      `json:"verdict,omitempty"`      // "aligned"|"drift_detected"|"needs_human"|"cached"|"errored"
+	Alternatives []DelegateIntentAlternative `json:"alternatives,omitempty"` // populated only when Verdict=needs_human
 }
 
 // DelegateIntent runs the DECIDE → PLAN → MIND → CURATE pipeline for
