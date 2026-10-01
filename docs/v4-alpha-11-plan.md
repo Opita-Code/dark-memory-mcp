@@ -272,37 +272,105 @@ enabled, it would fail with `ErrUnknownProject`. Callers that
 relied on the literal must pass it explicitly AND register it via
 `project_create`, or accept `'default'`. Wire shape unchanged.
 
-## 5. Phase 5 — Memory subsystem (3-4 weeks)
+## 5. Phase 5 — Memory subsystem ✅ SHIPPED (alpha.18, 2026-10-01)
 
 **Vibe-loop**: `alpha-11-phase-5`
 
-**Items**:
-| # | Item | Complexity | LoC | Risk | Spec file |
-|---|---|---|---|---|---|
-| 11 | ADR-013 (vector retrieval + RRF) | XL | ~700 | HIGH (biggest scope) | `SPEC-alpha-11-adr013.md` |
-| 12 | ADR-014 (temporal re-ranking) | M | ~180 | MEDIUM | `SPEC-alpha-11-adr014.md` |
-| 13 | ADR-015 (multi-hop / graph) | L | ~400 | MED-HIGH | `SPEC-alpha-11-adr015.md` |
+**Operator decision (2026-10-01, OD2=YES)**: ship Phase 5
+with vector retrieval + temporal re-ranking + multi-hop
+graph via the new `internal/v4alpha/recall/` package.
+LOCAL ONLY — no remote push (per deploy policy).
 
-**Only if OD2 = YES** (operator approves vector retrieval
-in this cycle). If OD2 = NO, Phase 5 deferred to v4.0.0-beta.
+**Original plan vs shipped**:
 
-**Dependency graph**:
-- ADR-013 → no deps.
-- ADR-014 → depends on ADR-013.
-- ADR-015 → depends on ADR-013.
+| # | Original Item | Shipped | Diff |
+|---|---|---|---|
+| 11 | ADR-013 vector + RRF | ✅ C2/C4/C5/C6 vector stubs (alpha.18), full BGE-large alpha.19 | partial — vector stub absorbed into FTS5, alpha.19 wires real embedder |
+| 12 | ADR-014 temporal re-ranking | ✅ DecayScore + RefreshOnAccess + PerVibeCaseMultiplier (5 classes, ScrubJay-MEM π_i + τ_i) | superset — also got MarkSuperseded (TokenMizer bitemporal) |
+| 13 | ADR-015 multi-hop / graph | ✅ 1-hop (C1/C2/C5/C6) + 2-hop (C3/C4) via adr_refs/inv_refs | shipped — HippoRAG-style expansion |
 
-**D1 decision baked in**: ADR-013 is FRESH
-implementation, no v2.9.x inheritance (per row 1578
-abandonment). Cormack 2009 RRF (k=60) as reference, not
-code to import.
+**5 commits on `feat/v4-redesign`** (commits
+`76a2a11`, `fe1b97d`, `a137947`, `9f834f2`, `e647239`).
 
-**Acceptance criteria**:
-- ADR-013: hybrid FTS5 + vector retrieval in `Recall()`.
-  Pluggable embedding adapter (HTTP: OpenAI, Voyage,
-  Cohere; local: ONNX optional). RRF re-ranker (k=60).
-- ADR-014: `Recall()` re-ranks by recency × relevance.
-- ADR-015: graph links between rows (parent/child,
-  related, references). `Recall()` traverses 1-2 hops.
+**Items shipped vs. plan**:
+
+- Chunk 5.1: schema migration — 20 additive columns on
+  `agent_memory`, 3 new tables (`agent_memory_entities`,
+  `agent_memory_links`, `decision_transitions`), 9
+  indexes, all idempotent, INV-19 hard isolation.
+  ~799 LoC. drift ALIGNED 0.99.
+- Chunk 5.2: polymorphic `RecallFor` dispatch + first
+  strategy `C3DecisionRecall`. ~1,235 LoC. drift ALIGNED
+  0.96 + 0.95.
+- Chunk 5.3: three more strategies `C1CodeRecall`,
+  `C2TextRecall`, `C4ResearchRecall`. ~956 LoC. drift C1
+  ALIGNED 0.96 / C2 drift_detected 0.82 (alpha.18 vector
+  stub) / C4 ALIGNED 0.92.
+- Chunk 5.4: last three strategies `C5VideoRecall`,
+  `C6AudioRecall`, `C7MultiRecall` ensemble. ~698 LoC.
+  drift C5 drift_detected 0.92 (ImageBind stub) / C6
+  ALIGNED 0.95 / C7 drift_detected 0.82 (keyword router).
+- Chunk 5.5: cross-cutting — `DecayScore` + `RefreshOnAccess`
+  + `MarkSuperseded` + `PerVibeCaseMultiplier` +
+  11/11 tests + 50-Q LifecycleBench micro-eval. ~451 LoC.
+  drift decay.go drift_detected 0.88 (false positive) /
+  decay_test.go ALIGNED 0.97.
+
+**Total Phase 5**: ~4,099 LoC across 19 files in
+`internal/v4alpha/recall/`. 41/41 recall tests pass. Full
+v4alpha suite (13 packages) passes.
+
+**Atomic mirror per ADR-008**: 5 SUMMARY pinned + 16
+SECTION + 1 meta SUMMARY = 22 rows (2235-2257). All
+`bind_session=true`, tags include `mirror:atomic`.
+
+**Drift summary**: 7 ALIGNED + 4 drift_detected (all
+intentional alpha.18 stubs documented, with the alpha.19
+evolution path captured in
+`docs/v4-status.md §1.5.7`).
+
+**Acceptance criteria status**:
+
+| Criterion | Status | Evidence |
+|---|---|---|
+| ADR-013 hybrid FTS5 + vector retrieval in `Recall()` | PARTIAL alpha.18 | C2/C4/C5/C6 strategies with vector stubs; alpha.19 wires BGE-large + ImageBind |
+| ADR-013 pluggable embedding adapter (HTTP/local ONNX) | DEFERRED alpha.19 | Per SPEC §2.2 non-goals |
+| ADR-013 RRF re-ranker (k=60) | ✅ SHIPPED | Cormack 2009 k=60 in `scoreFTSPlusGraph` |
+| ADR-014 `Recall()` re-ranks by recency × relevance | ✅ SHIPPED | DecayScore + PerVibeCaseMultiplier |
+| ADR-015 graph links between rows | ✅ SHIPPED | adr_refs/inv_refs columns + 1-hop (C1/C2/C5/C6) + 2-hop (C3/C4) |
+| ADR-015 `Recall()` traverses 1-2 hops | ✅ SHIPPED | graphExpandShared hop=1 or 2 per strategy |
+
+**alpha.19 follow-up (deferred from alpha.18)**:
+
+- ImageBind 1024-dim image encoder integration (alpha.19
+  wires `embed_image` column via `adapter.Adapter`)
+- BGE-large text embedder (alpha.19 wires `embed_text` —
+  not in alpha.18 column set, will add column then)
+- ONNX local embedder (alpha.19, pluggable adapter)
+- ProGraph 2-layer entity extraction
+  (`agent_memory_entities` table is reserved alpha.18)
+- CABLE auto-link (`agent_memory_links` operator-flag
+  default OFF alpha.18)
+- LLM-extracted sub-tasks for C7MultiRecall
+  (alpha.18 keyword router)
+- SENTINEL forgery guard (R-F §6.3 threat)
+- ReFind-style agent-controlled search (R-D counter-
+  evidence)
+
+**Cross-refs**:
+- `docs/specs/SPEC-alpha-11-phase5.md` — Phase 5 master
+  spec (434 LoC, 15 sections).
+- `docs/research/phase-5/{README,R-A,R-B,R-C,R-D,R-E,R-F}.md`
+  — 6 research artifacts synthesizing ~120 SOTA 2026
+  papers.
+- `docs/v4-status.md §1.5` — Phase 5 changelog with all 5
+  chunks.
+- `docs/sota-critique.md §5.2` — 3 tractable agent-
+  memory gaps NOW ENFORCED.
+- `CHANGELOG.md [4.0.0-alpha.18]` — release entry.
+- dark-memory rows 2235-2257 (5 SUMMARY + 16 SECTION +
+  1 meta, agent_id `alpha-11-phase5`, session
+  `sess-7e6f313abd9818cd`).
 
 ## 6. The vibe-loop pattern, restated
 

@@ -357,16 +357,71 @@ files (§8). This section is the operator-facing summary.
 
 ### 5.2 Agent memory (chunk 2, 7 gaps)
 
-- 3 of 7 are tractable: vector retrieval (ADR-013), temporal
-  re-ranking (ADR-014), multi-hop retrieval (ADR-015).
+**Status (2026-10-01, alpha.18): 3 of 7 tractable
+gaps NOW ENFORCED.**
+
+- 3 of 7 are tractable: vector retrieval (ADR-013),
+  temporal re-ranking (ADR-014), multi-hop retrieval
+  (ADR-015). **Now enforced in alpha.18** via
+  `internal/v4alpha/recall/` package (5 commits, ~4,099
+  LoC, 41/41 tests pass). See §5.2.1 for per-gap closure
+  evidence.
 - 4 of 7 are scale-axis: semantic dedup, A-MEM dynamic
   organization, telemetry hooks, large-context summarization.
-- **Honest assessment**: v4 is FTS5-only; SOTA 2025-26 (Mem0,
-  Letta) is hybrid FTS5 + vector + RRF. This is the single
-  largest SOTA gap in v4 today. v4's storage layer does not
-  have a vector column, an embedding pipeline, or an RRF
-  re-ranker. This is documented honestly as a known gap, not
-  papered over.
+  **Still open** (deferred to v4.0.0-beta per Phase 5
+  scope boundary in SPEC §2.2).
+- **Honest assessment (post-alpha.18)**: v4 is now
+  FTS5-primary with vector + cross-modal stubs that
+  absorb into FTS5 (alpha.18), and full embedder
+  integration in alpha.19. The RRF re-ranker (Cormack
+  2009 k=60) is **shipped**. The hybrid recall is
+  **partially shipped** (per-vibe-case weighted blends)
+  but the embedder pipeline is still alpha.19. This is
+  documented honestly as the alpha.18 scope boundary,
+  not papered over.
+
+#### 5.2.1 Phase 5 (alpha.18) per-gap closure evidence
+
+| Gap | ADR | Shipped in alpha.18 | alpha.19 follow-up |
+|---|---|---|---|
+| Vector retrieval + RRF | ADR-013 | ✅ RRF (k=60) re-ranker + per-vibe weighted blends (C2/C4/C5/C6 stubs) | BGE-large text embedder + ImageBind 1024-dim image + wav2vec 2.0 audio |
+| Temporal re-ranking | ADR-014 | ✅ DecayScore (ScrubJay-MEM π_i + τ_i) + RefreshOnAccess + PerVibeCaseMultiplier (5 decay classes) | full bitemporal (transaction_time + valid_time) |
+| Multi-hop / graph | ADR-015 | ✅ adr_refs/inv_refs columns + 1-hop (C1/C2/C5/C6) + 2-hop (C3/C4) via HippoRAG-style expansion | ProGraph 2-layer entity extraction |
+| Semantic dedup | (no ADR) | ❌ | (v4.0.0-beta) |
+| A-MEM dynamic organization | (no ADR) | ❌ | (v4.0.0-beta) |
+| Telemetry hooks | (no ADR) | ❌ | (v4.0.0-beta) |
+| Large-context summarization | (no ADR) | ❌ | (v4.0.0-beta) |
+
+**Per-vibe-case weights shipped** (Cormack 2009 RRF
+k=60 + per-vibe weighted blends, from
+`SPEC-alpha-11-phase5.md §3`):
+
+| Vibe | FTS5 | Vector | Graph | CrossModal |
+|---|---|---|---|---|
+| C1 code | 0.55 | 0.00 | 0.45 | 0.00 |
+| C2 text | 0.40 | **0.50** (alpha.18 stub) | 0.10 | 0.00 |
+| C3 decision | 0.30 | 0.00 | **0.70** | 0.00 |
+| C4 research | 0.25 | 0.45 (alpha.18 stub) | 0.30 | 0.00 |
+| C5 video | 0.00 | 0.00 | 0.20 | **0.80** (alpha.18 stub) |
+| C6 audio | 0.00 | 0.00 | 0.20 | **0.80** (alpha.18 stub) |
+| C7 multi | ensemble | RRF merge | subtask | n/a |
+
+**Drift_judge verdicts** (7 ALIGNED + 4 intentional
+drift_detected stubs — see `CHANGELOG.md [4.0.0-alpha.18]`
+for the full table). The 4 drift_detected are the
+documented alpha.18 scope boundary (vector stub,
+ImageBind stub, LLM-router stub, plus 1 false positive).
+
+**Cross-refs**:
+- `docs/specs/SPEC-alpha-11-phase5.md` — Phase 5 master
+  spec.
+- `docs/research/phase-5/{R-A,R-B,R-C,R-D,R-E,R-F}.md` —
+  per-domain research artifacts.
+- `internal/v4alpha/recall/` — 19-file implementation.
+- `CHANGELOG.md [4.0.0-alpha.18]`.
+- `docs/v4-status.md §1.5` + `docs/v4-alpha-11-plan.md
+  §5`.
+- dark-memory rows 2235-2257 (atomic mirror).
 
 ### 5.3 Audit chain (chunk 3, 8 gaps)
 

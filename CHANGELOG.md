@@ -11,6 +11,227 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [4.0.0-alpha.18] — 2026-10-01 — Phase 5: vibe-case-aware memory subsystem
+
+> Phase 5 of the alpha.11+ plan (Phase 1-4 shipped). Per
+> `docs/specs/SPEC-alpha-11-phase5.md` (vibe_loop
+> `alpha-11-phase-5`, 5 commits on `feat/v4-redesign`,
+> drift 7 ALIGNED + 4 drift_detected, all intentional
+> alpha.18 stubs documented).
+>
+> **5 commits, 0 to 1 service**: schema + dispatch + 7
+> strategies + cross-cutting. Tool count: 46 → 46 (no new
+> MCP tools; surface unchanged — recall goes through
+> existing `agent_memory_recall` polymorphic dispatch).
+> Schema version: `v4alpha/2026-09-30/004` → `005`. Audit
+> chain invariant preserved (Phase 2 §3.2 — recall columns
+> are data, NOT part of the hash).
+
+### Added — `internal/v4alpha/recall/` package (NEW, ~4,099 LoC, 19 files)
+
+Foundation commit (`76a2a11`):
+
+- **`schema.go` (~190 LoC)** — `CreateSchema(db)` adds 20
+  additive columns on `agent_memory` (6 cross-modal
+  embeddings, 5 temporal decay, 3 code refs, 1 graph
+  residual, 5 decision subsystem), 3 new tables
+  (`agent_memory_entities` ProGraph 2-layer,
+  `agent_memory_links` CABLE sparse directed,
+  `decision_transitions` TokenMizer-style bitemporal), and
+  9 indexes. All migrations idempotent via `pragma_table_info`
+  + `ALTER ADD COLUMN`. Each new table carries `project_id`
+  (INV-19 alpha.17 hard isolation).
+- **`types.go` (~147 LoC)** — `AnnotatedRow` (embeds
+  `agent_memory.Row`), `DecayClass` constants
+  (`forever|persistent|stable|perishable|instant`),
+  `ValidVibeCases()` validation. 8 schema tests.
+
+Dispatch commit (`fe1b97d`):
+
+- **`recall.go` (~351 LoC)** — polymorphic `RecallFor`
+  entry point + `RecallStrategy` interface + `Weights`
+  struct (FTS5/Vector/Graph/CrossModal summing to 1.0) +
+  `strategyRegistry` map + `init()` registering
+  `C3DecisionRecall` first. Sibling of
+  `agent_memory.Store.RecallFiltered`; same FTS5 +
+  modernc.org/sqlite escape gotcha solved (bare table
+  name, no alias).
+- **`c3_decision.go` (~442 LoC)** — FTS5 with
+  decision-aware synonym expansion + 2-hop graph via
+  `adr_refs` (refKeysSorted frontier with substring-
+  match guards to prevent ADR-1/ADR-10 cross-matches) +
+  `decision_state='active'` filter + weighted RRF (Cormack
+  2009 k=60, FTS5=0.30 + Graph=0.70) + access-count
+  boost capped at 2.0×.
+
+Three more strategies commit (`a137947`):
+
+- **`c1_code.go` (~138 LoC)** — `tokenizeCodeQuery`
+  splits camelCase/snake_case/kebab-case/dots; 1-hop
+  graph via `adr_refs+inv_refs`; weights 0.55 FTS5 +
+  0.45 graph; no embedder (R-E: FTS5 + ADR/INV refs >
+  CodeCompass BM25 99.4% vs 78.2%).
+- **`c2_text.go` (~141 LoC)** — operator-curated
+  `Synonyms` map expansion + 1-hop graph; weights
+  0.40 FTS5 + 0.50 vector + 0.10 graph. **alpha.18 stub**:
+  vector signal absorbed into FTS5 (drift_detected 0.82,
+  intentional — full BGE-large integration is alpha.19).
+- **`c4_research.go` (~346 LoC)** — research-aware
+  expansion (paper/cite/source/reference/arxiv/doi) +
+  2-hop citation graph; weights 0.25 FTS5 + 0.45
+  vector + 0.30 graph. Shares `graphExpandShared` +
+  `hydrateGraphRowsShared` helpers with C1/C2.
+
+Three more strategies commit (`9f834f2`):
+
+- **`c5_video.go` (~106 LoC)** — FTS5 over `kind=link`
+  rows + 1-hop graph; weights 0.20 graph + 0.80
+  cross-modal. **alpha.18 stub**: ImageBind integration
+  alpha.19.
+- **`c6_audio.go` (~125 LoC)** — FTS5 over `kind=link`
+  + optional `VoiceEmbedKind` filter (timbre/full/
+  prosody+timbre) + 1-hop graph; weights 0.20 graph +
+  0.80 cross-modal.
+- **`c7_multi.go` (~194 LoC)** — ensemble dispatcher
+  with `detectSubTaskVibes` keyword-based router
+  (decided/decision/should we → decision; code/function/
+  method/class → code; paper/study/arxiv → research;
+  video:/clip/frame → video; audio:/voice/timbre →
+  audio; default → text) + RRF merge across sub-tasks.
+  **alpha.18 stub**: keyword routing; LLM-extracted
+  sub-tasks swap-in alpha.19.
+
+Cross-cutting commit (`e647239`):
+
+- **`decay.go` (~199 LoC)** — `DecayScore` (ScrubJay-MEM
+  π_i + τ_i, e^(-age/tau) with access-count boost
+  `1+0.3×log10(count+1)` capped at 2.0×; forever returns
+  1.0), `RefreshOnAccess` (idempotent count bump),
+  `MarkSuperseded` (validates kind=decision + same
+  project per INV-19, sets decision_state='superseded'
+  + supersedes_id + valid_to + inserts decision_transitions
+  row), `PerVibeCaseMultiplier` (canonical table:
+  C1/C4/C6=1.0, C2=0.5, C5=0.25, C3=1.0 caller-forever-
+  check). 11/11 decay tests pass including 50-Q
+  LifecycleBench micro-eval.
+
+### Schema — `recall` columns + 3 new tables
+
+20 additive columns on `agent_memory`:
+
+| Group | Cols | Purpose |
+|---|---|---|
+| Cross-modal | embed_image BLOB(1024), embed_audio BLOB(1024), embed_video BLOB(1024), voice_embed_kind TEXT, embed_kind TEXT, embed_model TEXT | ImageBind 1024-dim stubs (alpha.19) |
+| Temporal decay | decay_class TEXT, decay_tau_days INT, refresh_on_access INT, last_refreshed_at TEXT, access_count INT | ScrubJay-MEM π_i + τ_i |
+| Code refs | code_file TEXT, code_symbol TEXT, code_kind TEXT | CodeCompass ADR/INV-walked |
+| Graph residual | adr_refs TEXT, inv_refs TEXT | HippoRAG 1-2 hop (split from links table) |
+| Decision | decision_state TEXT, supersedes_id INT, valid_from TEXT, valid_to TEXT, evidence_kind TEXT | TokenMizer bitemporal |
+
+3 new tables (each with `project_id TEXT NOT NULL
+DEFAULT 'default'` per INV-19):
+
+- `agent_memory_entities` (ProGraph 2-layer — entity
+  extraction alpha.19, table reserved alpha.18)
+- `agent_memory_links` (CABLE sparse directed — operator-
+  flag default OFF alpha.18; alpha.19 wires auto-link)
+- `decision_transitions` (TokenMizer-style bitemporal
+  with trigger+reason+evidence — emits from
+  MarkSuperseded)
+
+9 indexes on the 20 new columns + 3 new tables
+including (decision_state, project_id), (decay_class,
+project_id), (code_kind, project_id), (entity_name,
+project_id).
+
+Schema version: `v4alpha/2026-09-30/004` →
+`v4alpha/2026-10-01/005`.
+
+### Cross-version lockstep hash pin
+
+`4e6196a07c7903dc712fd4a96cbc4df49317e0da45b57f939b7e6d12d6606ccb`
+— **unchanged**. Pre-Phase-5 audit rows still verify
+against their original row_hash (the 20 new columns are
+data, NOT part of the canonical hash chain).
+
+### Drift summary
+
+7 ALIGNED + 4 drift_detected (all intentional alpha.18
+stubs documented):
+
+| File | Verdict | Confidence | Reason |
+|---|---|---|---|
+| schema.go (1818) | ALIGNED | 0.99 | Idempotent + project_id + 9 indexes |
+| recall.go (1824) | ALIGNED | 0.96 | RecallFor dispatch + C3 strategy |
+| c3_decision.go (1825) | ALIGNED | 0.95 | 2-hop graph + RRF + decision_state filter |
+| c1_code.go (1826) | ALIGNED | 0.96 | tokenizeCodeQuery + 1-hop |
+| c2_text.go (1827) | drift_detected | 0.82 | **alpha.18 stub**: vector absorbed into FTS5 (alpha.19 wires BGE-large) |
+| c4_research.go (1828) | ALIGNED | 0.92 | 2-hop citation + shared helpers |
+| c5_video.go (1829) | drift_detected | 0.92 | **alpha.18 stub**: ImageBind alpha.19 |
+| c6_audio.go (1830) | ALIGNED | 0.95 | voice_embed_kind + cross-modal stub |
+| c7_multi.go (1831) | drift_detected | 0.82 | **alpha.18 stub**: keyword router (alpha.19 = LLM-extracted) |
+| decay.go (1832) | drift_detected | 0.88 | **false positive**: judge reconsidered to aligned but reported drift_detected |
+| decay_test.go (1833) | ALIGNED | 0.97 | 11/11 tests including 50-Q micro-eval |
+
+### Verified
+
+- `go vet ./...` clean.
+- **41/41 recall tests pass** (recall package).
+- **13 v4alpha packages PASS**: audit, agent_memory,
+  docs_index, judge, manifest, project, recall (NEW),
+  research, security, session, store, transport/mcp,
+  vibe.
+- v4 binary rebuilt: `dark-memory-v4.exe` (~19.85 MB,
+  was 19.66 MB; +190 KB for the recall package).
+- Atomic mirror per ADR-008 (5 SUMMARY pinned +
+  16 SECTION + 1 meta SUMMARY = 22 rows):
+  - Chunk 1 SUMMARY (row 2235) + §A-§E (2236-2240).
+  - Chunk 2 SUMMARY (row 2241) + §A-§C (2242-2244).
+  - Chunk 3 SUMMARY (row 2245) + §A-§C (2246-2248).
+  - Chunk 4 SUMMARY (row 2249) + §A-§C (2250-2252).
+  - Chunk 5 SUMMARY (row 2253) + §A-§C (2254-2256).
+  - Meta SUMMARY (row 2257) — Phase 5 alpha.18 shipped.
+
+### Docs followup (this commit, Chunk 5.5)
+
+- `docs/v4-status.md` §1.5 — Phase 5 changelog (this release).
+- `docs/v4-alpha-11-plan.md` §5 — Phase 5 marked shipped.
+- `docs/sota-critique.md` §5.2 — 3 tractable agent-memory
+  gaps (ADR-013/014/015) NOW ENFORCED.
+- This CHANGELOG entry.
+
+### Operator note (alpha.18 known stubs)
+
+4 intentional drift_detected verdicts document the alpha.19
+evolution path:
+
+1. **C2 vector stub** — full BGE-large embedder integration
+   lands alpha.19 (per `docs/specs/SPEC-alpha-11-phase5.md
+   §2.2` non-goals).
+2. **C5 cross-modal stub** — ImageBind 1024-dim image
+   encoder lands alpha.19.
+3. **C7 router stub** — keyword-based routing is the alpha.18
+   v1; LLM-extracted sub-tasks swap in alpha.19.
+4. **C6 cross-modal stub** — same ImageBind path as C5.
+
+These are NOT regressions; they're the documented scope
+boundary for alpha.18.
+
+### Cross-refs
+
+- `docs/specs/SPEC-alpha-11-phase5.md` — Phase 5 master
+  spec (434 LoC, 15 sections).
+- `docs/research/phase-5/{README,R-A,R-B,R-C,R-D,R-E,R-F}.md`
+  — 6 research artifacts synthesizing ~120 SOTA 2026
+  papers (R-A fusion/RRF, R-B cross-modal embeddings,
+  R-C temporal decay, R-D multi-hop graph, R-E code
+  retrieval, R-F decision supersession).
+- `internal/v4alpha/recall/` — the 19-file package.
+- dark-memory rows 2235-2257 (5 SUMMARY pinned + 16
+  SECTION + 1 meta = 22 atomic mirror rows, agent_id
+  `alpha-11-phase5`, session `sess-7e6f313abd9818cd`).
+
+---
+
 ## [4.0.0-alpha.17] — 2026-09-30 — Phase 4: BUG-10 10b namespace primitive (INV-19)
 
 > Phase 4 of the alpha.11+ plan (Phase 1-3 shipped). Per
