@@ -26,6 +26,7 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/judge"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/manifest"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/project"
+	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/recall"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/session"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/store"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/vibe"
@@ -104,6 +105,7 @@ func applyAllSchemas(ctx context.Context, d *sql.DB) error {
 		{"judge/calibration", func() error { return judge.ApplyCalibrationColumns(ctx, d) }},
 		{"project", func() error { return project.CreateSchema(d) }},
 		{"project/apply", func() error { return project.ApplyProjectIDColumns(ctx, d) }},
+		{"recall", func() error { return recall.CreateSchema(ctx, d) }},
 	} {
 		if err := fn.f(); err != nil {
 			return fmt.Errorf("%s schema: %w", fn.name, err)
