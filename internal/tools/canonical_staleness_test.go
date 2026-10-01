@@ -109,8 +109,8 @@ func TestCanonicalOrder_WirePrefixConsistent(t *testing.T) {
 	}
 }
 
-// TestCanonicalOrder_Frozen_57_17_28 (SPEC 1270, lock 2026-08-18):
-// the canonical surface is FROZEN at 57 tools across 17 namespaces
+// TestCanonicalOrder_Frozen_60_17_29 (SPEC 1270, lock 2026-08-18):
+// the canonical surface is FROZEN at 60 tools across 17 namespaces
 // with schema v29. This test is the regression gate: any addition,
 // removal, or rename that shifts these numbers fails until an ADR +
 // minor bump is filed (see ARCHITECTURE.md §Tools surface). The
@@ -119,15 +119,15 @@ func TestCanonicalOrder_WirePrefixConsistent(t *testing.T) {
 // self-validating; the constants below are what the freeze DOCUMENTS,
 // not what it checks.
 //
-// Bumping schema v28 → v29 (spec 1276 T10) does NOT change the
-// canonical tool surface — v29 only adds columns to sdd_evaluations.
-// The tool count (57) and namespace count (17) stay the same. The
-// schema version constant moves to 29 to reflect the new floor.
+// Bumping 59 → 60 (alpha.20 Chunk 8.4): adds prograph_query to
+// AGENT_MEMORY (ADR-015 2-layer entity extraction BFS). The
+// namespace count stays 17 — prograph_query lives in AGENT_MEMORY
+// next to agent_memory_recall (its semantic sibling).
 func TestCanonicalOrder_Frozen_57_17_28(t *testing.T) {
 	const (
-		frozenToolCount      = 59 // 57 base + 2 from alpha.20 Chunk 8.5 (audit_export, audit_verify)
-		frozenNamespaceCount = 17 // no new namespace — audit tools live in OBSERVABILITY
-		frozenSchemaVersion  = 29 // v29 = sdd_evaluations audit_anchor (T10)
+		frozenToolCount      = 60 // 59 (alpha.19+Chunk 8.5) + 1 from alpha.20 Chunk 8.4 (prograph_query)
+		frozenNamespaceCount = 17 // no new namespace — prograph_query lives in AGENT_MEMORY
+		frozenSchemaVersion  = 29 // v29 = sdd_evaluations audit_anchor (T10); Chunk 8.4 does not bump schema
 	)
 
 	if got := len(CanonicalOrder()); got != frozenToolCount {

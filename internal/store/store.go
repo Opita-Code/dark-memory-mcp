@@ -638,6 +638,26 @@ type Store interface {
 	// v2.9.0 PR-3.
 	GetAgentMemoryEntities(ctx context.Context, memID int64) ([]agentmemory.Entity, error)
 
+	// ListAgentMemoryByAnyEntity returns the deduped list of
+	// mem_ids (in the active project) whose entity list contains
+	// at least one of the given values (OR semantics, case-insensitive
+	// — stored entities are already lowercase per internal/entity).
+	// Returns (nil, nil) when entityValues is empty or no row
+	// matches; callers do not need to treat that as an error.
+	//
+	// The result is sorted by mem_id ASC for determinism
+	// (ProGraph BFS relies on a stable order to avoid cycle
+	// surprises — see internal/recall/prograph.go MultiHopRetrieve).
+	// Cross-project isolation: only rows in the active project
+	// (per ActiveProject()) are returned; rows from other projects
+	// are filtered at the SQL layer.
+	//
+	// Phase 9 alpha.20 Chunk 8.4 (ProGraph 2-layer entity
+	// extraction, ADR-015). v3 applyEntityFilter applies AND
+	// semantics; this method is the OR-semantics complement that
+	// ProGraph needs to expand the BFS frontier.
+	ListAgentMemoryByAnyEntity(ctx context.Context, entityValues []string) ([]int64, error)
+
 	// GetAgentMemory returns the row by id, enforcing project
 	// isolation (INV-7): a row from a different project returns
 	// (nil, nil) — same as "not found" — to avoid leaking existence.

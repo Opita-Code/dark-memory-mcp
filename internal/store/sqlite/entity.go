@@ -22,6 +22,7 @@ package sqlite
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/agentmemory"
@@ -173,6 +174,100 @@ func (s *Store) loadEntitiesForMemIDs(ctx context.Context, memIDs []int64) (map[
 		rows.Close()
 		if err := rows.Err(); err != nil {
 			return nil, fmt.Errorf("agent_memory_entities: bulk rows: %w", err)
+		}
+	}
+	return out, nil
+}
+
+// ListAgentMemoryByAnyEntity returns the deduped mem_id list (in the
+// active project) whose entity list contains at least one of the
+// given values (OR semantics, case-insensitive — stored entities
+// are already lowercase per the Save path at store.go:4392 which
+// ToLower-insents before INSERT). The result is sorted by mem_id
+// ASC for determinism (ProGraph BFS depends on a stable frontier
+// expansion order — see internal/recall/prograph.go MultiHopRetrieve).
+//
+// Chunked at 200 placeholders per query to stay safely under SQLite's
+// default MAX_VARIABLE_NUMBER (999).
+//
+// Phase 9 alpha.20 Chunk 8.4 (ProGraph 2-layer entity extraction,
+// ADR-015). The complement to applyEntityFilter (AND semantics) for
+// the ProGraph BFS frontier expansion. Returns (nil, nil) for empty
+// input or no match — callers do not treat that as an error.
+//
+// Cross-project isolation: filters rows via JOIN on agent_memory
+// project_id = active project. Rows from other projects never leak
+// (INV-7).
+func (s *Store) ListAgentMemoryByAnyEntity(ctx context.Context, entityValues []string) ([]int64, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	if len(entityValues) == 0 {
+		return nil, nil
+	}
+	// Lowercase + dedup + trim the input. Stored entities are
+	// already lowercase but the input may carry any case.
+	seen := map[string]struct{}{}
+	values := make([]string, 0, len(entityValues))
+	for _, v := range entityValues {
+		v = strings.ToLower(strings.TrimSpace(v))
+		if v == "" {
+			continue
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		values = append(values, v)
+	}
+	if len(values) == 0 {
+		return nil, nil
+	}
+	// sort for determinism (chunk iteration order must be stable)
+	// and to keep the chunk composition reproducible across runs.
+	sort.Strings(values)
+
+	out := make([]int64, 0)
+	seenRows := map[int64]struct{}{}
+	const chunkSize = 200
+	for start := 0; start < len(values); start += chunkSize {
+		end := start + chunkSize
+		if end > len(values) {
+			end = len(values)
+		}
+		chunk := values[start:end]
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(chunk)), ",")
+		args := make([]any, 0, len(chunk)+1)
+		for _, v := range chunk {
+			args = append(args, v)
+		}
+		args = append(args, s.ActiveProject())
+		query := fmt.Sprintf(`
+			SELECT DISTINCT ent.mem_id
+			  FROM agent_memory_entities ent
+			  JOIN agent_memory        row ON row.id = ent.mem_id
+			 WHERE ent.entity IN (%s)
+			   AND row.project_id = ?
+			 ORDER BY ent.mem_id ASC`, placeholders)
+		rows, err := s.db.QueryContext(ctx, query, args...)
+		if err != nil {
+			return nil, fmt.Errorf("agent_memory_entities by-any-entity: query: %w", err)
+		}
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("agent_memory_entities by-any-entity: scan: %w", err)
+			}
+			if _, ok := seenRows[id]; ok {
+				continue
+			}
+			seenRows[id] = struct{}{}
+			out = append(out, id)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("agent_memory_entities by-any-entity: rows: %w", err)
 		}
 	}
 	return out, nil

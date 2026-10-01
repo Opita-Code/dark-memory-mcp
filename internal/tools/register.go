@@ -103,6 +103,13 @@ func RegisterAllWithDeps(reg *Registry, orch *orchestration.Orchestrator, st sto
 	// archive; read paths: list/get/recall). Positioned between CONTEXT
 	// and MINDSET per spec D-12 / BRIDGE_AND_COEXISTENCE.md §3.
 	RegisterAgentMemory(reg, orch, st)
+	// Phase 9 alpha.20 Chunk 8.4: prograph_query lives in AGENT_MEMORY
+	// (semantic sibling of agent_memory_recall — both are recall-shape
+	// tools). ADR-015 2-layer entity extraction BFS. RegisterPrograph
+	// returns an error only for nil reg/st; both are checked at boot.
+	if err := RegisterPrograph(reg, st); err != nil {
+		return nil, fmt.Errorf("tools: RegisterAll: RegisterPrograph: %w", err)
+	}
 	// MINDSET (1) — v2.7.0-alpha. Procedural composition with
 	// judge-validated subagent system prompts. Uses agent_memory
 	// rows as TTL cache (kind=context, tags=mindset-cache, expires_at

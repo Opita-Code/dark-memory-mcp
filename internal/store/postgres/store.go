@@ -409,6 +409,26 @@ func (s *Store) GetAgentMemoryEntities(ctx context.Context, memID int64) ([]agen
 	return out, nil
 }
 
+// ListAgentMemoryByAnyEntity returns the deduped mem_id list (in the
+// active project) whose entity list contains at least one of the
+// given values (OR semantics, case-insensitive). Postgres stub —
+// returns notImpl until the entity-side-table migration lands
+// (mirrors the GetAgentMemoryEntities parity noted in row 160 PR-3
+// cross-cutting). When the table is created in v24+ this dispatches
+// to the same SQL as sqlite (parameterized IN list).
+//
+// Phase 9 alpha.20 Chunk 8.4 (ProGraph 2-layer entity extraction,
+// ADR-015).
+func (s *Store) ListAgentMemoryByAnyEntity(ctx context.Context, entityValues []string) ([]int64, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	if len(entityValues) == 0 {
+		return nil, nil
+	}
+	return nil, notImpl("ListAgentMemoryByAnyEntity")
+}
+
 func (s *Store) runMigrations(ctx context.Context) error {
 	// Use pgx's connection to run migrations (raw exec).
 	conn, err := s.pool.Acquire(ctx)

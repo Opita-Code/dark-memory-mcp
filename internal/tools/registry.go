@@ -232,7 +232,7 @@ type NamespaceGroup struct {
 //		AGENT_BOOTSTRAP  (3)  - bootstrap, recommend_companions, detect_environment (v2.6.0)
 //		VIBE             (4)  - publish, spec, pipeline_status, resolve_drift
 //		CONTEXT          (4)  - artifact_context, spec_context, session_context, recall
-//		AGENT_MEMORY     (10) - save, list, recall, get, update, archive, delegate, entities, subagent_register, subagent_unregister (v2.1.0 + v2.3.0 + v2.9.3)
+//		AGENT_MEMORY     (11) - save, list, recall, get, update, archive, delegate, entities, subagent_register, subagent_unregister, prograph_query (v2.1.0 + v2.3.0 + v2.9.3 + v4.0.0-alpha.20 Chunk 8.4)
 //		MINDSET          (1)  - mindset_apply                        (v2.7.0-alpha, procedural + judge-validated)
 //		DELEGATION       (1)  - delegate_intent                      (Wave 5C, A1: handle/delegate/refuse)
 //		JUDGE            (3)  - judge, consensus, judgment_history
@@ -313,9 +313,13 @@ var canonicalNamespaces = []NamespaceGroup{
 		// v2.9.3 added agent_memory_delegate (prepares a delegation context
 		// for sub-agent spawns; registers the C2 binding + returns the
 		// ready-to-inject markdown block).
+		// v4.0.0-alpha.20 Chunk 8.4 added prograph_query (ADR-015 2-layer
+		// entity extraction BFS — returns rows that share at least one
+		// entity with the BM25 seeds, up to depth=2 hops). Sits next to
+		// agent_memory_recall because it's a recall-shape tool.
 		Name: "AGENT_MEMORY",
 		Tools: []string{
-			"agent_memory_save", "agent_memory_list", "agent_memory_recall", "agent_memory_get", "agent_memory_update", "agent_memory_archive", "agent_memory_delegate", "agent_memory_entities", "subagent_register", "subagent_unregister",
+			"agent_memory_save", "agent_memory_list", "agent_memory_recall", "agent_memory_get", "agent_memory_update", "agent_memory_archive", "agent_memory_delegate", "agent_memory_entities", "subagent_register", "subagent_unregister", "prograph_query",
 		},
 	},
 	{
