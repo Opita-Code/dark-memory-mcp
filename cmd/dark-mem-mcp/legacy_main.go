@@ -19,6 +19,7 @@ import (
 	"os/signal"
 	"runtime/debug"
 	"syscall"
+	"time"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/drift"
 	"github.com/dark-agents/dark-memory-mcp/internal/embedder"
@@ -49,6 +50,20 @@ func legacyMain() {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
+
+	// Phase 10 Chunk 10.1: file-flag reload watcher (Windows-compatible
+	// equivalent of SIGHUP). SIGHUP doesn't exist on Windows; instead
+	// the operator (or a deploy script) touches <exe>.reload in the
+	// binary's directory. The watcher polls every 2s, sees the flag,
+	// removes it, and calls cancel() to trigger graceful shutdown.
+	// The harness (opencode) then respawns the binary at the canonical
+	// path — which is the freshly atomic-renamed version. Per the
+	// Phase 10 deploy doc (docs/deploy-mcp-binary.md), the full
+	// deploy cycle is: build → rename → touch flag → wait → verify.
+	// The watcher's poll cost is one os.Stat per 2s (~10us); the
+	// pre-existing 30s sweeper tick dominates the boot loop's
+	// overhead so this is in the noise.
+	go watchReloadFlag(ctx, cancel)
 
 	srv, err := server.New(ctx)
 	if err != nil {
@@ -257,4 +272,57 @@ func runStartupRecoverLegacy(ctx context.Context, orch *orchestration.Orchestrat
 		return
 	}
 	_ = resOut // suppress unused warning
+}
+
+// watchReloadFlag polls for a flag file at <exe>.reload every 2s
+// and triggers graceful shutdown when it appears. This is the
+// Phase 10 Chunk 10.1 Windows-compatible equivalent of a SIGHUP
+// graceful re-exec — SIGHUP doesn't exist on Windows, so we use a
+// filesystem sentinel instead.
+//
+// The deploy procedure (docs/deploy-mcp-binary.md §3) is:
+//
+//  1. Build new binary as `bin/dark-mem-mcp.exe.new`.
+//  2. Atomic rename: `bin/dark-mem-mcp.exe` → `bin/dark-mem-mcp.exe.bak-<ts>`,
+//     then `bin/dark-mem-mcp.exe.new` → `bin/dark-mem-mcp.exe`.
+//  3. Touch `bin/dark-mem-mcp.exe.reload`.
+//  4. Within 2s, the watcher sees the flag, removes it, and calls
+//     cancel() — the existing SIGINT/SIGTERM handler runs and
+//     dark-mem-mcp exits gracefully.
+//  5. The opencode harness respawns the binary at the canonical
+//     path. The new binary is the freshly-renamed version. Total
+//     disconnect window: 2s (poll interval) + ~3s (boot) = ~5s.
+//
+// The watcher is idempotent (the os.Remove on the flag is best-
+// effort; a duplicate touch is harmless). The 2s poll is the
+// minimum that gives the operator a reasonable deploy latency
+// without measurable CPU overhead (one os.Stat per 2s ≈ 10µs,
+// dwarfed by the 30s sweeper tick).
+func watchReloadFlag(ctx context.Context, cancel context.CancelFunc) {
+	exe, err := os.Executable()
+	if err != nil {
+		// os.Executable failed — fall back to ARGV[0].
+		exe = os.Args[0]
+	}
+	flagPath := exe + ".reload"
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if _, statErr := os.Stat(flagPath); statErr == nil {
+				fmt.Fprintf(os.Stderr,
+					"dark-mem-mcp: reload flag %s found, triggering graceful shutdown for harness respawn\n",
+					flagPath)
+				// Best-effort flag cleanup. If Remove fails, a
+				// second deploy will see the same flag and
+				// self-trigger — annoying but harmless.
+				_ = os.Remove(flagPath)
+				cancel()
+				return
+			}
+		}
+	}
 }
