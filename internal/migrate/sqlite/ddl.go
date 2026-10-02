@@ -1298,4 +1298,164 @@ CREATE INDEX IF NOT EXISTS idx_sdd_eval_merkle_root
   ON sdd_evaluations (merkle_root);
 `,
 	},
+	{
+		// v30 — Phase 5 schema port to production (alpha.20 Chunk 8.7
+		// operator decision B).
+		//
+		// Ports the v4alpha Phase 5 memory subsystem extensions (R-B through R-F
+		// per SPEC-alpha-11-phase5.md §4.1) from internal/v4alpha/recall/schema.go
+		// (test-only until this chunk) into the production migration system so
+		// dark.db applies them at boot, not just in v4alpha tests.
+		//
+		// SCOPE — additive only, NEVER destructive:
+		//   1. 19 new columns on agent_memory (skipping `embedding` which
+		//      was already added in a prior migration):
+		//        R-B §4 I-2 cross-modal embeddings (5 cols: embedding_model,
+		//          embedding_dim, embedding_created_at, vibe_case, voice_embed_kind)
+		//        R-C §4 I-1 temporal decay (5 cols: decay_class, decay_tau_days,
+		//          last_refreshed_at, access_count, refresh_on_access)
+		//        R-E §4 I-3 code refs (3 cols: adr_refs, inv_refs, commit_hashes)
+		//        R-D §4 I-2 graph residuals (1 col: extracted_residuals)
+		//        R-F §4 I-2 decision subsystem (5 cols: rationale, supersedes_id,
+		//          decision_state, valid_from, valid_to)
+		//   2. 2 new tables: agent_memory_links (CABLE sparse directed links),
+		//      decision_transitions (TokenMizer-style supersession history).
+		//      agent_memory_entities is NOT touched — v24 schema already
+		//      exists and production code (Chunk 8.4) reads/writes the v24
+		//      column layout (mem_id, entity, source, confidence, model,
+		//      created_at). Changing it would break Chunk 8.4.
+		//   3. 7 new indexes: 5 for the new Phase 5 query paths + 2 for
+		//      agent_memory_links / decision_transitions FK lookups.
+		//
+		// IDEMPOTENCY: relies on F37 ("duplicate column name" / "column X
+		// already exists" tolerance) in migrate.go:259-269. ALTER TABLE ADD
+		// COLUMN on a column that already exists is a no-op via F37
+		// tolerance — safe to re-run on databases that may have already
+		// received partial schema additions from v4alpha tests.
+		//
+		// BACKWARD COMPAT: every new column is nullable or has a safe
+		// DEFAULT (decision_state DEFAULT 'active', refresh_on_access
+		// DEFAULT 1, access_count DEFAULT 0). Pre-Phase-5 rows have NULL
+		// in the new fields and behave identically to Phase 5 rows with
+		// NULL = "unclassified".
+		//
+		// Reference: internal/v4alpha/recall/schema.go:90-167 — the canonical
+		// list. This migration is a SUPERSET-LITE (we skip `embedding` and
+		// entity_kind/project_id columns on agent_memory_entities that
+		// production doesn't read). LUCIDEZ honest disclosure: any future
+		// v4alpha consumer that needs `entity_kind` will need a v32 migration
+		// to ADD COLUMN entity_kind TEXT on agent_memory_entities.
+		Version: 30,
+		Name:    "phase5_port_to_production",
+		Up: `
+-- R-B §4 I-2: cross-modal embeddings (5 of 6; embedding BLOB exists at v25).
+ALTER TABLE agent_memory ADD COLUMN embedding_model      TEXT;
+ALTER TABLE agent_memory ADD COLUMN embedding_dim        INTEGER;
+ALTER TABLE agent_memory ADD COLUMN embedding_created_at TEXT;
+ALTER TABLE agent_memory ADD COLUMN vibe_case            TEXT;
+ALTER TABLE agent_memory ADD COLUMN voice_embed_kind     TEXT;
+-- R-C §4 I-1: temporal decay (ScrubJay-MEM π_i + τ_i).
+ALTER TABLE agent_memory ADD COLUMN decay_class         TEXT;
+ALTER TABLE agent_memory ADD COLUMN decay_tau_days      INTEGER;
+ALTER TABLE agent_memory ADD COLUMN last_refreshed_at   TEXT;
+ALTER TABLE agent_memory ADD COLUMN access_count         INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE agent_memory ADD COLUMN refresh_on_access   INTEGER NOT NULL DEFAULT 1;
+-- R-E §4 I-3: code-specific refs (C1 ADR/INV/commit hash graph).
+ALTER TABLE agent_memory ADD COLUMN adr_refs      TEXT;
+ALTER TABLE agent_memory ADD COLUMN inv_refs      TEXT;
+ALTER TABLE agent_memory ADD COLUMN commit_hashes TEXT;
+-- R-D §4 I-2: ProGraph 2-layer graph residuals.
+ALTER TABLE agent_memory ADD COLUMN extracted_residuals TEXT;
+-- R-F §4 I-2: decision subsystem (rationale + supersession chain).
+ALTER TABLE agent_memory ADD COLUMN rationale       TEXT;
+ALTER TABLE agent_memory ADD COLUMN supersedes_id   INTEGER;
+ALTER TABLE agent_memory ADD COLUMN decision_state  TEXT NOT NULL DEFAULT 'active';
+ALTER TABLE agent_memory ADD COLUMN valid_from      TEXT;
+ALTER TABLE agent_memory ADD COLUMN valid_to        TEXT;
+
+-- CABLE sparse directed links (R-D §4 I-3).
+CREATE TABLE IF NOT EXISTS agent_memory_links (
+    source_id  INTEGER NOT NULL REFERENCES agent_memory(id) ON DELETE CASCADE,
+    target_id  INTEGER NOT NULL REFERENCES agent_memory(id) ON DELETE CASCADE,
+    kind       TEXT    NOT NULL,
+    weight     REAL    NOT NULL DEFAULT 1.0,
+    created_at TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    project_id TEXT    NOT NULL DEFAULT 'default',
+    PRIMARY KEY (source_id, target_id, kind)
+);
+-- TokenMizer-style supersession transitions (R-F §4 I-2).
+CREATE TABLE IF NOT EXISTS decision_transitions (
+    transition_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    decision_id   INTEGER NOT NULL REFERENCES agent_memory(id) ON DELETE CASCADE,
+    superseded_id INTEGER REFERENCES agent_memory(id) ON DELETE SET NULL,
+    trigger       TEXT    NOT NULL,
+    reason        TEXT    NOT NULL,
+    evidence      TEXT,
+    created_at    TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    project_id    TEXT    NOT NULL DEFAULT 'default'
+);
+
+-- R-B §4 I-2: embedder metadata lookup.
+CREATE INDEX IF NOT EXISTS idx_embedding_model ON agent_memory(embedding_model);
+-- v4alpha RecallFor dispatch index (recall.go:230 routes by vibe_case).
+CREATE INDEX IF NOT EXISTS idx_vibe_case       ON agent_memory(vibe_case);
+-- R-E §4 I-3: C1 code retrieval graph expansion.
+CREATE INDEX IF NOT EXISTS idx_adr_refs        ON agent_memory(adr_refs);
+CREATE INDEX IF NOT EXISTS idx_inv_refs        ON agent_memory(inv_refs);
+-- R-F §4 I-2: supersession chain lookup.
+CREATE INDEX IF NOT EXISTS idx_decision_state   ON agent_memory(decision_state, valid_to);
+CREATE INDEX IF NOT EXISTS idx_valid_from      ON agent_memory(valid_from);
+-- CABLE link traversal (R-D §4 I-3).
+CREATE INDEX IF NOT EXISTS idx_link_source     ON agent_memory_links(source_id);
+CREATE INDEX IF NOT EXISTS idx_link_target     ON agent_memory_links(target_id);
+-- TokenMizer transition history (R-F §4 I-2).
+CREATE INDEX IF NOT EXISTS idx_dt_decision     ON decision_transitions(decision_id);
+CREATE INDEX IF NOT EXISTS idx_dt_superseded   ON decision_transitions(superseded_id);
+`,
+	},
+	{
+		// v31 — lite bitemporal (alpha.20 Chunk 8.7 SPEC §3.7).
+		//
+		// Adds two NOT NULL columns on agent_memory:
+		//   transaction_time — write clock (when dark-memory saved the row)
+		//   valid_time       — semantic clock (when the fact became true
+		//                      in the operator's domain; defaults to NOW
+		//                      if caller doesn't pass a ValidTime override)
+		//
+		// Backward compat: DEFAULT CURRENT_TIMESTAMP means future rows get
+		// NOW without a code change. Existing rows get NULL initially (the
+		// ADD COLUMN is nullable) — production queries MUST COALESCE against
+		// created_at when transaction_time is NULL. This is the correct
+		// semantic: pre-v31 rows have no separate transaction_time (their
+		// created_at IS their transaction_time by definition).
+		//
+		// We deliberately do NOT make these NOT NULL via re-ALTER: SQLite
+		// cannot do ALTER TABLE ... ALTER COLUMN ... SET NOT NULL (would
+		// require table rebuild). Keeping them NULLABLE with code-side
+		// COALESCE(created_at, transaction_time) is the right tradeoff —
+		// see internal/store/sqlite/bitemporal.go for the read pattern.
+		//
+		// The two indexes support the two time-travel axes:
+		//   idx_transaction_time — for "rows written before T" queries
+		//   idx_valid_time       — for RecallAtTime(t) and forward-chaining
+		//                          "what did I know at time t" semantics
+		//
+		// Reference: SPEC-alpha-11-phase8.md §3.7 Chunk 8.7 Bitemporal
+		// (ADR-014). Operator decision B (2026-10-01): Phase 5 port + lite
+		// bitemporal.
+		Version: 31,
+		Name:    "bitemporal_lite",
+		Up: `
+ALTER TABLE agent_memory ADD COLUMN transaction_time TEXT;
+ALTER TABLE agent_memory ADD COLUMN valid_time       TEXT;
+-- Backfill pre-v31 rows: transaction_time defaults to created_at;
+-- valid_time defaults to created_at (most conservative — the fact was
+-- known to dark-memory at the same time the row was saved, since we
+-- have no better signal).
+UPDATE agent_memory SET transaction_time = created_at WHERE transaction_time IS NULL;
+UPDATE agent_memory SET valid_time       = created_at WHERE valid_time       IS NULL;
+CREATE INDEX IF NOT EXISTS idx_transaction_time ON agent_memory(transaction_time);
+CREATE INDEX IF NOT EXISTS idx_valid_time       ON agent_memory(valid_time);
+`,
+	},
 }

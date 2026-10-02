@@ -159,6 +159,20 @@ type AgentMemory struct {
 	UpdatedAt  string `json:"updated_at"`
 	ArchivedAt string `json:"archived_at,omitempty"`
 	ExpiresAt  string `json:"expires_at,omitempty"`
+
+	// TransactionTime is the bitemporal write clock (alpha.20 Chunk
+	// 8.7, ADR-014 lite). RFC3339Nano; set by Store.SaveAgentMemory
+	// to the same wall-clock as CreatedAt (they're aliases for now;
+	// future revisions may diverge). Empty when the row predates
+	// schema v31 — readers must COALESCE against CreatedAt.
+	TransactionTime string `json:"transaction_time,omitempty"`
+
+	// ValidTime is the bitemporal semantic clock — when the
+	// underlying fact became true in the operator's domain. Defaults
+	// to CreatedAt at Save time; operators can rewrite it via
+	// UpdateAgentMemory to back-date a fact ("this was true as of
+	// 2024-01"). Empty when the row predates schema v31.
+	ValidTime string `json:"valid_time,omitempty"`
 	// QuarantinedUntil is reserved for v2.5.0 (memory-poisoning
 	// defenses, zylos.ai 2026-04-05 §6). v2.3.0 schema does NOT
 	// include this column; the field always returns "". Carried

@@ -754,4 +754,81 @@ CREATE INDEX IF NOT EXISTS idx_sdd_eval_merkle_root
   ON sdd_evaluations (merkle_root);
 `,
 	},
+	{
+		// v30 — Phase 5 schema port to production (alpha.20 Chunk 8.7
+		// operator decision B). PostgreSQL variant of the SQLite migration.
+		//
+		// PostgreSQL supports ADD COLUMN IF NOT EXISTS natively (no F37
+		// tolerance needed). All 19 columns + 2 tables + 7 indexes are
+		// idempotent on re-run. Phase 5 schema additions follow the
+		// canonical list in internal/v4alpha/recall/schema.go:90-167.
+		Version: 30,
+		Name:    "phase5_port_to_production",
+		Up: `
+ALTER TABLE agent_memory ADD COLUMN IF NOT EXISTS embedding_model      TEXT;
+ALTER TABLE agent_memory ADD COLUMN IF NOT EXISTS embedding_dim        INTEGER;
+ALTER TABLE agent_memory ADD COLUMN IF NOT EXISTS embedding_created_at TEXT;
+ALTER TABLE agent_memory ADD COLUMN IF NOT EXISTS vibe_case            TEXT;
+ALTER TABLE agent_memory ADD COLUMN IF NOT EXISTS voice_embed_kind     TEXT;
+ALTER TABLE agent_memory ADD COLUMN IF NOT EXISTS decay_class         TEXT;
+ALTER TABLE agent_memory ADD COLUMN IF NOT EXISTS decay_tau_days      INTEGER;
+ALTER TABLE agent_memory ADD COLUMN IF NOT EXISTS last_refreshed_at   TEXT;
+ALTER TABLE agent_memory ADD COLUMN IF NOT EXISTS access_count         INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE agent_memory ADD COLUMN IF NOT EXISTS refresh_on_access   INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE agent_memory ADD COLUMN IF NOT EXISTS adr_refs            TEXT;
+ALTER TABLE agent_memory ADD COLUMN IF NOT EXISTS inv_refs            TEXT;
+ALTER TABLE agent_memory ADD COLUMN IF NOT EXISTS commit_hashes       TEXT;
+ALTER TABLE agent_memory ADD COLUMN IF NOT EXISTS extracted_residuals TEXT;
+ALTER TABLE agent_memory ADD COLUMN IF NOT EXISTS rationale           TEXT;
+ALTER TABLE agent_memory ADD COLUMN IF NOT EXISTS supersedes_id       BIGINT;
+ALTER TABLE agent_memory ADD COLUMN IF NOT EXISTS decision_state      TEXT NOT NULL DEFAULT 'active';
+ALTER TABLE agent_memory ADD COLUMN IF NOT EXISTS valid_from          TEXT;
+ALTER TABLE agent_memory ADD COLUMN IF NOT EXISTS valid_to            TEXT;
+
+CREATE TABLE IF NOT EXISTS agent_memory_links (
+    source_id  BIGINT  NOT NULL REFERENCES agent_memory(id) ON DELETE CASCADE,
+    target_id  BIGINT  NOT NULL REFERENCES agent_memory(id) ON DELETE CASCADE,
+    kind       TEXT    NOT NULL,
+    weight     DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    project_id TEXT    NOT NULL DEFAULT 'default',
+    PRIMARY KEY (source_id, target_id, kind)
+);
+CREATE TABLE IF NOT EXISTS decision_transitions (
+    transition_id BIGSERIAL PRIMARY KEY,
+    decision_id   BIGINT  NOT NULL REFERENCES agent_memory(id) ON DELETE CASCADE,
+    superseded_id BIGINT  REFERENCES agent_memory(id) ON DELETE SET NULL,
+    trigger       TEXT    NOT NULL,
+    reason        TEXT    NOT NULL,
+    evidence      TEXT,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    project_id    TEXT    NOT NULL DEFAULT 'default'
+);
+
+CREATE INDEX IF NOT EXISTS idx_embedding_model  ON agent_memory(embedding_model);
+CREATE INDEX IF NOT EXISTS idx_vibe_case        ON agent_memory(vibe_case);
+CREATE INDEX IF NOT EXISTS idx_adr_refs         ON agent_memory(adr_refs);
+CREATE INDEX IF NOT EXISTS idx_inv_refs         ON agent_memory(inv_refs);
+CREATE INDEX IF NOT EXISTS idx_decision_state   ON agent_memory(decision_state, valid_to);
+CREATE INDEX IF NOT EXISTS idx_valid_from       ON agent_memory(valid_from);
+CREATE INDEX IF NOT EXISTS idx_link_source      ON agent_memory_links(source_id);
+CREATE INDEX IF NOT EXISTS idx_link_target      ON agent_memory_links(target_id);
+CREATE INDEX IF NOT EXISTS idx_dt_decision      ON decision_transitions(decision_id);
+CREATE INDEX IF NOT EXISTS idx_dt_superseded    ON decision_transitions(superseded_id);
+`,
+	},
+	{
+		// v31 — lite bitemporal (alpha.20 Chunk 8.7 SPEC §3.7).
+		// PostgreSQL variant of the SQLite migration.
+		Version: 31,
+		Name:    "bitemporal_lite",
+		Up: `
+ALTER TABLE agent_memory ADD COLUMN IF NOT EXISTS transaction_time TEXT;
+ALTER TABLE agent_memory ADD COLUMN IF NOT EXISTS valid_time       TEXT;
+UPDATE agent_memory SET transaction_time = created_at WHERE transaction_time IS NULL;
+UPDATE agent_memory SET valid_time       = created_at WHERE valid_time       IS NULL;
+CREATE INDEX IF NOT EXISTS idx_transaction_time ON agent_memory(transaction_time);
+CREATE INDEX IF NOT EXISTS idx_valid_time       ON agent_memory(valid_time);
+`,
+	},
 }

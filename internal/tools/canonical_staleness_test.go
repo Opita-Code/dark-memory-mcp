@@ -109,9 +109,9 @@ func TestCanonicalOrder_WirePrefixConsistent(t *testing.T) {
 	}
 }
 
-// TestCanonicalOrder_Frozen_60_17_29 (SPEC 1270, lock 2026-08-18):
-// the canonical surface is FROZEN at 60 tools across 17 namespaces
-// with schema v29. This test is the regression gate: any addition,
+// TestCanonicalOrder_Frozen_62_17_31 (SPEC 1270, lock 2026-08-18):
+// the canonical surface is FROZEN at 62 tools across 17 namespaces
+// with schema v31. This test is the regression gate: any addition,
 // removal, or rename that shifts these numbers fails until an ADR +
 // minor bump is filed (see ARCHITECTURE.md §Tools surface). The
 // expected values are read from runtime (CanonicalOrder(),
@@ -119,15 +119,16 @@ func TestCanonicalOrder_WirePrefixConsistent(t *testing.T) {
 // self-validating; the constants below are what the freeze DOCUMENTS,
 // not what it checks.
 //
-// Bumping 59 → 60 (alpha.20 Chunk 8.4): adds prograph_query to
-// AGENT_MEMORY (ADR-015 2-layer entity extraction BFS). The
-// namespace count stays 17 — prograph_query lives in AGENT_MEMORY
-// next to agent_memory_recall (its semantic sibling).
+// Bumping 60 → 62 (alpha.20 Chunk 8.7): adds mark_superseded +
+// recall_bitemporal to AGENT_MEMORY (ADR-014 lite bitemporal). The
+// namespace count stays 17 — both tools live in AGENT_MEMORY. Schema
+// bumps v29 → v31 (v30 = Phase 5 port, v31 = bitemporal_lite
+// transaction_time + valid_time columns).
 func TestCanonicalOrder_Frozen_57_17_28(t *testing.T) {
 	const (
-		frozenToolCount      = 60 // 59 (alpha.19+Chunk 8.5) + 1 from alpha.20 Chunk 8.4 (prograph_query)
-		frozenNamespaceCount = 17 // no new namespace — prograph_query lives in AGENT_MEMORY
-		frozenSchemaVersion  = 29 // v29 = sdd_evaluations audit_anchor (T10); Chunk 8.4 does not bump schema
+		frozenToolCount      = 62 // 60 (alpha.20 Chunk 8.4) + 2 from alpha.20 Chunk 8.7 (mark_superseded + recall_bitemporal)
+		frozenNamespaceCount = 17 // no new namespace — both tools live in AGENT_MEMORY
+		frozenSchemaVersion  = 31 // v31 = bitemporal_lite (v29 base + v30 Phase 5 port + v31 bitemporal)
 	)
 
 	if got := len(CanonicalOrder()); got != frozenToolCount {

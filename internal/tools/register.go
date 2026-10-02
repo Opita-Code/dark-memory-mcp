@@ -110,6 +110,15 @@ func RegisterAllWithDeps(reg *Registry, orch *orchestration.Orchestrator, st sto
 	if err := RegisterPrograph(reg, st); err != nil {
 		return nil, fmt.Errorf("tools: RegisterAll: RegisterPrograph: %w", err)
 	}
+	// Phase 9 alpha.20 Chunk 8.7: mark_superseded + recall_bitemporal
+	// also sit in AGENT_MEMORY (sibling of prograph_query — all three
+	// are alpha.20 recall-shape tools). ADR-014 lite bitemporal:
+	// supersession transitions + as-of time-travel query. Both tools
+	// unconditionally registered (canonical surface requirement,
+	// mirrors Chunk 8.4 + 8.5 conventions).
+	if err := RegisterBitemporal(reg, st); err != nil {
+		return nil, fmt.Errorf("tools: RegisterAll: RegisterBitemporal: %w", err)
+	}
 	// MINDSET (1) — v2.7.0-alpha. Procedural composition with
 	// judge-validated subagent system prompts. Uses agent_memory
 	// rows as TTL cache (kind=context, tags=mindset-cache, expires_at

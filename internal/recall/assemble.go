@@ -94,7 +94,7 @@ const DefaultToolGrants = "project_create," + // PROJECT (1)
 	"agent_bootstrap,agent_recommend_companions,agent_detect_environment," + // AGENT_BOOTSTRAP (3) — v2.6.0
 	"vibe_publish,vibe_spec,pipeline_status,resolve_drift," + // VIBE (4)
 	"artifact_context,spec_context,session_context,recall," + // CONTEXT (4)
-	"agent_memory_save,agent_memory_list,agent_memory_recall,agent_memory_get,agent_memory_update,agent_memory_archive,agent_memory_delegate,agent_memory_entities,subagent_register,subagent_unregister,prograph_query," + // AGENT_MEMORY (11) — v2.1.0 (5) + v2.3.0 (1: recall) + v2.8.0-alpha C2 (2: subagent register/unregister) + v2.9.0-alpha PR-3 (1: entities) + v2.9.3 (1: delegate) + v4.0.0-alpha.20 Chunk 8.4 (1: prograph_query)
+	"agent_memory_save,agent_memory_list,agent_memory_recall,agent_memory_get,agent_memory_update,agent_memory_archive,agent_memory_delegate,agent_memory_entities,subagent_register,subagent_unregister,prograph_query,mark_superseded,recall_bitemporal," + // AGENT_MEMORY (13) — v2.1.0 (5) + v2.3.0 (1: recall) + v2.8.0-alpha C2 (2: subagent register/unregister) + v2.9.0-alpha PR-3 (1: entities) + v2.9.3 (1: delegate) + v4.0.0-alpha.20 Chunk 8.4 (1: prograph_query) + Chunk 8.7 (2: mark_superseded + recall_bitemporal)
 	"mindset_apply," + // MINDSET (1) — v2.7.0-alpha
 	"delegate_intent," + // DELEGATION (1) — Wave 5C (A1: handle/delegate/refuse)
 	"llm_key_add,llm_key_list,llm_key_remove,llm_provider_status," + // LLM_CONFIG (4) — v2.20.0 (spec 1188 T7: OS-keyring LLM key management + routing status)

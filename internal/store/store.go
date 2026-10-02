@@ -125,6 +125,15 @@ var (
 	ErrNotFound          = errors.New("store: row not found")
 	ErrProjectNotFound   = errors.New("store: project not found")
 	ErrInvalidArgument   = errors.New("store: invalid argument")
+	// ErrInvalidSupersession is returned by MarkSupersededAgentMemory
+	// when the input violates the supersession contract: same id,
+	// cross-project, or non-existent rows. Wraps the underlying
+	// database/sql error so callers can errors.Is + errors.As.
+	//
+	// Phase 9 alpha.20 Chunk 8.7 Bitemporal (ADR-014). Companion to
+	// internal/v4alpha/recall.ErrInvalidSupersession but in the v3
+	// Store surface so MCP callers can reach it.
+	ErrInvalidSupersession = errors.New("store: invalid supersession")
 	// ErrCrossProjectAccess is returned by GetAgentMemory when the
 	// requested id exists in a different project than the active one
 	// (INV-7). Distinct from ErrNotFound: the row exists, but the
@@ -657,6 +666,50 @@ type Store interface {
 	// semantics; this method is the OR-semantics complement that
 	// ProGraph needs to expand the BFS frontier.
 	ListAgentMemoryByAnyEntity(ctx context.Context, entityValues []string) ([]int64, error)
+
+	// MarkSupersededAgentMemory wires one row's supersession onto
+	// another, in the same project, both of which must be
+	// kind=decision (R-F §4 I-2 TokenMizer-style transition record).
+	//
+	// Side effects (in a single tx):
+	//   1. UPDATE oldMemID: decision_state='superseded',
+	//      supersedes_id=newMemID, valid_to=validTime.
+	//   2. INSERT into decision_transitions: trigger+reason+evidence.
+	//   3. recordWriteLocked audit row (insert under Actor=MarkSuperseded).
+	//
+	// Defaults: trigger='operator_action' when empty; validTime=NOW
+	// (UTC RFC3339Nano) when empty.
+	//
+	// Returns ErrInvalidSupersession wrapped with the cause when:
+	//   - oldMemID == newMemID (cannot supersede self)
+	//   - either row is missing
+	//   - either row is not kind=decision
+	//   - cross-project supersession (INV-7)
+	//
+	// Phase 9 alpha.20 Chunk 8.7 Bitemporal (ADR-014). Companion to
+	// internal/v4alpha/recall.MarkSuperseded; the v4alpha variant
+	// worked only in test databases (recall.CreateSchema is test-only);
+	// this is the production-grade version exposed via MCP
+	// dark_memory_mark_superseded.
+	MarkSupersededAgentMemory(ctx context.Context, wc WriteContext, oldMemID, newMemID int64, trigger, reason, evidence, validTime string) error
+
+	// RecallAtTime returns rows whose valid_time <= t (bitemporal
+	// "as-of" query — what did I know at time t?). Cross-project
+	// isolation: only rows in the active project. Soft-deleted rows
+	// (archived_at IS NOT NULL) are excluded.
+	//
+	// Supersession semantics: a row with decision_state='superseded'
+	// is INCLUDED only if its valid_from <= t < valid_to+lenient (we
+	// use <= t for the active boundary and exclude rows where
+	// supersedes_id points to a row whose valid_from <= t — those
+	// were no longer "current" at time t). This is the simple form
+	// per ADR-014; full bitemporal is alpha.21+ territory.
+	//
+	// limit <= 0 → no limit (caller is responsible for result size).
+	// kind filter empty → all kinds.
+	//
+	// Phase 9 alpha.20 Chunk 8.7 Bitemporal (ADR-014).
+	RecallAtTime(ctx context.Context, t time.Time, kind string, limit int) ([]*agentmemory.AgentMemory, error)
 
 	// GetAgentMemory returns the row by id, enforcing project
 	// isolation (INV-7): a row from a different project returns

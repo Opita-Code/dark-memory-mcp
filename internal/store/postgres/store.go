@@ -429,6 +429,45 @@ func (s *Store) ListAgentMemoryByAnyEntity(ctx context.Context, entityValues []s
 	return nil, notImpl("ListAgentMemoryByAnyEntity")
 }
 
+// MarkSupersededAgentMemory is the postgres stub for the bitemporal
+// supersession primitive (alpha.20 Chunk 8.7, ADR-014). The schema
+// (decision_state, supersedes_id, valid_from, valid_to,
+// decision_transitions) lands via migration v30; the runtime follows
+// once the postgres-side validation + tx order matches the sqlite
+// implementation in internal/store/sqlite/bitemporal.go.
+//
+// Until then, MarkSupersededAgentMemory on postgres returns
+// notImpl so operators see the gap explicitly (rather than silently
+// succeeding). Cross-tool semantics — the v4alpha MarkSuperseded in
+// internal/v4alpha/recall/decay.go remains the working version for
+// v4alpha callers.
+func (s *Store) MarkSupersededAgentMemory(
+	ctx context.Context, wc store.WriteContext,
+	oldMemID, newMemID int64,
+	trigger, reason, evidence, validTime string,
+) error {
+	if err := s.requireProject(); err != nil {
+		return err
+	}
+	return notImpl("MarkSupersededAgentMemory")
+}
+
+// RecallAtTime is the postgres stub for the bitemporal "as-of" query
+// (alpha.20 Chunk 8.7). Mirrors the MarkSupersededAgentMemory
+// posture: schema lands in v30 (valid_time/decision_state columns +
+// decision_transitions table), runtime follows.
+//
+// Until then, RecallAtTime on postgres returns notImpl so callers see
+// the gap explicitly.
+func (s *Store) RecallAtTime(
+	ctx context.Context, t time.Time, kind string, limit int,
+) ([]*agentmemory.AgentMemory, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	return nil, notImpl("RecallAtTime")
+}
+
 func (s *Store) runMigrations(ctx context.Context) error {
 	// Use pgx's connection to run migrations (raw exec).
 	conn, err := s.pool.Acquire(ctx)

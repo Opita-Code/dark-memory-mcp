@@ -454,18 +454,30 @@ production paths).
 **Files** (estimado ~500 LoC + 15 tests):
 
 - `internal/store/bitemporal.go` NEW — schema migration
-  adds 2 NOT NULL columns to agent_memory
-  (transaction_time TEXT NOT NULL DEFAULT current_timestamp,
-  valid_time TEXT NOT NULL DEFAULT current_timestamp).
-- `internal/store/store.go` MODIFIED — `SaveFrame` /
-  `GetFrame` / `ListFrames` accept + return bitemporal
-  fields.
+  adds 2 columns to agent_memory
+  (transaction_time TEXT, valid_time TEXT).
+  LUCIDEZ honest disclosure (Chunk 8.7 commit c61977a1):
+  v31 columns are NULLABLE, not `NOT NULL` as this SPEC §3.7
+  originally stated. SQLite cannot do
+  `ALTER TABLE ALTER COLUMN SET NOT NULL` without a table
+  rebuild (would lock dark.db for minutes on 100k-row
+  tables). The implementation uses COALESCE on read
+  (`COALESCE(valid_time, created_at) <= ?`) — pre-v31
+  rows surface as `created_at` which is the semantically
+  correct fallback. PostgreSQL variant CAN enforce
+  NOT NULL; that's a v32 migration if Postgres parity
+  becomes the priority.
+- `internal/store/store.go` MODIFIED — `SaveAgentMemory` /
+  `GetAgentMemory` accept + return bitemporal fields
+  (TransactionTime + ValidTime on AgentMemory struct,
+  RFC3339Nano, omitempty).
 - `internal/store/time_travel.go` NEW — `RecallAtTime(t, kind)`
-  for time-travel queries (returns frames with
-  valid_time ≤ t AND transaction_time ≤ t).
+  for time-travel queries (returns rows with
+  COALESCE(valid_time, created_at) ≤ t; archived rows
+  excluded).
 - `internal/store/migration_31.go` NEW — migration from
-  v30 → v31 (adds columns, defaults to current_timestamp
-  for existing rows).
+  v30 → v31 (adds columns, BACKFILLs from created_at for
+  existing rows).
 - `internal/store/{bitemporal,time_travel,migration}_test.go`
   NEW — 15 tests: transaction_time monotonicity,
   valid_time settability, time-travel consistency,
