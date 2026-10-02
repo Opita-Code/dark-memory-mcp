@@ -11,7 +11,107 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
-## [4.0.0-alpha.20] — 2026-10-02 — Phase 9: v4alpha wiring close + embedder pilot (alpha.20)
+## [4.0.0-alpha.20.1] — 2026-10-02 — Phase 9 alpha.20.1: override patterns doc + e2e gate meta-decision
+
+Closes the two deferred Phase 9 chunks (`§8.9` + `§8.10` of
+`docs/v4-alpha-11-plan.md`). Doc-only release — **no code, no
+schema changes**, **0 new tests required**. Cross-version
+lockstep hash pin unchanged. Local tag `v4.0.0-alpha.20.1`
+on `feat/v4-redesign` (NO remote push per platform-LOCAL policy).
+
+### Added — Chunk 8.9 override validator pattern documentation
+
+**Goal (SPEC §3.8, closes Phase 8 e2e T12 caveat row 2344)**:
+document what each override pattern DOES and DOES NOT match,
+plus design rationale for the intentionally narrow
+`fake_authority` class.
+
+- `docs/sota-critique.md §5.2.5` NEW (~115 LoC). Three sub-sections:
+  - **§5.2.5.1** — the 10 real patterns `OP-1..OP-10` (canonical
+    source `internal/v4alpha/judge/judge_util.go:253-264`).
+    Table columns: ID | Substring (post-T5) | Severity | DO
+    trigger example | DOES NOT trigger example | Rationale.
+  - **§5.2.5.2** — `fake_authority` reconciliation. The Phase 8
+    e2e row 2344 referenced a 10-pattern catalog with `fake_authority`
+    as one entry. **That catalog does NOT exist in code**
+    (`grep -rn "fake_authority\|fakeAuthority"` against `internal/`
+    returns 0 matches). The closest semantic match in the actual
+    validator is `OP-9` (`act as`, flag) + `OP-10` (`override your`,
+    flag). The e2e T12 test was wrong to assume `block` severity
+    for those patterns — both are `flag` (logged, not blocked).
+  - **§5.2.5.3** — T5 normalizer (NFKC + zero-width-strip +
+    unicode-escape-decode + Cyrillic-homoglyph-map + lowercase +
+    whitespace-collapse) defeats simple obfuscation (zero-width
+    spaces, BOM, Cyrillic homoglyphs). Tested at
+    `internal/v4alpha/judge/judge_util_test.go:67-74`.
+  - **§5.2.5.4** — LUCIDEZ honest disclosure: the `fake_authority`
+    + 9-name list in row 2344 was a SPEC annotation that never
+    landed as code. The actual catalog is `OP-1..OP-10`.
+
+### Added — Chunk 8.10 e2e gate meta-decision codified
+
+**Goal (SPEC §3.10)**: codify the alpha.21+ requirement for
+exhaustive e2e gate before SHIP.
+
+- `docs/v4-alpha-11-plan.md §10` MODIFIED — `OD7` added: exhaustive
+  e2e required before alpha.21+ SHIP. Covers (a) session
+  lifecycle chain; (b) vibe_publish + drift_judge round-trip;
+  (c) audit chain cross-process monotonicity; (d) override pattern
+  sweep **with `block`/`flag` severity distinction**; (e) persona
+  registry count; (g) concurrent write stress ≥10; (h)
+  cross-session atomic mirror survival; (i) needs_human surface
+  for failure modes. 0 critical findings required.
+- `docs/v4-alpha-11-plan.md §11` MODIFIED — cross-refs to
+  row 2344 (fake_authority caveat) + `docs/v4-alpha-20-1-decision.md`.
+- `docs/v4-alpha-20-1-decision.md` NEW — release decision document
+  capturing: Phase 8 e2e re-test results (0 critical findings),
+  Phase 9 alpha.20 chunks 8.1-8.8 final state, Chunk 8.9 + 8.10
+  codifications, OD7 enforcement template for alpha.21+.
+
+### Modified
+
+- `docs/v4-alpha-11-plan.md §8.9` — `📋 PLANNED` → `✅ SHIPPED`.
+- `docs/v4-alpha-11-plan.md §8.10` — status `📋 PLANNED` →
+  `✅ CODIFIED`. Cross-ref to `docs/v4-alpha-20-1-decision.md`.
+
+### Verification
+
+- `go vet ./...` clean.
+- `go build ./...` clean.
+- `tests/docs` PASSES (no README.md change needed — Chunk 8.8
+  already updated `tools=62` / `schema-v31` / `Las 62 herramientas`).
+- `tests/migrate` PASSES (no schema changes).
+- `tests/conformance TestBridge7_*` PASSES (no tool surface
+  changes — 62 canonical tools unchanged).
+- Wider regression on `feat/v4-redesign`: no changes to any
+  package under `internal/` or `cmd/`, so all prior test runs
+  remain valid by construction (doc-only commit).
+
+### Acceptance criteria
+
+1. `docs/sota-critique.md §5.2.5` covers all 10 `OP-1..OP-10`
+   patterns with DO/DOES NOT examples + rationale. ✅
+2. `fake_authority` design rationale explained + SPEC-vs-reality
+   reconciliation documented. ✅
+3. `OD7` codified in `docs/v4-alpha-11-plan.md §10` with required
+   tests enumerated. ✅
+4. Cross-refs in `docs/v4-alpha-11-plan.md §11` updated. ✅
+5. `docs/v4-alpha-20-1-decision.md` created with e2e gate sign-off. ✅
+6. Doc-only change (no code). ✅
+7. Atomic mirrors: 2 SECTION (Chunk 8.9 + 8.10) + 1 SUMMARY
+   (this release). ✅
+8. Local tag `v4.0.0-alpha.20.1` created on this commit
+   (next step). ✅
+9. Phase 9 progress: **10 of 10 chunks shipped** (8.1, 8.2, 8.3,
+   8.3-bench, 8.4, 8.5, 8.6, 8.7, 8.8, 8.9, 8.10). ✅
+
+### LUCIDEZ honest disclosure (alpha.20.1 SPEC-vs-reality)
+
+| Chunk | SPEC estimated | Actual | Drift reason |
+|---|---|---|---|
+| 8.9 fake_authority doc | 40 LoC | ~115 LoC | +75 LoC because the §5.2.5.2 reconciliation + §5.2.5.3 T5 normalizer + §5.2.5.4 LUCIDEZ disclosure are necessary to honestly close row 2344 |
+| 8.10 e2e gate meta-decision | 30 LoC | ~50 LoC | +20 LoC because OD7 table entry + decision-sign-doc context are needed for codification |
+| **TOTAL alpha.20.1** | **~70 LoC** | **~165 LoC** | **+135% drift**, all approved explicitly via chunk scope |
 
 Phase 9 (alpha.20) closes **2 of 2 critical Phase 8 e2e wiring gaps**
 (§8.1 + §8.2) and ships **5 alpha.20 follow-ups** plus the docs

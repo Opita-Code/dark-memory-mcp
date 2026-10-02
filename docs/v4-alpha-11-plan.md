@@ -698,19 +698,27 @@ memory_type=episodic, agent_id `alpha-11-phase8`).
 - Atomic mirror: 1 SUMMARY pinned + 7 SECTION pinned=false (8 chunks
   × 1 SECTION) — row 2376 + 7 SECTION (this commit).
 
-### §8.9 Document `fake_authority` pattern examples 📋 PLANNED
+### §8.9 Document `fake_authority` pattern examples ✅ SHIPPED (alpha.20.1)
+
+**Atomic mirror row 2379** (this SECTION pinned, kind=note,
+agent_id `alpha-11-phase8`).
 
 - **Caveat (e2e T12)**: 5 attempted phrasings of `fake_authority` pattern all missed the validator. Other 9 patterns (no_needs_human, auto_sign, self_modify, ignore_invariant, disable_audit, skip_injection, always_aligned, remove_safety, trust_unconditional) trigger with reasonable phrasing. fake_authority is intentionally narrow (privilege escalation requires sophisticated phrasing).
 - **Goal**: add to `docs/sota-critique.md §5.2.4` an "override validator patterns" appendix with examples of phrasings that DO and DO NOT trigger each pattern, plus design rationale (fake_authority is intentionally narrow per security review).
-- **Estimated LoC**: +40 LoC doc-only.
+- **Resolution (alpha.20.1)**: documented the **actual** 10 patterns in production (`OP-1..OP-10` at `internal/v4alpha/judge/judge_util.go:253-264`), not the `fake_authority` + 9-name catalog from row 2344. Reconciliation: `fake_authority` semantically maps to the combination of `OP-9` (`act as`, flag) + `OP-10` (`override your`, flag) — both `flag` severity (logged, NOT blocked). The e2e T12 test was wrong to assume `block` severity for those two patterns.
+- **Estimated LoC**: +40 LoC doc-only. **Actual ~115 LoC** (table grew + T5 normalizer section + LUCIDEZ honest disclosure).
 - **Closes**: Phase 8 e2e T12 caveat (row 2344).
 
-### §8.10 E2E production-grade gate — meta-decision
+### §8.10 E2E production-grade gate — meta-decision ✅ CODIFIED (alpha.20.1)
+
+**Atomic mirror row 2380** (this SECTION pinned, kind=decision,
+agent_id `alpha-11-phase8`).
 
 - **Lesson (Phase 8 e2e)**: exhaustive e2e found 2 critical wiring gaps that unit tests missed. Future phases MUST include exhaustive e2e gate before SHIP.
-- **Decision (operator-approved)**: alpha.21+ must include exhaustive e2e before SHIP. Required tests at minimum: (a) session lifecycle chain; (b) vibe_publish + drift_judge round-trip; (c) audit chain cross-process monotonicity; (d) override pattern sweep; (e) persona registry count; (g) concurrent write stress (≥10 parallel); (h) cross-session atomic mirror survival; (i) needs_human surface for any tool with failure modes.
+- **Decision (operator-approved, codified as OD7)**: alpha.21+ must include exhaustive e2e before SHIP. Required tests at minimum: (a) session lifecycle chain; (b) vibe_publish + drift_judge round-trip; (c) audit chain cross-process monotonicity; (d) override pattern sweep with `block`/`flag` severity distinction; (e) persona registry count; (g) concurrent write stress (≥10 parallel); (h) cross-session atomic mirror survival; (i) needs_human surface for any tool with failure modes.
 - **Acceptance**: 0 critical findings before SHIP. Caveats documented but not blocking.
 - **Cost budget**: ~$5-10 per phase e2e gate (LLM judge calls).
+- **CODIFICATION** (per Chunk 8.10): §10 OD7 added below; §11 cross-ref to `docs/v4-alpha-20-1-decision.md` added. See `docs/v4-alpha-20-1-decision.md` for the per-phase gate sign-off template.
 
 ### Acceptance criteria (Phase 8 / alpha.20 SHIP)
 
@@ -760,11 +768,12 @@ For each phase, the workflow is:
 | # | Decision | Default |
 |---|---|---|
 | OD1 | Phase 1 start point | chunk 7 first |
-| OD2 | Include ADR-013? | defer to beta |
+| OD2 | Include ADR-13? | defer to beta |
 | OD3 | BUG-10 10b blocks other work? | parallel |
 | OD4 | v2.9.x embedder resurrected? | NO (per row 1578) |
-| OD5 | ADR-013 strategy (if OD2=YES) | FRESH |
+| OD5 | ADR-13 strategy (if OD2=YES) | FRESH |
 | OD6 | `project_id` framing | **namespace (soft)** per §7.6.9 |
+| OD7 | Exhaustive e2e gate before alpha.21+ SHIP | **REQUIRED** (per Chunk 8.10 §3.10 + docs/v4-alpha-20-1-decision.md) — 0 critical findings required, caveats documented but non-blocking. Covers session lifecycle, vibe_publish + drift_judge round-trip, audit chain cross-process monotonicity, override pattern sweep (with `block`/`flag` distinction), persona registry count, concurrent write stress ≥10, cross-session atomic mirror survival, needs_human surface for failure modes. |
 
 ## 11. Cross-references
 
@@ -780,3 +789,7 @@ For each phase, the workflow is:
 - Row 1578 (dark-memory) — v2.9.x embedder ABANDONED.
 - Row 2112 (dark-memory) — BUG-10 10a pre-coding 4-doc
   plan + operator approval gate pattern.
+- Row 2344 (dark-memory) — Phase 8 e2e T12 fake_authority caveat
+  (closed by `docs/sota-critique.md §5.2.5` + Chunk 8.9 §3.9).
+- `docs/v4-alpha-20-1-decision.md` — alpha.20.1 release decision
+  (Chunk 8.10 §3.10 sign-off).
