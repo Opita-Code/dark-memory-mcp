@@ -22,20 +22,20 @@
 
 [![MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Go 1.25+](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go&logoColor=white)](go.mod)
-[![MCP tools](https://img.shields.io/badge/MCP-25%20of%2057%20(v4--alpha.1)-orange)](#status)
-[![Schema](https://img.shields.io/badge/schema-v4alpha%2F2026--09--27%2F001-orange)](#status)
+[![MCP tools](https://img.shields.io/badge/MCP-62%20canonical%20tools-blueviolet)](#status)
+[![Schema](https://img.shields.io/badge/schema-v31-blueviolet)](#status)
 [![Branch](https://img.shields.io/badge/branch-feat%2Fv4--redesign-blue)](https://github.com/Opita-Code/dark-memory-mcp)
 [![Install](https://img.shields.io/badge/install-npx%20%40opita--code%2Fdark--memory--mcp-cc3534)](docs/npm-install.md)
 
-> ## ⚠️ STATUS: v4-alpha.1 in progress
+> ## ⚠️ STATUS: v4-alpha.20 in progress
 >
 > **You are reading the README of the v4 redesign branch**
 > (`feat/v4-redesign`). The narrative below describes the v2.20.0
-> production tree; v4-alpha.1 is a partial rewrite in progress.
+> production tree; v4-alpha.20 is a partial rewrite in progress.
 >
 > - **Branch**: `feat/v4-redesign` (local-only — no remote)
-> - **Tools**: 25 of 57 canonical tools registered (44%)
-> - **Schema**: `v4alpha/2026-09-27/001` (separate from v2.20.0's `v26`)
+> - **Tools**: 62 of 62 canonical tools registered (100% of canonical surface)
+> - **Schema**: `v31` (bitemporal lite + Phase 5 port; separate from v2.20.0's `v26`)
 > - **Binary**: `dark-memory-v4` (not `dark-mem-mcp`)
 > - **Project id**: `dark-memory-v4` (not `dark-mem`)
 >
@@ -49,7 +49,7 @@
 
 ---
 
-[¿Qué es esto?](#qué-es-esto) · [El problema que resuelve](#el-problema-que-resuelve) · [El vibe-loop](#el-vibe-loop-un-paradigma-nuevo) · [Conceptos clave](#conceptos-clave) · [Quickstart](#quickstart) · [Las 57 herramientas](#las-57-herramientas) · [Camino de aprendizaje](#camino-de-aprendizaje) · [Resolver problemas](#resolver-problemas) · [Contribuir](#contribuir)
+[¿Qué es esto?](#qué-es-esto) · [El problema que resuelve](#el-problema-que-resuelve) · [El vibe-loop](#el-vibe-loop-un-paradigma-nuevo) · [Conceptos clave](#conceptos-clave) · [Quickstart](#quickstart) · [Las 62 herramientas](#las-62-herramientas) · [Camino de aprendizaje](#camino-de-aprendizaje) · [Resolver problemas](#resolver-problemas) · [Contribuir](#contribuir)
 
 </div>
 
@@ -250,9 +250,9 @@ Debe mostrar algo como:
 
 ---
 
-## Las 57 herramientas
+## Las 62 herramientas
 
-Dark Memory expone **57 herramientas** (más 3 extras en modo investigación) en su superficie canónica final (v4 GA target). En `feat/v4-redesign` (v4-alpha.1) hay **25 registradas**. El agente las invoca con el prefijo `dark_memory_`. Estructura final agrupada por 17 oficios:
+Dark Memory expone **62 herramientas** (más 3 extras en modo investigación) en su superficie canónica final (v4 GA target). En `feat/v4-redesign` (v4-alpha.20) las **62 están registradas** (100% de la superficie canónica). El agente las invoca con el prefijo `dark_memory_`. Estructura final agrupada por 17 oficios:
 
 ### Sesión (7 tools)
 `session_start` · `session_resume` · `session_heartbeat` · `session_status` · `session_close` · `session_recover` · `session_resurrect`

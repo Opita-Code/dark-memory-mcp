@@ -11,6 +11,315 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [4.0.0-alpha.20] — 2026-10-02 — Phase 9: v4alpha wiring close + embedder pilot (alpha.20)
+
+Phase 9 (alpha.20) closes **2 of 2 critical Phase 8 e2e wiring gaps**
+(§8.1 + §8.2) and ships **5 alpha.20 follow-ups** plus the docs
+sweep. Per `docs/specs/SPEC-alpha-11-phase8.md` (v2 with bitemporal
+Lite clarification, 621+ LoC spec, vibe_loop `alpha-11-phase-8`, **9
+commits on `feat/v4-redesign`**: 8.0 plan + 8.1-8.7 + 8.8 docs, 1
+local tag). 62 canonical tools, schema v31, **0 critical findings
+on re-test**, **84 new tests** total across 8 chunks. Cross-version
+lockstep hash pin unchanged.
+
+### Re-test of Phase 8 e2e critical findings
+
+| Finding (Phase 8 e2e row 2345) | Status | Chunk |
+|---|---|---|
+| v4alpha EXTRACT pipeline (Chunk 7.1) not exposed via MCP | ✅ CLOSED | 8.1 |
+| v4alpha persona registry (14 personas) not exposed via MCP | ✅ CLOSED | 8.2 |
+
+### Added — Chunk 8.1 v4alpha `delegate_intent` wired into v3 MCP (commit `75a04fa`, CRITICAL e2e T7 close)
+
+Wires `internal/v4alpha/transport/mcp/wire.go:RunDelegateIntentCore` as
+the new canonical `dark_memory_delegate_intent` handler. Closes the
+Phase 8 e2e critical finding #1 (row 2327).
+
+- `internal/v4alpha/transport/mcp/wire.go` NEW — `RunDelegateIntentCore`
+  as pure function (no mcp-go types), callable from both the v4alpha
+  binary and v3 tools.
+- `internal/v4alpha/transport/mcp/delegation.go` — exports
+  `DelegateIntentInput/Output/Subtask/Alternative` types (capitalized)
+  for cross-package import.
+- `internal/orchestration/delegate_intent.go` — adds 4 additive fields
+  to `DelegateIntentOutput` (Decision, CacheHit, Verdict, Alternatives)
+  with `omitempty` for backward compat with the alpha.18.1 wire shape.
+- `internal/tools/delegation.go` — `RegisterDelegationWithBackend` +
+  `DARK_DELEGATION_BACKEND` env var (default `v4alpha`, set `v2` to
+  rollback to alpha.18.1 router).
+- `internal/tools/register.go` — `RegisterAllWithDeps` signature.
+- `cmd/dark-mem-mcp/legacy_main.go` — wires v4alpha deps at boot
+  (judge.NewRealLLMClient + delegation.NewExtractCache +
+  CacheTTLFromEnv).
+- Feature flag: `DARK_DELEGATION_BACKEND=v4alpha` (default) → v4alpha
+  pipeline runs; if no LLM key, EXTRACT returns `needs_human` with
+  alternatives[]. `DARK_DELEGATION_BACKEND=v2` → deterministic v2
+  router (no LLM, no EXTRACT).
+- 8 e2e tests in `internal/tools/delegation_e2e_test.go` PASS:
+  InlineShort (HANDLE/aligned), DelegateLong (3 EXTRACTed subtasks/
+  aligned), RefuseMarker (REFUSED), NeedsHuman_NoLLMKey (fallback-plan
+  alternative), NeedsHuman_LLMParseError (3 alternatives),
+  RefineRetry (4 LLM calls), WireShapeV3, v2_FallbackByFlag.
+
+### Added — Chunk 8.2 v4alpha personas exposed via `judge_list_personas` (commit `bade6d0`, CRITICAL e2e T3 close)
+
+`dark_memory_judge_list_personas` now returns **14 (8 v2 compiled + 6
+v4alpha)** with `Source="v4alpha"` discriminator. Closes Phase 8 e2e
+critical finding #2 (row 2323).
+
+- `internal/orchestration/judge_personas_types.go` NEW constant
+  `PersonaSourceV4Alpha="v4alpha"`.
+- `internal/orchestration/judge_personas_v4alpha.go` NEW (155 LoC):
+  v4alphaPersonaIDs (judge-cross-modal, judge-pipeline, judge-opinion,
+  judge-decision, judge-research, judge-delegator), conversion from
+  v4alpha `judge.PersonaContent` to orchestration `Persona` with
+  documented field mapping (ID→ID, PromptTemplate→Role+Voice,
+  EvaluationLens→Lens, BiasControls→Constraints,
+  RequiredEvidence→Rubric).
+- `internal/orchestration/judge_personas_registry.go` — `IncludeV4Alpha`
+  option, merged after overrides in `NewPersonaRegistry`.
+- `internal/orchestration/orchestrator.go` — `includeV4AlphaPersonas`
+  bool + `WithV4AlphaPersonas(enabled)` builder + `V4AlphaPersonasEnabled()`
+  getter.
+- `cmd/dark-mem-mcp/legacy_main.go` — wires
+  `orch.WithV4AlphaPersonas(true)` at boot (between 8.1 v4alpha
+  delegate deps and RegisterAllWithDeps).
+- 6 hermetic tests in `internal/orchestration/judge_list_personas_test.go`
+  PASS: legacy 8-only, merge to 14, Source discriminator, ID
+  invariant + round-trip, field mapping correctness, builder default
+  false + idempotent.
+- Backward compat: WITHOUT `WithV4AlphaPersonas` the registry returns
+  exactly 8 (legacy). Operators explicitly opt in.
+
+### Added — Chunk 8.3 embedder wired at boot (commit `514d003`, recort operator decision A)
+
+Operator recort: text-only (dropped BGE-large multi-modal scope
+because dark-memory has NO attachment schema for image/audio storage).
+Wires the EXISTING `internal/embedder/` (5 adapters + FactoryAuto
+ladder, shipped v2.9.0-alpha PR-2) — the boot path was the missing
+piece.
+
+- `internal/store/store.go:214` — added `WithEmbedder(e embedder.Embedder)
+  Store` to the Store interface (was only on concrete *sqlite.Store /
+  *postgres.Store).
+- `internal/store/sqlite/store.go:396` + `internal/store/postgres/store.go:342`
+  — return type changed from `*Store` to `store.Store` (interface, was
+  concrete).
+- `cmd/dark-mem-mcp/legacy_main.go:124-143` — wired
+  `bootState.Store.WithEmbedder(embedder.FactoryAuto())` + stderr log
+  line "embedder kind=... dim=..." for operator visibility.
+- `internal/tools/health.go` — `Embedder()` added to storeBridge
+  interface; new `embedderInfo` struct (Kind+Dim, frozen wire shape);
+  new top-level `embedder` field in `healthPingResult` (omitempty
+  when `KindNone`).
+- `internal/store/sqlite/embedder_integration_test.go` NEW (270 LoC, 5
+  tests PASS — WithEmbedder_RRFReturnsSemanticMatch, VectorCosineRanking,
+  FactoryAutoLadder, WithEmbedderNilRestoresStub).
+- `docs/specs/SPEC-alpha-11-phase8.md §3.3` — operator decision note
+  + listed pre-existing assets (10 LoC already shipped) + Chunk 8.3
+  NEW work (~150 LoC + 6 tests).
+
+### Observation — Chunk 8.3-bench real-latency benchmark (commit `03aa531`)
+
+Xenova/all-MiniLM-L6-v2 INT8 (384d, ~22MB model + ~7MB libonnxruntime
+DLL bundled) on AMD Ryzen 5 5600 + AMD RX 6600 XT 4GB (DirectML EP
+out of scope). 4 input buckets matching real agent_memory content
+distribution. 200 timed calls × 3 runs.
+
+| Input size | p50 | p99 range | Throughput |
+|---|---|---|---|
+| 34 chars (title) | 14.2ms | 16-22ms | 70-71 calls/sec |
+| 500 chars (observation) | 14.5ms | 16-31ms | 67-69 calls/sec |
+| 2280 chars (decision) | 14.7ms | 16-21ms | 67-69 calls/sec |
+| 9120 chars (spec chunk) | 15.2ms | 18-30ms | 65-67 calls/sec |
+
+Latency constant ~14-15ms p50 (model truncates to 512 wordpieces);
+throughput 65-71 q/s single-threaded. **First call ~200-500ms one-shot
+at boot (model load + ONNX env init)** — pre-existing chunk.
+
+### Added — Chunk 8.4 ProGraph 2-layer entity extraction BFS (commit `9217379`, ADR-015)
+
+Exposes `dark_memory_prograph_query` — BM25 seeds expanded via the
+entity-overlap graph (case-insensitive noun phrases extracted at Save
+time when `ExtractEntities=true`), up to depth=2 hops.
+
+- `internal/recall/entity.go` NEW (372 LoC): `Entity` struct + in-memory
+  `EntityStore` index (sync.RWMutex, O(1) Lookup + OR-semantics
+  RowsContainingAnyEntity).
+- `internal/recall/prograph.go` NEW (389 LoC): `ExtractEntities` +
+  `MultiHopRetrieve` BFS + `ProGraphSource` 3-method subset interface
+  for hermetic tests (saves 100-method Store mock).
+- **Store-first BFS** expansion (NOT in-memory-only — initial design
+  had only in-memory, fixed by e2e).
+- `internal/store/sqlite/entity.go` MODIFIED: `ListAgentMemoryByAnyEntity`
+  (OR-semantics complement to applyEntityFilter AND; chunked 200
+  placeholders, lowercase + dedup + sort for determinism, JOIN on
+  agent_memory project_id = active for INV-7).
+- `internal/store/store.go` MODIFIED: ListAgentMemoryByAnyEntity in
+  Store interface.
+- `internal/store/postgres/store.go` MODIFIED: notImpl stub.
+- `internal/tools/prograph.go` NEW (109 LoC): RegisterPrograph +
+  dark_memory_prograph_query handler. PrographQueryInput (query, depth
+  0-2, seed_limit, hop_limit, total_limit) + PrographQueryResult.
+- `internal/tools/registry.go` + `canonical_staleness_test.go`:
+  canonicalNamespaces AGENT_MEMORY 10→11 tools; frozenToolCount
+  59→60.
+- 23 tests PASS (6 entity_test, 12 prograph_test, 5 prograph_e2e_test).
+
+### Added — Chunk 8.5 `audit_export` + `audit_verify` (commit `9c4cfe6`, ADR-016 + ADR-018)
+
+Exposes the audit chain as JSONL stream with HMAC-SHA256 chain
+verification. Closes Phase 6 D2 debt (audit gaps deferred since
+alpha.18.1).
+
+- `internal/audit/hmac.go` NEW (~200 LoC): ChainPrev + ChainSelf +
+  ChainKeyID per row (omitted from write_audit SQL table; only emitted
+  in JSONL stream). CanonicalBytes (encoding/json Marshal with chain
+  fields cleared, deterministic). Keyring holds multiple keys for
+  rotation via `DARK_AUDIT_HMAC_KEY` (env: `v1:<hex>,v2:<hex>`).
+- `internal/audit/export.go` NEW (~150 LoC): Exporter wraps Lister
+  interface (decoupled from store pkg), reverses ListWrites DESC to
+  ASC for canonical chain.
+- `internal/audit/verify.go` NEW (~170 LoC): Verifier re-derives
+  chain. Status enum: OK | Broken | UnknownKey | Malformed. Stops
+  on FIRST failure with FirstBadID + Reason.
+- `internal/audit/{hmac,export,verify}_test.go` NEW (~700 LoC):
+  31 hermetic tests.
+- `internal/tools/audit.go` NEW (~180 LoC): RegisterAudit wires
+  audit_export + audit_verify. ErrAuditNoKeyring sentinel when kr
+  is nil.
+- 37 tests PASS (31 hermetic + 4 e2e + 1 staleness).
+
+### Added — Chunk 8.6 internal/recall coverage 82.1% → 91.9% (commit `07c2b90`)
+
+5 new test files (1414 LoC, 27+ new tests).
+
+| Frame | Before | After |
+|---|---|---|
+| DriftFrame | 38.1% | 95.2% |
+| PersonaFrame | 68.8% | 93.8% |
+| IdentityFrame | 80.0% | 90.0% |
+| ScopeFrame | 90.9% | 90.9% |
+| CapabilitiesFrame | 86.7% | 86.7% (dead branches, accepted ceiling) |
+
+LUCIDEZ honest disclosure: SPEC §3.6 estimated 8 tests targeting
+"remaining uncovered branches". Of those, only 3-4 are REACHABLE
+(json.Marshal can't fail on JSON-safe struct types; frameTTL takes a
+string not duration). SPEC §3.6 COMPLETELY MISSED DriftFrame 38.1%
+gap + PersonaFrame 68.9% gap — required 5+5 additional tests not 0.
+
+Remaining 3.1% gap to SPEC ≥95% target: unreachable defensive paths
+(`json.Marshal` cannot fail on JSON-safe struct types; closed-store
+test fails GetFrame first; DefaultToolGrants ends without trailing
+comma so strings.Split never produces empty entry).
+
+### Added — Chunk 8.7 Bitemporal lite + Phase 5 schema port (commit `c61982b`, ADR-014, operator decision B)
+
+Closes the Phase 6 D2 `mark_superseded` gap that was blocked since
+v4alpha Phase 5 landed (the Phase 5 schema was test-only in v4alpha;
+this chunk ports it to production). Schema v29 → v31.
+
+- `internal/migrate/sqlite/ddl.go` v30 `phase5_port_to_production`:
+  19 new columns on agent_memory (5 embeddings + 5 decay + 3 code
+  refs + 1 graph residual + 5 decision subsystem; skipping `embedding`
+  BLOB which already exists at v25). 2 new tables
+  (agent_memory_links CABLE + decision_transitions TokenMizer). 9
+  indexes.
+- `internal/migrate/sqlite/ddl.go` v31 `bitemporal_lite`:
+  `transaction_time` + `valid_time` columns (NULLABLE; backfill UPDATE
+  from created_at for pre-v31 rows; COALESCE on read).
+- `internal/migrate/postgres/ddl.go`: v30 + v31 PG variants
+  (`ADD COLUMN IF NOT EXISTS`).
+- `internal/agentmemory/types.go`: AgentMemory struct gains
+  `TransactionTime` + `ValidTime` (RFC3339Nano, omitempty).
+- `internal/store/store.go`: `ErrInvalidSupersession` sentinel +
+  `MarkSupersededAgentMemory` + `RecallAtTime` in Store interface.
+- `internal/store/sqlite/bitemporal.go` NEW (244 LoC):
+  MarkSupersededAgentMemory (pre-flight validation + tx with UPDATE
+  + INSERT decision_transitions + INV-1 audit row) +
+  RecallAtTime (valid_time <= t filter, archived excluded,
+  newest-first, no supersession-chain exclusion in lite form).
+- `internal/store/postgres/store.go`: notImpl stubs.
+- `internal/tools/bitemporal.go` NEW (187 LoC): RegisterBitemporal +
+  `dark_memory_mark_superseded` + `dark_memory_recall_bitemporal`
+  MCP handlers.
+- `internal/tools/registry.go` + `canonical_staleness_test.go`:
+  canonicalNamespaces AGENT_MEMORY 11→13 tools; frozenToolCount
+  60→62; frozenSchemaVersion 29→31.
+- 21 tests PASS (4 migration_v30_v31, 10 bitemporal_*, 7
+  bitemporal_e2e).
+
+LUCIDEZ honest disclosure: SPEC §3.7 said `NOT NULL DEFAULT
+current_timestamp`; SQLite cannot do `ALTER TABLE ALTER COLUMN SET
+NOT NULL` without table rebuild (would lock dark.db for minutes on
+100k-row chunks). Implementation uses COALESCE on read; v31 columns
+are NULLABLE. PostgreSQL variant CAN enforce NOT NULL (v32 migration
+if parity is the priority). SPEC §3.7 amended with the honest
+disclosure.
+
+### Added — Chunk 8.8 Docs followup + alpha.20 tag local (this commit)
+
+Per `docs/specs/SPEC-alpha-11-phase8.md §3.8`. 1 SUMMARY pinned +
+SECTION pinned=false atomic mirrors minimum. Doc-only chunk.
+
+- `CHANGELOG.md` — this `[4.0.0-alpha.20]` entry (~250 LoC covering
+  8 chunks + 8.8 itself).
+- `docs/v4-status.md` — §1.8 Phase 8 changelog (~150 LoC).
+- `docs/v4-alpha-11-plan.md §8` — confirm + per-chunk cross-refs to
+  atomic mirror rows 2356, 2360, 2365, 2369, 2370, 2371, 2372,
+  2375 (~50 LoC).
+- `docs/sota-critique.md §5.2.4` — Phase 8 per-gap closure evidence
+  table (~100 LoC).
+- `README.md` — fix to `MCP-62 canonical tools` + `## Las 62
+  herramientas` + `schema-v31` + `17 oficios` (was stuck at 57 tools +
+  schemas v4alpha; unblocks `tests/docs` TestDocs_SurfaceNumbersMatchRuntime).
+- Local tag `v4.0.0-alpha.20` (NO remote push per platform-LOCAL
+  policy).
+
+### Schema bump v29 → v31
+
+Phase 9 added 2 schema migrations:
+
+| Version | Name | New | Test |
+|---|---|---|---|
+| v30 | `phase5_port_to_production` | 19 columns + 2 tables + 9 indexes on agent_memory | TestMigrationV30_Phase5Port |
+| v31 | `bitemporal_lite` | 2 columns (transaction_time + valid_time) + 2 indexes | TestMigrationV31_BitemporalLite |
+
+Both migrations idempotent via F37 tolerance
+(`tests/migrations/migrate_f37_test.go`) and `ADD COLUMN IF NOT
+EXISTS` (Postgres).
+
+### Verification
+
+- `go vet ./...` clean.
+- `go build ./...` clean.
+- Wider regression: internal/migrate/sqlite 0.02s ok, internal/store/sqlite
+  23.05s ok (21 new tests + existing), internal/recall 43.34s ok,
+  internal/tools 25.49s ok (TestCanonicalOrder_Frozen 62 tools),
+  internal/embedder/* ok, tests/migrate 48.71s ok (4 new + F37 +
+  v29), tests/conformance TestBridge7_* 29.80s ok (62 tools wired),
+  internal/v4alpha/recall 22.53s ok, internal/v4alpha/transport/mcp
+  7.07s ok.
+- `tests/docs` TestDocs_SurfaceNumbersMatchRuntime PASSES after this
+  commit (README updated to 62 tools / schema-v31 / 17 oficios).
+- Cross-version hash pin unchanged.
+
+### Operator decisions (D1-D6 captured in §9 of SPEC)
+
+- D1: §8.1 + §8.2 CRITICAL — close both e2e2 critical wiring gaps
+  before alpha.20 ships.
+- D2: §8.3-§8.7 alpha.20 follow-ups per `docs/sota-critique.md §5.2.3`
+  (5 items).
+- D3: §8.8 docs + alpha.20 tag local (CHANGELOG, v4-status §1.8,
+  v4-alpha-11-plan §8, sota-critique §5.2.4).
+- D4: §8.9 — Document `fake_authority` pattern examples in
+  sota-critique.md §5.2.4 (operator awareness).
+- D5: §8.10 — Meta-decision codified: alpha.21+ MUST include
+  exhaustive e2e gate before SHIP. 0 critical findings required.
+- D6: Spec-first mandatory.
+
+---
+
 ## [4.0.0-alpha.19] — 2026-10-02 — Phase 7: sub-agent wiring + LLM router upgrade + coverage close (4 alpha.18.1 deferred items closed)
 
 Phase 7 closes **4 of 4 deferred alpha.18.1 items** plus a new LLM-router

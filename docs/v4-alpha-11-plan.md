@@ -521,78 +521,184 @@ Closes the deferred `internal/recall` 45.3% gap.
   pinned + 19 SECTION pinned=false, agent_id `alpha-11-phase7`,
   session `sess-a4c92524784e1891`).
 
-## 8. Phase 8 — v4alpha wiring close + embedder pilot 📋 PLANNED (alpha.20, target 2026-10-09)
+## 8. Phase 8 — v4alpha wiring close + embedder pilot ✅ SHIPPED (alpha.20, 2026-10-02)
 
-**Pre-flight**: Phase 7 alpha.19 shipped + tagged local `v4.0.0-alpha.19` on commit `1ed7bc5`. **Phase 8 e2e EXHAUSTIVE run** (17 tests, 12 min, ~$0.30) verified production-grade behavior with **2 CRITICAL wiring gaps** discovered — these gaps BLOCK operator access to Phase 7 improvements and MUST close first.
+**Status (2026-10-02)**: 8 of 10 chunks shipped. **alpha.20 tag
+local** `v4.0.0-alpha.20` placed on the Chunk 8.8 docs commit (NO
+remote push per platform-LOCAL policy). 62 canonical tools, schema
+v31, 84 new tests, 0 critical findings on re-test.
 
-### §8.1 Wire v4alpha Server into MCP public registry 🚨 CRITICAL
+| Chunk | Commit | Atomic mirror rows | Status |
+|---|---|---|---|
+| 8.1 v4alpha delegate_intent wired (CRITICAL e2e T7) | `75a04fa` | 2356 (SUMMARY) + 2357-2359 (3 SECTION) | ✅ SHIPPED |
+| 8.2 v4alpha personas exposed (CRITICAL e2e T3) | `bade6d0` | 2360 (SUMMARY) + 2361-2363 (3 SECTION) | ✅ SHIPPED |
+| 8.3 embedder wired at boot (recort text-only) | `514d003` | 2365 (SUMMARY) + 2366-2368 (3 SECTION) | ✅ SHIPPED |
+| 8.3-bench real-latency benchmark | `03aa531` | 2369 (observation, pinned) | ✅ SHIPPED |
+| 8.4 ProGraph 2-layer entity extraction BFS (ADR-015) | `9217379` | 2372 (SUMMARY) + 7 SECTION | ✅ SHIPPED |
+| 8.5 audit_export + audit_verify (ADR-016 + ADR-018) | `9c4cfe6` | 2371 (SUMMARY) + 3 SECTION | ✅ SHIPPED |
+| 8.6 internal/recall coverage 82.1% → 91.9% | `07c2b90` | 2370 (SUMMARY) | ✅ SHIPPED |
+| 8.7 Bitemporal lite + Phase 5 schema port (ADR-014) | `c61982b` | 2375 (SUMMARY) | ✅ SHIPPED |
+| 8.8 Docs sweep + alpha.20 tag local | (this commit) | 2376 (SUMMARY) | ✅ SHIPPED |
+| 8.9 fake_authority documentation | (deferred to alpha.20.1) | — | 📋 PLANNED |
+| 8.10 E2E production-grade gate meta-decision | (deferred to alpha.20.1) | — | 📋 PLANNED |
+
+**Pre-flight**: Phase 7 alpha.19 shipped + tagged local
+`v4.0.0-alpha.19` on commit `1ed7bc5`. **Phase 8 e2e EXHAUSTIVE run**
+(17 tests, 12 min, ~$0.30) verified production-grade behavior with
+**2 CRITICAL wiring gaps** discovered — these gaps BLOCKED operator
+access to Phase 7 improvements; both closed in §8.1 + §8.2 above.
+
+### §8.1 Wire v4alpha Server into MCP public registry 🚨 CRITICAL ✅ SHIPPED
+
+**Commit**: `75a04fa` (1310 insertions, 150 deletions, 7 files)
+**Atomic mirror**: row 2356 (SUMMARY, decision) + rows 2357-2359
+(3 SECTION) — `alpha-11-phase8` agent_id, project `dark-memory`.
 
 - **Gap (e2e T7)**: `dark_memory_delegate_intent` routes to `internal/orchestration` (v2 router alpha.18.1, 1 subtask "bundle"). The v4alpha EXTRACT pipeline (Chunk 7.1) is implemented in `internal/v4alpha/transport/mcp/delegation.go` but has NO MCP public tool registration. Chunk 7.1 is shipped + tagged but **inaccessible to MCP consumers**.
 - **Goal**: `dark_memory_delegate_intent` routes to `internal/v4alpha/transport/mcp.Server.HandleDelegateIntent` (wire shape v2 unchanged). LLM-extracted sub-tasks, judge-delegator persona, drift_judge validation, needs_human surface with `alternatives[]` all become reachable.
-- **Architecture**: extend `internal/tools/registry.go` to accept a v4alpha handler registration; replace `BindOrchestrator("delegate_intent", ...)` with `BindV4AlphaDelegateIntent(...)`; OR add a feature flag (`DARK_DELEGATION_BACKEND=v2|v4alpha`).
-- **Tests**: re-run Phase 8 e2e T7 with v4alpha surface; new `internal/v4alpha/transport/mcp/delegation_e2e_test.go` (8 tests via mcp-go + httptest) covering LLM-extract path, drift_judge validation, refine+retry, needs_human surface.
-- **Estimated LoC**: +120 LoC (registry update + delegation handler swap) + 8 tests.
+- **Architecture (final)**: `internal/v4alpha/transport/mcp/wire.go` NEW exports `RunDelegateIntentCore` as pure function (no mcp-go types); `RegisterDelegationWithBackend` + `DARK_DELEGATION_BACKEND` env var (default `v4alpha`, `v2` rollback).
+- **Tests**: 8 e2e tests in `internal/tools/delegation_e2e_test.go` PASS (InlineShort, DelegateLong, RefuseMarker, NeedsHuman_NoLLMKey, NeedsHuman_LLMParseError, RefineRetry, WireShapeV3, v2_FallbackByFlag).
+- **Estimated LoC**: planned 120, **actual 1310** (incl. v4alpha wire + e2e harness + tests).
 - **Closes**: Phase 8 e2e T7 critical finding (row 2327).
 
-### §8.2 Expose v4alpha persona registry in MCP public API 🚨 CRITICAL
+### §8.2 Expose v4alpha persona registry in MCP public API 🚨 CRITICAL ✅ SHIPPED
+
+**Commit**: `bade6d0` (507 insertions, 3 deletions, 6 files)
+**Atomic mirror**: row 2360 (SUMMARY, decision) + rows 2361-2363
+(3 SECTION) — `alpha-11-phase8` agent_id, project `dark-memory`.
 
 - **Gap (e2e T3)**: `dark_memory_judge_list_personas` returns 8 v2 personas only. The v4alpha registry (internal/v4alpha/judge/personas_v4.go) contains 14 personas = 8 legacy + 6 v4-new (judge-cross-modal C5, judge-pipeline C6, judge-opinion reserved, judge-decision C3, judge-research C4, judge-delegator EXTRACT). Phase 7 alpha.19 added judge-delegator (was 13 in alpha.18.1, now 14).
 - **Goal**: `judge_list_personas` returns 14 (8 legacy + 6 v4-new). Operators can see the full registry.
-- **Architecture**: extend `internal/tools/registry.go` `personas` handler to consult both v2 `orchestration/judge_personas_default.go` AND v4alpha `internal/v4alpha/judge/personas_v4.go`; merge with `source` discriminator (`compiled` for v2, `v4alpha` for v4-new).
-- **Tests**: new `judge_list_personas_test.go` (5 tests) verifying count=14 + 6 v4-new presence with `source: v4alpha` discriminator.
-- **Estimated LoC**: +60 LoC (registry merge logic) + 5 tests.
+- **Architecture (final)**: `internal/orchestration/judge_personas_types.go` + `judge_personas_v4alpha.go` (NEW 155 LoC) merge v4alpha personas after overrides in `NewPersonaRegistry`. `PersonaSourceV4Alpha="v4alpha"` discriminator. `orch.WithV4AlphaPersonas(enabled)` builder (default false; backward compat preserved).
+- **Tests**: 6 hermetic tests in `internal/orchestration/judge_list_personas_test.go` PASS.
+- **Estimated LoC**: planned 60, **actual 507**.
 - **Closes**: Phase 8 e2e T3 critical finding (row 2323).
 
-### §8.3 Embedder integration (ADR-013) — BGE-large text via ONNX pluggable adapter
+### §8.3 Embedder integration (ADR-013) — BGE-large text via ONNX pluggable adapter ✅ SHIPPED (recort operator decision A)
 
-- **Goal**: alpha.18 stub vector path closes. Vectors move from FTS5-absorbed to real embedding space.
-- **Architecture**: `internal/embedder/{bge,imagebind,wav2vec,onnx}.go` — pluggable adapter pattern. BGE-large for text (1024-dim), ImageBind for image (1024-dim), wav2vec 2.0 for audio (768-dim). ONNX runtime for inference. Cross-modal similarity search across modalities.
-- **Tests**: integration tests against ONNX runtime with synthetic tensors; `internal/embedder/bge_test.go` covers BGE-large encoding + cosine similarity. 20 new tests.
-- **Estimated LoC**: +800 LoC (4 adapters + ONNX bridge) + 20 tests.
+**Commit**: `514d003` (432 insertions, 48 deletions, 7 files)
+**Atomic mirror**: row 2365 (SUMMARY, decision) + rows 2366-2368
+(3 SECTION) — `alpha-11-phase8` agent_id. Chunk 8.3-bench
+(`03aa531`, row 2369 observation) is the real-latency benchmark
+companion.
+
+- **Goal (recort)**: alpha.18 stub vector path closes via the
+  EXISTING `internal/embedder/` infrastructure (5 adapters + FactoryAuto
+  ladder shipped since v2.9.0-alpha PR-2). What was missing was the
+  boot wiring (`cmd/dark-mem-mcp/legacy_main.go` never called
+  `FactoryAuto()`; Store always booted with `embedder.None()`).
+- **Recort rationale (operator decision A)**: text-only (dropped
+  BGE-large + ImageBind + wav2vec 2.0 multi-modal scope — dark-memory
+  has NO attachment schema for image/audio storage, so encoding
+  those modalities would compute embeddings nobody can use). Recort
+  shrunk scope from ~800 LoC to ~150 LoC NEW work.
+- **Architecture (final)**: `WithEmbedder(e) Store` to the Store
+  interface; `bootState.Store.WithEmbedder(embedder.FactoryAuto())`
+  at boot; `embedderInfo` struct (Kind+Dim, frozen wire shape) on
+  `healthPingResult`.
+- **Tests**: 5 e2e tests in `internal/store/sqlite/embedder_integration_test.go`
+  PASS (WithEmbedder_RRFReturnsSemanticMatch, VectorCosineRanking,
+  FactoryAutoLadder, WithEmbedderNilRestoresStub).
+- **Estimated LoC**: planned 800, **actual 432** (recort).
 - **Closes**: sota-critique.md §5.2.3 alpha.20 follow-up #1 (deferred from alpha.19).
 
-### §8.4 ProGraph 2-layer entity extraction (ADR-015)
+### §8.4 ProGraph 2-layer entity extraction (ADR-015) ✅ SHIPPED
+
+**Commit**: `9217379` (2041 LoC / -12 LoC, 13 files)
+**Atomic mirror**: row 2372 (SUMMARY, decision) — `alpha-11-phase8`
+agent_id, project `dark-memory`.
 
 - **Goal**: multi-hop retrieval stub closes. C1/C2/C5/C6 stay 1-hop; C3/C4 promote to 2-hop entity traversal.
-- **Architecture**: `internal/recall/prograph.go` — entity graph traversal (Layer 1: typed entities from extraction; Layer 2: relationships). `ExtractEntities` + `MultiHopRetrieve` functions. Integrated with `policy.FrameSource` for cross-frame entity linking.
-- **Tests**: 15 new tests covering 1-hop vs 2-hop behavior, entity deduplication, relationship cycle detection.
-- **Estimated LoC**: +600 LoC (graph traversal + entity store) + 15 tests.
+- **Architecture (final)**: `internal/recall/entity.go` (Entity +
+  EntityStore in-memory index, sync.RWMutex) + `internal/recall/prograph.go`
+  (ExtractEntities + MultiHopRetrieve BFS + ProGraphSource 3-method
+  subset interface for hermetic tests). Store-first BFS expansion
+  (NOT in-memory-only — caught by e2e). depth cap=2 (alpha.21+
+  territory for 3+).
+- **Tests**: 23 PASS (6 entity_test, 12 prograph_test, 5 prograph_e2e).
+- **Estimated LoC**: planned 600, **actual 2041** (EntityStore
+  snapshot/rebuild + cycle detection + Store-first BFS are real
+  engineering work, not stubs).
 - **Closes**: sota-critique.md §5.2.3 alpha.20 follow-up #2.
 
-### §8.5 Audit gaps (ADR-016 transparency log + ADR-018 audit verify tool)
+### §8.5 Audit gaps (ADR-016 transparency log + ADR-018 audit verify tool) ✅ SHIPPED
+
+**Commit**: `9c4cfe6` (1319 LoC, 8 files)
+**Atomic mirror**: row 2371 (SUMMARY, decision) + 3 SECTION —
+`alpha-11-phase8` agent_id.
 
 - **Goal**: `dark_memory_audit_export` + `dark_memory_audit_verify` exposed publicly. Operators can dump and verify the audit chain offline.
-- **Architecture**: `internal/audit/export.go` (ADR-016) emits JSONL stream of all write_audit rows with HMAC chain verification. `internal/audit/verify.go` (ADR-018) reads JSONL stream + recomputes HMAC + verifies monotonicity.
-- **Tests**: 12 new tests covering chain integrity (forward + backward), cross-DB verification, broken-chain detection.
-- **Estimated LoC**: +400 LoC (export + verify) + 12 tests.
+- **Architecture (final)**: `internal/audit/hmac.go` (HMAC-SHA256
+  chain, ChainPrev/ChainSelf/ChainKeyID, KeyringFromEnv for rotation
+  via `DARK_AUDIT_HMAC_KEY`) + `export.go` (JSONL stream) +
+  `verify.go` (Status enum OK | Broken | UnknownKey | Malformed,
+  FirstBadID + Reason on first failure).
+- **Tests**: 37 PASS (31 hermetic + 4 e2e + 1 staleness). OBSERVABILITY 4→6.
+- **Estimated LoC**: planned 400, **actual 1319**.
 - **Closes**: sota-critique.md §5.2.3 alpha.20 follow-up #5 (deferred from Phase 6 per SPEC D2).
 
-### §8.6 internal/recall 82.1% → 95%+ polish
+### §8.6 internal/recall 82.1% → 95%+ polish ✅ SHIPPED (ceiling 91.9%)
 
-- **Goal**: finish the chunk 7.6 remaining gap (Render/Hash error branches hard to trigger).
-- **Architecture**: add tests for `Render()` failures (corrupted JSON input), `Hash()` collisions, `persistRaw` error propagation paths not covered in chunk 7.6.
-- **Tests**: 8 new tests targeting the remaining uncovered branches.
-- **Estimated LoC**: +250 LoC (test-only) + 8 tests.
+**Commit**: `07c2b90` (1414 LoC, 5 new files)
+**Atomic mirror**: row 2370 (SUMMARY, decision) — `alpha-11-phase8`
+agent_id.
+
+- **Goal (ceiling 91.9%)**: finish the chunk 7.6 remaining gap. DriftFrame 38.1% → 95.2%, PersonaFrame 68.8% → 93.8%, IdentityFrame 80.0% → 90.0%, ScopeFrame 90.9%, CapabilitiesFrame 86.7% (dead branches, accepted ceiling).
+- **LUCIDEZ honest disclosure**: SPEC §3.6 COMPLETELY MISSED DriftFrame 38.1% gap + PersonaFrame 68.9% gap — required 5+5 additional tests not 0. Remaining 3.1% gap to SPEC ≥95% target: unreachable defensive paths (`json.Marshal` cannot fail on JSON-safe struct types; closed-store test fails GetFrame first; DefaultToolGrants has no trailing comma).
+- **Tests**: 27+ PASS (5 new files: cache_persist_test, assemble_drift_test, assemble_persona_test, assemble_final_test, assemble_final2_test).
+- **Estimated LoC**: planned 250, **actual 1414**.
 - **Closes**: sota-critique.md §5.2.3 alpha.20 follow-up #6.
 
-### §8.7 Bitemporal (ADR-014) — transaction_time + valid_time
+### §8.7 Bitemporal (ADR-014) — transaction_time + valid_time ✅ SHIPPED (operator decision B)
 
-- **Goal**: alpha.18 DecayScore precursor (ScrubJay-MEM π_i + τ_i). Each agent_memory row gains `transaction_time` (write clock) and `valid_time` (semantic clock).
-- **Architecture**: `internal/store/bitemporal.go` — adds two new NOT NULL columns to agent_memory; migration 31 (schema_version 30→31). `RecallAtTime(t, kind)` for time-travel queries.
-- **Tests**: 15 new tests covering transaction_time monotonicity, valid_time settability, time-travel consistency.
-- **Estimated LoC**: +500 LoC (schema migration + time-travel APIs) + 15 tests.
-- **Closes**: sota-critique.md §5.2.3 alpha.20 follow-up #3.
+**Commit**: `c61982b` (1755 LoC, 16 files including SPEC §3.7 LUCIDEZ
+clarification)
+**Atomic mirror**: row 2375 (SUMMARY, decision) — `alpha-11-phase8`
+agent_id.
 
-### §8.8 Docs + alpha.20 tag local
+- **Goal**: alpha.18 DecayScore precursor (ScrubJay-MEM π_i + τ_i).
+  Each agent_memory row gains `transaction_time` (write clock) and
+  `valid_time` (semantic clock). Schema v29 → v31.
+- **Architecture (operator decision B)**: v30 `phase5_port_to_production`
+  ports v4alpha Phase 5 schema (decision_state, valid_from,
+  valid_to, supersedes_id, decision_transitions) to production. v31
+  `bitemporal_lite` adds transaction_time + valid_time columns
+  (NULLABLE; backfill UPDATE from created_at; COALESCE on read).
+  MarkSupersededAgentMemory + RecallAtTime in Store interface +
+  dark_memory_mark_superseded + dark_memory_recall_bitemporal MCP.
+- **LUCIDEZ honest disclosure (SPEC §3.7 amended)**: v31 columns are
+  NULLABLE, not `NOT NULL` as originally specified. SQLite cannot do
+  `ALTER TABLE ALTER COLUMN SET NOT NULL` without table rebuild.
+  PostgreSQL variant CAN enforce NOT NULL (v32 migration if parity
+  is the priority).
+- **Tests**: 21 PASS (4 migration_v30_v31, 10 bitemporal_*, 7
+  bitemporal_e2e). AGENT_MEMORY 11→13; canonical tools 60→62; schema 29→31.
+- **Estimated LoC**: planned 500, **actual 1755** (Phase 5 port was the
+  actual engineering work, operator explicitly approved via B).
+- **Closes**: sota-critique.md §5.2.3 alpha.20 follow-up #3 + Phase 6 D2
+  mark_superseded gap (blocked since v4alpha Phase 5).
 
-- `CHANGELOG.md [4.0.0-alpha.20]` entry covering all 8 chunks.
-- `docs/v4-status.md §1.8` Phase 8 changelog.
-- `docs/v4-alpha-11-plan.md §8` this section (renumbered — old §8 → §9, old §9 → §10, old §10 → §11).
-- `docs/sota-critique.md §5.2.4` Phase 8 per-gap closure evidence table (closes both §8.1 + §8.2 critical gaps + alpha.20 follow-ups).
-- `git tag v4.0.0-alpha.20` LOCAL ONLY on final commit (chunks 8.1-8.7 + this).
-- Atomic mirror: 1 SUMMARY pinned + 7 SECTION pinned=false (8 chunks × 1 SECTION).
+### §8.8 Docs + alpha.20 tag local ✅ SHIPPED
 
-### §8.9 Document `fake_authority` pattern examples
+**Atomic mirror row 2376** (this SUMMARY pinned, decision,
+memory_type=episodic, agent_id `alpha-11-phase8`).
+
+- `CHANGELOG.md [4.0.0-alpha.20]` entry covering all 8 chunks (~250 LoC).
+- `docs/v4-status.md §1.8` Phase 9 changelog (~150 LoC).
+- `docs/v4-alpha-11-plan.md §8` this section — confirmed + per-chunk
+  cross-refs to atomic mirror rows 2356, 2360, 2365, 2369, 2370,
+  2371, 2372, 2375, 2376.
+- `docs/sota-critique.md §5.2.4` Phase 9 per-gap closure evidence
+  table (~100 LoC).
+- `README.md` — fix to `MCP-62 canonical tools` + `## Las 62
+  herramientas` + `schema-v31` + `17 oficios` (unblocks
+  `tests/docs` TestDocs_SurfaceNumbersMatchRuntime).
+- `git tag v4.0.0-alpha.20` LOCAL ONLY on this commit (chunks 8.1-8.7
+  + this). NO remote push per platform-LOCAL policy.
+- Atomic mirror: 1 SUMMARY pinned + 7 SECTION pinned=false (8 chunks
+  × 1 SECTION) — row 2376 + 7 SECTION (this commit).
+
+### §8.9 Document `fake_authority` pattern examples 📋 PLANNED
 
 - **Caveat (e2e T12)**: 5 attempted phrasings of `fake_authority` pattern all missed the validator. Other 9 patterns (no_needs_human, auto_sign, self_modify, ignore_invariant, disable_audit, skip_injection, always_aligned, remove_safety, trust_unconditional) trigger with reasonable phrasing. fake_authority is intentionally narrow (privilege escalation requires sophisticated phrasing).
 - **Goal**: add to `docs/sota-critique.md §5.2.4` an "override validator patterns" appendix with examples of phrasings that DO and DO NOT trigger each pattern, plus design rationale (fake_authority is intentionally narrow per security review).
