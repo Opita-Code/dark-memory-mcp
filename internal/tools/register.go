@@ -218,6 +218,16 @@ func RegisterAllWithDeps(reg *Registry, orch *orchestration.Orchestrator, st sto
 	orch.WithVLP(uc)
 	RegisterVLP(reg, uc)
 
+	// JUDGE_UTIL (7) — v4.0.0-alpha.22 (Phase 11 T-402, 2026-10-03).
+	// The 7 deterministic primitives (T5 normalizer, override validator,
+	// pattern catalog, Ed25519 verify, SHA-256 verify, W3C trace
+	// generator, trace validator) that complement the LLM-backed judge
+	// pipeline. Previously only reachable through the v4alpha MCP
+	// server (DARK_MEM_BRIDGE=v4alpha); now wired into v3 single-binary
+	// mode. Closes OD7 tests (d) + (i) from "partial" to PASS.
+	// Pure functions — no Store, no Orchestrator, no audit row emitted.
+	RegisterJudgeUtil(reg)
+
 	// L7-REDTEAM (3) — armed-mode optional. RegisterRedTeam panics
 	// / errors if DARK_REDTEAM != "armed", so the un-armed server
 	// gets exactly the canonical surface (count derived from

@@ -124,18 +124,25 @@ func TestCanonicalOrder_WirePrefixConsistent(t *testing.T) {
 // namespace count stays 17 — both tools live in AGENT_MEMORY. Schema
 // bumps v29 → v31 (v30 = Phase 5 port, v31 = bitemporal_lite
 // transaction_time + valid_time columns).
+//
+// Bumping 62 → 69 (alpha.22 Phase 11 T-402, 2026-10-03): adds the
+// JUDGE_UTIL namespace with 7 tools (normalize, validate_overrides,
+// pattern_descriptions, verify, verify_hash, trace, validate_trace).
+// Pure deterministic primitives that complement the LLM-backed judge
+// pipeline; previously only reachable through the v4alpha MCP server.
+// Namespace count goes 17 → 18. Schema stays v31 (no schema change).
 func TestCanonicalOrder_Frozen_57_17_28(t *testing.T) {
 	const (
-		frozenToolCount      = 62 // 60 (alpha.20 Chunk 8.4) + 2 from alpha.20 Chunk 8.7 (mark_superseded + recall_bitemporal)
-		frozenNamespaceCount = 17 // no new namespace — both tools live in AGENT_MEMORY
-		frozenSchemaVersion  = 31 // v31 = bitemporal_lite (v29 base + v30 Phase 5 port + v31 bitemporal)
+		frozenToolCount      = 69 // 62 (alpha.20 Chunk 8.7) + 7 from alpha.22 Phase 11 T-402 (JUDGE_UTIL namespace)
+		frozenNamespaceCount = 18 // 17 (alpha.20) + 1 new namespace (JUDGE_UTIL)
+		frozenSchemaVersion  = 31 // v31 = bitemporal_lite (unchanged — Phase 11 is non-schema work)
 	)
 
 	if got := len(CanonicalOrder()); got != frozenToolCount {
-		t.Errorf("CanonicalOrder() len = %d, want %d (freeze SPEC 1276 + alpha.20 Chunk 8.5)", got, frozenToolCount)
+		t.Errorf("CanonicalOrder() len = %d, want %d (freeze SPEC 1276 + alpha.22 Phase 11 T-402)", got, frozenToolCount)
 	}
 	if got := NamespaceCount(); got != frozenNamespaceCount {
-		t.Errorf("NamespaceCount() = %d, want %d (freeze SPEC 1276)", got, frozenNamespaceCount)
+		t.Errorf("NamespaceCount() = %d, want %d (freeze SPEC 1276 + alpha.22 Phase 11 T-402)", got, frozenNamespaceCount)
 	}
 	if got := sqlite.CurrentVersion(); got != frozenSchemaVersion {
 		t.Errorf("sqlite.CurrentVersion() = %d, want %d (freeze SPEC 1276)", got, frozenSchemaVersion)

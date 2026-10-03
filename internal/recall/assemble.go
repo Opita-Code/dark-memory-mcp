@@ -104,7 +104,8 @@ const DefaultToolGrants = "project_create," + // PROJECT (1)
 	"error_list,error_get,error_summary,error_resolve," + // ERROR_OBS (4) — v2.11.0 (spec 757: Error Observatory backlog + triage)
 	"admin_migrate,admin_schema_status,admin_vacuum," + // ADMIN (3)
 	"vlp_handle_event," + // L6-VLP (1) — DMAP v1.1
-	"embedder_setup_prompt" // EMBEDDER (1) — v2.9.0-alpha PR-2 (consent gate, row 164 §3)
+	"embedder_setup_prompt," + // EMBEDDER (1) — v2.9.0-alpha PR-2 (consent gate, row 164 §3)
+	"judge_util_normalize,judge_util_validate_overrides,judge_util_pattern_descriptions,judge_util_verify,judge_util_verify_hash,judge_util_trace,judge_util_validate_trace" // JUDGE_UTIL (7) — v4.0.0-alpha.22 (Phase 11 T-402: 7 deterministic primitives from v4alpha exposed in v3 single-binary mode)
 
 // DefaultTone is the fallback persona tone when the active
 // constitution doesn't have a [tone] section. Used by PersonaFrame.

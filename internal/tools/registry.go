@@ -404,6 +404,28 @@ var canonicalNamespaces = []NamespaceGroup{
 		Name:  "EMBEDDER",
 		Tools: []string{"embedder_setup_prompt"},
 	},
+	{
+		// v4.0.0-alpha.22 (Phase 11 T-402, 2026-10-03). The 7
+		// deterministic primitives that complement the LLM-backed
+		// judge pipeline. Previously only reachable through the
+		// v4alpha MCP server (DARK_MEM_BRIDGE=v4alpha); now wired
+		// into v3 single-binary mode (closes OD7 tests (d) + (i)
+		// from "partial" to PASS). Pure functions — no Store,
+		// no Orchestrator, no audit row emitted. Closes the freeze
+		// (additive namespace; SPEC 1270 breaking-change contract).
+		// Wire shape mirrors internal/v4alpha/transport/mcp/judge_util.go
+		// byte-for-byte where overlapping.
+		Name: "JUDGE_UTIL",
+		Tools: []string{
+			"judge_util_normalize",
+			"judge_util_validate_overrides",
+			"judge_util_pattern_descriptions",
+			"judge_util_verify",
+			"judge_util_verify_hash",
+			"judge_util_trace",
+			"judge_util_validate_trace",
+		},
+	},
 }
 
 // flattenCanonicalNamespaces flattens canonicalNamespaces into the
