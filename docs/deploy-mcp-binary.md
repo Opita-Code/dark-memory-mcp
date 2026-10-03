@@ -187,6 +187,83 @@ production), the next iteration (alpha.22+) can implement
 Windows-compatible in-place re-exec via `os.StartProcess` +
 explicit handle inheritance. Out of scope for Chunk 10.1.
 
+### 6.5 The supervisor wrapper (Chunk 10.2) — solves the harness respawn limit
+
+The Phase 10 deploy test (2026-10-03, fresh state, no orphans)
+proved the in-binary watcher works but the harness still does
+NOT respawn reliably:
+
+```
+fresh PID 7412 (post-fix binary)
+  → touch bin/dark-mem-mcp.exe.reload
+  → watcher fires within 2s, closes stdin
+  → binary exits gracefully (boot.Shutdown defer runs)
+  → harness sees broken pipe
+  → harness's first respawn attempt: FAILS (no clear reason,
+    possibly a race during the brief MCP re-init)
+  → harness marks dark-memory as "dead" for the session
+  → 60s of waiting: 0 new processes, dark-memory tools gone
+```
+
+The opencode harness has no `auto_relaunch_on_browser_death`
+flag (unlike dark-copilot). After the first failed respawn, it
+gives up entirely. This is a harness constraint, not a binary
+bug.
+
+**Solution: a supervisor wrapper process.**
+
+`bin/dark-mem-mcp-supervisor.exe` is a tiny Go program (~3MB)
+that:
+
+1. The harness spawns the wrapper (per `opencode.jsonc` —
+   `command: [.../dark-mem-mcp-supervisor.exe]`).
+2. The wrapper spawns `bin/dark-mem-mcp.exe` as a child with
+   stdio inherited from the wrapper. Go's `os/exec` does this
+   automatically on Windows when `cmd.Stdin/Stdout/Stderr` are
+   set to the parent's.
+3. The harness's stdio pipes connect to the wrapper, which
+   proxies them to the child. MCP `initialize` and `tools/list`
+   work because the proxy is transparent.
+4. When the child exits (e.g., deploy triggered via file-flag
+   watcher), the wrapper detects the exit, logs to stderr,
+   sleeps 1s, and respawns the child with the SAME stdio
+   handles (the wrapper's, which the harness owns).
+5. The harness never sees the child's death — only the
+   wrapper's stable presence. MCP tool calls during the
+   1s backoff + ~3s boot window fail with "EOF" or similar;
+   the LLM operator retries automatically.
+
+**Update `~/.config/opencode/opencode.jsonc`** (already
+applied in this repo, see commit history):
+
+```diff
+"dark-memory": {
+  "type": "local",
+  "command": [
+-    "C:/Users/Nico/Documents/dark-memory-mcp/bin/dark-mem-mcp.exe"
++    "C:/Users/Nico/Documents/dark-memory-mcp/bin/dark-mem-mcp-supervisor.exe"
+  ],
+  ...
+}
+```
+
+**Deployment procedure is unchanged** — the operator still
+touches `bin/dark-mem-mcp.exe.reload`. The watcher in the
+binary fires, closes stdin, exits. The supervisor detects
+the exit and respawns. The harness sees a brief pause (~5s)
+but no death event.
+
+**Trade-off vs. the watcher-only approach**: the supervisor
+adds one level of indirection. The MCP handshake proxies
+through the wrapper. Negligible latency overhead (~10µs per
+stdio syscall). Operationally transparent.
+
+**Bootstrap paradox resolved**: the supervisor doesn't have
+the chicken-and-egg problem that the watcher fix had.
+Operators install the supervisor ONCE (one opencode restart)
+and never need to restart opencode again for binary deploys.
+Subsequent deploys are touch + wait + verify.
+
 ## 7. Cross-references
 
 - `cmd/dark-mem-mcp/legacy_main.go:50-58` — signal handler + watcher goroutine
