@@ -286,12 +286,25 @@ func runStartupRecoverLegacy(ctx context.Context, orch *orchestration.Orchestrat
 //  2. Atomic rename: `bin/dark-mem-mcp.exe` → `bin/dark-mem-mcp.exe.bak-<ts>`,
 //     then `bin/dark-mem-mcp.exe.new` → `bin/dark-mem-mcp.exe`.
 //  3. Touch `bin/dark-mem-mcp.exe.reload`.
-//  4. Within 2s, the watcher sees the flag, removes it, and calls
-//     cancel() — the existing SIGINT/SIGTERM handler runs and
-//     dark-mem-mcp exits gracefully.
+//  4. Within 2s, the watcher sees the flag, removes it, and
+//     closes os.Stdin — mcp-go's ServeStdio sees EOF on stdin
+//     and returns. The defer s.boot.Shutdown(ctx) runs (audit
+//     flush, sweeper stop, federation peer close), then main
+//     returns and the process exits normally.
 //  5. The opencode harness respawns the binary at the canonical
 //     path. The new binary is the freshly-renamed version. Total
 //     disconnect window: 2s (poll interval) + ~3s (boot) = ~5s.
+//
+// Chunk 10.1b note: the first version of this watcher called
+// cancel() instead of os.Stdin.Close(). That didn't work because
+// server.ServeStdio (internal/server/server.go:345) does NOT pass
+// the ctx to mcp-go's server.ServeStdio — the underlying stdio
+// read loop is not context-aware. The process kept running after
+// cancel() because stdin never closed. Closing stdin forces EOF,
+// which the read loop returns on, which makes ServeStdio return
+// nil, which lets the defer fire, which lets main return. This
+// is the "Windows-compatible SIGHUP" — EOF on stdin IS the
+// graceful shutdown signal for a stdio MCP server.
 //
 // The watcher is idempotent (the os.Remove on the flag is best-
 // effort; a duplicate touch is harmless). The 2s poll is the
@@ -314,12 +327,20 @@ func watchReloadFlag(ctx context.Context, cancel context.CancelFunc) {
 		case <-ticker.C:
 			if _, statErr := os.Stat(flagPath); statErr == nil {
 				fmt.Fprintf(os.Stderr,
-					"dark-mem-mcp: reload flag %s found, triggering graceful shutdown for harness respawn\n",
+					"dark-mem-mcp: reload flag %s found, closing stdin for graceful shutdown\n",
 					flagPath)
 				// Best-effort flag cleanup. If Remove fails, a
 				// second deploy will see the same flag and
 				// self-trigger — annoying but harmless.
 				_ = os.Remove(flagPath)
+				// Close stdin. mcp-go's stdio scanner sees EOF
+				// and returns. ServeStdio's defer
+				// s.boot.Shutdown(ctx) runs, main returns,
+				// process exits gracefully.
+				_ = os.Stdin.Close()
+				// Belt + suspenders: also cancel the context so
+				// any non-stdio-aware code paths (e.g. the
+				// sweeper) see the shutdown signal.
 				cancel()
 				return
 			}
