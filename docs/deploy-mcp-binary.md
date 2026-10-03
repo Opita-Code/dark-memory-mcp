@@ -198,7 +198,40 @@ explicit handle inheritance. Out of scope for Chunk 10.1.
 - dark-memory row 2378 (Phase 9 alpha.20.1 SUMMARY)
 - dark-memory row 2381+ (Phase 10 Chunk 10.1 deploy procedure atomic mirror — pending)
 
-## 8. LUCIDEZ honest disclosure (deploy test 2026-10-02)
+## 8. LUCIDEZ honest disclosure (deploy tests 2026-10-02 + 2026-10-03)
+
+### 8.1 First test (2026-10-02): harness gives up after 1 failed respawn
+
+The Phase 10 B-rev1 deploy test killed the v3 binary (pid 15104)
+before adding the file-flag handler. The harness respawned once
+(pid 15116) but that respawn failed; the harness gave up. The
+dark-memory MCP stayed dead for the rest of the session, even
+after the operator's opencode restart. Lesson: **always add the
+reload handler BEFORE the first deploy attempt**, or risk a
+session-long outage.
+
+### 8.2 Second test (2026-10-03): chicken-and-egg with the fix itself
+
+The Chunk 10.1b fix (os.Stdin.Close() instead of cancel() only)
+was deployed via the file-flag trigger. The OLD running binary
+(v4-alpha.21-pre-1, the cancel-only version) detected the flag,
+called cancel(), but didn't die (because ServeStdio isn't
+context-aware). The HARNESS then spawned PID 8624 (the post-fix
+binary), but PID 4856 was still alive and serving MCP, so the
+harness kept using PID 4856. When I manually killed PID 4856, the
+harness had no fallback to PID 8624 and gave up — dark-memory
+went "dead" for the session AGAIN.
+
+**Lesson: the first deploy of a watcher-fix requires an opencode
+restart.** The fix can only be tested AFTER it's deployed, but
+the deploy mechanism that the fix enables is the only way to
+deploy without restart. Bootstrap requires one opencode restart,
+then subsequent deploys work clean.
+
+After the second opencode restart (where the harness spawns the
+post-fix binary from cold), the procedure works end-to-end:
+touch flag → stdin close → graceful exit → harness respawns with
+the freshly-deployed canonical binary. No more restart needed.
 
 The Phase 10 B-rev1 deploy test killed the v3 binary (pid
 15104) before adding the file-flag handler. The harness
