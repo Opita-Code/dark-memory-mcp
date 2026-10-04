@@ -39,6 +39,7 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/audit"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/delegation"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/docs_index"
+	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/event"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/judge"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/project"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/research"
@@ -76,6 +77,7 @@ type Server struct {
 	judgePipeline   *judge.Pipeline // ADR-007 C2: LLM-backed judge surface
 	llmClient       judge.LLMClient // Phase 7 alpha.19 Chunk 7.1: EXTRACT step in delegate_intent
 	extractCache    *delegation.ExtractCache // Phase 7 alpha.19 Chunk 7.1: hoist for cross-call caching
+	eventEmitter    *event.DelegationProgressEmitter // Phase 12 T-103c: progress events for delegate_intent pipeline
 	judgePersonas   judge.PersonaRegistry
 	judgeStore      *judge.Store // ADR-007 C3: sdd_evaluations persistence
 	researchExecutor *research.Executor // BUG-10 10a: 17-backend research fan-out
@@ -373,6 +375,17 @@ func (s *Server) MemoriesForTest() *agent_memory.Store {
 // (without this, s.extractCache is nil and every call is a cache miss).
 func (s *Server) SetExtractCacheForTest(c *delegation.ExtractCache) {
 	s.extractCache = c
+}
+
+// WithEventEmitter injects a *event.DelegationProgressEmitter for
+// Phase 12 T-103c. When non-nil, the delegate_intent pipeline emits
+// 1 root + 4 child progress events through the DECIDE→EXTRACT→MIND
+// →CURATE→COMPLETED lifecycle. When nil, the pipeline runs without
+// emitting events (backward compat for harnesses that haven't wired
+// the emitter yet). Returns the server for chaining.
+func (s *Server) WithEventEmitter(e *event.DelegationProgressEmitter) *Server {
+	s.eventEmitter = e
+	return s
 }
 
 // NewExtractCacheForTest returns a fresh in-memory ExtractCache for use

@@ -268,7 +268,7 @@ func handleV4AlphaDelegateIntent(ctx context.Context, raw json.RawMessage, backe
 		ParentSessionID: in.ParentSessionID,
 		ParentAgentID:   in.ParentAgentID,
 	}
-	v4res, err := v4mcpt.RunDelegateIntentCore(ctx, v4in, llmClient, extractCache, memories)
+	v4res, err := v4mcpt.RunDelegateIntentCore(ctx, v4in, llmClient, extractCache, memories, nil) // Phase 12 T-103c: nil emitter (wiring deferred to v3 main.go)
 	if err != nil {
 		// Map *WireError → ToolError (F35 propagation).
 		we, ok := v4mcpt.AsWireError(err)

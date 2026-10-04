@@ -154,7 +154,7 @@ func (s *Server) handleDelegateIntent(ctx context.Context, req mcp.CallToolReque
 	// dependency graph (llmClient, extractCache, memories). nil-safe:
 	// the pipeline falls back to needs_human when llmClient is nil and
 	// no-ops the CURATE step when memories is nil.
-	out, err := RunDelegateIntentCore(ctx, in, s.llmClient, s.extractCache, s.memories)
+	out, err := RunDelegateIntentCore(ctx, in, s.llmClient, s.extractCache, s.memories, s.eventEmitter)
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}

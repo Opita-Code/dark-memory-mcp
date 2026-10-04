@@ -131,11 +131,20 @@ func TestCanonicalOrder_WirePrefixConsistent(t *testing.T) {
 // Pure deterministic primitives that complement the LLM-backed judge
 // pipeline; previously only reachable through the v4alpha MCP server.
 // Namespace count goes 17 → 18. Schema stays v31 (no schema change).
+//
+// Bumping 31 → 32 (alpha.23 Phase 12 T-101, 2026-10-04): adds the
+// polymorphic events table (events_polymorphic migration, v32). T-102
+// adds the EventWriter policy primitive (no schema). T-103a adds
+// AutoEmitter (no schema). T-103b adds DriftJudgeProgressEmitter +
+// wires into runAsyncJudgePipeline (no schema). T-103c adds
+// DelegationProgressEmitter + wires into RunDelegateIntentCore (no
+// schema). Tool count + namespace count stay unchanged through T-101
+// → T-103c; tools event_log + event_replay come in T-105 (69 → 71).
 func TestCanonicalOrder_Frozen_57_17_28(t *testing.T) {
 	const (
 		frozenToolCount      = 69 // 62 (alpha.20 Chunk 8.7) + 7 from alpha.22 Phase 11 T-402 (JUDGE_UTIL namespace)
 		frozenNamespaceCount = 18 // 17 (alpha.20) + 1 new namespace (JUDGE_UTIL)
-		frozenSchemaVersion  = 31 // v31 = bitemporal_lite (unchanged — Phase 11 is non-schema work)
+		frozenSchemaVersion  = 32 // v31 = bitemporal_lite; v32 = events_polymorphic (Phase 12 T-101)
 	)
 
 	if got := len(CanonicalOrder()); got != frozenToolCount {

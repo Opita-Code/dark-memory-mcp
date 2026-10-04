@@ -58,9 +58,11 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/agent_memory"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/delegation"
+	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/event"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/judge"
 )
 
@@ -101,6 +103,7 @@ func RunDelegateIntentCore(
 	llmClient judge.LLMClient,
 	extractCache *delegation.ExtractCache,
 	memories *agent_memory.Store,
+	emitter *event.DelegationProgressEmitter, // Phase 12 T-103c, nil-safe
 ) (*DelegateIntentOutput, error) {
 	if !validVibeCases[in.VibeCase] {
 		return nil, errInvalidVibeCase(in.VibeCase)
@@ -112,8 +115,23 @@ func RunDelegateIntentCore(
 		in.Operator = "orchestrator_delegate"
 	}
 
+	// Phase 12 T-103c: capture start time for duration_ms forensic.
+	// Used by EmitCompleted / EmitFailed at the end of the pipeline.
+	startTime := time.Now()
+
+	// taskID is stable across DECIDE→EXTRACT→MIND→CURATE→COMPLETED so
+	// observers can correlate the 5+ progress events via process_id.
+	taskID := newTaskID(in.Operator, in.TaskDescription)
+
 	// 1+2. DECIDE.
 	decision, reason := delegation.DecideDelegation(in.VibeCase, in.TaskDescription)
+
+	// Phase 12 T-103c: emit "started" (root) progress event. SYNC so we
+	// capture the event id; downstream emits reference it as
+	// parent_event_id. Failures are logged but don't fail the pipeline.
+	if emitter != nil {
+		_, _ = emitter.EmitDecide(ctx, taskID, decision, reason)
+	}
 
 	// 3+4. EXTRACT (when ShouldExtract fires) OR PLAN (otherwise).
 	var (
@@ -136,9 +154,18 @@ func RunDelegateIntentCore(
 		if result.Reasoning != "" {
 			reason = reason + " | " + result.Reasoning
 		}
+		// Phase 12 T-103c: emit "running" for EXTRACT (pct=25).
+		if emitter != nil {
+			emitter.EmitExtract(ctx, taskID, extractVerd, len(subtasks))
+		}
 	} else {
 		// PLAN for short delegate + inline + refused.
 		subtasks = delegation.PlanSubtasks(in.VibeCase, in.TaskDescription, decision)
+		// Phase 12 T-103c: when EXTRACT is bypassed, emit a synthetic
+		// EXTRACT event so observers see the full timeline.
+		if emitter != nil {
+			emitter.EmitExtract(ctx, taskID, "aligned", len(subtasks))
+		}
 	}
 
 	// Initial verdict: aligned for PLAN/INLINE/REFUSED, or whatever
@@ -163,11 +190,14 @@ func RunDelegateIntentCore(
 			DelegationContext: st.DelegationContext,
 		})
 	}
+	// Phase 12 T-103c: emit "running" for MIND (pct=50).
+	if emitter != nil {
+		emitter.EmitMind(ctx, taskID, len(out))
+	}
 
 	// 6. CURATE — register a subagent binding per subtask (Chunk 7.2
 	// path). Skipped when verdict != aligned (a needs_human / cached
 	// / errored response has no stable subtasks to bind).
-	taskID := newTaskID(in.Operator, in.TaskDescription)
 	if verdict == "aligned" && len(out) > 0 {
 		stSlice := make([]delegation.Subtask, len(out))
 		for i, st := range out {
@@ -190,6 +220,26 @@ func RunDelegateIntentCore(
 				out[i].DelegationContext = b.DelegationContext
 			}
 		}
+	}
+	// Phase 12 T-103c: emit "running" for CURATE (pct=75). Always emit
+	// (even when verdict != aligned) so the timeline shows CURATE was
+	// either skipped (verdict != aligned) or ran (verdict == aligned).
+	if emitter != nil {
+		boundCount := 0
+		for _, st := range out {
+			if st.SubagentID != "" {
+				boundCount++
+			}
+		}
+		emitter.EmitCurate(ctx, taskID, boundCount)
+	}
+
+	// Phase 12 T-103c: emit "completed" (pct=100) with final verdict
+	// + subtask count + duration. SYNC so observers polling the
+	// process_id see the final state before the MCP call returns.
+	if emitter != nil {
+		elapsedMs := time.Since(startTime).Milliseconds()
+		emitter.EmitCompleted(ctx, taskID, verdict, len(out), elapsedMs)
 	}
 
 	// 7. Build the wire shape.
