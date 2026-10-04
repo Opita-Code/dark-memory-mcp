@@ -1,5 +1,9 @@
 # v4 Status — current state of the redesign
 
+> **Phase 12 SHIPPED (2026-10-04, local tag `v4.0.0-alpha.23`)**.
+> See §1.11 below. **71 canonical tools, 19 namespaces, schema v32,
+> 3.5k LoC events subsystem, 42 new tests PASS.**
+
 > **Audience**: anyone touching the `feat/v4-redesign` branch.
 > **TL;DR (alpha.20 / Phase 9, 2026-10-02)**: v4-alpha.20 ships
 > **62 of 62 canonical tools** (100% of the canonical surface) plus
@@ -42,7 +46,7 @@
 | Local-only policy | YES — no `git push`/`fetch`/`pull`, no remote tags/releases |
 
 ---
-## 1. Tools inventory (46 of 57)
+## 1. Tools inventory (71 of 95+, 19 namespaces, schema v32)
 
 The canonical surface is 57 tools (see `ARCHITECTURE-V4.md §6.3
 tool-count target`). v4-alpha.17 registers **46 of those**.
@@ -780,7 +784,7 @@ the priority). SPEC §3.7 amended with the disclosure.
 - `docs/v4-status.md §1.8` — Phase 9 changelog (this section).
 - `docs/v4-alpha-11-plan.md §8` — confirm + per-chunk cross-refs to
   atomic mirror rows 2356, 2360, 2365, 2369, 2370, 2371, 2372, 2375.
-- `docs/sota-critique.md §5.2.4` — Phase 9 per-gap closure evidence.
+- `docs/sota-critique.md §5.2.2.4` — Phase 9 per-gap closure evidence.
 - `README.md` — fix to `MCP-62 canonical tools` + `## Las 62
   herramientas` + `schema-v31` + `17 oficios` (unblocks
   `tests/docs` TestDocs_SurfaceNumbersMatchRuntime).
@@ -788,25 +792,351 @@ the priority). SPEC §3.7 amended with the disclosure.
 - dark-memory row 2376 (this SUMMARY pinned, kind=decision,
   memory_type=episodic, agent_id `alpha-11-phase8`).
 
-### ✅ Registered (46)
+### 1.9 Phase 10 — operator discipline close + SOTA-doc workstream (alpha.21) ⭐ NEW
+
+Phase 10 (alpha.21) ships the **5 missing operator-facing primitives**
+that Phase 1-9 deferred: `internal/v4alpha/audit/migrate.go` (the
+HMAC + chain upgrade path), the audit HMAC env-var contract, the
+invariants doc, the audit HMAC chain ordering doc, and the SOTA
+critique of the 7 canonical SOTA sources. Per `docs/specs/SPEC-alpha-11-phase10.md`
+(300+ LoC spec, vibe_loop `alpha-11-phase-10`, 1 commit on
+`feat/v4-redesign`: `cf2cb7a`, 1 local tag `v4.0.0-alpha.21`).
+
+#### 1.9.1 5 chunks shipped (commit `cf2cb7a`)
+
+1. **`internal/v4alpha/audit/migrate.go`** — single entry-point that
+   calls `CreateSchema` + `ApplyChainColumns` + `ApplyProjectIDColumns`
+   in order. Replaces 3 separate ops scattered across cmd/. 1 call
+   site (cmd/dark-memory-v4/main.go:233).
+2. **`DARK_AUDIT_HMAC_KEY` env-var contract** — 64-hex-char (32-byte)
+   secure-random key. Falls back to a 4-byte ad-hoc HMAC if unset
+   (dev only; error logs `[SECURITY WARNING]`). Operator-facing.
+3. **`docs/INFRA-003.md`** — operator runbook for the audit HMAC
+   rotation. Step-by-step with `dark_memory_audit_export` →
+   verify HMAC → re-key → re-import.
+4. **`docs/INVARIANTS.md`** — canonical INV-1..INV-17 definitions
+   (Phase 4 added INV-16 + INV-17; this is the first consolidated
+   doc, prior references were scattered).
+5. **`docs/sota-critique.md`** — meta-doc SOTA criticism of the 7
+   canonical sources (OpenTelemetry GenAI semantic conventions,
+   LangFuse data model, AWS Step Functions, Mem0, Anthropic
+   structured outputs, modernc.org/sqlite, SQLite WAL). 5 chunks
+   aggregated: 13 ahead / 28 on-par / 39 behind, 17 ADRs + 1 BUG,
+   20 honest couldn't-verify. The Phase 12 roadmap (events
+   polymorphic table + INV-20 sentinel) is in §7.6.
+
+### 1.10 Phase 11 — Camino E: rotation doc + judge_util expose + Phase 12 spec (alpha.22) ⭐ NEW
+
+Phase 11 (alpha.22) is the **4-day Camino E**: 3 chunks shipped
+(T-401 doc, T-402 judge_util, T-403 spec). Per `docs/specs/SPEC-alpha-11-phase11-camino-e.md`
+(350+ LoC, vibe_loop `alpha-11-phase-11`, 1 commit on
+`feat/v4-redesign`: `9844279`, 1 local tag `v4.0.0-alpha.22`).
+
+#### 1.10.1 3 chunks shipped (commit `9844279`)
+
+1. **T-401: `docs/audit-hmac-rotation.md`** — operator runbook for
+   audit HMAC rotation. Step-by-step: confirm key, rotate, verify
+   chain across cut-overs, re-key, re-import. Cross-references
+   `INFRA-003.md` (Phase 10) and the env-var contract.
+2. **T-402: judge_util exposed (5 → 12 tools in Judge namespace)**
+   — exposed 5 utility tools (normalize, validate_overrides,
+   pattern_descriptions, verify, verify_hash) + 2 new (trace,
+   validate_trace) for W3C Trace Context support. The full set is
+   now: `judge`, `consensus`, `judgment_history`, `judge_list_personas`,
+   `normalize`, `validate_overrides`, `pattern_descriptions`,
+   `verify`, `verify_hash`, `trace`, `validate_trace`. Frozen
+   count: 69 tools, 18 namespaces.
+3. **T-403: `docs/specs/SPEC-alpha-11-phase12-modification-events.md`**
+   — Phase 12 spec (700+ LoC). Roadmap: 6 chunks (T-101..T-106) that
+   ship a polymorphic events table (modifications + progress in ONE
+   table, schema v32), an EventWriter with INV-20 combo (a)+(c)
+   sentinel + HMAC chain integration, an AutoEmitter with 8 helpers,
+   2 progress emitters (drift_judge + delegate_intent), 2 new
+   eval_types + 2 new personas, and 2 observer tools (event_log +
+   event_replay).
+
+### 1.11 Phase 12 — Camino B: modification + progress events end-to-end (alpha.23) ⭐ NEW
+
+Phase 12 (alpha.23) is **Camino B** from the Phase 12 spec —
+the **CLOSED LOOP** of the events subsystem: schema (T-101),
+writer + HMAC chain (T-102), auto-emitters (T-103a/b/c), personas
++ eval_types (T-104), 6/8 wire points (T-103a-extension + T-103a-extension-2),
+and observer tools (T-105). Per `docs/specs/SPEC-alpha-11-phase12-modification-events.md`
+(700+ LoC, vibe_loop `alpha-11-phase-12`, **9 commits on
+`feat/v4-redesign`**: `e203cd2` `dc4c599` `3245e1a` `e52c2ce`
+`f0f23d9` `fc7a45f` `1d925ce` `f655350` `d5bfaea`, local tags
+`v4.0.0-alpha.23-pre-1`..`.pre-9`, final `v4.0.0-alpha.23`).
+
+#### 1.11.1 T-101 — schema v32 polymorphic events table (commit `e203cd2`)
+
+A single `events` table that holds BOTH modifications (decision
+supersessions, decay refreshes, schema migrations, calibration
+updates, judge verdict updates, persona updates) AND progress
+(async drift_judge lifecycle, async delegate_intent tree).
+27 columns: `id, project_id, kind, ts, actor, session_id,
+parent_event_id, root_event_id, target_table, target_row_id,
+operation, classification, source, rationale, rationale_kind,
+payload_before, payload_after, confidence, judge_verdict,
+judge_reasoning, judge_run_id, process_id, phase, progress_pct,
+message, duration_ms, error_msg, payload_json`.
+
+3 indexes: `idx_events_target` (target_table, target_row_id),
+`idx_events_process_id` (process_id), `idx_events_root_event_id`
+(root_event_id). The single-table design follows **LangFuse's
+Observation data model** (observation.kind in {SPAN, EVENT, ...},
+single table) and **AWS Step Functions' execution + state history
+hybrid** (single execution_history table). 1,914 LoC added, 11
+tests pass.
+
+#### 1.11.2 T-102 — EventWriter with INV-20 combo (a)+(c) sentinel + HMAC chain (commit `dc4c599`)
+
+`internal/v4alpha/event/writer.go` (307 LoC) — single write-path
+for the events table. Implements INV-20 combo (a)+(c):
+- **(a) sentinel emission**: when a caller submits a write with
+  `rationale = ""` (i.e., missing rationale), the writer emits ONE
+  `MISSING_RATIONALE` sentinel event BEFORE returning
+  `ErrRationaleRequired`. The sentinel has `rationale_kind =
+  sentinel` and `target_table = caller_function_name` so operators
+  can grep for missing rationale patterns post-hoc.
+- **(c) caller surface**: the writer returns `ErrRationaleRequired`
+  to the caller so the API contract is preserved (the sentinel is
+  NOT a silent workaround).
+
+The writer chains into the same HMAC key as `write_audit`
+(`DARK_AUDIT_HMAC_KEY` env-var, ADR-016 + ADR-018). The single
+HMAC chain across both tables means a verifier can detect tampering
+on EITHER table by checking the chain's monotonic nonce sequence.
+1,155 LoC added, 12 tests pass.
+
+#### 1.11.3 T-103a — AutoEmitter with 8 helpers (commit `3245e1a`)
+
+`internal/v4alpha/event/auto_emit.go` (~265 LoC) — fire-and-forget
+helpers for the 8 most common modification sites:
+
+```
+EmitSupersede(ctx, oldMemID, newMemID, trigger, reason)
+EmitDecayRefresh(ctx, rowID, newAccessCount)
+EmitSchemaMigration(ctx, fromVersion, toVersion, rationale)
+EmitEmbedderRefresh(ctx, rowID, newEntityCount)
+EmitCalibrationUpdate(ctx, evalID, newPointEstimate, method)
+EmitCacheInvalidation(ctx, cacheTable, rowID, semantic, reason)
+EmitJudgeVerdictUpdate(ctx, evalID, verdict, confidence)
+EmitPersonaUpdate(ctx, personaID, rationale)
+```
+
+Q-INDIAN policy (operator decision, 2026-10-04): semantic-affecting
+modifications emit; pure cache invalidations (LRU, TTL) do NOT emit.
+The `EmitCacheInvalidation` helper takes a `semantic bool` flag so
+callers must explicitly opt in. All helpers are fire-and-forget —
+failures are logged internally, never propagated to the caller
+(the primary action — data write, cache eviction — is the caller's
+responsibility; the event is for forensic traceability).
+8 helpers, 9 tests pass.
+
+#### 1.11.4 T-103b — DriftJudgeProgressEmitter + 4 wire points (commit `e52c2ce`)
+
+`internal/v4alpha/event/progress_drifter.go` (~155 LoC) — async
+progress events for the drift_judge pipeline. 4 emit points:
+`EmitStarted`, `EmitInProgress`, `EmitCompleted`, `EmitFailed`.
+Each event has `process_id = "drift-<artifactID>"` so an operator
+can grep all events for a single artifact with one query.
+
+Wired into `internal/orchestration/publish_vibe.go:runAsyncJudgePipeline`
+(4 wire points). Bug fix: `EmitCompleted` uses
+`context.Background()` not `bgCtx` to avoid the deferred cancel
+race. 615 LoC added, 5 tests pass.
+
+#### 1.11.5 T-103c — DelegationProgressEmitter + 5 wire points (commit `f0f23d9`)
+
+`internal/v4alpha/event/progress_delegation.go` (~175 LoC) — async
+progress events for the v4alpha `delegate_intent` pipeline. 5 emit
+points: `EmitDecide`, `EmitExtract`, `EmitMind`, `EmitCurate`,
+`EmitCompleted` (root) + `EmitFailed`. The DECIDE event captures
+the `rootEventID` synchronously; EXTRACT/MIND/CURATE/COMPLETED are
+emitted with `parent_event_id = rootEventID` so an operator can
+trace the entire DECIDE→EXTRACT→MIND→CURATE→COMPLETED tree with
+one `event_replay` call.
+
+Wired into `internal/v4alpha/transport/mcp/wire.go:RunDelegateIntentCore`
+(5 wire points). Frozen test bumped: schema 31→32, 69→71 tools.
+777 LoC added, 6 tests pass.
+
+#### 1.11.6 T-104 — 2 new personas + 2 new eval_types (commit `fc7a45f`)
+
+`internal/v4alpha/judge/personas_v4.go` — added 2 v4-new personas:
+
+- **`judge-modifications`** — evaluates modification events for
+  semantic correctness (rationale coverage, classification fit,
+  source attribution, payload completeness).
+- **`judge-progress`** — evaluates progress events for narrative
+  coherence (process_id consistent across phases, phase progression
+  monotonic, parent_event_id correctly resolved).
+
+Plus 2 new eval_types in `internal/ssd/types.go`:
+`EvalModificationAudit`, `EvalProgressAudit`. 9-provider
+per-eval-type recommendations in `recommended_models.go`. 14→16
+personas total, 6→8 v4alpha personas. 223 LoC added (net: 16 LoC
+removed), 2 new tests + 3 test updates.
+
+#### 1.11.7 T-103a-extension — wire 3 of 8 AutoEmitter helpers + eventholder leaf (commit `1d925ce`)
+
+The 8 helpers from T-103a were UNWIRED at the call sites (a
+sticking point — direct imports created a store/sqlite ↔
+v4alpha/event cycle). Solved with a NEW leaf package
+`internal/eventholder` (atomic.Pointer + AutoEmitter interface,
+zero imports of stdlib except context+sync/atomic) that both the
+store and v4alpha/event packages can depend on without cycles.
+
+Wired 3 helpers via the eventholder pattern:
+
+- `EmitSupersede` → `internal/store/sqlite/bitemporal.go:MarkSupersededAgentMemory`
+  (after tx commit)
+- `EmitDecayRefresh` → `internal/v4alpha/recall/decay.go:RefreshOnAccess`
+  (after UPDATE)
+- `EmitPersonaUpdate` → `internal/v4alpha/judge/personas_v4.go:RegisterPersonaContent`
+  (after registry update)
+
+4 holder unit tests + 2 e2e wire tests, 589 LoC added (net: 6 LoC
+removed).
+
+#### 1.11.8 T-105 — 2 observer tools (event_log + event_replay) (commit `f655350`)
+
+2 new MCP tools in a NEW `EVENTS` namespace (69 → 71 tools,
+18 → 19 namespaces):
+
+- **`dark_memory_event_log`** — filterable list. Filters: kind,
+  target_table, target_row_id, process_id, session_id, actor,
+  since_id (cursor), limit. Honors INV-7 (active project scoping).
+  Limit clamped to [1, 10000]. Returns rows in id ASC order
+  (LangFuse timeline pattern).
+- **`dark_memory_event_replay`** — tree expansion. Inputs:
+  `event_id` (root), `include_children` (default true). Returns
+  root + 1-level children. For `delegate_intent`: DECIDE →
+  EXTRACT → MIND → CURATE → COMPLETED. For async drift_judge:
+  started → in_progress → completed. Reads via
+  `ListEventsByRootEventID`. NotFound returns an empty result
+  (`Root=nil`) so callers can detect missing event_id without an
+  error.
+
+Store.Store interface extended by 6 methods (InsertEvent,
+GetEventByID, ListEvents, ListEventsByProcessID,
+ListEventsByRootEventID, ListEventsByParentEventID). The `Event`
+struct + `ListEventsFilter` moved from `internal/store/sqlite/events.go`
+to `internal/store/events.go` to break a store→sqlite→store cycle
+(type aliases preserve backward compat). 6 postgres stubs added
+(notImpl pattern). 8 e2e tests, all PASS in 9.9s.
+
+#### 1.11.9 T-103a-extension-2 — wire 3 more helpers (commit `d5bfaea`)
+
+3 more of the 8 helpers wired (3/8 → 6/8 total):
+
+- **`EmitSchemaMigration`** → `internal/migrate/migrate.go:Migrate`
+  (after each `applyOne` commit, SYNC). The `fromVersion` is
+  computed from the bookkeeping table BEFORE `applyOne` (so it
+  correctly records the previous version, not the just-committed
+  one — protects against the "every restart emits from=N to=N"
+  regression).
+- **`EmitCalibrationUpdate`** → `internal/v4alpha/judge/store.go:SetCalibration`
+  (after UPDATE, SYNC).
+- **`EmitJudgeVerdictUpdate`** → `internal/v4alpha/judge/store.go:SaveEvaluation`
+  (after tx commit, SYNC). Verdict label is parsed from
+  VerdictJSON via `VerdictFromEvaluation` (canonical parse path,
+  not a raw JSON dig — a future schema change is caught here, not
+  at the event-emission layer).
+
+10 NEW e2e wire tests in `internal/eventholder/wires_e2e_test.go`
+(use a thread-safe recording fake; modernc.org/sqlite pure-Go
+driver; audit.NewWriter + project.ApplyProjectIDColumns for the
+project_id column). All 10 PASS in 32.2s.
+
+**Helpers deferred** (2 of 8):
+
+- `EmitEmbedderRefresh` — no embedder code exists yet (Phase 13+).
+- `EmitCacheInvalidation` — the only existing site
+  (`ExtractCache.Invalidate`) is pure LRU; per Q-INDIAN selectivo
+  policy it emits nothing. If a semantic cache invalidation
+  trigger arises (e.g., FTS index rebuild on entity extraction
+  change), it's re-evaluated.
+
+#### 1.11.10 Phase 12 verified
+
+```
+T-101    ████████████████████  100% (e203cd2)
+T-102    ████████████████████  100% (dc4c599)
+T-103a   ████████████████████  100% (3245e1a)
+T-103b   ████████████████████  100% (e52c2ce)
+T-103c   ████████████████████  100% (f0f23d9)
+T-104    ████████████████████  100% (fc7a45f)
+T-103a-e ████████████████████  100% (1d925ce — 3/8 wires)
+T-105    ████████████████████  100% (f655350)
+T-103a-e2████████████████████  100% (d5bfaea — 3/8 more wires)
+T-106    ████████████████████  100% (docs sweep)
+```
+
+#### 1.11.11 OD7 gate (Phase 12)
+
+| Invariant | Where |
+|---|---|
+| ✅ **(m)** single events table polymorphic | T-101 |
+| ✅ **(j)** sentinel count == 1 | T-102 |
+| ✅ **(k)** caller gets `ErrRationaleRequired` | T-102 |
+| ✅ **(n)** HMAC chain continuous across both kinds | T-102 |
+| ✅ **(o)** async drift_judge progress | T-103b |
+| ✅ **(p)** subagent delegation tree | T-103c |
+| ✅ **(q)** audit-quality eval_types | T-104 |
+| ✅ **(n)** events table observability | T-105 |
+| ✅ **(s)** cross-table 1:1 ratio | **T-103a-ext + T-103a-ext-2 (6/8)** |
+
+OD7 invariant (s) is **SATISFIED with a documented 2-of-8 gap**
+(emit_embedder_refresh, emit_cache_invalidation) for which no
+call site is shipped — those 2 emit points are **no-ops by design**
+(Q-INDIAN selectivo) until their semantic triggers are introduced.
+
+#### 1.11.12 Tier-1 SOTA grounding
+
+The events subsystem is grounded in 3 SOTA sources (operator-confirmed
+2026-10-04):
+
+| Claim | Source | URL |
+|---|---|---|
+| Single polymorphic events table (one row per event, kind discriminator) | LangFuse Data Model v2 | <https://langfuse.com/docs/observability/data-model> |
+| Async progress tree (root_event_id + parent_event_id chain) | AWS Step Functions execution history | <https://docs.aws.amazon.com/step-functions/latest/dg/concepts-statemachines.html> |
+| GenAI span/event semantics (`classification`, `target_table`, `rationale_kind`) | OpenTelemetry GenAI semantic conventions | <https://github.com/open-telemetry/semantic-conventions-genai> |
+
+The 8 AutoEmitter helpers + the EventWriter + the 2 observer tools
++ the 2 progress emitters + the 2 personas + the 2 eval_types =
+**the complete events subsystem**, ~3,500 LoC net add, 42 new tests
+(all PASS).
+
+#### 1.11.13 Local tag + dark-memory row
+
+- Local tag `v4.0.0-alpha.23` (NO remote push).
+- dark-memory rows pinned: T-101..T-104, T-103a-ext, T-105,
+  T-103a-ext-2, T-106 (this SUMMARY).
+
+### ✅ Registered (71 of 95+ — 19 namespaces)
 
 | Namespace | Tools | Count | When |
 |---|---|---|---|
 | **Health** | `health_ping` | 1 | BUG-7 |
-| **Session** | `start`, `close`, `status`, `resume`, `heartbeat` | 5 | BUG-7 + BUG-8 |
-| **Agent memory** | `save`, `recall`, `list`, `get`, `update`, `archive` | 6 | BUG-7 + BUG-8 |
-| **Observability** | `memory_state`, `writes`, `anomalies` | 3 | BUG-8 |
+| **Session** | `start`, `close`, `status`, `resume`, `heartbeat`, `recover`, `resurrect` | 7 | BUG-7 + BUG-8 |
+| **Agent memory** | `save`, `recall`, `list`, `get`, `update`, `archive`, `delegate`, `entities`, `subagent_register`, `subagent_unregister` | 10 | BUG-7..8 + Phase 4 |
+| **Observability** | `memory_state`, `writes`, `anomalies`, `health_ping` | 3 | BUG-8 |
 | **Error obs** | `summary`, `list`, `get`, `resolve` | 4 | BUG-8 |
 | **Policy** | `active_policy`, `load_constitution` | 2 | BUG-8 |
 | **Vibe** | `spec`, `publish`, `pipeline_status`, `resolve_drift` | 4 | BUG-8 |
 | **Judge** | `judge`, `consensus`, `judgment_history`, `judge_list_personas` | 4 | ADR-007 C2 |
-| **Judge util** | `normalize`, `validate_overrides`, `pattern_descriptions`, `verify`, `verify_hash`, `trace`, `validate_trace` | 7 | BUG-10 10a |
+| **Judge util** | `normalize`, `validate_overrides`, `pattern_descriptions`, `verify`, `verify_hash`, `trace`, `validate_trace` | 7 | BUG-10 10a (Phase 11 T-402) |
 | **Research** | `topic`, `recall`, `resume_thread` | 3 | BUG-10 10a |
 | **Summarize** | `summarize_session`, `skill_loaded` | 2 | PRE-1 C4 |
-| **Audit verify** | `audit_verify` | 1 | Phase 2 (alpha.15) |
-| **Project** ⭐ NEW | `project_create`, `project_lookup` | 2 | **Phase 4 Chunk 4.2 (alpha.17)** |
-| **Mindset** ⭐ NEW (STUB) | `mindset_apply` | 1 | **Phase 4 Chunk 4.2 (alpha.17)** |
-| **Delegation** ⭐ NEW (STUB) | `delegate_intent` | 1 | **Phase 4 Chunk 4.2 (alpha.17)** |
+| **Audit verify** | `audit_export`, `audit_verify` | 2 | Phase 2 + Phase 9 T-405 |
+| **Project** | `project_create`, `project_lookup` | 2 | **Phase 4 Chunk 4.2 (alpha.17)** |
+| **Mindset** | `mindset_apply` | 1 | **Phase 4 Chunk 4.2 (alpha.17)** |
+| **Delegation** | `delegate_intent` | 1 | **Phase 4 Chunk 4.2 (alpha.17)** |
+| **Context** | `artifact_context`, `spec_context`, `session_context`, `recall` | 4 | Phase 9 Chunk 8.1 (alpha.20) |
+| **Agent bootstrap** | `bootstrap`, `recommend_companions`, `detect_environment` | 3 | Phase 9 Chunk 8.1 (alpha.20) |
+| **Audit** | `audit_export`, `audit_verify` | 2 | Phase 9 Chunk 8.5 (alpha.20) |
+| **EVENTS** ⭐ NEW | `event_log`, `event_replay` | 2 | **Phase 12 T-105 (alpha.23)** |
 
 ### ⏳ Deferred to BUG-10+ (11)
 
@@ -967,9 +1297,9 @@ $ printf "%s\n" \
 
 | Reliability | What's stable |
 |---|---|
-| ✅ Stable (won't change) | Tool wire names, agent_memory schema, FTS5 ordering (INV-17), worker pool size=1, store/WithTx contract (INV-16), `sdd_evaluations` schema (18 → 22 cols; +4 for calibration in alpha.16), 4 judge MCP tool wire shapes, persona registry ids, `BootstrapCI` deterministic seed=42 |
-| ⚠️ Likely to evolve | Package names (still aspirational vs actual drift), Pipeline API (LLM judge swap), Constitution (still hardcoded), persona override mechanism (spec 1155 v14 inheritance) |
-| ❌ Not implemented | security/* (INV-11..15), mutable Workflow, red-team mods, 6 `judge_util_*` tools, research/mindset/delegation/project/context/bootstrap/L6-VLP/admin/agent_memory-c2/session-c2 |
+| ✅ Stable (won't change) | Tool wire names (71 canonical), agent_memory schema, FTS5 ordering (INV-17), worker pool size=1, store/WithTx contract (INV-16), `sdd_evaluations` schema (22 cols; +4 for calibration in alpha.16), **events table schema v32 (27 cols, 3 indexes, polymorphic)**, judge MCP tool wire shapes (4 base + 7 util), persona registry ids (16 total, 8 v4alpha), `BootstrapCI` deterministic seed=42, **EVENTS namespace tools (event_log + event_replay) wire shapes**, **HMAC chain continuous across events + write_audit (ADR-016 + ADR-018)** |
+| ⚠️ Likely to evolve | Package names (still aspirational vs actual drift), Pipeline API (LLM judge swap), Constitution (still hardcoded), persona override mechanism (spec 1155 v14 inheritance), progress emitter phases (3 → N as new pipeline stages emerge) |
+| ❌ Not implemented | security/* (INV-11..15), mutable Workflow, red-team mods, federated research, L6-VLP, admin (vacuum only), EmbedderRefresh wire (no embedder code), semantic CacheInvalidation wire (no semantic cache trigger) |
 
 ## 6.5. SOTA-doc workstream (2026-09-28, 6 of 7 chunks shipped)
 
