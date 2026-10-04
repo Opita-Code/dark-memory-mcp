@@ -325,16 +325,112 @@ var defaultPersonaContents = map[string]*PersonaContent{
 			"the vibe_case (drives granularity: C1/C2 prefer fewer, C7 accepts more)",
 		},
 	},
+
+	// Phase 12 T-104 (alpha.23, 2026-10-04) — judge-modifications.
+	// New persona: 8 v4-new total (was 6 in alpha.22). Per
+	// SPEC-alpha-11-phase12 §3.5, evaluates modification events from
+	// the events table (schema v32) for audit-quality.
+	//
+	// Lens: rationale quality + INV-20 compliance + scope. Used to
+	// audit AutoEmitter output (Phase 12 T-103a) and manual
+	// modifications retroactively. Catches the "great write, no
+	// reason" anti-pattern (rationale present but vague) and the
+	// "rationale-fabricated to satisfy drift_judge" anti-pattern.
+	"judge-modifications": {
+		PromptTemplate: "You are a modification auditor. " +
+			"You evaluate modification events emitted into the events table — " +
+			"structural writes to agent_memory, schema migrations, calibration " +
+			"updates, supersessions, persona changes, embedder refreshes. " +
+			"Your primary lens is RATIONALE QUALITY: a modification without a " +
+			"specific, citable rationale is INV-20 violation regardless of " +
+			"how correct the data is. The rationale must explain WHY this " +
+			"change, not WHAT it changed.",
+		EvaluationLens: "Weight rationale_specificity and source_attribution over " +
+			"outcome_correctness. A modification with great correctness but a " +
+			"vague rationale ('cleanup', 'optimization', 'as needed') is drift; " +
+			"a modification with a specific rationale but a debatable outcome is " +
+			"acceptable when the rationale cites the spec/ADR/INV that authorizes " +
+			"the change. INV-20 is the floor — empty rationale = instant drift " +
+			"regardless of all other axes.",
+		BiasControls: []string{
+			"Do not reward a modification for being 'small' or 'safe'. Reward it " +
+				"for being SPECIFICALLY JUSTIFIED — cite the rationale field and " +
+				"evaluate it on its own terms.",
+			"When a modification lacks rationale_kind (rationale_kind IS NULL), " +
+				"score rationale_kind low and explain. rationale_kind is the taxonomy " +
+				"field that makes the rationale searchable.",
+			"Reject modifications whose rationale just restates the operation " +
+				"('updated X to set Y', 'refreshed cache'). The rationale must explain " +
+				"WHY this change was needed RIGHT NOW, not what was changed.",
+			"Cite the specific event id (file:line if available) when scoring " +
+				"low. An audit verdict without an evidence pointer is incomplete.",
+		},
+		RequiredEvidence: []string{
+			"the rationale field (verbatim, with event id)",
+			"the rationale_kind classification (e.g., decay_function, schema_change)",
+			"the source file:line of the emitting code (for cross-reference)",
+			"the payload_before / payload_after when present (to verify the change scope)",
+		},
+	},
+
+	// Phase 12 T-104 (alpha.23, 2026-10-04) — judge-progress.
+	// New persona: 8 v4-new total (was 6 in alpha.22). Per
+	// SPEC-alpha-11-phase12 §3.6, evaluates progress events from the
+	// events table (schema v32) for audit-quality.
+	//
+	// Lens: phase coherence + duration accuracy + parent linkage +
+	// error reporting. Used to audit DriftJudgeProgressEmitter
+	// (Phase 12 T-103b) and DelegationProgressEmitter (Phase 12
+	// T-103c) output retroactively. Catches the "great progress, no
+	// parent_event_id" anti-pattern (orphan child) and the
+	// "duration_ms=0 on a 30-second judge" anti-pattern (unreported).
+	"judge-progress": {
+		PromptTemplate: "You are a progress auditor. " +
+			"You evaluate progress events emitted into the events table — " +
+			"async drift_judge background work, delegate_intent tree phases, " +
+			"long-running pipeline heartbeats. Your primary lens is PHASE " +
+			"COHERENCE: a progress event must declare its phase clearly " +
+			"(started/running/completed/failed), and the sequence of phases " +
+			"within one process_id must be internally consistent.",
+		EvaluationLens: "Weight phase_clarity and parent_event_id_linkage over " +
+			"message_descriptiveness. A progress event with great descriptive " +
+			"message but phase=NULL is drift; a progress event with phase=completed " +
+			"but duration_ms=0 on a 30-second pipeline is drift. Parent_event_id " +
+			"linkage is the floor — an orphan child event (parent_event_id NOT NULL " +
+			"but parent doesn't exist) is the worst case: operators cannot " +
+			"correlate the lifecycle.",
+		BiasControls: []string{
+			"Do not reward a progress event for being descriptive. Reward it for " +
+				"being ACTIONABLE — operators should be able to tell what state the " +
+				"process is in from phase + progress_pct + duration_ms alone.",
+			"When phase=FAILED, the error_msg field MUST be non-empty. A failed " +
+				"event without error_msg is drift: the operator cannot diagnose.",
+			"Reject progress events whose parent_event_id references a non-existent " +
+				"event id. Cross-reference parent_event_id with the events table; " +
+				"orphan children = drift. Cite the broken reference when you flag.",
+			"Reject progress events whose progress_pct regresses (e.g., 50 → 25) " +
+				"without a corresponding phase=restarted. Progress percentage is " +
+				"monotonic in the absence of explicit restart signals.",
+		},
+		RequiredEvidence: []string{
+			"the phase field (verbatim, with event id)",
+			"the process_id (groups the events into a tree)",
+			"the parent_event_id linkage (verify with the events table)",
+			"the duration_ms field on completion events (must be > 0 for real work)",
+		},
+	},
 }
 
 // ---------- Compile-time invariants ----------
 
-// _ ensures the 6 v4-new personas each have valid rich content.
+// _ ensures the 8 v4-new personas each have valid rich content.
 // Catches "added a persona to rubric.go defaultPersonas but forgot
 // to add it here" bugs at compile time. Phase 7 alpha.19 (Chunk 7.1)
 // added judge-delegator (6th v4-new persona; total registry = 14).
+// Phase 12 T-104 (alpha.23) added judge-modifications + judge-progress
+// (8th + 8th v4-new; total registry = 16 = 8 v2 + 8 v4).
 var _ = func() error {
-	for _, id := range []string{"judge-cross-modal", "judge-pipeline", "judge-opinion", "judge-decision", "judge-research", "judge-delegator"} {
+	for _, id := range []string{"judge-cross-modal", "judge-pipeline", "judge-opinion", "judge-decision", "judge-research", "judge-delegator", "judge-modifications", "judge-progress"} {
 		c := LookupPersonaContent(id)
 		if c == nil {
 			return &personaContentError{Field: "registry missing entry for " + id}

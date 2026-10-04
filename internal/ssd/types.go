@@ -25,6 +25,17 @@ const (
 	// rows for full audit trail of every composition iteration.
 	EvalMindsetCompose EvaluationType = "mindset_compose"
 	EvalMindsetQuality EvaluationType = "mindset_quality"
+	// Phase 12 T-104 (alpha.23, 2026-10-04): audit-quality eval_types
+	// for the events table (single events table polymorphic, schema
+	// v32). ModificationAudit evaluates modification events for
+	// rationale quality, INV-20 class compliance, and scope creep.
+	// ProgressAudit evaluates progress events for phase transitions,
+	// duration accuracy, parent_event_id linkage, and error reporting.
+	// Both are LLM-as-judge calls that persist SDDEvaluation rows
+	// for forensic traceability — the audit-quality gate for the
+	// events table.
+	EvalModificationAudit EvaluationType = "modification_audit"
+	EvalProgressAudit     EvaluationType = "progress_audit"
 )
 
 // SDDEvaluation is one LLM-as-judge verdict. v3 added five constitution-

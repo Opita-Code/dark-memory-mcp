@@ -43,7 +43,13 @@ import (
 
 // v4alphaPersonaIDs is the canonical list of v4-new persona IDs that
 // have rich PersonaContent in v4alpha/judge. Order matches
-// v4alpha/judge/personas_v4.go:337 (compile-time invariant).
+// v4alpha/judge/personas_v4.go:336 (compile-time invariant).
+//
+// Phase 12 T-104 (alpha.23, 2026-10-04) added judge-modifications +
+// judge-progress for audit-quality of the events table (schema v32).
+// Total v4-new personas: 8 (was 6 in alpha.22). Total registry surface:
+// 16 (8 v2 + 8 v4-new). Closes Phase 12 OD7 invariant (q): audit-quality
+// eval_types for the events table.
 var v4alphaPersonaIDs = []string{
 	"judge-cross-modal",
 	"judge-pipeline",
@@ -51,6 +57,8 @@ var v4alphaPersonaIDs = []string{
 	"judge-decision",
 	"judge-research",
 	"judge-delegator",
+	"judge-modifications", // Phase 12 T-104
+	"judge-progress",      // Phase 12 T-104
 }
 
 // v4alphaPersonas converts the v4alpha PersonaContent registry into

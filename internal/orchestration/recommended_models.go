@@ -68,6 +68,8 @@ var RecommendedModels = []ModelRecommendation{
 			ssd.EvalConsensus:           "claude-opus-4-7",
 			ssd.EvalMindsetCompose:      "claude-sonnet-4-5",
 			ssd.EvalMindsetQuality:      "claude-sonnet-4-5",
+			ssd.EvalModificationAudit:   "claude-opus-4-7",   // Phase 12 T-104: deep rationale reasoning
+			ssd.EvalProgressAudit:       "claude-opus-4-7",   // Phase 12 T-104: deep phase/linkage reasoning
 		},
 	},
 	{
@@ -83,6 +85,8 @@ var RecommendedModels = []ModelRecommendation{
 			ssd.EvalConsensus:           "gpt-5",
 			ssd.EvalMindsetCompose:      "gpt-5-mini",
 			ssd.EvalMindsetQuality:      "gpt-5",
+			ssd.EvalModificationAudit:   "gpt-5", // Phase 12 T-104
+			ssd.EvalProgressAudit:       "gpt-5", // Phase 12 T-104
 		},
 	},
 	{
@@ -98,6 +102,8 @@ var RecommendedModels = []ModelRecommendation{
 			ssd.EvalConsensus:           "gemini-3.6-pro",
 			ssd.EvalMindsetCompose:      "gemini-3.6-flash",
 			ssd.EvalMindsetQuality:      "gemini-3.6-pro",
+			ssd.EvalModificationAudit:   "gemini-3.6-pro", // Phase 12 T-104
+			ssd.EvalProgressAudit:       "gemini-3.6-pro", // Phase 12 T-104
 		},
 	},
 	{
@@ -113,6 +119,8 @@ var RecommendedModels = []ModelRecommendation{
 			ssd.EvalConsensus:           "deepseek-v4-pro",
 			ssd.EvalMindsetCompose:      "deepseek-v4-pro",
 			ssd.EvalMindsetQuality:      "deepseek-v4-flash",
+			ssd.EvalModificationAudit:   "deepseek-v4-pro", // Phase 12 T-104
+			ssd.EvalProgressAudit:       "deepseek-v4-pro", // Phase 12 T-104
 		},
 	},
 	{
@@ -128,6 +136,8 @@ var RecommendedModels = []ModelRecommendation{
 			ssd.EvalConsensus:           "MiniMax-M3",
 			ssd.EvalMindsetCompose:      "MiniMax-M3",
 			ssd.EvalMindsetQuality:      "MiniMax-M3",
+			ssd.EvalModificationAudit:   "MiniMax-M3", // Phase 12 T-104
+			ssd.EvalProgressAudit:       "MiniMax-M3", // Phase 12 T-104
 		},
 	},
 	{
@@ -143,6 +153,8 @@ var RecommendedModels = []ModelRecommendation{
 			ssd.EvalConsensus:           "MiniMax-M3",
 			ssd.EvalMindsetCompose:      "MiniMax-M3",
 			ssd.EvalMindsetQuality:      "MiniMax-M3",
+			ssd.EvalModificationAudit:   "MiniMax-M3", // Phase 12 T-104
+			ssd.EvalProgressAudit:       "MiniMax-M3", // Phase 12 T-104
 		},
 	},
 	{
@@ -158,6 +170,8 @@ var RecommendedModels = []ModelRecommendation{
 			ssd.EvalConsensus:           "glm-5.2",
 			ssd.EvalMindsetCompose:      "glm-5.2",
 			ssd.EvalMindsetQuality:      "glm-5.2",
+			ssd.EvalModificationAudit:   "glm-5.2", // Phase 12 T-104
+			ssd.EvalProgressAudit:       "glm-5.2", // Phase 12 T-104
 		},
 	},
 	{
@@ -173,6 +187,8 @@ var RecommendedModels = []ModelRecommendation{
 			ssd.EvalConsensus:           "kimi-k3",
 			ssd.EvalMindsetCompose:      "kimi-k2.7-code",
 			ssd.EvalMindsetQuality:      "kimi-k3",
+			ssd.EvalModificationAudit:   "kimi-k3", // Phase 12 T-104
+			ssd.EvalProgressAudit:       "kimi-k3", // Phase 12 T-104
 		},
 	},
 	{
@@ -188,6 +204,8 @@ var RecommendedModels = []ModelRecommendation{
 			ssd.EvalConsensus:           "qwen3.8-max",
 			ssd.EvalMindsetCompose:      "qwen3.7-plus",
 			ssd.EvalMindsetQuality:      "qwen3.8-max",
+			ssd.EvalModificationAudit:   "qwen3.8-max", // Phase 12 T-104
+			ssd.EvalProgressAudit:       "qwen3.8-max", // Phase 12 T-104
 		},
 	},
 }

@@ -1,9 +1,13 @@
 // judge_list_personas_test.go — Phase 9 alpha.20 Chunk 8.2.
 //
 // E2E tests for the v3 binary's dark_memory_judge_list_personas after
-// Chunk 8.2. Validates that the v4alpha 6-person PersonaContent registry
+// Chunk 8.2. Validates that the v4alpha 8-person PersonaContent registry
 // is exposed through the v3 MCP surface (closes Phase 8 e2e critical
 // finding #2, row 2323 — T3).
+//
+// Phase 12 T-104 (alpha.23, 2026-10-04) added judge-modifications +
+// judge-progress (Phase 12 OD7 invariant (q) — audit-quality of the
+// events table, schema v32). Total v4-new personas: 8 (was 6 in alpha.22).
 //
 // # Test layout
 //
@@ -12,14 +16,14 @@
 //     registry returns exactly 8 compiled personas (legacy behavior
 //     preserved — backward compat for harnesses that expect 8).
 //  2. TestJudgeListPersonas_V4AlphaMerge: WITH WithV4AlphaPersonas(true),
-//     registry returns 14 personas (8 v2 + 6 v4-new).
-//  3. TestJudgeListPersonas_V4AlphaSourceDiscriminator: the 6 v4-new
+//     registry returns 16 personas (8 v2 + 8 v4-new).
+//  3. TestJudgeListPersonas_V4AlphaSourceDiscriminator: the 8 v4-new
 //     entries carry Source="v4alpha" (not "compiled"); v2 entries
 //     keep Source="compiled".
-//  4. TestJudgeListPersonas_V4AlphaIDs: the 6 v4-new IDs are exactly
+//  4. TestJudgeListPersonas_V4AlphaIDs: the 8 v4-new IDs are exactly
 //     {judge-cross-modal, judge-pipeline, judge-opinion, judge-decision,
-//     judge-research, judge-delegator} (the compile-time invariant
-//     from v4alpha/judge/personas_v4.go:337).
+//     judge-research, judge-delegator, judge-modifications, judge-progress}
+//     (the compile-time invariant from v4alpha/judge/personas_v4.go:336).
 //  5. TestJudgeListPersonas_V4AlphaFieldMapping: each v4-new persona
 //     has non-empty Role (first sentence of PromptTemplate), Lens
 //     (= EvaluationLens verbatim), Constraints (BiasControls),
@@ -56,7 +60,7 @@ func TestJudgeListPersonas_DefaultV2Only(t *testing.T) {
 	}
 }
 
-// --- Test 2: with v4alpha → 14 personas ---
+// --- Test 2: with v4alpha → 16 personas ---
 
 func TestJudgeListPersonas_V4AlphaMerge(t *testing.T) {
 	r, err := NewPersonaRegistry(RegistryOptions{
@@ -67,8 +71,8 @@ func TestJudgeListPersonas_V4AlphaMerge(t *testing.T) {
 		t.Fatalf("NewPersonaRegistry: %v", err)
 	}
 	personas := r.List()
-	if len(personas) != 14 {
-		t.Errorf("List returned %d personas; want 14 (8 v2 + 6 v4alpha)", len(personas))
+	if len(personas) != 16 {
+		t.Errorf("List returned %d personas; want 16 (8 v2 + 8 v4alpha)", len(personas))
 	}
 	// Spot check: 8 v2 IDs still present.
 	wantV2 := []string{
@@ -80,10 +84,11 @@ func TestJudgeListPersonas_V4AlphaMerge(t *testing.T) {
 			t.Errorf("v2 persona %q missing after v4alpha merge", id)
 		}
 	}
-	// Spot check: 6 v4alpha IDs present.
+	// Spot check: 8 v4alpha IDs present.
 	wantV4 := []string{
 		"judge-cross-modal", "judge-pipeline", "judge-opinion",
 		"judge-decision", "judge-research", "judge-delegator",
+		"judge-modifications", "judge-progress",
 	}
 	for _, id := range wantV4 {
 		if _, ok := r.Get(id); !ok {
@@ -118,8 +123,8 @@ func TestJudgeListPersonas_V4AlphaSourceDiscriminator(t *testing.T) {
 	if v2Count != 8 {
 		t.Errorf("v2 count = %d; want 8", v2Count)
 	}
-	if v4Count != 6 {
-		t.Errorf("v4alpha count = %d; want 6", v4Count)
+	if v4Count != 8 {
+		t.Errorf("v4alpha count = %d; want 8 (Phase 12 T-104 added judge-modifications + judge-progress)", v4Count)
 	}
 }
 
@@ -128,16 +133,18 @@ func TestJudgeListPersonas_V4AlphaSourceDiscriminator(t *testing.T) {
 func TestJudgeListPersonas_V4AlphaIDs(t *testing.T) {
 	// Cross-check: every v4alpha PersonaContent ID must produce an
 	// orchestration Persona. The compile-time invariant at
-	// v4alpha/judge/personas_v4.go:337 enforces this — but only for
-	// the 6 IDs in that slice. Our registry must surface exactly
-	// those 6 IDs (no more, no less) when IncludeV4Alpha=true.
+	// v4alpha/judge/personas_v4.go:336 enforces this — but only for
+	// the 8 IDs in that slice. Our registry must surface exactly
+	// those 8 IDs (no more, no less) when IncludeV4Alpha=true.
 	wantIDs := map[string]bool{
-		"judge-cross-modal": false,
-		"judge-pipeline":    false,
-		"judge-opinion":     false,
-		"judge-decision":    false,
-		"judge-research":    false,
-		"judge-delegator":   false,
+		"judge-cross-modal":   false,
+		"judge-pipeline":      false,
+		"judge-opinion":       false,
+		"judge-decision":      false,
+		"judge-research":      false,
+		"judge-delegator":     false,
+		"judge-modifications": false, // Phase 12 T-104
+		"judge-progress":      false, // Phase 12 T-104
 	}
 	r, err := NewPersonaRegistry(RegistryOptions{
 		IncludeMarkdownOverrides: false,
