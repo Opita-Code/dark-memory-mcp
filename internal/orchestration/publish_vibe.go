@@ -617,12 +617,30 @@ func (o *Orchestrator) runAsyncJudgePipeline(
 	pendingDriftID int64,
 	result *PublishResult,
 ) {
+	// Phase 12 T-103b: capture start time for duration_ms forensic.
+	// Used by EmitCompleted / EmitFailed at the end of the goroutine.
+	startTime := o.now()
+
 	go func() {
+		// Phase 12 T-103b: emit "started" progress event as the first
+		// thing in the goroutine, before any blocking work. nil-safe
+		// (WithEventEmitter(nil) = no-op).
+		if o.eventEmitter != nil {
+			o.eventEmitter.EmitStarted(context.Background(), artifactID, specID, in.SessionID)
+		}
+
 		defer func() {
+			elapsedMs := time.Since(startTime).Milliseconds()
 			if r := recover(); r != nil {
 				o.RecordError(context.Background(), "publish_vibe_async", in.SessionID, fmt.Errorf("async drift_judge panic: %v", r), errorobs.SeverityError)
 				if pendingDriftID > 0 {
 					_ = o.Store.UpdateDriftReportVerdict(context.Background(), wc, pendingDriftID, "needs_human", "async drift_judge panic: "+fmt.Sprint(r))
+				}
+				// Phase 12 T-103b: emit "failed" progress event with
+				// panic message + elapsed ms.
+				if o.eventEmitter != nil {
+					o.eventEmitter.EmitFailed(context.Background(), artifactID, in.SessionID,
+						"async drift_judge panic: "+fmt.Sprint(r), elapsedMs)
 				}
 			}
 		}()
@@ -661,6 +679,16 @@ func (o *Orchestrator) runAsyncJudgePipeline(
 		// Emit the VLP drift_log with the final verdict — the loop
 		// advances drift_judging → complete | needs_human | spec_active.
 		o.emitVLPWithVerdict(bgCtx, in.SessionID, "orchestrator_publish_vibe_async", vlp.EventDriftLog, verdictToVLP(v))
+
+		// Phase 12 T-103b: emit "completed" progress event with the
+		// final verdict + confidence + duration_ms. nil-safe.
+		// EmitAsync so we don't slow the goroutine teardown.
+		// Use context.Background() — bgCtx will be cancelled by the
+		// deferred cancel() below, which would race the insert.
+		if o.eventEmitter != nil {
+			elapsedMs := time.Since(startTime).Milliseconds()
+			o.eventEmitter.EmitCompleted(context.Background(), artifactID, in.SessionID, v, conf, elapsedMs)
+		}
 
 		// A1 + A4 hooks (same as sync aligned path).
 		if v280Enabled() && v == "aligned" {

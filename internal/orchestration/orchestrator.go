@@ -45,6 +45,7 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/nli"
 	"github.com/dark-agents/dark-memory-mcp/internal/safety"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
+	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/event"
 	"github.com/dark-agents/dark-memory-mcp/internal/vlp"
 )
 
@@ -155,6 +156,27 @@ type Orchestrator struct {
 	// parallel publishes would race on this field — guarded by the
 	// caller not invoking vibe_publish concurrently).
 	pendingAuditProvenance *auditgate.Provenance
+
+	// Phase 12 T-103b: progress emitter for the async drift_judge
+	// background path (runAsyncJudgePipeline). When non-nil, the
+	// background goroutine emits 4 progress events through its
+	// lifecycle (started → in_progress → completed/failed). When nil,
+	// the async path runs identically but skips progress emission
+	// (backward compat for callers that haven't opted in via
+	// WithEventEmitter). Wired by main.go at boot.
+	eventEmitter *event.DriftJudgeProgressEmitter
+}
+
+// WithEventEmitter attaches the Phase 12 T-103b progress emitter
+// used by runAsyncJudgePipeline. The emitter fires 4 progress events
+// through the async drift_judge lifecycle so operators polling
+// pipeline_status(artifact_id=X) get visibility into the background
+// goroutine. Nil-safe: when nil, the async path runs identically
+// without emitting progress (backward compat for callers that
+// haven't opted in). Wired by main.go at boot.
+func (o *Orchestrator) WithEventEmitter(e *event.DriftJudgeProgressEmitter) *Orchestrator {
+	o.eventEmitter = e
+	return o
 }
 
 // New constructs an Orchestrator with the given Store and Safety
