@@ -138,12 +138,14 @@ func TestCanonicalOrder_WirePrefixConsistent(t *testing.T) {
 // AutoEmitter (no schema). T-103b adds DriftJudgeProgressEmitter +
 // wires into runAsyncJudgePipeline (no schema). T-103c adds
 // DelegationProgressEmitter + wires into RunDelegateIntentCore (no
-// schema). Tool count + namespace count stay unchanged through T-101
-// → T-103c; tools event_log + event_replay come in T-105 (69 → 71).
+// schema). T-104 adds 2 v4-new personas (judge-modifications +
+// judge-progress) for audit-quality. T-105 adds 2 tools (event_log
+// + event_replay) in a new EVENTS namespace (tool count 69 → 71,
+// namespace count 18 → 19). Schema stays v32 (no further migration).
 func TestCanonicalOrder_Frozen_57_17_28(t *testing.T) {
 	const (
-		frozenToolCount      = 69 // 62 (alpha.20 Chunk 8.7) + 7 from alpha.22 Phase 11 T-402 (JUDGE_UTIL namespace)
-		frozenNamespaceCount = 18 // 17 (alpha.20) + 1 new namespace (JUDGE_UTIL)
+		frozenToolCount      = 71 // 69 (alpha.22 Phase 11 T-402) + 2 from alpha.23 Phase 12 T-105 (EVENTS namespace)
+		frozenNamespaceCount = 19 // 18 (alpha.22) + 1 new namespace (EVENTS)
 		frozenSchemaVersion  = 32 // v31 = bitemporal_lite; v32 = events_polymorphic (Phase 12 T-101)
 	)
 

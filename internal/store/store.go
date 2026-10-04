@@ -711,6 +711,44 @@ type Store interface {
 	// Phase 9 alpha.20 Chunk 8.7 Bitemporal (ADR-014).
 	RecallAtTime(ctx context.Context, t time.Time, kind string, limit int) ([]*agentmemory.AgentMemory, error)
 
+	// Phase 12 T-105 (alpha.23, 2026-10-04): events table surface.
+	// InsertEvent appends one modification/progress event to the
+	// events table (single events table polymorphic, schema v32).
+	// Returns the new row's id. INV-20 rationale enforcement is
+	// the caller's responsibility (the policy primitive lives in
+	// internal/v4alpha/event/Writer, NOT in the data layer).
+	InsertEvent(ctx context.Context, ev *Event) (int64, error)
+
+	// GetEventByID returns the event by id. Cross-project isolation:
+	// returns (nil, nil) for events in other projects (same as "not
+	// found" to avoid leaking existence).
+	GetEventByID(ctx context.Context, id int64) (*Event, error)
+
+	// ListEvents returns events matching the filter, ordered by id
+	// ASC (insertion order — LangFuse timeline). Honors INV-7
+	// (cross-project isolation): if filter.ProjectID == "" the
+	// active project is enforced. since_id cursor supports
+	// incremental fetch (LangFuse flush pattern).
+	ListEvents(ctx context.Context, f ListEventsFilter) ([]*Event, error)
+
+	// ListEventsByProcessID returns all progress events for one
+	// process_id (e.g. "drift-<artifactID>" for async drift_judge,
+	// "delegate-<taskID>" for delegate_intent pipeline). The
+	// caller is responsible for kind="" filter or "progress" —
+	// this method does NOT restrict kind.
+	ListEventsByProcessID(ctx context.Context, processID string) ([]*Event, error)
+
+	// ListEventsByRootEventID returns all events sharing the same
+	// root_event_id. The root event itself IS included when its
+	// root_event_id == its own id (LangFuse root visibility).
+	// Step Functions exec-history analog.
+	ListEventsByRootEventID(ctx context.Context, rootEventID int64) ([]*Event, error)
+
+	// ListEventsByParentEventID returns direct children of parent
+	// (one level deep). Useful for incremental tree expansion in
+	// event_replay.
+	ListEventsByParentEventID(ctx context.Context, parentEventID int64) ([]*Event, error)
+
 	// GetAgentMemory returns the row by id, enforcing project
 	// isolation (INV-7): a row from a different project returns
 	// (nil, nil) — same as "not found" — to avoid leaking existence.

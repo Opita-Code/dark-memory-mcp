@@ -468,6 +468,53 @@ func (s *Store) RecallAtTime(
 	return nil, notImpl("RecallAtTime")
 }
 
+// Phase 12 T-105 (alpha.23): postgres stubs for the events table
+// surface. The schema lands in v32 (events_polymorphic migration);
+// runtime follows. Until then, these return notImpl so callers see
+// the gap explicitly (consistent with the MarkSupersededAgentMemory +
+// RecallAtTime posture).
+func (s *Store) InsertEvent(ctx context.Context, ev *store.Event) (int64, error) {
+	if err := s.requireProject(); err != nil {
+		return 0, err
+	}
+	return 0, notImpl("InsertEvent")
+}
+
+func (s *Store) GetEventByID(ctx context.Context, id int64) (*store.Event, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	return nil, notImpl("GetEventByID")
+}
+
+func (s *Store) ListEvents(ctx context.Context, f store.ListEventsFilter) ([]*store.Event, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	return nil, notImpl("ListEvents")
+}
+
+func (s *Store) ListEventsByProcessID(ctx context.Context, processID string) ([]*store.Event, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	return nil, notImpl("ListEventsByProcessID")
+}
+
+func (s *Store) ListEventsByRootEventID(ctx context.Context, rootEventID int64) ([]*store.Event, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	return nil, notImpl("ListEventsByRootEventID")
+}
+
+func (s *Store) ListEventsByParentEventID(ctx context.Context, parentEventID int64) ([]*store.Event, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	return nil, notImpl("ListEventsByParentEventID")
+}
+
 func (s *Store) runMigrations(ctx context.Context) error {
 	// Use pgx's connection to run migrations (raw exec).
 	conn, err := s.pool.Acquire(ctx)

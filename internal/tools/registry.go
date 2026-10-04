@@ -239,6 +239,7 @@ type NamespaceGroup struct {
 //		POLICY           (2)  - active_policy, load_constitution
 //		OBSERVABILITY    (4)  - memory_state, writes, anomalies, health_ping (v1.3.0)
 //		ERROR_OBS        (4)  - error_list, error_get, error_summary, error_resolve (v2.11.0, spec 757)
+//		EVENTS           (2)  - event_log, event_replay                (v4.0.0-alpha.23, Phase 12 T-105)
 //		ADMIN            (3)  - admin_migrate, admin_schema_status, admin_vacuum
 //		L6-VLP           (1)  - vlp_handle_event          (DMAP v1.1 spec 193)
 //		EMBEDDER         (1)  - embedder_setup_prompt     (v2.9.0-alpha PR-2)
@@ -386,6 +387,17 @@ var canonicalNamespaces = []NamespaceGroup{
 		// surface). Store-bound, no orchestrator layer.
 		Name:  "ERROR_OBS",
 		Tools: []string{"error_list", "error_get", "error_summary", "error_resolve"},
+	},
+	{
+		// v4.0.0-alpha.23 (Phase 12 T-105, 2026-10-04): events table
+		// observability. event_log (filterable list) + event_replay
+		// (tree expansion by root_event_id). Read-only. Read-only
+		// observers over the polymorphic events table (schema v32,
+		// single table for modifications + progress). Positioned
+		// right after ERROR_OBS because events IS observability —
+		// the forensic audit log for the data plane.
+		Name:  "EVENTS",
+		Tools: []string{"event_log", "event_replay"},
 	},
 	{
 		Name:  "ADMIN",

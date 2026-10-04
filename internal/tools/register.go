@@ -190,6 +190,16 @@ func RegisterAllWithDeps(reg *Registry, orch *orchestration.Orchestrator, st sto
 	// OBSERVABILITY because it IS observability — the durable error
 	// plane that the other observability tools surface.
 	RegisterErrorObservatory(reg, st)
+
+	// EVENTS (2) — v4.0.0-alpha.23 (Phase 12 T-105, 2026-10-04).
+	// event_log (filterable list) + event_replay (tree expansion by
+	// root_event_id). Read-only observability over the polymorphic
+	// events table (schema v32, single table for modifications +
+	// progress). Positioned right after ERROR_OBS as another
+	// observability surface (events IS observability — the
+	// forensic audit log). Both tools are nil-orchestrator;
+	// Store-bound (the events table is the data layer).
+	RegisterEventsTools(reg, st)
 	// ADMIN (3) — read-only or schema-only, no orchestrator needed.
 	RegisterAdmin(reg, nil, st)
 

@@ -39,7 +39,21 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 )
 
-// EventKind values for the polymorphic discriminator.
+// Phase 12 T-105 (alpha.23): Event and ListEventsFilter are type
+// aliases of the canonical types in internal/store. The struct
+// definitions live there so the store.Store interface can reference
+// them WITHOUT importing this package (which would create a cycle).
+// Existing callers that use sqlite.Event continue to work — the
+// alias is transparent.
+type (
+	Event            = store.Event
+	ListEventsFilter = store.ListEventsFilter
+)
+
+// EventKind values for the polymorphic discriminator (re-declared
+// as constants — Go doesn't allow const-aliasing, so we re-export
+// the same string values). These MUST match store.EventKind* to
+// keep wire compatibility across the type alias.
 const (
 	EventKindModification = "modification"
 	EventKindProgress     = "progress"
@@ -54,51 +68,18 @@ const (
 // (modification-only vs progress-only) are pointers/strings that are
 // NULL when unused — the schema uses NULLABLE TEXT columns so SQLite
 // stores NULL cleanly. Scan target fields use sql.NullString /
-// sql.NullFloat64 / sql.NullInt64 to read NULL safely.
-//
-// For zero-value events (caller fills fields one by one), the convention
-// is: set Kind = "modification" or "progress" before calling Insert.
-//
-// Performance: Insert is one statement in runInTx; reads are single
-// QueryContext calls. Indexes (set in v32) cover the 5 read surfaces.
-type Event struct {
-	ID         int64
-	ProjectID  string
-	Kind       string // EventKindModification | EventKindProgress
-	TS         string // RFC3339
-
-	// Common
-	Actor          string
-	SessionID      sql.NullString
-	ParentEventID  sql.NullInt64
-	RootEventID    sql.NullInt64
-
-	// Modification-only (NULL for progress)
-	TargetTable    sql.NullString
-	TargetRowID    sql.NullInt64
-	Operation      sql.NullString
-	Classification sql.NullString
-	Source         sql.NullString
-	Rationale      sql.NullString
-	RationaleKind  sql.NullString
-	PayloadBefore  sql.NullString
-	PayloadAfter   sql.NullString
-	Confidence     sql.NullFloat64
-	JudgeVerdict   sql.NullString
-	JudgeReasoning sql.NullString
-	JudgeRunID     sql.NullInt64
-
-	// Progress-only (NULL for modification)
-	ProcessID    sql.NullString
-	Phase        sql.NullString
-	ProgressPct  sql.NullFloat64
-	Message      sql.NullString
-	DurationMs   sql.NullInt64
-	ErrorMsg     sql.NullString
-
-	// Both kinds (OTel GenAI-style attributes)
-	PayloadJSON sql.NullString
-}
+	// sql.NullFloat64 / sql.NullInt64 to read NULL safely.
+	//
+	// For zero-value events (caller fills fields one by one), the convention
+	// is: set Kind = "modification" or "progress" before calling Insert.
+	//
+	// Performance: Insert is one statement in runInTx; reads are single
+	// QueryContext calls. Indexes (set in v32) cover the 5 read surfaces.
+	//
+	// (Type definitions for Event + ListEventsFilter live in
+	// internal/store/events.go so the store.Store interface can
+	// reference them. Type aliases at the top of this file preserve
+	// backward compatibility for callers using sqlite.Event directly.)
 
 // InsertEvent appends one event row to the events table. Returns
 // the new row's id.
@@ -217,19 +198,16 @@ func (s *Store) GetEventByID(ctx context.Context, id int64) (*Event, error) {
 }
 
 // ListEventsFilter holds optional filters for the List* family.
-//
-// ProjectID empty = caller accepts all projects. Active project
-// isolation is the caller's responsibility (matches ListWrites pattern).
+// (Type alias at top of this file — see internal/store/events.go
+// for the canonical definition.)
 //
 // SinceID > 0 = id > SinceID (delta cursor, LangFuse flush pattern).
 //
 // Limit <= 0 = no limit.
-type ListEventsFilter struct {
-	ProjectID string
-	Kind      string // "" = any; or "modification" | "progress"
-	SinceID   int64
-	Limit     int
-}
+//
+// ProjectID empty = active project enforced (INV-7). New filters
+// added in T-105: TargetTable, TargetRowID, ProcessID, SessionID,
+// Actor — see internal/store/events.go for the full struct shape.
 
 // ListEvents returns events matching the filter, ordered by id ASC
 // (canonical insertion order). Limit is clamped to [1, 10000].
@@ -250,6 +228,29 @@ func (s *Store) ListEvents(ctx context.Context, f ListEventsFilter) ([]*Event, e
 	if f.Kind != "" {
 		q += ` AND kind = ?`
 		args = append(args, f.Kind)
+	}
+	// Phase 12 T-105: extended filters (TargetTable, TargetRowID,
+	// ProcessID, SessionID, Actor). All optional; matching index
+	// for performance (idx_events_target / idx_events_process_id).
+	if f.TargetTable != "" {
+		q += ` AND target_table = ?`
+		args = append(args, f.TargetTable)
+	}
+	if f.TargetRowID > 0 {
+		q += ` AND target_row_id = ?`
+		args = append(args, f.TargetRowID)
+	}
+	if f.ProcessID != "" {
+		q += ` AND process_id = ?`
+		args = append(args, f.ProcessID)
+	}
+	if f.SessionID != "" {
+		q += ` AND session_id = ?`
+		args = append(args, f.SessionID)
+	}
+	if f.Actor != "" {
+		q += ` AND actor = ?`
+		args = append(args, f.Actor)
 	}
 	if f.SinceID > 0 {
 		q += ` AND id > ?`
