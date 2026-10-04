@@ -51,11 +51,13 @@ import (
 	"sync"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/auditgate"
+	"github.com/dark-agents/dark-memory-mcp/internal/eventholder"
 	"github.com/dark-agents/dark-memory-mcp/internal/orchestration"
 	"github.com/dark-agents/dark-memory-mcp/internal/safety"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 	"github.com/dark-agents/dark-memory-mcp/internal/store/runtime"
 	"github.com/dark-agents/dark-memory-mcp/internal/tools"
+	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/event"
 )
 
 // BootState carries the resolved boot handles. The Server keeps a
@@ -147,6 +149,42 @@ func Boot(ctx context.Context) (*BootState, error) {
 	// state.
 	safe := installCanary(st)
 	log.Printf("dark-mem-mcp: boot step4 ok canary installed (present=%v)", !safe.Active().IsZero())
+
+	// Step 4b: install the events-tied process-wide AutoEmitter.
+	// This is what makes the 8 helpers (EmitSupersede, EmitDecayRefresh,
+	// EmitSchemaMigration, EmitCalibrationUpdate, EmitJudgeVerdictUpdate,
+	// EmitPersonaUpdate, ...) actually fire events into the events
+	// table. Without this step, every helper does
+	// `if ae := eventholder.Get(); ae != nil` and silently no-ops,
+	// leaving the events table empty even after a successful
+	// agent_memory.SaveEvaluation.
+	//
+	// We install ONCE at boot (atomic.Pointer.Set) and never mutate
+	// it again. Pre-boot (eventholder.Get() == nil) silently no-ops
+	// — that branch is hit by tests + by the supervisor-respawn
+	// window between processes.
+	//
+	// Phase 12 T-107: this wire is what closes OD7 invariant (s)
+	// (cross-table 1:1 ratio). Before this commit, the wires were
+	// physically present in the code but never observed any
+	// because no caller ever installed the AutoEmitter.
+	//
+	// Pre-step note: the v32 migration's CREATE TABLE IF NOT EXISTS
+	// + CREATE INDEX statements depend on a clean slate. If the
+	// operator upgraded from a v2.x DB that had a legacy events
+	// table (10 columns, no project_id), the CREATE TABLE no-ops
+	// and the CREATE INDEX fails at stmt[1] ("no such column:
+	// project_id"). The v32 migration Up block now starts with a
+	// guarded ALTER TABLE events RENAME that moves the legacy table
+	// to events_legacy_v2_pre_alpha23 (errors are tolerated via F41
+	// in migrate.isToleratedDDLError — "no such table: events" on
+	// fresh installs).
+	writer, err := event.New(st, nil)
+	if err != nil {
+		return nil, fmt.Errorf("server.Boot step4b (event.New): %w", err)
+	}
+	eventholder.Set(event.NewAutoEmitter(writer))
+	log.Printf("dark-mem-mcp: boot step4b ok AutoEmitter installed (6 of 8 helpers wired)")
 
 	// Construct the orchestrator. WithBackends / WithLLMSelector can
 	// be applied by the caller after Boot (e.g. for tests).

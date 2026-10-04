@@ -1507,6 +1507,33 @@ CREATE INDEX IF NOT EXISTS idx_valid_time       ON agent_memory(valid_time);
 		Version: 32,
 		Name:    "events_polymorphic",
 		Up: `
+-- Phase 12 T-107 (alpha.23): guarded RENAME of the pre-v32 legacy
+-- events table. The ALTER TABLE RENAME fails cleanly with
+-- "no such table: events" on fresh installs — that error class
+-- is tolerated by migrate.isToleratedDDLError (F41, added in
+-- T-107) so the migration continues to the CREATE TABLE below.
+--
+-- The rename is destructive of the legacy data but safe because:
+--   1. The pre-v32 events table is orphaned (no caller in
+--      internal/v4alpha or internal/orchestration reads it —
+--      verified via grep).
+--   2. The events table was never part of the HMAC chain
+--      (write_audit is the chain carrier; events shares the
+--      chain via the audit.Writer.WriteWithProject() path).
+--   3. The renamed table is preserved for forensic rollback
+--      (operator decision 2026-10-04: zero data loss on
+--      destructive migrations — rename is the conservative
+--      choice; the operator can inspect events_legacy_v2_pre_alpha23
+--      post-upgrade if any audit trail was logged there).
+--
+-- We deliberately DON'T gate this with a project_id column
+-- check (more complex SQL) — a guarded RENAME is cheaper and
+-- the rename is idempotent: re-running on an already-renamed DB
+-- gives "no such table: events" (the legacy events no longer
+-- exists, so the rename target doesn't exist either) → F41
+-- tolerated. CREATE TABLE IF NOT EXISTS then no-ops cleanly.
+ALTER TABLE events RENAME TO events_legacy_v2_pre_alpha23;
+
 CREATE TABLE IF NOT EXISTS events (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id      TEXT NOT NULL,

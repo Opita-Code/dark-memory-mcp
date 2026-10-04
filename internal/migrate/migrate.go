@@ -277,6 +277,12 @@ func SplitStatementsForTest(body string) []string {
 //     already exists. Distinguished from F37 by error wording;
 //     covers CREATE TABLE statements that may have been
 //     duplicated by EnsureCoreTables + Migrate double-boot.
+//
+//   - F41: "no such table: X" — DROP TABLE / ALTER TABLE RENAME on
+//     a table that doesn't exist. Phase 12 T-107 introduced guarded
+//     RENAME statements that fail cleanly on fresh installs (where
+//     the legacy events table never existed). The migration must
+//     continue past the failure so the v32 CREATE TABLE can land.
 func isToleratedDDLError(err error) bool {
 	if err == nil {
 		return false
@@ -293,6 +299,9 @@ func isToleratedDDLError(err error) bool {
 	}
 	if strings.Contains(s, "table") && strings.Contains(s, "already exists") {
 		return true // F40
+	}
+	if strings.Contains(s, "no such table") {
+		return true // F41 (Phase 12 T-107 guarded rename)
 	}
 	return false
 }
