@@ -40,6 +40,8 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+
+	"github.com/dark-agents/dark-memory-mcp/internal/eventholder"
 )
 
 // Migration is one versioned schema change. Both driver packages
@@ -70,9 +72,28 @@ func Migrate(ctx context.Context, db *sql.DB, migs []Migration) error {
 		if _, ok := applied[m.Version]; ok {
 			continue
 		}
+		// Snapshot the highest currently applied version BEFORE
+		// applyOne commits — that is the "from" version that
+		// EmitSchemaMigration records. After applyOne succeeds the
+		// bookkeeping row will land and we'd see m.Version itself
+		// in `applied`, which would be wrong.
+		fromVersion := 0
+		for v := range applied {
+			if v > fromVersion {
+				fromVersion = v
+			}
+		}
 		if err := applyOne(ctx, db, m); err != nil {
 			return err
 		}
+		// Phase 12 T-103a-extension-2: emit a modification event
+		// after each successful migration commit. Fire-and-forget
+		// (eventholder.Get() returns nil pre-boot, helper swallows
+		// errors internally per auto_emit.go design).
+		if ae := eventholder.Get(); ae != nil {
+			ae.EmitSchemaMigration(ctx, fromVersion, m.Version, m.Name)
+		}
+		applied[m.Version] = m.Name
 	}
 	return nil
 }

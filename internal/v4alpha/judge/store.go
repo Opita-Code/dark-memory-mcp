@@ -45,6 +45,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dark-agents/dark-memory-mcp/internal/eventholder"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/audit"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/store"
 )
@@ -405,6 +406,18 @@ func (s *Store) SaveEvaluation(ctx context.Context, auditMeta *Audit, e *Evaluat
 	if err != nil {
 		return 0, err
 	}
+	// Phase 12 T-103a-extension-2: emit a modification event AFTER
+	// the sdd_evaluations row + audit_log row commit. The new
+	// evaluation id is the target row; verdict label + confidence
+	// are the payload fields. Fire-and-forget; eventholder.Get()
+	// returns nil pre-boot and the helper swallows errors.
+	if ae := eventholder.Get(); ae != nil {
+		verdictLabel := ""
+		if v, err := VerdictFromEvaluation(e); err == nil && v != nil {
+			verdictLabel = v.Verdict
+		}
+		ae.EmitJudgeVerdictUpdate(ctx, id, verdictLabel, e.Confidence)
+	}
 	return id, nil
 }
 
@@ -654,6 +667,12 @@ func (s *Store) SetCalibration(ctx context.Context, id int64, ci CalibrationCI, 
 	)
 	if err != nil {
 		return fmt.Errorf("judge store SetCalibration: %w", err)
+	}
+	// Phase 12 T-103a-extension-2: emit a modification event after
+	// the calibration UPDATE commits. Fire-and-forget. Pre-boot
+	// (eventholder.Get() == nil) silently no-ops.
+	if ae := eventholder.Get(); ae != nil {
+		ae.EmitCalibrationUpdate(ctx, id, ci.PointEstimate, method)
 	}
 	return nil
 }
