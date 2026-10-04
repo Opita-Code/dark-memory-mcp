@@ -1458,4 +1458,105 @@ CREATE INDEX IF NOT EXISTS idx_transaction_time ON agent_memory(transaction_time
 CREATE INDEX IF NOT EXISTS idx_valid_time       ON agent_memory(valid_time);
 `,
 	},
+	{
+		// v32 — Phase 12 polymorphic events table (alpha.23).
+		//
+		// Single `events` table with `kind` discriminator:
+		//   - 'modification' rows: state changes to canonical rows
+		//     (target_table, target_row_id, rationale INV-20, payload
+		//     before/after snapshots, judge verdict, etc.)
+		//   - 'progress' rows: async work lifecycle (process_id,
+		//     phase started/heartbeat/completed/failed, progress_pct,
+		//     parent_event_id for subagent tree nesting).
+		//
+		// SOTA-grounded by:
+		//   - LangFuse observations model (single table, discriminator,
+		//     nesting via parent_event_id).
+		//   - AWS Step Functions execution history (process_id is the
+		//     ARN-like identifier; root_event_id groups a whole
+		//     execution tree).
+		//   - OpenTelemetry GenAI semantic conventions (payload_json
+		//     uses the gen_ai.* attribute family).
+		//
+		// HMAC chain (chain_prev/chain_self/chain_key_id) is NOT
+		// stored in events — same pattern as write_audit (the chain
+		// is a derived view computed by audit_export at stream time,
+		// not canonical SQL data). audit_export is extended in T-102
+		// to iterate events interleaved with write_audit for one
+		// unified chain.
+		//
+		// Indexes are designed for the 5 query patterns surfaced by
+		// T-105's event_log + event_replay tools:
+		//   - (project_id, ts)         — recent-events-by-project
+		//   - (kind)                    — kind filter
+		//   - (kind, classification)    — modification-by-classification
+		//   - (kind, phase)             — progress-by-phase
+		//   - (process_id)              — LangFuse timeline-by-process
+		//   - (root_event_id)           — Step Functions exec history
+		//   - (parent_event_id)         — LangFuse tree-nesting
+		//   - (target_table, target_row_id) — modification-by-canonical-row
+		//
+		// The last_modified_by_event_id column on agent_memory is a
+		// convenience reverse-lookup: "which event last modified this
+		// row?" Canonical truth is events.target_row_id (Q4 wrapper +
+		// invariant test verifies 1:1 ratio post-T-103a).
+		//
+		// Reference: docs/specs/SPEC-alpha-11-phase12-modification-events.md
+		// (2026-10-04 revision, OTel+LangFuse+Step Functions SOTA).
+		// Operator decision 2026-10-04: Phase 12 SHIP work authorized.
+		Version: 32,
+		Name:    "events_polymorphic",
+		Up: `
+CREATE TABLE IF NOT EXISTS events (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id      TEXT NOT NULL,
+    kind            TEXT NOT NULL CHECK(kind IN ('modification', 'progress')),
+    ts              TEXT NOT NULL,
+
+    -- Common (both kinds)
+    actor           TEXT NOT NULL,
+    session_id      TEXT,
+    parent_event_id INTEGER REFERENCES events(id),
+    root_event_id   INTEGER REFERENCES events(id),
+
+    -- Modification-only (NULL for progress)
+    target_table    TEXT,
+    target_row_id   INTEGER,
+    operation       TEXT,
+    classification  TEXT,
+    source          TEXT,
+    rationale       TEXT,
+    rationale_kind  TEXT,
+    payload_before  TEXT,
+    payload_after   TEXT,
+    confidence      REAL,
+    judge_verdict   TEXT,
+    judge_reasoning TEXT,
+    judge_run_id    INTEGER,
+
+    -- Progress-only (NULL for modification)
+    process_id      TEXT,
+    phase           TEXT,
+    progress_pct    REAL,
+    message         TEXT,
+    duration_ms     INTEGER,
+    error_msg       TEXT,
+
+    -- Both kinds (OTel GenAI-style attributes)
+    payload_json    TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_events_project_ts         ON events(project_id, ts);
+CREATE INDEX IF NOT EXISTS idx_events_kind                ON events(kind);
+CREATE INDEX IF NOT EXISTS idx_events_kind_classification ON events(kind, classification);
+CREATE INDEX IF NOT EXISTS idx_events_kind_phase          ON events(kind, phase);
+CREATE INDEX IF NOT EXISTS idx_events_process_id         ON events(process_id);
+CREATE INDEX IF NOT EXISTS idx_events_root_event_id      ON events(root_event_id);
+CREATE INDEX IF NOT EXISTS idx_events_parent_event_id    ON events(parent_event_id);
+CREATE INDEX IF NOT EXISTS idx_events_target              ON events(target_table, target_row_id);
+
+ALTER TABLE agent_memory ADD COLUMN last_modified_by_event_id INTEGER;
+CREATE INDEX IF NOT EXISTS idx_last_modified_by_event_id ON agent_memory(last_modified_by_event_id);
+`,
+	},
 }

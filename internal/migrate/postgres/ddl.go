@@ -831,4 +831,74 @@ CREATE INDEX IF NOT EXISTS idx_transaction_time ON agent_memory(transaction_time
 CREATE INDEX IF NOT EXISTS idx_valid_time       ON agent_memory(valid_time);
 `,
 	},
+	{
+		// v32 — Phase 12 polymorphic events table (alpha.23).
+		// Postgres mirror of sqlite v32. See sqlite/ddl.go v32 for the
+		// full SOTA rationale (LangFuse + Step Functions + OTel GenAI).
+		//
+		// Differences vs SQLite:
+		//   - INTEGER PRIMARY KEY AUTOINCREMENT → BIGSERIAL PRIMARY KEY
+		//   - ALTER TABLE ADD COLUMN (no IF NOT EXISTS pre-PG 9.6) →
+		//     ADD COLUMN IF NOT EXISTS (PG 9.6+, we target 13+)
+		//   - SELF-REFERENTIAL FK (parent_event_id REFERENCES events(id))
+		//     is supported in PG; the deferred constraint check on
+		//     self-FK is fine since we insert in two-phase (parent then
+		//     child) in T-103c.
+		//
+		// HMAC chain fields are NOT stored in events — same pattern as
+		// write_audit. audit_export is extended in T-102 to iterate
+		// events interleaved with write_audit.
+		//
+		// Reference: docs/specs/SPEC-alpha-11-phase12-modification-events.md.
+		Version: 32,
+		Name:    "events_polymorphic",
+		Up: `
+CREATE TABLE IF NOT EXISTS events (
+    id              BIGSERIAL PRIMARY KEY,
+    project_id      TEXT NOT NULL,
+    kind            TEXT NOT NULL CHECK(kind IN ('modification', 'progress')),
+    ts              TEXT NOT NULL,
+
+    actor           TEXT NOT NULL,
+    session_id      TEXT,
+    parent_event_id BIGINT REFERENCES events(id),
+    root_event_id   BIGINT REFERENCES events(id),
+
+    target_table    TEXT,
+    target_row_id   BIGINT,
+    operation       TEXT,
+    classification  TEXT,
+    source          TEXT,
+    rationale       TEXT,
+    rationale_kind  TEXT,
+    payload_before  TEXT,
+    payload_after   TEXT,
+    confidence      DOUBLE PRECISION,
+    judge_verdict   TEXT,
+    judge_reasoning TEXT,
+    judge_run_id    BIGINT,
+
+    process_id      TEXT,
+    phase           TEXT,
+    progress_pct    DOUBLE PRECISION,
+    message         TEXT,
+    duration_ms     BIGINT,
+    error_msg       TEXT,
+
+    payload_json    TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_events_project_ts         ON events(project_id, ts);
+CREATE INDEX IF NOT EXISTS idx_events_kind                ON events(kind);
+CREATE INDEX IF NOT EXISTS idx_events_kind_classification ON events(kind, classification);
+CREATE INDEX IF NOT EXISTS idx_events_kind_phase          ON events(kind, phase);
+CREATE INDEX IF NOT EXISTS idx_events_process_id         ON events(process_id);
+CREATE INDEX IF NOT EXISTS idx_events_root_event_id      ON events(root_event_id);
+CREATE INDEX IF NOT EXISTS idx_events_parent_event_id    ON events(parent_event_id);
+CREATE INDEX IF NOT EXISTS idx_events_target              ON events(target_table, target_row_id);
+
+ALTER TABLE agent_memory ADD COLUMN IF NOT EXISTS last_modified_by_event_id BIGINT;
+CREATE INDEX IF NOT EXISTS idx_last_modified_by_event_id ON agent_memory(last_modified_by_event_id);
+`,
+	},
 }
