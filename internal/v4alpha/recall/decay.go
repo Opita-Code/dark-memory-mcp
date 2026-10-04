@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"time"
+
+	"github.com/dark-agents/dark-memory-mcp/internal/eventholder"
 )
 
 // DecayScore computes the decay multiplier for one AnnotatedRow
@@ -60,6 +62,12 @@ func DecayScore(row AnnotatedRow, now time.Time) float64 {
 // It runs in the same transaction as the recall that triggered the
 // refresh (operator-flagged, default ON for forever rows; OFF for
 // perishable rows to avoid inflating their half-life).
+//
+// Phase 12 T-103a-extension: after the UPDATE succeeds, auto-emit a
+// modification event via the process-wide eventholder (nil-safe — no-op
+// when no AutoEmitter is wired at boot). The rationale field is
+// auto-generated ("access_count -> N"); rationale_kind is
+// RationaleDecayFunction. Q2 decision: cosmetic step is async.
 func RefreshOnAccess(ctx context.Context, db *sql.DB, rowID int64, now time.Time) (int int64, err error) {
 	if db == nil {
 		return 0, fmt.Errorf("recall RefreshOnAccess: db is nil")
@@ -84,12 +92,30 @@ func RefreshOnAccess(ctx context.Context, db *sql.DB, rowID int64, now time.Time
 	if err := db.QueryRowContext(ctx,
 		`SELECT access_count FROM agent_memory WHERE id = ?`, rowID,
 	).Scan(&n); err != nil {
-		return 1, nil // best-effort: return at least 1
-	}
-	if !n.Valid {
+		// Phase 12 T-103a-extension: still emit (best-effort — we did
+		// the UPDATE; the readback failed but we know count >= 1).
+		emitDecayRefresh(ctx, rowID, 1)
 		return 1, nil
 	}
-	return n.Int64, nil
+	finalCount := n.Int64
+	if !n.Valid {
+		finalCount = 1
+	}
+	// Phase 12 T-103a-extension: auto-emit after successful UPDATE.
+	// emitDecayRefresh is nil-safe via eventholder.Get().
+	emitDecayRefresh(ctx, rowID, finalCount)
+	return finalCount, nil
+}
+
+// emitDecayRefresh is the Phase 12 T-103a-extension wire from
+// RefreshOnAccess into the AutoEmitter. nil-safe — when no
+// AutoEmitter is wired at boot, this is a no-op.
+func emitDecayRefresh(ctx context.Context, rowID, newAccessCount int64) {
+	ae := eventholder.Get()
+	if ae == nil {
+		return
+	}
+	ae.EmitDecayRefresh(ctx, rowID, newAccessCount)
 }
 
 // MarkSuperseded marks one decision row as superseded by another.

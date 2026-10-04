@@ -28,6 +28,7 @@ import (
 
 	"github.com/dark-agents/dark-memory-mcp/internal/agentmemory"
 	"github.com/dark-agents/dark-memory-mcp/internal/audit"
+	"github.com/dark-agents/dark-memory-mcp/internal/eventholder"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 )
 
@@ -123,8 +124,7 @@ func (s *Store) MarkSupersededAgentMemory(
 	}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.runInTx(ctx, func(tx *sql.Tx) error {
+	txErr := s.runInTx(ctx, func(tx *sql.Tx) error {
 		now := time.Now().UTC().Format(time.RFC3339Nano)
 		// Step 1: mark old as superseded.
 		res, err := tx.ExecContext(ctx, `
@@ -172,6 +172,33 @@ func (s *Store) MarkSupersededAgentMemory(
 		}
 		return nil
 	})
+	// Phase 12 T-103a-extension: emit the modification event AFTER tx
+	// commit. s.mu is still held by the deferred Unlock, but the events
+	// table is a separate table in the SAME DB so this is safe (the
+	// writer-vs-writer contention is benign — the events table row
+	// is independent of the supersession transaction).
+	if txErr == nil {
+		s.emitSupersedeAfterMark(ctx, oldMemID, newMemID, trigger, reason)
+	}
+	return txErr
+}
+
+// Auto-emit the modification event AFTER the tx commits successfully.
+// Phase 12 T-103a-extension: wire EmitSupersede into MarkSupersededAgentMemory.
+// Uses the package-level eventholder (no struct injection needed).
+// nil-safe: when no AutoEmitter is wired, no-op (backward compat for
+// harnesses that haven't called eventholder.Set yet).
+//
+// Note: the emit happens inside the s.mu critical section but the
+// events table is a separate table in the SAME DB so this is safe
+// (the writer-vs-writer contention is benign — the events table row
+// is independent of the supersession transaction).
+func (s *Store) emitSupersedeAfterMark(ctx context.Context, oldMemID, newMemID int64, trigger, reason string) {
+	ae := eventholder.Get()
+	if ae == nil {
+		return
+	}
+	ae.EmitSupersede(ctx, oldMemID, newMemID, trigger, reason)
 }
 
 // RecallAtTime implements store.Store.RecallAtTime. Bitemporal "as-of"

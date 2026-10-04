@@ -22,8 +22,11 @@
 package judge
 
 import (
+	"context"
 	"strings"
 	"sync"
+
+	"github.com/dark-agents/dark-memory-mcp/internal/eventholder"
 )
 
 // ---------- PersonaContent ----------
@@ -128,6 +131,12 @@ func LookupPersonaContent(personaID string) *PersonaContent {
 // RegisterPersonaContent adds or replaces a persona's content.
 // Used by tests + future Markdown override (spec 1155 v14).
 // Returns an error when content.Validate() fails.
+//
+// Phase 12 T-103a-extension: after registration, auto-emit a
+// modification event via the eventholder. nil-safe — no-op when no
+// AutoEmitter is wired. Q2 decision: persona update is SYNC
+// (structural change — operators want to see it immediately in
+// the events table).
 func RegisterPersonaContent(personaID string, c *PersonaContent) error {
 	if personaID == "" {
 		return &personaContentError{Field: "personaID"}
@@ -136,9 +145,25 @@ func RegisterPersonaContent(personaID string, c *PersonaContent) error {
 		return err
 	}
 	defaultPersonaContentRegistry.mu.Lock()
-	defer defaultPersonaContentRegistry.mu.Unlock()
 	defaultPersonaContentRegistry.byID[personaID] = c
+	defaultPersonaContentRegistry.mu.Unlock()
+	// Phase 12 T-103a-extension: emit AFTER registry update so the
+	// event reflects the new state, not a stale pre-update state.
+	emitPersonaUpdate(personaID, "persona content registered/replaced")
 	return nil
+}
+
+// emitPersonaUpdate is the Phase 12 T-103a-extension wire from
+// RegisterPersonaContent into the AutoEmitter. nil-safe via
+// eventholder.Get().
+func emitPersonaUpdate(personaID, rationale string) {
+	ae := eventholder.Get()
+	if ae == nil {
+		return
+	}
+	// Use context.Background() — RegisterPersonaContent doesn't take
+	// a ctx (the caller is the test harness or the boot-time loader).
+	ae.EmitPersonaUpdate(context.Background(), personaID, rationale)
 }
 
 // UnregisterPersonaContent removes a persona's content. Used by tests.
