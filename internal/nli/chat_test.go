@@ -416,6 +416,15 @@ func TestChatProvider_ParseCanonicalLabel(t *testing.T) {
 		{"entailment.", LabelEntailment, false},
 		{"contradiction", LabelContradiction, false},
 		{"neutral", LabelNeutral, false},
+		// T-406 (v4.0.0-alpha.27-pre-2): thinking-block prefixes
+		// from 2026 reasoning models (MiniMax-M3, DeepSeek-R1,
+		// Claude extended-thinking). The block must be stripped
+		// before the canonical match.
+		{"<think>The premise says X</think>\n\nentailment", LabelEntailment, false},
+		{"<think>reasoning</think>contradiction", LabelContradiction, false},
+		{"<think>\n  lots of reasoning\n  \n</think>\n\nneutral", LabelNeutral, false},
+		{"<think>still thinking</think>  \n  entailment  ", LabelEntailment, false},
+		{"<think>only reasoning, no label", "", true},
 		{"", "", true},
 		{"yes", "", true},
 		{"no", "", true},

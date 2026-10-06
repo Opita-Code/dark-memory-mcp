@@ -252,9 +252,18 @@ func buildNliPrompt(premise, hypothesis string) string {
 // Manually marshaled for stable field order (test goldenfiles).
 //
 // We use a fixed temperature of 0 (deterministic drift verdicts) and
-// a tight max_tokens of 8 (the longest canonical label is 12 chars; 8
-// is enough headroom for the model to add a period or whitespace but
-// bounded to prevent the model from "explaining" itself).
+// a moderate max_tokens of 256. T-406 (v4.0.0-alpha.27-pre-2): raised
+// from 8 → 64 → 256 to give 2026 reasoning models (MiniMax-M3,
+// DeepSeek-R1, Claude extended-thinking) enough budget for the
+// <think>...</think> reasoning block PLUS the canonical one-word
+// label. The old 8-token ceiling truncated the reply mid-thinking,
+// leaving drift_judge stuck on ErrProviderBadResponse("unrecognized
+// reply ... <think>..."). 64 still cut off MiniMax-M3 mid-thought;
+// 256 covers the worst-case reasoning block observed on real models
+// while staying well below provider per-request caps.
+//
+// The cap is still tight enough to prevent the model from "explaining"
+// itself in prose; 256 tokens ≈ a paragraph.
 func buildChatCompletionPayload(modelRev, premise, hypothesis string) ([]byte, error) {
 	type message struct {
 		Role    string `json:"role"`
@@ -269,7 +278,7 @@ func buildChatCompletionPayload(modelRev, premise, hypothesis string) ([]byte, e
 	req := request{
 		Model:       modelRev,
 		Temperature: 0,
-		MaxTokens:   8,
+		MaxTokens:   256,
 		Messages: []message{
 			{Role: "system", Content: nliChatSystemPrompt},
 			{Role: "user", Content: buildNliPrompt(premise, hypothesis)},
@@ -340,8 +349,37 @@ func parseChatCompletionResponse(body []byte) (Label, float64, error) {
 // are NOT recognized — we keep the contract strict so an ambiguous
 // reply surfaces as ErrProviderBadResponse instead of silently mapping
 // to the wrong label.
+//
+// T-406 (v4.0.0-alpha.27-pre-2): Some 2026 chat-completion models
+// (MiniMax-M3, Claude with extended-thinking, DeepSeek-R1) emit an
+// explicit thinking block before the actual reply:
+//
+//	"<think>\n...reasoning...\n</think>\n\n<label>"
+//
+// The block is rendered as raw text in the assistant message field
+// when reasoning is collapsed at the provider. We strip the block
+// before the canonical-match so the operator's choice of model
+// doesn't silently fail drift_judge.
 func parseCanonicalLabel(raw string) (Label, float64, error) {
 	word := strings.ToLower(strings.TrimSpace(raw))
+	// T-406: strip <think>...</think> blocks (2026 reasoning-model pattern).
+	// The block may appear at the start, in the middle, or wrapping the label.
+	for {
+		start := strings.Index(word, "<think>")
+		if start < 0 {
+			break
+		}
+		end := strings.Index(word[start:], "</think>")
+		if end < 0 {
+			// Unterminated block — treat the whole reply as reasoning
+			// (no label found). Fall through to default.
+			word = ""
+			break
+		}
+		// Drop the whole <think>...</think> segment.
+		word = word[:start] + word[start+end+len("</think>"):]
+		word = strings.TrimSpace(word)
+	}
 	// Strip surrounding punctuation that some models add despite the
 	// system prompt asking them not to.
 	word = strings.Trim(word, `"'.!?,;:`)
