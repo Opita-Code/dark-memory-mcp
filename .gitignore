@@ -13,7 +13,10 @@ dev/
 # Build / dev artifacts (legacy operator WIP that are not part of this repo)
 *.exe~
 dev/
+
+# mods/ is mostly operator-WIP; whitelist the official vibe-loop-git mod
 mods/
+!mods/vibe-loop-git/
 
 # Build artifacts (bin/ directory holds compiled binaries + operator probe files)
 bin/
