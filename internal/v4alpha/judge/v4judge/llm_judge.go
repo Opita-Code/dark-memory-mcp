@@ -251,6 +251,7 @@ type Verdict struct {
 	Confidence  float64 // [0.0, 1.0]
 	Reasoning   string  // non-empty
 	ProviderID  string  // e.g. "judge-minimax-cn"
+	ModelRev    string  // best-effort; empty if unknown
 	LatencyMS   int64   // observed wall-clock for this Judge call
 }
 
@@ -356,8 +357,9 @@ func (j *LLMJudge) Judge(ctx context.Context, specIntent, artifactBody string) (
 
 	parsed.LatencyMS = latency
 	parsed.ProviderID = j.ID()
+	parsed.ModelRev = j.modelRev
 	if err := parsed.Validate(); err != nil {
-		return Verdict{LatencyMS: latency, ProviderID: j.ID()}, err
+		return Verdict{LatencyMS: latency, ProviderID: j.ID(), ModelRev: j.modelRev}, err
 	}
 	return parsed, nil
 }

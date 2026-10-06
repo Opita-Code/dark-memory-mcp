@@ -287,6 +287,7 @@ func (o *Orchestrator) DriftJudge(ctx context.Context, in DriftJudgeInput) (*Dri
 				Verdict:        verdict,
 				Confidence:     confidence,
 				ProviderID:     llmJudge.ID(),
+				ModelRev:       llmVerdict.ModelRev,
 				LatencyMS:      llmLatency,
 				ArtifactSource: string(resolved.Source),
 				ArtifactSHA256: hexBytes(resolved.ContentSHA256),
