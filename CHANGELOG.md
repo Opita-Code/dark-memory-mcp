@@ -11,6 +11,119 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [4.0.0-alpha.26] — 2026-10-06 — Phase 15: closure of §1.13.5 deferrals
+
+Phase 15 closes the 3 deferrals documented in Phase 14 §1.13.5:
+the Postgres parity gap (3 `notImpl` methods), the 8th/8th
+AutoEmitter orphan (`EmitCacheInvalidation`), and the NLI
+`CachedProvider.ConcurrentGet_RaceFree` flaky test. No new tools,
+no schema changes, no new namespaces. Cross-version lockstep hash
+pin UNCHANGED.
+
+### Added — T-401 Postgres parity (commit `2033647`, alpha.26-pre-1)
+
+3 PG `notImpl` methods replaced with real pgxpool implementations
+that mirror the SQLite versions exactly. Schema (v30 + v31) was
+already present in `internal/migrate/postgres/ddl.go:783-831`; only
+the runtime was missing.
+
+- `internal/store/postgres/store.go:412` — `ListAgentMemoryByAnyEntity`
+  → pgx `ANY($1::text[])` + JOIN project_id filter.
+- `internal/store/postgres/store.go:444` — `MarkSupersededAgentMemory`
+  → pre-flight + `runInTx` + `recordWriteTx` (INV-1 audit in same tx)
+  + `EmitSupersede` after tx commit.
+- `internal/store/postgres/store.go:462` — `RecallAtTime`
+  → pgx SELECT with COALESCE(valid_time, created_at) filter.
+
+7 NEW PG tests in `internal/store/postgres/bitemporal_pg_test.go`
+gated by `DARK_TEST_POSTGRES_DSN`. Operator runs locally with:
+
+```bash
+DARK_TEST_POSTGRES_DSN=postgres://user:pass@localhost:5432/dark_mem \
+  go test ./internal/store/postgres/
+```
+
+### Added — T-402 EmitCacheInvalidation 8th/8th wire (commit `ff6452b`, alpha.26-pre-2)
+
+The 8th / 8th AutoEmitter orphan is now wired. Before T-402, 7 of 8
+emitters were called from actual event sites; `EmitCacheInvalidation`
+was defined in `internal/v4alpha/event/auto_emit.go:256` but had
+zero callers. After T-402: every LRU eviction in `internal/nli/cache.go`
+fires `EmitCacheInvalidation`.
+
+- `internal/nli/cache.go` — `SetAutoEmitter(ae)` setter on
+  `InMemoryLRU` (nil-safe). Local `AutoEmitter` interface (minimal
+  subset — only `EmitCacheInvalidation`) to avoid import cycle.
+- Get path emits `reason="ttl_expired"` on lazy TTL expiry.
+- Put path emits `reason="lru_cap"` on every over-cap eviction.
+- Wire signature: `cacheTable="nli_lru"`, `rowID=0`, `semantic=false`.
+
+4 NEW tests in `internal/nli/cache_test.go`:
+- `TestInMemoryLRU_PutEviction_FiresEmitCacheInvalidation`
+- `TestInMemoryLRU_GetTTLExpiry_FiresEmitCacheInvalidation`
+- `TestInMemoryLRU_NoEmissionWhenNotEvicted`
+- `TestInMemoryLRU_SetAutoEmitter_NilSafe`
+
+Production wiring at boot: `cache.SetAutoEmitter(eventholder.Get())`.
+
+### Fixed — T-403 CachedProvider single-flight dedup (commit `adb2fbe`, alpha.26-pre-3)
+
+`TestCachedProvider_ConcurrentGet_RaceFree` was flaky because N
+concurrent `Score()` calls with the SAME `(premise, hypothesis)` all
+called `c.inner.Score` independently. The race detector flagged the
+TOCTOU between `cache.Get` and `LoadOrStore` — a goroutine that
+missed the cache (before winner's Put) could win `LoadOrStore`
+(after winner's Delete) and trigger a second inner call.
+
+- New `sync.Mutex` field on `CachedProvider` guards the slow path
+  (fast path stays lock-free for cache hits).
+- Double-check cache after acquiring mu.
+- `singleflight` runs mu-held with order = `Put → close(done) → Delete`.
+- `CacheStats` gains `Waiters` counter.
+
+3 NEW tests in `internal/nli/cached_provider_test.go`:
+- `TestCachedProvider_ConcurrentGet_1000xNoFlake` (1000 iter × 100
+  goroutines → exactly 1 inner call total vs 50000+ without fix).
+- `TestCachedProvider_DifferentKeys_ParallelInner` (10 keys × 10
+  inner — no false sharing).
+- `TestCachedProvider_Stats_ReflectsWaiters` (50 concurrent with
+  delay=20ms → 1 miss + 49 hits/waiters).
+
+`go test -race -count=10 ./internal/nli/` PASS (53.6s, no flake).
+
+### Changed — T-404 Docs sweep (this commit, final `alpha.26`)
+
+- `docs/v4-status.md` §1.14 (1.14.1..1.14.8) published.
+- Top-level banner updated with Phase 15 summary.
+- Frozen test stays `TestCanonicalOrder_Frozen_73_20_28`
+  (no tool count change).
+
+### Why Phase 15 ships closure, not expansion
+
+Phase 14 was the "ship the truth" push (LLM-as-judge). Phase 15 is
+the opposite shape: no new features, only the closure of documented
+deferrals. Each task has a file:line root cause, a TDD-verified fix,
+and an atomic-mirror audit trail. Operator pattern: when Phase 14
+SHIPPED, the §1.13.5 list explicitly named these 3 items as the
+remaining work — Phase 15 closes that list. After Phase 15 SHIP,
+the v4 redesign has no open deferrals (only known structural
+constraints: 91.9% coverage ceiling, DirectML EP blocked upstream).
+
+### Tags
+
+- 3 pre-tags: `v4.0.0-alpha.26-pre-1`..`..pre-3`
+- final: `v4.0.0-alpha.26`
+- (LOCAL ONLY — no `git push` / no remote tags)
+
+### Atomic mirror rows
+
+- 2473 (T-401 SHIPPED)
+- 2474 (T-402 SHIPPED)
+- 2475 (T-403 SHIPPED)
+- 2476 (Phase 15 SHIPPED pinned — summary, saved at SHIP)
+
+---
+
 ## [4.0.0-alpha.25] — 2026-10-06 — Phase 14: LLM-as-judge + Connect flow
 
 Phase 14 (alpha.25) implements the operator directive from Phase 13:

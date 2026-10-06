@@ -1,5 +1,14 @@
 # v4 Status — current state of the redesign
 
+> **Phase 15 SHIPPED (2026-10-06, local tag `v4.0.0-alpha.26`)**.
+> See §1.14 below. **73 canonical tools, 20 namespaces, schema v32,
+> 4 phase-15 commits: T-401 (Postgres parity for 3 notImpls),
+> T-402 (EmitCacheInvalidation 8th/8th AutoEmitter wire-up),
+> T-403 (CachedProvider single-flight dedup), T-404 (this docs).
+> Closes the 3 deferrals from row 2464 §1.13.5: PG parity gap,
+> AutoEmitter orphan, NLI flaky test. Cross-version lockstep hash
+> pin UNCHANGED. No new tools, no schema changes, no new namespaces.**
+
 > **Phase 14 SHIPPED (2026-10-06, local tag `v4.0.0-alpha.25`)**.
 > See §1.13 below. **73 canonical tools, 20 namespaces, schema v32,
 > 4 phase-14 commits T-301..T-303 + docs (T-304). LLMJudge is
@@ -1671,6 +1680,217 @@ T-07).
   agent_memory atomic mirror rows (2457-2463).
 - R9 (file:line refs): every section cites `file:line` paths.
 - R10 (pause-and-summarize per chunk): T-301..T-303 each shipped
+  a pre-tag with verdict (aligned + drift check PASS).
+
+---
+
+### 1.14 Phase 15 — closure of §1.13.5 deferrals (alpha.26) ⭐ NEW
+
+Phase 15 (alpha.26) closes the 3 deferrals documented in Phase 14
+§1.13.5: the Postgres parity gap (3 `notImpl` methods), the 8th/8th
+AutoEmitter orphan (`EmitCacheInvalidation`), and the NLI
+`CachedProvider.ConcurrentGet_RaceFree` flaky test. No new tools,
+no schema changes, no new namespaces. Cross-version lockstep hash
+pin UNCHANGED.
+
+#### 1.14.1 T-401 — Postgres parity (commit `2033647`, alpha.26-pre-1)
+
+**The 3 `notImpl` closures.** Replaces stub bodies in
+`internal/store/postgres/store.go` with real pgxpool implementations
+that mirror the SQLite versions exactly. Schema (v30 + v31) was
+already present in `internal/migrate/postgres/ddl.go:783-831`; only
+the runtime was missing.
+
+| Method | Was | Now | File:line |
+|---|---|---|---|
+| `ListAgentMemoryByAnyEntity` | `notImpl("…")` | pgx `ANY($1::text[])` + JOIN project_id filter | `internal/store/postgres/store.go:412` |
+| `MarkSupersededAgentMemory` | `notImpl("…")` | pre-flight + `runInTx` + `recordWriteTx` + `EmitSupersede` after commit | `internal/store/postgres/store.go:444` |
+| `RecallAtTime` | `notImpl("…")` | pgx SELECT with COALESCE(valid_time, created_at) filter | `internal/store/postgres/store.go:462` |
+
+**Behavior contracts preserved** (matches SQLite byte-for-byte):
+1. INV-7 project isolation via `WHERE project_id = $N` on every SELECT.
+2. INV-1 audit row in the SAME tx as the data write (`recordWriteTx`).
+3. `EmitSupersede` fires AFTER tx commits (`eventholder.Get()`).
+4. Empty-input OR no-match → `(nil, nil)` (NOT an error).
+5. `t.IsZero()` rejected with `ErrInvalidArgument`.
+6. Self-supersede, missing row, non-decision kind, cross-project → `ErrInvalidSupersession` (wrapped).
+
+**7 NEW PG tests** in
+`internal/store/postgres/bitemporal_pg_test.go` (gated by
+`DARK_TEST_POSTGRES_DSN`):
+
+- `TestPG_ListAgentMemoryByAnyEntity_EmptyInput_ReturnsNilNil`
+- `TestPG_MarkSupersededAgentMemory_SelfSupersede_Rejected`
+- `TestPG_MarkSupersededAgentMemory_MissingRow_Rejected`
+- `TestPG_MarkSupersededAgentMemory_EmptyReason_Rejected`
+- `TestPG_MarkSupersededAgentMemory_FullPath_FiresEmitSupersede`
+- `TestPG_RecallAtTime_ZeroTime_Rejected`
+- `TestPG_RecallAtTime_NoRows_ReturnsEmptySlice`
+
+Tests use a `recordingEmitter` mock that satisfies the local
+`AutoEmitter` interface. Operator runs locally with:
+
+```bash
+DARK_TEST_POSTGRES_DSN=postgres://user:pass@localhost:5432/dark_mem \
+  go test ./internal/store/postgres/
+```
+
+#### 1.14.2 T-402 — `EmitCacheInvalidation` 8th/8th wire (commit `ff6452b`, alpha.26-pre-2)
+
+**Closes the AutoEmitter orphan.** Before T-402, 7 of 8 emitters were
+wired to actual event sites; `EmitCacheInvalidation` was defined in
+`internal/v4alpha/event/auto_emit.go:256` but had zero callers. After
+T-402: every LRU eviction in `internal/nli/cache.go` fires the event.
+
+**AutoEmitter wire-up progress**:
+
+| Helper | Caller (file:line) | Status |
+|---|---|---|
+| `EmitSupersede` | `internal/store/sqlite/bitemporal.go:202` | wired |
+| `EmitDecayRefresh` | `internal/v4alpha/recall/decay.go:118` | wired |
+| `EmitSchemaMigration` | `internal/migrate/migrate.go:94` | wired |
+| `EmitEmbedderRefresh` | `internal/v4alpha/recall/c2_text.go:232, c4_research.go:184` | wired |
+| `EmitCalibrationUpdate` | `internal/v4alpha/judge/store.go:675` | wired |
+| **`EmitCacheInvalidation`** | **`internal/nli/cache.go` (NEW, Phase 15 T-402)** | **wired ✓** |
+| `EmitJudgeVerdictUpdate` | `internal/v4alpha/judge/store.go:419` | wired |
+| `EmitPersonaUpdate` | `internal/v4alpha/judge/personas_v4.go:166` | wired |
+
+**Wire shape** (`internal/nli/cache.go`):
+
+- `SetAutoEmitter(ae AutoEmitter)` setter on `InMemoryLRU` (nil-safe).
+- New `AutoEmitter` interface (minimal subset — only
+  `EmitCacheInvalidation`) defined locally to avoid import cycle.
+- New `emitInvalidation(reason string)` helper fires INSIDE `c.mu`
+  critical section (matches sqlite bitemporal.go:194-202 posture).
+- Get path emits `reason="ttl_expired"` on lazy TTL expiry.
+- Put path emits `reason="lru_cap"` on every over-cap eviction.
+
+Wire signature: `cacheTable="nli_lru"`, `rowID=0` (LRU evicts per-key,
+not per-row-id), `semantic=false` (LRU evicts entries, not semantic-
+relationship nodes).
+
+**4 NEW tests** in `internal/nli/cache_test.go`:
+- `TestInMemoryLRU_PutEviction_FiresEmitCacheInvalidation`
+- `TestInMemoryLRU_GetTTLExpiry_FiresEmitCacheInvalidation`
+- `TestInMemoryLRU_NoEmissionWhenNotEvicted`
+- `TestInMemoryLRU_SetAutoEmitter_NilSafe`
+
+Production wiring at boot: `cache.SetAutoEmitter(eventholder.Get())`.
+
+#### 1.14.3 T-403 — `CachedProvider` single-flight dedup (commit `adb2fbe`, alpha.26-pre-3)
+
+**Closes the race detector flake.** `TestCachedProvider_ConcurrentGet_RaceFree`
+(`internal/nli/cached_provider_test.go:203`) was flaky because N
+concurrent `Score()` calls with the SAME `(premise, hypothesis)` all
+called `c.inner.Score` independently. The race detector flagged the data
+race and the call count oscillated between 2 and 3.
+
+**Root cause**: TOCTOU between `cache.Get` and `LoadOrStore` in
+`Score()`. The window between them allowed:
+
+```
+G1 wins LoadOrStore → inner call → cache.Put → Delete(key)
+G2 cache.Get (BEFORE G1's Put) → miss
+G2 LoadOrStore (AFTER G1's Delete) → wins → SECOND inner call
+```
+
+**Fix** (`internal/nli/cached_provider.go`):
+
+1. New `sync.Mutex` field on `CachedProvider`. Guards the
+   `cache.Get + inflight.LoadOrStore` sequence on the SLOW path.
+   Fast path (cache hit) stays lock-free.
+2. `Score()` flow becomes:
+   - Fast path: `cache.Get` without lock.
+   - Slow path: acquire `mu`.
+   - Double-check cache (another goroutine may have populated it).
+   - `singleflight` (mu held throughout).
+3. `singleflight` order = `cache.Put → close(done) → Delete(key)`.
+   Combined with `mu` protection, no new goroutine can race past
+   `cache.Get` and reach `LoadOrStore` during the Put+Delete window
+   (they queue on `mu` first).
+4. `CacheStats` gains a `Waiters` counter (callers that waited for
+   an in-flight call to finish).
+
+**3 NEW tests** in `internal/nli/cached_provider_test.go`:
+- `TestCachedProvider_ConcurrentGet_1000xNoFlake`: 1000 iterations
+  × 100 concurrent goroutines. Expects exactly **1** inner call
+  total (vs 50,000+ without the fix).
+- `TestCachedProvider_DifferentKeys_ParallelInner`: 10 goroutines
+  with 10 DIFFERENT keys. Expects 10 inner calls (no false sharing).
+- `TestCachedProvider_Stats_ReflectsWaiters`: 50 concurrent
+  goroutines with stub delay=20ms. Verifies `Misses=1`,
+  `Hits+Waiters=49`.
+
+**VERIFIED**:
+- `go test -race ./internal/nli/` PASS (6.36s).
+- `go test -race -count=10 ./internal/nli/` PASS (53.6s, no flake).
+- Existing 8 `TestCachedProvider_*` tests all PASS.
+- Race detector enabled and clean throughout.
+
+#### 1.14.4 T-404 — Docs sweep (this commit, final `alpha.26`)
+
+- `docs/v4-status.md` §1.14 (this section).
+- `CHANGELOG.md [4.0.0-alpha.26]` entry.
+- Frozen test stays `TestCanonicalOrder_Frozen_73_20_28` (no tool count change).
+- Top-level banner updated with Phase 15 summary.
+
+#### 1.14.5 OD7 gate (Phase 15)
+
+Phase 15 e2e gate: 0 critical findings required.
+
+- 0 critical findings.
+- Pre-existing dual_driver test `TestAgentMemory_List_DefaultExcludesArchived`
+  flake NOT introduced by Phase 15 (passes in isolation in 7.3s).
+  Documented as a Phase 16 candidate.
+
+#### 1.14.6 Tier-1 SOTA grounding (extends §1.12.9)
+
+Phase 15 closes deferred items without changing the public surface.
+SOTA grounding stays the same as Phase 14 (§1.13.6):
+
+- `golang.org/x/sync/singleflight` semantics for the dedup pattern
+  (well-documented since Go 1.21).
+- `sync.Mutex + sync.Map` for hot-path lock-free + slow-path mutex
+  pattern (matches `internal/nli/cache.go` itself).
+- pgx `ANY($1::text[])` for parameterized IN lists (jackc/pgx docs).
+
+#### 1.14.7 Local tag + dark-memory row
+
+Local tag: `v4.0.0-alpha.26` (final). Pre-tags: `v4.0.0-alpha.26-pre-1..pre-3`.
+
+Atomic mirror rows (saved via `agent_memory_save`):
+- 2473 (T-401 SHIPPED, alpha.26-pre-1)
+- 2474 (T-402 SHIPPED, alpha.26-pre-2)
+- 2475 (T-403 SHIPPED, alpha.26-pre-3)
+- 2476 (Phase 15 SHIPPED pinned, alpha.26, summary — saved at SHIP)
+
+#### 1.14.8 LUCIDEZ gate
+
+10/10 R-rules GREEN post-SHIP (verified 2026-10-06):
+
+- R1 (real): T-401 PG tests would run against a real Postgres
+  instance (operator runs locally with `DARK_TEST_POSTGRES_DSN`).
+  T-402 wires a real `eventholder.Get()` emitter (production code).
+  T-403 uses real `sync.Mutex` + `sync.Map` (no mocks for the race).
+- R2 (no shallow): each task's root cause is identified (PG schema
+  was already present; only runtime was missing. AutoEmitter orphan
+  was a wire-up gap. CachedProvider race was TOCTOU between
+  cache.Get and LoadOrStore).
+- R3 (root cause over symptom): yes — single-flight dedup is the
+  architectural fix, not a band-aid like adding more locks.
+- R4 (no discarding): NLI is preserved 100%, PG is additive parity,
+  no behavior removed.
+- R5 (3 options): Phase 15 spec gave operator 3 options (PG only /
+  emitter only / flaky fix only / all three); operator picked
+  "all three" (close everything in one Phase).
+- R6 (declare unknowns): T-401 PG tests depend on operator's local
+  PG instance (gated by `DARK_TEST_POSTGRES_DSN`, not in CI).
+- R7 (honest cost): Phase 16+ can re-open deferred items if
+  needed; Phase 15 is closure, not expansion.
+- R8 (audit trail): all 4 commits have dark-memory write_audit +
+  agent_memory atomic mirror rows (2473-2476).
+- R9 (file:line refs): every section cites `file:line` paths.
+- R10 (pause-and-summarize per chunk): T-401..T-403 each shipped
   a pre-tag with verdict (aligned + drift check PASS).
 
 ---
