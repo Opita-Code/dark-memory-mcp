@@ -468,51 +468,302 @@ func (s *Store) RecallAtTime(
 	return nil, notImpl("RecallAtTime")
 }
 
-// Phase 12 T-105 (alpha.23): postgres stubs for the events table
-// surface. The schema lands in v32 (events_polymorphic migration);
-// runtime follows. Until then, these return notImpl so callers see
-// the gap explicitly (consistent with the MarkSupersededAgentMemory +
-// RecallAtTime posture).
+// Phase 12 T-105 (alpha.23) + Phase 13 T-203 (alpha.24): postgres
+// parity for the events table surface. The schema lands in v32
+// (events_polymorphic migration); runtime follows. Mirrors the
+// sqlite implementation (internal/store/sqlite/events.go) with
+// pgx-native syntax (no transactions, no s.mu — pgxpool serializes
+// only when the connection limit is hit).
+//
+// All 6 read paths accept the same ListEventsFilter / scalar
+// arguments the sqlite impl accepts, so callers can switch drivers
+// without touching their code. Cross-project reads are allowed
+// (admin / replay tool); tenant isolation at read time is the
+// caller's responsibility, same as sqlite.
+
+// InsertEvent appends one event row to the events table.
 func (s *Store) InsertEvent(ctx context.Context, ev *store.Event) (int64, error) {
 	if err := s.requireProject(); err != nil {
 		return 0, err
 	}
-	return 0, notImpl("InsertEvent")
-}
-
-func (s *Store) GetEventByID(ctx context.Context, id int64) (*store.Event, error) {
-	if err := s.requireProject(); err != nil {
-		return nil, err
+	if ev.Kind != store.EventKindModification && ev.Kind != store.EventKindProgress {
+		return 0, fmt.Errorf("%w: events: kind must be %q or %q (got %q)",
+			store.ErrInvalidArgument, store.EventKindModification, store.EventKindProgress, ev.Kind)
 	}
-	return nil, notImpl("GetEventByID")
+	if ev.Actor == "" {
+		return 0, fmt.Errorf("%w: events: actor is required", store.ErrInvalidArgument)
+	}
+	activeProject := s.activeProject
+	if ev.ProjectID == "" {
+		ev.ProjectID = activeProject
+	}
+	if ev.TS == "" {
+		ev.TS = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+	// Empty string → NULL mapping (matches sqlite convention via
+	// sql.NullString{Valid:false} on read; pgx maps nil to NULL).
+	var id int64
+	err := s.pool.QueryRow(ctx, `
+		INSERT INTO events (
+			project_id, kind, ts,
+			actor, session_id, parent_event_id, root_event_id,
+			target_table, target_row_id, operation, classification, source,
+			rationale, rationale_kind, payload_before, payload_after,
+			confidence, judge_verdict, judge_reasoning, judge_run_id,
+			process_id, phase, progress_pct, message, duration_ms, error_msg,
+			payload_json
+		) VALUES (
+			$1, $2, $3,
+			$4, $5, $6, $7,
+			$8, $9, $10, $11, $12,
+			$13, $14, $15, $16,
+			$17, $18, $19, $20,
+			$21, $22, $23, $24, $25, $26,
+			$27
+		) RETURNING id`,
+		ev.ProjectID, ev.Kind, ev.TS,
+		ev.Actor, nullStr(ev.SessionID.String), nullInt64(ev.ParentEventID), nullInt64(ev.RootEventID),
+		nullStr(ev.TargetTable.String), nullInt64(ev.TargetRowID), nullStr(ev.Operation.String), nullStr(ev.Classification.String), nullStr(ev.Source.String),
+		nullStr(ev.Rationale.String), nullStr(ev.RationaleKind.String), nullStr(ev.PayloadBefore.String), nullStr(ev.PayloadAfter.String),
+		nullFloat64(ev.Confidence), nullStr(ev.JudgeVerdict.String), nullStr(ev.JudgeReasoning.String), nullInt64(ev.JudgeRunID),
+		nullStr(ev.ProcessID.String), nullStr(ev.Phase.String), nullFloat64(ev.ProgressPct), nullStr(ev.Message.String), nullInt64(ev.DurationMs), nullStr(ev.ErrorMsg.String),
+		nullStr(ev.PayloadJSON.String),
+	).Scan(&id)
+	if err != nil {
+		return 0, fmt.Errorf("events: insert: %w", err)
+	}
+	return id, nil
 }
 
+// GetEventByID returns the event with the given id, or nil if no
+// such row exists. (sqlite returns store.ErrNotFound; the postgres
+// impl returns nil + nil for parity with how the rest of the
+// postgres store treats missing rows — see GetRun precedent.)
+func (s *Store) GetEventByID(ctx context.Context, id int64) (*store.Event, error) {
+	if id <= 0 {
+		return nil, fmt.Errorf("%w: events: id must be positive (got %d)", store.ErrInvalidArgument, id)
+	}
+	row := s.pool.QueryRow(ctx, eventSelectAllFromWhereID, id)
+	return scanEventPostgres(row)
+}
+
+// ListEvents returns events matching the filter, ordered by id ASC
+// (canonical insertion order). Limit is clamped to [1, 10000] —
+// matches the sqlite default. Negative Limit returns nil.
 func (s *Store) ListEvents(ctx context.Context, f store.ListEventsFilter) ([]*store.Event, error) {
 	if err := s.requireProject(); err != nil {
 		return nil, err
 	}
-	return nil, notImpl("ListEvents")
+	if f.Kind != "" && f.Kind != store.EventKindModification && f.Kind != store.EventKindProgress {
+		return nil, fmt.Errorf("%w: events: kind filter must be empty, %q, or %q",
+			store.ErrInvalidArgument, store.EventKindModification, store.EventKindProgress)
+	}
+	if f.Limit < 0 {
+		return nil, nil
+	}
+	if f.Limit > 10000 {
+		f.Limit = 10000
+	}
+
+	q := eventSelectAllFrom + ` WHERE 1=1`
+	args := []interface{}{}
+	argN := 1
+	if f.ProjectID != "" {
+		q += ` AND project_id = $` + intToStr(argN)
+		args = append(args, f.ProjectID)
+		argN++
+	} else {
+		// INV-7 tenant scoping: enforce active project on reads when
+		// the caller passes empty. Matches sqlite behavior.
+		q += ` AND project_id = $` + intToStr(argN)
+		args = append(args, s.activeProject)
+		argN++
+	}
+	if f.Kind != "" {
+		q += ` AND kind = $` + intToStr(argN)
+		args = append(args, f.Kind)
+		argN++
+	}
+	if f.TargetTable != "" {
+		q += ` AND target_table = $` + intToStr(argN)
+		args = append(args, f.TargetTable)
+		argN++
+	}
+	if f.TargetRowID != 0 {
+		q += ` AND target_row_id = $` + intToStr(argN)
+		args = append(args, f.TargetRowID)
+		argN++
+	}
+	if f.ProcessID != "" {
+		q += ` AND process_id = $` + intToStr(argN)
+		args = append(args, f.ProcessID)
+		argN++
+	}
+	if f.SessionID != "" {
+		q += ` AND session_id = $` + intToStr(argN)
+		args = append(args, f.SessionID)
+		argN++
+	}
+	if f.Actor != "" {
+		q += ` AND actor = $` + intToStr(argN)
+		args = append(args, f.Actor)
+		argN++
+	}
+	if f.SinceID > 0 {
+		q += ` AND id > $` + intToStr(argN)
+		args = append(args, f.SinceID)
+		argN++
+	}
+	q += ` ORDER BY id ASC`
+	if f.Limit > 0 {
+		q += ` LIMIT $` + intToStr(argN)
+		args = append(args, f.Limit)
+	}
+
+	rows, err := s.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("events: list: %w", err)
+	}
+	defer rows.Close()
+	return scanEventsPostgres(rows)
 }
 
+// ListEventsByProcessID is a thin wrapper over ListEvents with the
+// ProcessID filter set. Exists for parity with the sqlite API and
+// for callers that don't want to build a ListEventsFilter literal.
 func (s *Store) ListEventsByProcessID(ctx context.Context, processID string) ([]*store.Event, error) {
 	if err := s.requireProject(); err != nil {
 		return nil, err
 	}
-	return nil, notImpl("ListEventsByProcessID")
+	if processID == "" {
+		return nil, nil
+	}
+	return s.ListEvents(ctx, store.ListEventsFilter{
+		ProcessID: processID,
+		Limit:     10000,
+	})
 }
 
+// ListEventsByRootEventID returns every event in the tree rooted at
+// rootEventID. The root event itself is NOT included — the call
+// returns its direct + transitive children for chain replay (e.g.,
+// async drift judge lifecycle: started → in_progress → completed).
 func (s *Store) ListEventsByRootEventID(ctx context.Context, rootEventID int64) ([]*store.Event, error) {
 	if err := s.requireProject(); err != nil {
 		return nil, err
 	}
-	return nil, notImpl("ListEventsByRootEventID")
+	if rootEventID <= 0 {
+		return nil, fmt.Errorf("%w: events: root_event_id must be positive (got %d)", store.ErrInvalidArgument, rootEventID)
+	}
+	q := eventSelectAllFrom + ` WHERE root_event_id = $1 AND project_id = $2 ORDER BY id ASC LIMIT 10000`
+	rows, err := s.pool.Query(ctx, q, rootEventID, s.activeProject)
+	if err != nil {
+		return nil, fmt.Errorf("events: list by root: %w", err)
+	}
+	defer rows.Close()
+	return scanEventsPostgres(rows)
 }
 
+// ListEventsByParentEventID returns every event whose
+// parent_event_id matches the given value. Useful for the
+// event_replay 1-level tree expansion (parent → children).
 func (s *Store) ListEventsByParentEventID(ctx context.Context, parentEventID int64) ([]*store.Event, error) {
 	if err := s.requireProject(); err != nil {
 		return nil, err
 	}
-	return nil, notImpl("ListEventsByParentEventID")
+	if parentEventID <= 0 {
+		return nil, fmt.Errorf("%w: events: parent_event_id must be positive (got %d)", store.ErrInvalidArgument, parentEventID)
+	}
+	q := eventSelectAllFrom + ` WHERE parent_event_id = $1 AND project_id = $2 ORDER BY id ASC LIMIT 10000`
+	rows, err := s.pool.Query(ctx, q, parentEventID, s.activeProject)
+	if err != nil {
+		return nil, fmt.Errorf("events: list by parent: %w", err)
+	}
+	defer rows.Close()
+	return scanEventsPostgres(rows)
+}
+
+// eventSelectAllFrom is the canonical SELECT prefix for the
+// postgres events table. Mirrors the sqlite constant
+// (internal/store/sqlite/events.go) but with pgx-compatible
+// column ordering — the field order matches scanEventPostgres.
+const eventSelectAllFrom = `
+SELECT id, project_id, kind, ts,
+       actor, session_id, parent_event_id, root_event_id,
+       target_table, target_row_id, operation, classification, source,
+       rationale, rationale_kind, payload_before, payload_after,
+       confidence, judge_verdict, judge_reasoning, judge_run_id,
+       process_id, phase, progress_pct, message, duration_ms, error_msg,
+       payload_json
+  FROM events`
+
+const eventSelectAllFromWhereID = eventSelectAllFrom + ` WHERE id = $1`
+
+// scanEventPostgres scans one event row. Handles pgx ErrNoRows →
+// (nil, nil) for parity with the rest of the postgres store's
+// Get* path (matches GetRun precedent; the sqlite impl returns
+// store.ErrNotFound for the same case — operators switching drivers
+// must handle the difference).
+func scanEventPostgres(row pgx.Row) (*store.Event, error) {
+	var ev store.Event
+	err := row.Scan(
+		&ev.ID, &ev.ProjectID, &ev.Kind, &ev.TS,
+		&ev.Actor, &ev.SessionID, &ev.ParentEventID, &ev.RootEventID,
+		&ev.TargetTable, &ev.TargetRowID, &ev.Operation, &ev.Classification, &ev.Source,
+		&ev.Rationale, &ev.RationaleKind, &ev.PayloadBefore, &ev.PayloadAfter,
+		&ev.Confidence, &ev.JudgeVerdict, &ev.JudgeReasoning, &ev.JudgeRunID,
+		&ev.ProcessID, &ev.Phase, &ev.ProgressPct, &ev.Message, &ev.DurationMs, &ev.ErrorMsg,
+		&ev.PayloadJSON,
+	)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("events: scan: %w", err)
+	}
+	return &ev, nil
+}
+
+// scanEventsPostgres scans zero-or-more rows.
+func scanEventsPostgres(rows pgx.Rows) ([]*store.Event, error) {
+	out := []*store.Event{}
+	for rows.Next() {
+		var ev store.Event
+		if err := rows.Scan(
+			&ev.ID, &ev.ProjectID, &ev.Kind, &ev.TS,
+			&ev.Actor, &ev.SessionID, &ev.ParentEventID, &ev.RootEventID,
+			&ev.TargetTable, &ev.TargetRowID, &ev.Operation, &ev.Classification, &ev.Source,
+			&ev.Rationale, &ev.RationaleKind, &ev.PayloadBefore, &ev.PayloadAfter,
+			&ev.Confidence, &ev.JudgeVerdict, &ev.JudgeReasoning, &ev.JudgeRunID,
+			&ev.ProcessID, &ev.Phase, &ev.ProgressPct, &ev.Message, &ev.DurationMs, &ev.ErrorMsg,
+			&ev.PayloadJSON,
+		); err != nil {
+			return nil, fmt.Errorf("events: scan row: %w", err)
+		}
+		out = append(out, &ev)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("events: rows: %w", err)
+	}
+	return out, nil
+}
+
+// nullInt64 returns nil when v is the zero sql.NullInt64 (Valid=false),
+// otherwise v.Int64. Used by INSERT statements to map
+// sql.NullInt64 → SQL NULL cleanly via pgx.
+func nullInt64(v sql.NullInt64) any {
+	if !v.Valid {
+		return nil
+	}
+	return v.Int64
+}
+
+// nullFloat64 mirrors nullInt64 for float64 columns.
+func nullFloat64(v sql.NullFloat64) any {
+	if !v.Valid {
+		return nil
+	}
+	return v.Float64
 }
 
 func (s *Store) runMigrations(ctx context.Context) error {
