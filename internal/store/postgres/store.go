@@ -42,6 +42,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -52,6 +53,7 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/audit"
 	"github.com/dark-agents/dark-memory-mcp/internal/constitution"
 	"github.com/dark-agents/dark-memory-mcp/internal/embedder"
+	"github.com/dark-agents/dark-memory-mcp/internal/eventholder"
 	"github.com/dark-agents/dark-memory-mcp/internal/errorobs"
 	"github.com/dark-agents/dark-memory-mcp/internal/merkle"
 	"github.com/dark-agents/dark-memory-mcp/internal/migrate"
@@ -411,14 +413,17 @@ func (s *Store) GetAgentMemoryEntities(ctx context.Context, memID int64) ([]agen
 
 // ListAgentMemoryByAnyEntity returns the deduped mem_id list (in the
 // active project) whose entity list contains at least one of the
-// given values (OR semantics, case-insensitive). Postgres stub —
-// returns notImpl until the entity-side-table migration lands
-// (mirrors the GetAgentMemoryEntities parity noted in row 160 PR-3
-// cross-cutting). When the table is created in v24+ this dispatches
-// to the same SQL as sqlite (parameterized IN list).
+// given values (OR semantics, case-insensitive). Postgres impl —
+// mirrors internal/store/sqlite/entity.go:201 (Phase 15 T-401,
+// closes row 2464 §1.13.5 deferral).
 //
-// Phase 9 alpha.20 Chunk 8.4 (ProGraph 2-layer entity extraction,
-// ADR-015).
+// Algorithm:
+//  1. Lowercase + dedup + sort the input (matches SQLite store.go:208-228).
+//  2. Use unnest($1::text[]) for the IN list — pgx-friendly, no manual
+//     placeholder building. project_id filter applied via JOIN.
+//  3. Empty input or no match → `nil, nil` (NOT an error).
+//
+// Phase 9 alpha.20 Chunk 8.4 (ProGraph 2-layer entity extraction, ADR-015).
 func (s *Store) ListAgentMemoryByAnyEntity(ctx context.Context, entityValues []string) ([]int64, error) {
 	if err := s.requireProject(); err != nil {
 		return nil, err
@@ -426,46 +431,275 @@ func (s *Store) ListAgentMemoryByAnyEntity(ctx context.Context, entityValues []s
 	if len(entityValues) == 0 {
 		return nil, nil
 	}
-	return nil, notImpl("ListAgentMemoryByAnyEntity")
+	// Lowercase + dedup + trim. Stored entities are already lowercase
+	// (see internal/store/sqlite/store.go:4392 ToLower before INSERT).
+	seen := make(map[string]struct{}, len(entityValues))
+	values := make([]string, 0, len(entityValues))
+	for _, v := range entityValues {
+		v = strings.ToLower(strings.TrimSpace(v))
+		if v == "" {
+			continue
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		values = append(values, v)
+	}
+	if len(values) == 0 {
+		return nil, nil
+	}
+	sort.Strings(values) // deterministic ordering across runs
+
+	rows, err := s.pool.Query(ctx, `
+		SELECT DISTINCT ent.mem_id
+		  FROM agent_memory_entities ent
+		  JOIN agent_memory        row ON row.id = ent.mem_id
+		 WHERE ent.entity = ANY($1::text[])
+		   AND row.project_id = $2
+		 ORDER BY ent.mem_id ASC`,
+		values, s.activeProject)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: agent_memory_entities by-any-entity: query: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]int64, 0)
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("postgres: agent_memory_entities by-any-entity: scan: %w", err)
+		}
+		out = append(out, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres: agent_memory_entities by-any-entity: rows: %w", err)
+	}
+	return out, nil
 }
 
-// MarkSupersededAgentMemory is the postgres stub for the bitemporal
-// supersession primitive (alpha.20 Chunk 8.7, ADR-014). The schema
-// (decision_state, supersedes_id, valid_from, valid_to,
-// decision_transitions) lands via migration v30; the runtime follows
-// once the postgres-side validation + tx order matches the sqlite
-// implementation in internal/store/sqlite/bitemporal.go.
+// MarkSupersededAgentMemory is the postgres implementation of the
+// bitemporal supersession primitive (alpha.20 Chunk 8.7, ADR-014).
+// Phase 15 T-401: closes row 2464 §1.13.5 deferral.
 //
-// Until then, MarkSupersededAgentMemory on postgres returns
-// notImpl so operators see the gap explicitly (rather than silently
-// succeeding). Cross-tool semantics — the v4alpha MarkSuperseded in
-// internal/v4alpha/recall/decay.go remains the working version for
-// v4alpha callers.
+// Algorithm mirrors internal/store/sqlite/bitemporal.go:69 (sqlite):
+//  1. Read both rows; verify they exist, are kind=decision, and share
+//     the active project. Cross-check first so we don't half-write.
+//  2. Default trigger='operator_action' when empty; validTime=NOW (UTC
+//     RFC3339Nano) when empty.
+//  3. runInTx with pgx.Tx:
+//     UPDATE agent_memory SET decision_state='superseded',
+//                              supersedes_id=newMemID,
+//                              valid_to=validTime
+//     WHERE id=oldMemID AND project_id=active.
+//     INSERT INTO decision_transitions (...).
+//     recordWriteTx for INV-1 audit row.
+//  4. After tx commits, EmitSupersede fires (matches sqlite behavior).
+//
+// INV-7: cross-project is rejected by pre-flight; pgx has no mutex
+// equivalent so no deadlock risk on requireProject().
+//
+// Returns:
+//   - store.ErrInvalidSupersession (wrapped) for same-id, missing,
+//     non-decision-kind, or cross-project rows.
+//   - any underlying tx error wrapped.
 func (s *Store) MarkSupersededAgentMemory(
 	ctx context.Context, wc store.WriteContext,
 	oldMemID, newMemID int64,
 	trigger, reason, evidence, validTime string,
 ) error {
+	if oldMemID == newMemID {
+		return fmt.Errorf("%w: cannot supersede self (id=%d)", store.ErrInvalidSupersession, oldMemID)
+	}
+	if oldMemID <= 0 || newMemID <= 0 {
+		return fmt.Errorf("%w: invalid row id (old=%d new=%d)", store.ErrInvalidSupersession, oldMemID, newMemID)
+	}
+	if reason == "" {
+		return fmt.Errorf("%w: reason is required", store.ErrInvalidSupersession)
+	}
 	if err := s.requireProject(); err != nil {
 		return err
 	}
-	return notImpl("MarkSupersededAgentMemory")
+	activeProject := s.activeProject
+	if trigger == "" {
+		trigger = "operator_action"
+	}
+	if validTime == "" {
+		validTime = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+
+	// Pre-flight: validate before opening one. Read with the active
+	// project filter so a cross-project row is rejected here (matches
+	// sqlite bitemporal.go:97-124).
+	var oldKind, newKind string
+	err := s.pool.QueryRow(ctx,
+		`SELECT kind FROM agent_memory WHERE id = $1 AND project_id = $2`,
+		oldMemID, activeProject,
+	).Scan(&oldKind)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("%w: old row not found or not in active project (id=%d)",
+				store.ErrInvalidSupersession, oldMemID)
+		}
+		return fmt.Errorf("postgres: read old: %w", err)
+	}
+	err = s.pool.QueryRow(ctx,
+		`SELECT kind FROM agent_memory WHERE id = $1 AND project_id = $2`,
+		newMemID, activeProject,
+	).Scan(&newKind)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("%w: new row not found or not in active project (id=%d)",
+				store.ErrInvalidSupersession, newMemID)
+		}
+		return fmt.Errorf("postgres: read new: %w", err)
+	}
+	if oldKind != agentmemory.KindDecision || newKind != agentmemory.KindDecision {
+		return fmt.Errorf("%w: both rows must be kind=decision (old=%s new=%s)",
+			store.ErrInvalidSupersession, oldKind, newKind)
+	}
+
+	txErr := s.runInTx(ctx, func(tx pgx.Tx) error {
+		now := time.Now().UTC().Format(time.RFC3339Nano)
+		// Step 1: mark old as superseded.
+		tag, err := tx.Exec(ctx, `
+			UPDATE agent_memory
+			   SET decision_state = 'superseded',
+			       supersedes_id  = $1,
+			       valid_to       = $2
+			 WHERE id = $3
+			   AND project_id = $4`,
+			newMemID, validTime, oldMemID, activeProject)
+		if err != nil {
+			return fmt.Errorf("postgres: supersede: %w", err)
+		}
+		if tag.RowsAffected() == 0 {
+			// race: row deleted between pre-flight and tx.
+			return fmt.Errorf("%w: old row vanished during supersession (id=%d)",
+				store.ErrInvalidSupersession, oldMemID)
+		}
+		// Step 2: record transition.
+		var evidenceArg interface{}
+		if evidence == "" {
+			evidenceArg = nil
+		} else {
+			evidenceArg = evidence
+		}
+		if _, err := tx.Exec(ctx, `
+            INSERT INTO decision_transitions
+                (decision_id, superseded_id, trigger, reason, evidence, project_id, created_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+			newMemID, oldMemID, trigger, reason, evidenceArg,
+			activeProject, now); err != nil {
+			return fmt.Errorf("postgres: decision_transitions: insert: %w", err)
+		}
+		// Step 3: INV-1 audit row.
+		if wc.WritePath == "" {
+			wc.WritePath = "MarkSupersededAgentMemory"
+		}
+		if err := s.recordWriteTx(ctx, tx, audit.WriteEvent{
+			TableName:       "agent_memory",
+			RowID:           oldMemID,
+			ProjectID:       activeProject,
+			Actor:           wc.Actor,
+			SessionID:       wc.SessionID,
+			WritePath:       wc.WritePath,
+			ConstitutionID:  wc.ConstitutionID,
+			ConstitutionVer: wc.ConstitutionVer,
+			CreatedAt:       now,
+		}, ""); err != nil {
+			return fmt.Errorf("postgres: audit: %w", err)
+		}
+		return nil
+	})
+	if txErr != nil {
+		return txErr
+	}
+	// Phase 12 T-103a-extension: emit the modification event AFTER tx
+	// commit. Matches sqlite bitemporal.go:181-183. Fire-and-forget.
+	ae := eventholder.Get()
+	if ae != nil {
+		ae.EmitSupersede(ctx, oldMemID, newMemID, trigger, reason)
+	}
+	return nil
 }
 
-// RecallAtTime is the postgres stub for the bitemporal "as-of" query
-// (alpha.20 Chunk 8.7). Mirrors the MarkSupersededAgentMemory
-// posture: schema lands in v30 (valid_time/decision_state columns +
-// decision_transitions table), runtime follows.
+// RecallAtTime is the postgres implementation of the bitemporal
+// "as-of" query (alpha.20 Chunk 8.7). Phase 15 T-401: closes row 2464
+// §1.13.5 deferral.
 //
-// Until then, RecallAtTime on postgres returns notImpl so callers see
-// the gap explicitly.
+// Mirrors internal/store/sqlite/bitemporal.go:232 (sqlite):
+//   - Filter: project_id == active AND archived_at IS NULL
+//     AND COALESCE(valid_time, created_at) <= t.
+//   - Optional kind filter (no kind = any kind).
+//   - Sort: valid_time DESC (newest first), then id ASC (deterministic
+//     tie-break).
+//
+// Same "lite form" caveats as the sqlite version: superseded rows ARE
+// returned (the historical fact was known at time t). To exclude them,
+// callers can filter client-side.
+//
+// Limit <= 0 means no limit. Empty kind means any kind. t.IsZero() is
+// rejected with store.ErrInvalidArgument.
 func (s *Store) RecallAtTime(
 	ctx context.Context, t time.Time, kind string, limit int,
 ) ([]*agentmemory.AgentMemory, error) {
 	if err := s.requireProject(); err != nil {
 		return nil, err
 	}
-	return nil, notImpl("RecallAtTime")
+	if t.IsZero() {
+		return nil, fmt.Errorf("%w: t must not be zero", store.ErrInvalidArgument)
+	}
+	activeProject := s.activeProject
+	tStr := t.UTC().Format(time.RFC3339Nano)
+
+	q := `
+		SELECT id, project_id, COALESCE(session_id, ''), operator,
+		       COALESCE(agent_id, ''), kind, COALESCE(memory_type, ''),
+		       COALESCE(title, ''), content, COALESCE(tags, ''),
+		       pinned, created_at, updated_at, COALESCE(archived_at, ''),
+		       COALESCE(expires_at, ''),
+		       COALESCE(transaction_time, ''), COALESCE(valid_time, '')
+		  FROM agent_memory
+		 WHERE project_id = $1
+		   AND archived_at IS NULL
+		   AND COALESCE(valid_time, created_at) <= $2`
+	args := []interface{}{activeProject, tStr}
+	if kind != "" {
+		q += ` AND kind = $3`
+		args = append(args, kind)
+	}
+	q += ` ORDER BY COALESCE(valid_time, created_at) DESC, id ASC`
+	if limit > 0 {
+		// Safe to inline: limit is validated to be > 0 here.
+		q += fmt.Sprintf(` LIMIT %d`, limit)
+	}
+
+	rows, err := s.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: agent_memory recall_at_time: query: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]*agentmemory.AgentMemory, 0)
+	for rows.Next() {
+		var m agentmemory.AgentMemory
+		var pinnedInt int
+		if err := rows.Scan(
+			&m.ID, &m.ProjectID, &m.SessionID, &m.Operator, &m.AgentID,
+			&m.Kind, &m.MemoryType, &m.Title, &m.Content, &m.Tags,
+			&pinnedInt, &m.CreatedAt, &m.UpdatedAt, &m.ArchivedAt, &m.ExpiresAt,
+			&m.TransactionTime, &m.ValidTime,
+		); err != nil {
+			return nil, fmt.Errorf("postgres: agent_memory recall_at_time: scan: %w", err)
+		}
+		m.Pinned = pinnedInt != 0
+		out = append(out, &m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("postgres: agent_memory recall_at_time: rows: %w", err)
+	}
+	return out, nil
 }
 
 // Phase 12 T-105 (alpha.23) + Phase 13 T-203 (alpha.24): postgres
