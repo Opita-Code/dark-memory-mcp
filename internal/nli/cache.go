@@ -21,6 +21,7 @@ package nli
 
 import (
 	"container/list"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -120,6 +121,7 @@ type InMemoryLRU struct {
 	maxEntries int
 	order      *list.List               // front = most-recently-used; back = LRU
 	index      map[string]*list.Element // key string → *list.Element holding *cacheEntry
+	ae         AutoEmitter              // optional; emits on eviction. Set via SetAutoEmitter.
 }
 
 // NewInMemoryLRU constructs a bounded LRU. maxEntries must be > 0.
@@ -133,6 +135,56 @@ func NewInMemoryLRU(maxEntries int) (*InMemoryLRU, error) {
 		order:      list.New(),
 		index:      make(map[string]*list.Element, maxEntries),
 	}, nil
+}
+
+// SetAutoEmitter wires the AutoEmitter so every eviction (Put-over-cap
+// or Get-TTL-expiry) emits a modification event. Phase 15 T-402:
+// closes the 8th/8th AutoEmitter orphan — EmitCacheInvalidation was
+// defined in internal/v4alpha/event/auto_emit.go:256 but never wired
+// to any cache site.
+//
+// nil-safe: pass nil to uninstall (LRU still works, no events fire).
+// Concurrent with the LRU's mu — emit happens INSIDE the mu critical
+// section; the events table is separate from the cache so this is
+// safe (same posture as internal/store/sqlite/bitemporal.go:194-202).
+//
+// Pattern (matches eventholder.Set):
+//
+//	main.go:
+//     cache.SetAutoEmitter(eventholder.Get())
+//
+//	OR explicitly for tests:
+//
+//	cache.SetAutoEmitter(myMockEmitter)
+//	defer cache.SetAutoEmitter(nil)
+func (c *InMemoryLRU) SetAutoEmitter(ae AutoEmitter) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.ae = ae
+}
+
+// AutoEmitter is the minimal subset of internal/eventholder.AutoEmitter
+// that InMemoryLRU needs. Decoupled from eventholder to avoid an import
+// cycle (the nli package is leaf-level; eventholder depends on
+// v4alpha/event). Production code wires eventholder.Get() (which
+// satisfies this interface) at startup; tests use a recording mock.
+//
+// Only EmitCacheInvalidation is needed because LRU evictions are the
+// only cache lifecycle event we observe here.
+type AutoEmitter interface {
+	EmitCacheInvalidation(ctx context.Context, cacheTable string, rowID int64, semantic bool, reason string)
+}
+
+// emitInvalidation is a fire-and-forget helper. Called inside c.mu
+// critical section. Failures from the emitter are not propagated
+// (event holders log internally and never block the caller).
+func (c *InMemoryLRU) emitInvalidation(reason string) {
+	if c.ae == nil {
+		return
+	}
+	// rowID=0 (LRU evicts per-key, not per-row-id); semantic=false
+	// (LRU evicts entries, not semantic-relationship nodes).
+	c.ae.EmitCacheInvalidation(context.Background(), "nli_lru", 0, false, reason)
 }
 
 // Get returns the score and true on hit + non-expired. Returns (zero,
@@ -150,9 +202,11 @@ func (c *InMemoryLRU) Get(key Key) (Score, bool) {
 	}
 	entry := el.Value.(*cacheEntry)
 	if !entry.expiresAt.IsZero() && time.Now().After(entry.expiresAt) {
-		// Expired — evict silently.
+		// Expired — evict silently. Emit so the audit trail
+		// captures the TTL-driven invalidation (Phase 15 T-402).
 		c.order.Remove(el)
 		delete(c.index, k)
+		c.emitInvalidation("ttl_expired")
 		return Score{}, false
 	}
 	c.order.MoveToFront(el)
@@ -192,6 +246,9 @@ func (c *InMemoryLRU) Put(key Key, score Score, ttl time.Duration) (int, error) 
 		backKey := back.Value.(*cacheEntry).key
 		c.order.Remove(back)
 		delete(c.index, backKey)
+		// Phase 15 T-402: emit on every LRU cap eviction so the audit
+		// trail captures which entries were pushed out (cap pressure).
+		c.emitInvalidation("lru_cap")
 	}
 	return c.order.Len(), nil
 }

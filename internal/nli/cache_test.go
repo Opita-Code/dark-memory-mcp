@@ -1,7 +1,9 @@
 package nli
 
 import (
+	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 )
@@ -286,5 +288,121 @@ func TestInMemoryLRU_PutTwice_ReplacesNotDoubles(t *testing.T) {
 	got, ok := c.Get(k)
 	if !ok || got.Label != LabelContradiction || got.Confidence != 0.9 {
 		t.Errorf("Get after overwrite: got=%v ok=%v, want contradiction 0.9", got, ok)
+	}
+}
+// --- Phase 15 T-402: AutoEmitter EmitCacheInvalidation wire ----------------
+
+// recordingEmitter captures EmitCacheInvalidation calls for tests.
+type recordingEmitter struct {
+	mu      sync.Mutex
+	calls   []emitterCall
+}
+
+type emitterCall struct {
+	cacheTable string
+	rowID      int64
+	semantic   bool
+	reason     string
+}
+
+func (r *recordingEmitter) EmitCacheInvalidation(_ context.Context, cacheTable string, rowID int64, semantic bool, reason string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls = append(r.calls, emitterCall{cacheTable: cacheTable, rowID: rowID, semantic: semantic, reason: reason})
+}
+
+func TestInMemoryLRU_PutEviction_FiresEmitCacheInvalidation(t *testing.T) {
+	t.Parallel()
+	c, _ := NewInMemoryLRU(3)
+	rec := &recordingEmitter{}
+	c.SetAutoEmitter(rec)
+	t.Cleanup(func() { c.SetAutoEmitter(nil) })
+
+	// Fill to cap (3 entries).
+	for i := 0; i < 3; i++ {
+		k := Key{"p", "x", string(rune('a' + i))}
+		if _, err := c.Put(k, Score{Label: LabelEntailment, ProviderID: "p"}, time.Hour); err != nil {
+			t.Fatalf("Put %d: %v", i, err)
+		}
+	}
+	if got := len(rec.calls); got != 0 {
+		t.Errorf("before eviction: EmitCacheInvalidation called %d times, want 0", got)
+	}
+	// One more Put triggers an eviction (cap=3, current=3 → evict 1).
+	if _, err := c.Put(Key{"p", "x", "d"}, Score{ProviderID: "p"}, time.Hour); err != nil {
+		t.Fatalf("Put evict: %v", err)
+	}
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if got := len(rec.calls); got != 1 {
+		t.Fatalf("after eviction: EmitCacheInvalidation called %d times, want 1", got)
+	}
+	if c := rec.calls[0]; c.cacheTable != "nli_lru" || c.rowID != 0 || c.semantic || c.reason != "lru_cap" {
+		t.Errorf("got call=%+v, want {cacheTable=nli_lru rowID=0 semantic=false reason=lru_cap}", c)
+	}
+}
+
+func TestInMemoryLRU_GetTTLExpiry_FiresEmitCacheInvalidation(t *testing.T) {
+	t.Parallel()
+	c, _ := NewInMemoryLRU(10)
+	rec := &recordingEmitter{}
+	c.SetAutoEmitter(rec)
+	t.Cleanup(func() { c.SetAutoEmitter(nil) })
+
+	k := Key{"p", "x", "y"}
+	if _, err := c.Put(k, Score{ProviderID: "p"}, 2*time.Millisecond); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	// Sleep past TTL.
+	time.Sleep(10 * time.Millisecond)
+	if _, ok := c.Get(k); ok {
+		t.Errorf("expected Get to return false after TTL expiry")
+	}
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if got := len(rec.calls); got != 1 {
+		t.Fatalf("EmitCacheInvalidation called %d times, want 1", got)
+	}
+	if r := rec.calls[0]; r.reason != "ttl_expired" {
+		t.Errorf("reason=%q, want ttl_expired", r.reason)
+	}
+}
+
+func TestInMemoryLRU_NoEmissionWhenNotEvicted(t *testing.T) {
+	t.Parallel()
+	c, _ := NewInMemoryLRU(10)
+	rec := &recordingEmitter{}
+	c.SetAutoEmitter(rec)
+	t.Cleanup(func() { c.SetAutoEmitter(nil) })
+
+	// Put a single entry that doesn't overflow.
+	if _, err := c.Put(Key{"p", "x", "y"}, Score{ProviderID: "p"}, time.Hour); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if _, ok := c.Get(Key{"p", "x", "y"}); !ok {
+		t.Errorf("Get should hit")
+	}
+	if got := len(rec.calls); got != 0 {
+		t.Errorf("EmitCacheInvalidation called %d times, want 0 (no eviction occurred)", got)
+	}
+}
+
+func TestInMemoryLRU_SetAutoEmitter_NilSafe(t *testing.T) {
+	t.Parallel()
+	c, _ := NewInMemoryLRU(2)
+	// Never call SetAutoEmitter (ae stays nil).
+	for i := 0; i < 5; i++ {
+		k := Key{"p", "x", string(rune('a' + i))}
+		if _, err := c.Put(k, Score{ProviderID: "p"}, time.Hour); err != nil {
+			t.Fatalf("Put %d: %v", i, err)
+		}
+	}
+	if c.Size() > 2 {
+		t.Errorf("Size=%d, want <= 2 (LRU cap holds with nil emitter)", c.Size())
+	}
+	// SetAutoEmitter(nil) — also a no-op safe path.
+	c.SetAutoEmitter(nil)
+	if _, err := c.Put(Key{"p", "x", "z"}, Score{ProviderID: "p"}, time.Hour); err != nil {
+		t.Fatalf("Put after SetAutoEmitter(nil): %v", err)
 	}
 }
