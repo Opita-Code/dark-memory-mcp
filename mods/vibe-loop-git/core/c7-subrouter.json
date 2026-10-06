@@ -1,0 +1,186 @@
+{
+  "$schema": "https://opitacode.com/schemas/c7-subrouter-v0.2.json",
+  "version": "0.2.0",
+  "loop": 3,
+  "title": "vibe-loop-git v0.2 — C7 Multi-Agent Sub-routing",
+  "c7_semantics": "coordinated bundle of INDEPENDENT artifacts (per internal/vibecase/taxonomy.go:18 — CaseMixed='C7')",
+  "rationale": "C7 in dark-memory ALWAYS routes to DELEGATE and ALWAYS dispatches in parallel (internal/v4alpha/delegation/router.go:24-26). The orchestrator-workers pattern (Anthropic Cookbook Dec 2024) is the canonical way to handle 'tasks where subtasks depend on the specific input'. Magentic-One adds plan/track/re-plan recovery. MoA validates layered ensemble > single model. We combine: dynamic decomposition → parallel worker dispatch → per-subtask judge (Loop 2) → bundle verdict aggregation → coherence check.",
+  "decomposition_strategy_default": "orchestrator_workers_dynamic",
+  "decomposition_strategies": {
+    "orchestrator_workers_dynamic": {
+      "description": "Orchestrator LLM analyzes the C7 task at runtime and emits N <task> blocks in XML (Anthropic cookbook format). Each task has a <type> and <description>. Workers receive the original task + their specific subtask description.",
+      "orchestrator_tier_default": "medium",
+      "orchestrator_prompt_template": "You are a task orchestrator. Analyze the user task and decompose it into N independent, parallel-executable subtasks. Each subtask must be self-contained — no dependency on another subtask's output. Output format:\n<analysis>{high-level plan}</analysis>\n<tasks>\n<task><type>{subtype}</type><description>{what the worker must produce}</description></task>\n<task><type>{subtype}</type><description>{what the worker must produce}</description></task>\n...</tasks>\nAim for 2-{max_subtasks} subtasks. Each subtask type must be one of: code, text, decision, research, video, audio.",
+      "max_subtasks_default": 8,
+      "max_subtasks_min": 1,
+      "max_subtasks_max": 32,
+      "max_concurrent_subtasks_default": 4,
+      "orchestrator_timeout_seconds_default": 30,
+      "rationale": "Anthropic Orchestrator-Workers Cookbook (Dec 2024) — 'central LLM dynamically delegates tasks to worker LLMs'; dynamic decomposition is more adaptive than pre-defined parallel workflows."
+    },
+    "static_predefined": {
+      "description": "Operator pre-declares the subtasks in vibe_publish.spec.tasks. No orchestrator LLM call — directly map operator tasks to workers.",
+      "operator_declares_subtasks_in_spec": true,
+      "max_subtasks_default": 16,
+      "max_subtasks_max": 32,
+      "when_to_use": "Operator knows the exact subtask set in advance (e.g., shipping a documentation bundle that always has README + CHANGELOG + LICENSE + examples).",
+      "tradeoff": "Lower cost (no orchestrator LLM call) but less adaptive — operator must update spec when task shape changes."
+    }
+  },
+  "subtask_routing": {
+    "subtask_vibe_case_in": ["C1", "C2", "C3", "C4", "C5", "C6"],
+    "subtask_vibe_case_not_in": ["C7"],
+    "no_nesting_rationale": "A C7 sub-task would itself trigger another DECIDE → EXTRACT pipeline, leading to unbounded recursion. Subtasks must be concrete (C1=code, C2=text, C3=decision, C4=research, C5=video, C6=audio).",
+    "per_subtask_judge_link": "judge-mapping.json",
+    "per_subtask_judge_behavior": "Each subtask's vibe_case → tier via judge-mapping.tier_selection_rules.by_vibe_case → model via judge-mapping.model_per_provider → judge with voting if C7-specific OR artifact_size > 16KB (per Loop 2 voting defaults).",
+    "safety_net": "If a subtask is somehow emitted with vibe_case=C7 (should be impossible post-validation), force single-model no-voting judge at medium tier and emit a warning audit row."
+  },
+  "bundle_verdict_aggregation": {
+    "rule": "all_aligned",
+    "rule_definition": "Bundle verdict = aligned ONLY when ALL subtasks aligned. Any subtask drift_detected → bundle drift_detected. Any subtask needs_human → bundle needs_human.",
+    "needs_human_when_any_subtask_needs_human": true,
+    "needs_human_when_conflicting_verdicts": true,
+    "conflict_definition": "If subtasks produce ≥2 different verdicts (e.g., 2 aligned + 1 needs_human + 1 drift_detected), escalate to needs_human — the orchestrator's decomposition may have been wrong.",
+    "coherence_check": {
+      "enabled": true,
+      "enabled_default": true,
+      "judge_tier_default": "cheap",
+      "judge_prompt_template": "Review these {N} subtask outputs and determine whether they form a coherent, non-contradictory whole. Reject if:\n- Two subtasks assert mutually exclusive facts\n- There are gaps (a promised deliverable is missing)\n- There is overlap or redundancy that suggests the orchestrator decomposed incorrectly\n- The subtasks fail to cover the user's original request\n\nOutput exactly one of: COHERENT or INCOHERENT followed by a 1-2 sentence justification.",
+      "timeout_seconds_default": 15,
+      "verdict_map": {
+        "COHERENT": "bundle verdict stays as-is from aggregation rule",
+        "INCOHERENT": "bundle verdict escalates to needs_human regardless of subtask aggregation"
+      },
+      "rationale": "Evaluator-optimizer pattern (Anthropic Building Effective Agents Dec 2024): one LLM generates, another evaluates; the cheap coherence pass catches structural issues the per-subtask judges cannot see (cross-cutting contradictions)."
+    }
+  },
+  "cost_latency_controls": {
+    "max_subtasks": 8,
+    "max_subtasks_min": 1,
+    "max_subtasks_max": 32,
+    "max_concurrent_subtasks": 4,
+    "timeout_per_subtask_seconds": 60,
+    "timeout_per_subtask_min": 5,
+    "timeout_per_subtask_max": 300,
+    "orchestrator_timeout_seconds": 30,
+    "orchestrator_timeout_min": 5,
+    "orchestrator_timeout_max": 120,
+    "coherence_check_timeout_seconds": 15,
+    "coherence_check_timeout_max": 60,
+    "rationale": "C7 cascades can blow up cost. The orchestrator LLM is one call; each subtask is one worker + one judge (×3 voting); coherence is one extra judge. Default 8 subtasks × 4 judge calls = 32+ LLM calls. Caps prevent runaway + provider rate limit hits."
+  },
+  "operator_overrides": {
+    "force_decomposition_strategy": {
+      "where": "vibe_publish.spec.constitution.c7_force_strategy",
+      "values": ["orchestrator_workers_dynamic", "static_predefined"],
+      "default": null,
+      "rationale": "Operator may force a specific strategy when the task shape is known or to skip orchestrator LLM call for cost."
+    },
+    "max_subtasks": {
+      "where": "vibe_publish.spec.constitution.c7_max_subtasks",
+      "values": [1, 32],
+      "default": 8,
+      "rationale": "Cap subtasks to control cost/latency. Higher = more granular decomposition, more parallel LLM calls."
+    },
+    "skip_coherence_check": {
+      "where": "vibe_publish.spec.constitution.c7_skip_coherence",
+      "values": [true, false],
+      "default": false,
+      "rationale": "Skip only when operator has high confidence subtasks are independent (e.g., shipping docs bundle). Default false — coherence check IS the value-add of C7."
+    },
+    "force_orchestrator_tier": {
+      "where": "vibe_publish.spec.constitution.c7_force_orchestrator_tier",
+      "values": ["ultra_cheap", "cheap", "medium", "frontier"],
+      "default": null,
+      "rationale": "Operator may force a tier for the orchestrator LLM (e.g., downgrade to cheap when the task shape is trivial)."
+    },
+    "voting_n": {
+      "where": "vibe_publish.spec.constitution.c7_voting_n",
+      "values": [1, 7],
+      "default": 3,
+      "rationale": "Override Loop 2 voting N. Higher = more confidence in subtask verdicts at higher latency."
+    }
+  },
+  "precedence_chain": [
+    "1. Operator explicit override (vibe_publish.spec.constitution.c7_*) — highest",
+    "2. Project-level config (projects.config.json c7.*)",
+    "3. This c7-subrouter.json defaults",
+    "4. Loop 2 judge-mapping.json tier_selection_rules — lowest"
+  ],
+  "evidence": [
+    {
+      "id": "Anthropic-Orchestrator-Workers-Cookbook",
+      "url": "https://platform.claude.com/cookbook/patterns-agents-orchestrator-workers",
+      "claim": "Central LLM dynamically delegates tasks to worker LLMs and synthesizes their combined results. Two-phase: analysis (XML <tasks>) + execution (workers receive original + subtask). Use when subtasks depend on the input; not when latency-critical or subtasks predictable.",
+      "tier": "1"
+    },
+    {
+      "id": "Magentic-One",
+      "url": "https://arxiv.org/abs/2411.04468",
+      "claim": "Microsoft Research Nov 2024. 5-agent generalist system: Orchestrator plans/tracks/re-plans + WebSurfer + FileSurfer + Coder + ComputerTerminal. Competitive with specialized systems on GAIA/AssistantBench/WebArena.",
+      "tier": "1"
+    },
+    {
+      "id": "MoA-2024",
+      "url": "https://arxiv.org/abs/2406.04692",
+      "claim": "Mixture-of-Agents. 6-layer × 6-agent. 65.1% AlpacaEval 2.0 vs GPT-4 Omni 57.5%. Layered composition > single model.",
+      "tier": "1"
+    },
+    {
+      "id": "MS-Magentic-Orchestration",
+      "url": "https://learn.microsoft.com/en-us/agent-framework/workflows/orchestrations/magentic",
+      "claim": "Microsoft Agent Framework. Manager coordinates team, dynamic selection based on evolving context, task progress.",
+      "tier": "1"
+    },
+    {
+      "id": "Anthropic-Building-Effective-Agents",
+      "url": "https://www.anthropic.com/research/building-effective-agents",
+      "claim": "Sectioning (one LLM per aspect) + voting (N samples → consensus). Evaluator-optimizer: generate → evaluate → refine loop. Inspired the coherence_check design.",
+      "tier": "1"
+    },
+    {
+      "id": "internal-router-C7",
+      "url": "internal://internal/v4alpha/delegation/router.go:24-26",
+      "claim": "C7 mixed — ALWAYS parallel dispatch (independent artifacts). Always DELEGATE per decideMixed at router.go:119-145.",
+      "tier": "internal"
+    },
+    {
+      "id": "internal-taxonomy-C7",
+      "url": "internal://internal/vibecase/taxonomy.go:18",
+      "claim": "CaseMixed Case = 'C7' — coordinated bundle of independent artifacts.",
+      "tier": "internal"
+    },
+    {
+      "id": "internal-C7MultiRecall",
+      "url": "internal://internal/v4alpha/recall/c7_multi.go",
+      "claim": "C7MultiRecall implements a blended multi-vibe ensemble recall — different recall strategies per C1..C6 child vibe_cases.",
+      "tier": "internal"
+    }
+  ],
+  "consumed_by": [
+    "Loop 4 (Cold-Start Bootstrap) — uses decomposition_strategy_default + max_subtasks + orchestrator_tier_default as zero-config defaults",
+    "Loop 5 (Latency Axis) — uses cost_latency_controls for subtask count × judge voting budget",
+    "Loop 6 (Self-Evaluation) — uses audit_schema_fields_consumable_by_loop_6 for meta-loop"
+  ],
+  "audit_schema_fields_consumable_by_loop_6": [
+    "decomposition_strategy_used",
+    "subtask_count",
+    "subtask_vibe_case_distribution",
+    "subtask_verdicts",
+    "coherence_check_verdict",
+    "coherence_check_passed",
+    "bundle_verdict",
+    "aggregation_rule_applied",
+    "needs_human_trigger_reason",
+    "conflicting_verdict_detected",
+    "orchestrator_tier_used",
+    "voting_n_used",
+    "latency_ms_orchestrator",
+    "latency_ms_subtasks_total",
+    "latency_ms_coherence",
+    "latency_ms_total",
+    "cost_estimate_usd",
+    "rate_limit_hit",
+    "subtask_failure_count"
+  ]
+}
