@@ -143,6 +143,17 @@ func RegisterAllWithDeps(reg *Registry, orch *orchestration.Orchestrator, st sto
 	// directly — it uses orchestration.DefaultKeyStore() and
 	// DefaultFailoverClient() singletons at call time.
 	RegisterLLMConfig(reg)
+	// LLM_BIND (2) — Phase 14 T-303 (2026-10-06). llm_provider_bind
+	// persists to the active project's NLIConfig JSON blob;
+	// llm_provider_probe sends a tiny /v1/chat/completions
+	// connectivity probe (system='reply with pong'). No LLM call is
+	// made by either tool — both are pure operators over persisted
+	// state + HTTP probe traffic. Registered right after LLM_CONFIG
+	// (its keystore sister) and before JUDGE (the consumer of the
+	// bindings). Advances the canonical surface from 71 tools / 19
+	// namespaces to 73 tools / 20 namespaces.
+	llmBindCanonicalStore = st
+	RegisterLLMBind(reg)
 	// EMBEDDER (1) — v2.9.0-alpha PR-2. Hybrid retrieval consent gate.
 	// The handler casts st to an embedder-introspector interface so
 	// stores without the embedder field still register the tool with

@@ -142,11 +142,17 @@ func TestCanonicalOrder_WirePrefixConsistent(t *testing.T) {
 // judge-progress) for audit-quality. T-105 adds 2 tools (event_log
 // + event_replay) in a new EVENTS namespace (tool count 69 → 71,
 // namespace count 18 → 19). Schema stays v32 (no further migration).
-func TestCanonicalOrder_Frozen_57_17_28(t *testing.T) {
+//
+// Phase 14 T-303 (2026-10-06) adds the LLM_BIND namespace with 2
+// tools (llm_provider_bind + llm_provider_probe) — surface advances
+// 71 → 73 tools, 19 → 20 namespaces. Schema stays v32 (no further
+// migration; the NLIConfig JSON column added in T-07 already covers
+// the storage shape — T-303 is pure operator wiring).
+func TestCanonicalOrder_Frozen_73_20_28(t *testing.T) {
 	const (
-		frozenToolCount      = 71 // 69 (alpha.22 Phase 11 T-402) + 2 from alpha.23 Phase 12 T-105 (EVENTS namespace)
-		frozenNamespaceCount = 19 // 18 (alpha.22) + 1 new namespace (EVENTS)
-		frozenSchemaVersion  = 32 // v31 = bitemporal_lite; v32 = events_polymorphic (Phase 12 T-101)
+		frozenToolCount      = 73 // 71 (alpha.23 Phase 12 T-105) + 2 from alpha.25 Phase 14 T-303 (LLM_BIND namespace)
+		frozenNamespaceCount = 20 // 19 (alpha.23) + 1 new namespace (LLM_BIND)
+		frozenSchemaVersion  = 32 // v31 = bitemporal_lite; v32 = events_polymorphic (Phase 12 T-101); unchanged by Phase 14
 	)
 
 	if got := len(CanonicalOrder()); got != frozenToolCount {

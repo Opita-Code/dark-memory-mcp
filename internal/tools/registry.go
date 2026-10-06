@@ -359,6 +359,21 @@ var canonicalNamespaces = []NamespaceGroup{
 		Tools: []string{"llm_key_add", "llm_key_list", "llm_key_remove", "llm_provider_status"},
 	},
 	{
+		// Phase 14 T-303 (2026-10-06). Operator-facing bind/probe for
+		// LLMJudge (judge-*) and ChatProvider (chat-*) bindings.
+		// llm_provider_bind persists to the active project's
+		// NLIConfig JSON blob (same column as project_create). The
+		// llm_provider_probe tool sends a tiny /v1/chat/completions
+		// request with system='reply with pong' for connectivity
+		// validation. NO LLM call is made by llm_provider_bind —
+		// both tools are pure operators over persisted state +
+		// HTTP probe traffic. Positioned right after LLM_CONFIG (the
+		// keystore mgmt it complements) and before JUDGE (the
+		// consumer of the bindings).
+		Name:  "LLM_BIND",
+		Tools: []string{"llm_provider_bind", "llm_provider_probe"},
+	},
+	{
 		Name:  "JUDGE",
 		Tools: []string{"judge", "consensus", "judgment_history", "judge_list_personas"},
 	},
