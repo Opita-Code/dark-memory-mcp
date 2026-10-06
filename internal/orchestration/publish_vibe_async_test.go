@@ -32,7 +32,21 @@ import (
 // newAsyncTestOrchestrator is the same fixture as
 // newErrorObsTestOrchestrator (real SQLite in temp dir + active
 // project + session). Duplicated here to avoid cross-file coupling.
-func newAsyncTestOrchestrator(t *testing.T, ctx context.Context) (*Orchestrator, store.Store) {
+//
+// Phase 14 refactor (closes row 2457 + v4-status §1.12.8 pre-existing
+// hang): the helper now takes an LLMSelector parameter. When llm is
+// nil, the orchestrator gets NoLLMSelector{} injected so judge calls
+// return ErrNoLLMAvailable IMMEDIATELY without touching env vars,
+// without launching a HealthRegistry probe loop, and without any
+// goroutine leak. Tests that need a real LLM pass wireMockLLM() or
+// a deterministic mock.
+//
+// Removing the prior clearJudgeEnv(env-coupling) pattern — the
+// Phase 13 row note for T-204/T-205 misattributed the hang to
+// "test length"; the forensic showed real cause was env vars →
+// FailoverClient → real HTTP call. With explicit injection, the
+// hang path is unreachable.
+func newAsyncTestOrchestrator(t *testing.T, ctx context.Context, llm LLMSelector) (*Orchestrator, store.Store) {
 	t.Helper()
 	cfg := store.Config{
 		Driver:      store.DriverSQLite,
@@ -49,6 +63,15 @@ func newAsyncTestOrchestrator(t *testing.T, ctx context.Context) (*Orchestrator,
 		t.Fatalf("SetActiveProject: %v", err)
 	}
 	orch := New(st, &safety.Holder{})
+	// Phase 14: explicit LLM injection. When nil, NoLLMSelector returns
+	// ErrNoLLMAvailable from Select without reading env vars or starting
+	// the package-level HealthRegistry. This is the deterministic
+	// "no LLM available" contract; tests that need a real LLM pass
+	// wireMockLLM() or a per-eval-type mock selector.
+	if llm == nil {
+		llm = NoLLMSelector{}
+	}
+	orch.WithLLMSelector(llm)
 	if _, err := orch.SessionStart(ctx, SessionStartInput{
 		Operator:  "tester",
 		ProjectID: "default",
@@ -59,34 +82,13 @@ func newAsyncTestOrchestrator(t *testing.T, ctx context.Context) (*Orchestrator,
 	return orch, st
 }
 
-// clearJudgeEnv is the no-LLM guard used across orchestration tests:
-// without any DARK_*_API_KEY the Judge deterministically returns
-// ErrNoLLMAvailable, which is what we want here (fast background
-// needs_human verdict, no network).
-func clearJudgeEnv(t *testing.T) {
-	t.Helper()
-	for _, k := range []string{
-		"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY",
-		"DARK_DRIFT_JUDGE_DAEMON_URL", "DARK_JUDGE_MODEL_DRIFT_JUDGE_DAEMON",
-		"DARK_JUDGE_MODEL_ANTHROPIC", "DARK_JUDGE_MODEL_OPENAI", "DARK_JUDGE_MODEL_GEMINI",
-		"DEEPSEEK_API_KEY", "MINIMAX_API_KEY", "MINIMAX_API_KEY_CN", "MOONSHOT_API_KEY",
-		"ZAI_API_KEY", "DASHSCOPE_API_KEY", "DARK_JUDGE_PROVIDER",
-	} {
-		t.Setenv(k, "")
-	}
-	// v2.20.0 (spec 1188): force env-var-only keys — the OS keyring may
-	// hold a real migrated key, and this guard asserts the NO-LLM path.
-	t.Setenv("DARK_LLM_KEYRING", "0")
-}
-
 // TestPublishVibe_Async_ReturnsPendingImmediately verifies the core
 // UX fix: async publish must return WITHOUT touching the LLM judge.
 // The artifact + spec are persisted, and a pending drift report row
 // exists so pipeline_status has something to poll.
 func TestPublishVibe_Async_ReturnsPendingImmediately(t *testing.T) {
-	clearJudgeEnv(t)
 	ctx := context.Background()
-	orch, st := newAsyncTestOrchestrator(t, ctx)
+	orch, st := newAsyncTestOrchestrator(t, ctx, nil)
 
 	start := time.Now()
 	out, err := orch.PublishVibe(ctx, PublishVibeInput{
@@ -174,9 +176,8 @@ func TestPublishVibe_Async_ReturnsPendingImmediately(t *testing.T) {
 // and the drift row must transition pending → needs_human within the
 // poll deadline.
 func TestPublishVibe_Async_BackgroundUpdatesDriftReport(t *testing.T) {
-	clearJudgeEnv(t)
 	ctx := context.Background()
-	orch, st := newAsyncTestOrchestrator(t, ctx)
+	orch, st := newAsyncTestOrchestrator(t, ctx, nil)
 
 	out, err := orch.PublishVibe(ctx, PublishVibeInput{
 		Spec: PublishSpecInput{
@@ -221,9 +222,8 @@ func TestPublishVibe_Async_BackgroundUpdatesDriftReport(t *testing.T) {
 // false: no LLM call, verdict="skipped" lands in the background row
 // (the operator reviews manually).
 func TestPublishVibe_Async_SkipAutoCheck(t *testing.T) {
-	clearJudgeEnv(t)
 	ctx := context.Background()
-	orch, st := newAsyncTestOrchestrator(t, ctx)
+	orch, st := newAsyncTestOrchestrator(t, ctx, nil)
 
 	autoFalse := false
 	out, err := orch.PublishVibe(ctx, PublishVibeInput{

@@ -22,7 +22,7 @@ func TestMaterializeForPublish_RoutesViaMaterializer(t *testing.T) {
 	ctx := context.Background()
 	baseDir := filepath.Join(t.TempDir(), "materialized")
 
-	orch, _ := newAsyncTestOrchestrator(t, ctx)
+	orch, _ := newAsyncTestOrchestrator(t, ctx, nil)
 	orch.WithMaterializer(&artifact.Materializer{BaseDir: baseDir})
 
 	text := "the artifact text that will be SHA-256-anchored"
@@ -69,7 +69,7 @@ func TestMaterializeForPublish_FallsBackToMaterializeFromText(t *testing.T) {
 	cacheDir := filepath.Join(t.TempDir(), "dark-materialized")
 	t.Setenv("DARK_MATERIALIZE_DIR", cacheDir)
 
-	orch, _ := newAsyncTestOrchestrator(t, ctx)
+	orch, _ := newAsyncTestOrchestrator(t, ctx, nil)
 	// No WithMaterializer → fallback.
 
 	text := "fallback materialize text"
@@ -99,7 +99,7 @@ func TestMaterializeForPublish_Idempotent(t *testing.T) {
 	ctx := context.Background()
 	baseDir := filepath.Join(t.TempDir(), "materialized")
 
-	orch, _ := newAsyncTestOrchestrator(t, ctx)
+	orch, _ := newAsyncTestOrchestrator(t, ctx, nil)
 	orch.WithMaterializer(&artifact.Materializer{BaseDir: baseDir})
 
 	text := "idempotent text"
@@ -125,7 +125,7 @@ func TestMaterializeForPublish_TooLarge(t *testing.T) {
 	ctx := context.Background()
 	baseDir := filepath.Join(t.TempDir(), "materialized")
 
-	orch, _ := newAsyncTestOrchestrator(t, ctx)
+	orch, _ := newAsyncTestOrchestrator(t, ctx, nil)
 	orch.WithMaterializer(&artifact.Materializer{BaseDir: baseDir})
 
 	// 5 MiB text (over the 4 MiB cap).
@@ -151,7 +151,7 @@ func TestRunJudgePipeline_MaterializesBrandMatch(t *testing.T) {
 	ctx := context.Background()
 	baseDir := filepath.Join(t.TempDir(), "materialized")
 
-	orch, st := newAsyncTestOrchestrator(t, ctx)
+	orch, st := newAsyncTestOrchestrator(t, ctx, nil)
 	orch.WithMaterializer(&artifact.Materializer{BaseDir: baseDir})
 
 	// Build a PublishVibeInput that runs brand_match but no LLM.
@@ -206,7 +206,7 @@ func TestRunJudgePipeline_MaterializesComplianceCheck(t *testing.T) {
 	ctx := context.Background()
 	baseDir := filepath.Join(t.TempDir(), "materialized")
 
-	orch, _ := newAsyncTestOrchestrator(t, ctx)
+	orch, _ := newAsyncTestOrchestrator(t, ctx, nil)
 	orch.WithMaterializer(&artifact.Materializer{BaseDir: baseDir})
 
 	autoCheck := false
@@ -250,7 +250,7 @@ func TestRunJudgePipeline_MaterializesDriftJudgeLegacy(t *testing.T) {
 	ctx := context.Background()
 	baseDir := filepath.Join(t.TempDir(), "materialized")
 
-	orch, _ := newAsyncTestOrchestrator(t, ctx)
+	orch, _ := newAsyncTestOrchestrator(t, ctx, nil)
 	orch.WithMaterializer(&artifact.Materializer{BaseDir: baseDir})
 
 	autoCheck := true // enable drift_judge legacy path
@@ -303,7 +303,7 @@ func TestRunJudgePipeline_MaterializeFailureMarksBrandMatch(t *testing.T) {
 	// be created (e.g., a path that the OS will reject).
 	t.Setenv("DARK_MATERIALIZE_DIR", "") // ensure fallback is unused
 
-	orch, _ := newAsyncTestOrchestrator(t, ctx)
+	orch, _ := newAsyncTestOrchestrator(t, ctx, nil)
 	// BaseDir is a path with a NUL byte — os.MkdirAll will fail.
 	badMaterializer := &artifact.Materializer{
 		BaseDir: string([]byte{0x00, '/', 'b', 'a', 'd'}),
@@ -364,7 +364,7 @@ func TestRunJudgePipeline_EmptyTextSkipsMaterialize(t *testing.T) {
 	ctx := context.Background()
 	baseDir := filepath.Join(t.TempDir(), "materialized")
 
-	orch, _ := newAsyncTestOrchestrator(t, ctx)
+	orch, _ := newAsyncTestOrchestrator(t, ctx, nil)
 	orch.WithMaterializer(&artifact.Materializer{BaseDir: baseDir})
 
 	autoCheck := true
@@ -402,7 +402,7 @@ func TestRunJudgePipeline_EmptyTextSkipsMaterialize(t *testing.T) {
 // TestWithMaterializer_SetAndOverride (spec 1276 T11): WithMaterializer
 // is a fluent setter that returns the orchestrator for chaining.
 func TestWithMaterializer_SetAndOverride(t *testing.T) {
-	orch, _ := newAsyncTestOrchestrator(t, context.Background())
+	orch, _ := newAsyncTestOrchestrator(t, context.Background(), nil)
 
 	baseDir1 := filepath.Join(t.TempDir(), "first")
 	baseDir2 := filepath.Join(t.TempDir(), "second")
@@ -432,7 +432,7 @@ func TestPublishVibe_T11AuditTrail(t *testing.T) {
 	ctx := context.Background()
 	baseDir := filepath.Join(t.TempDir(), "materialized")
 
-	orch, _ := newAsyncTestOrchestrator(t, ctx)
+	orch, _ := newAsyncTestOrchestrator(t, ctx, nil)
 	orch.WithMaterializer(&artifact.Materializer{BaseDir: baseDir})
 
 	// wire BrandID + Jurisdiction + DriftJudge-legacy path. All 3
@@ -478,7 +478,7 @@ func TestPublishVibe_T11AuditTrail(t *testing.T) {
 func TestRunJudgePipeline_MaterializeErrorWraps(t *testing.T) {
 	ctx := context.Background()
 
-	orch, _ := newAsyncTestOrchestrator(t, ctx)
+	orch, _ := newAsyncTestOrchestrator(t, ctx, nil)
 	big := strings.Repeat("y", 5*1024*1024) // 5 MiB > 4 MiB cap
 	_, err := orch.materializeForPublish(ctx, big, "t11_wrap")
 

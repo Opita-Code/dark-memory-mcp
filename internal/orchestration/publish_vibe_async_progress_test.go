@@ -33,9 +33,8 @@ import (
 // events table. The events carry process_id="drift-<artifactID>" so
 // operators can correlate the 2 emits with the background goroutine.
 func TestPublishVibe_Async_EmitsProgressEvents(t *testing.T) {
-	clearJudgeEnv(t)
 	ctx := context.Background()
-	orch, st := newAsyncTestOrchestrator(t, ctx)
+	orch, st := newAsyncTestOrchestrator(t, ctx, nil)
 
 	// Wire the EventEmitter (Phase 12 T-103b). projectID="default"
 	// matches the test orchestrator's active project. The Writer

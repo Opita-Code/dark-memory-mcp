@@ -101,3 +101,40 @@ func (o *OSINTSelector) RecommendedModelFor(provider, evalType string) string {
 // Void-import guard for context (Select takes ctx for future
 // OSINT-query implementations that may need to fetch).
 var _ = context.Background
+
+// NoLLMSelector returns ErrNoLLMAvailable from Select regardless of
+// eval_type. Tests pass this to WithLLMSelector (or the
+// newAsyncTestOrchestrator helper) when they want deterministic
+// "no LLM available" semantics: the judge pipeline runs to
+// completion (verdict=needs_human), the LLM client never opens a
+// socket, and no HealthRegistry goroutine is launched.
+//
+// This is the Phase 14 lesson applied: env-var coupling ("test
+// must clear API keys before running") is a code smell. The
+// explicit injection removes the coupling AND the goroutine leak
+// that comes with the package-level DefaultFailoverClient
+// singleton (HealthRegistry.Start launches a probe loop the test
+// cannot stop — see test_hang analysis in v4-status §1.12.8).
+//
+// Why exported: tests across the orchestration package reuse this
+// selector. The zero-value struct is valid; no constructor needed.
+type NoLLMSelector struct{}
+
+// Select implements LLMSelector. Returns ErrNoLLMAvailable with the
+// eval_type attached so callers can log the intended target even
+// when no client is wired.
+func (NoLLMSelector) Select(_ context.Context, evalType string) (LLMClient, error) {
+	return nil, fmt.Errorf("%w: no client for eval_type=%s (NoLLMSelector injected for tests)",
+		ErrNoLLMAvailable, evalType)
+}
+
+// ProviderFor implements LLMSelector. Returns "" — no provider is
+// selected when no LLM is available.
+func (NoLLMSelector) ProviderFor(string) string { return "" }
+
+// RecommendedModelFor implements LLMSelector. Returns "" — no
+// recommendation when no provider is selected.
+func (NoLLMSelector) RecommendedModelFor(string, string) string { return "" }
+
+// Compile-time guard: NoLLMSelector satisfies LLMSelector.
+var _ LLMSelector = NoLLMSelector{}
