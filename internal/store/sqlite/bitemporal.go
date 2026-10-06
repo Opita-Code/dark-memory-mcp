@@ -124,6 +124,7 @@ func (s *Store) MarkSupersededAgentMemory(
 	}
 
 	s.mu.Lock()
+	defer s.mu.Unlock() // Phase 13 T-204: previously MISSING — caused every subsequent requireProject() to deadlock. Lock must be released on ALL paths (success, validation error, tx failure).
 	txErr := s.runInTx(ctx, func(tx *sql.Tx) error {
 		now := time.Now().UTC().Format(time.RFC3339Nano)
 		// Step 1: mark old as superseded.
