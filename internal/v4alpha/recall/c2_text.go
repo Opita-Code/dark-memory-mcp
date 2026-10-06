@@ -5,6 +5,9 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+
+	"github.com/dark-agents/dark-memory-mcp/internal/embedder"
+	"github.com/dark-agents/dark-memory-mcp/internal/eventholder"
 )
 
 // C2TextRecall is the alpha.18 text-context retrieval strategy.
@@ -24,9 +27,11 @@ import (
 //     for semantic match — the operator gets correct behaviour
 //     without paying the embedder cost.
 //
-//   - When alpha.19 ships, this strategy gets a real BGE-large
-//     adapter and the 0.50 vector weight starts contributing real
-//     cosine-similarity scores. The Weights literal stays the same.
+//   - Phase 13 T-202: when an Embedder is configured (non-nil + non-
+//     disabled), this strategy gets real cosine-similarity scoring
+//     and the 0.50 vector weight starts contributing for rows that
+//     have a stored embedding. Rows without a stored embedding
+//     silently fall back to ftsScore (the alpha.18 stub behavior).
 //
 //   - The graph signal uses same-project neighbours (operators
 //     working on the same project typically benefit from cross-
@@ -36,6 +41,16 @@ type C2TextRecall struct {
 	// variants). Empty default: minimal expansion. alpha.19 will
 	// add LLM-extracted per-domain synonyms.
 	Synonyms map[string][]string
+	// Embedder is the optional vector-axis plug (Phase 13 T-202).
+	// When nil OR KindNone OR disabled, vector scores collapse to
+	// ftsScore (legacy behavior). When non-nil, the strategy calls
+	// Embed(ctx, [query]) once per Recall and computes cosine to
+	// each candidate's stored embedding via decodeEmbeddingBlob.
+	//
+	// Best practice: callers wire embedder.FactoryAuto() at boot
+	// and reuse the same instance across all RecallFor calls. The
+	// factory's Sync wrapper makes concurrent use safe.
+	Embedder embedder.Embedder
 }
 
 // VibeCase returns "text" (C2).
@@ -90,7 +105,16 @@ func (c *C2TextRecall) Recall(ctx context.Context, db *sql.DB, query, projectID 
 		return nil, fmt.Errorf("C2TextRecall hydrate: %w", err)
 	}
 	candidates := append(seeds, extra...)
-	ranked := scoreFTSPlusGraph(candidates, seeds, graphScores, c.Weights())
+	// Phase 13 T-202: optional embedder-driven cosine scoring. When
+	// c.Embedder is nil/KindNone/disabled the helper returns nil and
+	// scoreFTSPlusGraph falls back to ftsScore for every row.
+	vectorScores, vecErr := c.computeVectorScores(ctx, candidates, expanded)
+	if vecErr != nil {
+		// Best-effort: log + degrade to ftsScore. The recall pipeline
+		// must not fail because the embedder provider is misbehaving.
+		vectorScores = nil
+	}
+	ranked := scoreFTSPlusGraph(candidates, seeds, graphScores, c.Weights(), vectorScores)
 	return topKRows(ranked, topK), nil
 }
 
@@ -138,4 +162,75 @@ func expandTextQuery(query string, synonyms map[string][]string) string {
 		}
 	}
 	return strings.Join(out, " OR ")
+}
+
+// computeVectorScores computes the per-row cosine similarity
+// between the query and each candidate's stored embedding.
+//
+// Returns (nil, nil) when the embedder is missing or disabled —
+// callers pass `nil` to scoreFTSPlusGraph, which falls back to
+// ftsScore for every row (alpha.18 stub behavior, preserved for
+// backward compat with no-embedder operators).
+//
+// Errors from the embedder (ErrKeyMissing, network timeout, etc.)
+// surface here so callers can degrade gracefully without failing
+// the recall. Rows whose BLOB cannot be decoded (malformed or
+// dim-mismatched) are silently skipped — their vector signal will
+// be the ftsScore fallback in scoreFTSPlusGraph.
+//
+// Phase 13 T-202 wire: when the embedder returns at least one
+// query vector AND at least one candidate has a stored embedding,
+// the helper emits an EmitEmbedderRefresh event via eventholder
+// (8/8 of Phase 12 T-103a helpers now wired).
+func (c *C2TextRecall) computeVectorScores(ctx context.Context, candidates []AnnotatedRow, query string) (map[int64]float64, error) {
+	if c.Embedder == nil {
+		return nil, nil
+	}
+	if c.Embedder.Kind() == embedder.KindNone {
+		return nil, nil
+	}
+	if len(candidates) == 0 || strings.TrimSpace(query) == "" {
+		return nil, nil
+	}
+	qVecs, err := c.Embedder.Embed(ctx, []string{query})
+	if err != nil {
+		return nil, fmt.Errorf("embedder.Embed: %w", err)
+	}
+	if len(qVecs) == 0 || qVecs[0] == nil {
+		return nil, nil
+	}
+	qVec := qVecs[0]
+	qDim := qVec.Dim()
+
+	out := make(map[int64]float64, len(candidates))
+	scored := 0
+	for _, cand := range candidates {
+		if len(cand.Embedding) == 0 {
+			continue
+		}
+		// Prefer the row's declared EmbeddingDim when present
+		// (zero = legacy / unset, decode tolerates any multiple of 4).
+		expectedDim := cand.EmbeddingDim
+		if expectedDim == 0 {
+			expectedDim = qDim
+		}
+		cVec, derr := decodeEmbeddingBlob(cand.Embedding, expectedDim)
+		if derr != nil {
+			// Drop the row, don't pollute the map.
+			continue
+		}
+		sim := cosineSimilarity(qVec, cVec)
+		out[cand.ID] = sim
+		scored++
+	}
+
+	// Phase 13 T-202: 8/8 AutoEmitter helpers wired. EmitEmbedderRefresh
+	// fires when the recall consumed embeddings (audit trail for the
+	// embedder consumption path; cosmetic per Q2 INDIAN, async).
+	if scored > 0 {
+		if ae := eventholder.Get(); ae != nil {
+			ae.EmitEmbedderRefresh(ctx, 0, scored) // rowID=0 (process-wide aggregate)
+		}
+	}
+	return out, nil
 }

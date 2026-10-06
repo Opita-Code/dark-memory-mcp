@@ -5,6 +5,9 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+
+	"github.com/dark-agents/dark-memory-mcp/internal/embedder"
+	"github.com/dark-agents/dark-memory-mcp/internal/eventholder"
 )
 
 // C4ResearchRecall is the alpha.18 research-context retrieval strategy.
@@ -28,7 +31,20 @@ import (
 //   - Domain-aware decay is deferred to alpha.19 (per the
 //     per-vibe-case multiplier table in SPEC §9). alpha.18 applies
 //     the kind-based default (per R-C §4 I-1).
-type C4ResearchRecall struct{}
+//   - Domain-aware decay is deferred to alpha.19 (per the
+//     per-vibe-case multiplier table in SPEC §9). alpha.18 applies
+//     the kind-based default (per R-C §4 I-1).
+//   - Phase 13 T-202: when Embedder is configured (non-nil + non-
+//     disabled), the 0.45 vector weight contributes real cosine
+//     similarity scores for rows with stored embeddings. Rows
+//     without a stored embedding silently fall back to ftsScore.
+type C4ResearchRecall struct {
+	// Embedder is the optional vector-axis plug (Phase 13 T-202).
+	// When nil OR KindNone OR disabled, vector scores collapse to
+	// ftsScore (legacy behavior). See C2TextRecall.Embedder for the
+	// same contract + best-practice wiring notes.
+	Embedder embedder.Embedder
+}
 
 // VibeCase returns "research" (C4).
 func (c *C4ResearchRecall) VibeCase() string { return VibeCaseResearch }
@@ -79,7 +95,14 @@ func (c *C4ResearchRecall) Recall(ctx context.Context, db *sql.DB, query, projec
 		return nil, fmt.Errorf("C4ResearchRecall hydrate: %w", err)
 	}
 	candidates := append(seeds, extra...)
-	ranked := scoreFTSPlusGraph(candidates, seeds, graphScores, c.Weights())
+	// Phase 13 T-202: optional embedder-driven cosine scoring. Same
+	// contract as C2TextRecall.computeVectorScores — nil when the
+	// embedder is disabled, best-effort on provider errors.
+	vectorScores, vecErr := c.computeVectorScores(ctx, candidates, expanded)
+	if vecErr != nil {
+		vectorScores = nil
+	}
+	ranked := scoreFTSPlusGraph(candidates, seeds, graphScores, c.Weights(), vectorScores)
 	return topKRows(ranked, topK), nil
 }
 
@@ -108,7 +131,61 @@ func (c *C4ResearchRecall) hydrateGraphRows(ctx context.Context, db *sql.DB, gra
 	return hydrateGraphRowsShared(ctx, db, graphScores, seeds, projectID, "1=1", annotatedColumns)
 }
 
-// expandResearchQuery adds research-aware synonyms to the FTS5 query.
+// computeVectorScores computes the per-row cosine similarity
+// between the query and each candidate's stored embedding.
+//
+// Mirrors C2TextRecall.computeVectorScores (same contract, same
+// embedder dispatch). C4's vector weight is 0.45 (vs C2's 0.50),
+// so the impact on ranking is smaller — research recall leans
+// more heavily on the 2-hop citation graph (0.30).
+func (c *C4ResearchRecall) computeVectorScores(ctx context.Context, candidates []AnnotatedRow, query string) (map[int64]float64, error) {
+	if c.Embedder == nil {
+		return nil, nil
+	}
+	if c.Embedder.Kind() == embedder.KindNone {
+		return nil, nil
+	}
+	if len(candidates) == 0 || strings.TrimSpace(query) == "" {
+		return nil, nil
+	}
+	qVecs, err := c.Embedder.Embed(ctx, []string{query})
+	if err != nil {
+		return nil, fmt.Errorf("embedder.Embed: %w", err)
+	}
+	if len(qVecs) == 0 || qVecs[0] == nil {
+		return nil, nil
+	}
+	qVec := qVecs[0]
+	qDim := qVec.Dim()
+
+	out := make(map[int64]float64, len(candidates))
+	scored := 0
+	for _, cand := range candidates {
+		if len(cand.Embedding) == 0 {
+			continue
+		}
+		expectedDim := cand.EmbeddingDim
+		if expectedDim == 0 {
+			expectedDim = qDim
+		}
+		cVec, derr := decodeEmbeddingBlob(cand.Embedding, expectedDim)
+		if derr != nil {
+			continue
+		}
+		sim := cosineSimilarity(qVec, cVec)
+		out[cand.ID] = sim
+		scored++
+	}
+
+	// Phase 13 T-202: 8/8 AutoEmitter helpers wired (T-202 closes the
+	// 7/8 → 8/8 gap noted in the Phase 13 spec §3.2).
+	if scored > 0 {
+		if ae := eventholder.Get(); ae != nil {
+			ae.EmitEmbedderRefresh(ctx, 0, scored)
+		}
+	}
+	return out, nil
+}
 // alpha.18 ships a minimal expansion; alpha.19 may swap in a domain-
 // specific lexicon (per operator config).
 func expandResearchQuery(query string) string {
@@ -290,9 +367,16 @@ func hydrateGraphRowsShared(ctx context.Context, db *sql.DB, graphScores map[int
 // scoreFTSPlusGraph is the canonical score-blend for the FTS+Graph
 // strategies (C1, C2, C3, C4). Score = Σ (weight_i × signal_i).
 //
-// alpha.18 caveat: "vector" weight is treated identically to FTS5
-// weight (the alpha.19 embedder integration will replace this slot).
-func scoreFTSPlusGraph(candidates, seeds []AnnotatedRow, graphScores map[int64]int, w Weights) []rankedRow {
+// alpha.18 fallback: when vectorScores is nil OR a row ID is
+// missing from it, the vector signal collapses to ftsScore (the
+// pre-alpha.19 stub behavior, preserved for backward compat with
+// operators who never configured an embedder).
+//
+// Phase 13 T-202: vectorScores is computed by the embedder-bearing
+// recall paths (C2/C4) and passed in once per call. Rows with no
+// stored embedding (raw is nil/empty) drop out of the vector map
+// at compute time and silently fall through to ftsScore.
+func scoreFTSPlusGraph(candidates, seeds []AnnotatedRow, graphScores map[int64]int, w Weights, vectorScores map[int64]float64) []rankedRow {
 	seedRank := make(map[int64]int, len(seeds))
 	for i, s := range seeds {
 		seedRank[s.ID] = i + 1
@@ -319,9 +403,15 @@ func scoreFTSPlusGraph(candidates, seeds []AnnotatedRow, graphScores map[int64]i
 				graphScore = 1.0
 			}
 		}
-		// alpha.18 stub: vector signal = FTS5 signal. The alpha.19
-		// embedder integration replaces this with cosine similarity.
-		vectorScore = ftsScore
+		// Phase 13 T-202: real cosine similarity when the embedder
+		// computed a score for this row ID. Falls back to ftsScore
+		// when vectorScores is nil OR the row is missing from the map
+		// (legacy rows without stored embeddings).
+		if v, ok := vectorScores[c.ID]; ok {
+			vectorScore = v
+		} else {
+			vectorScore = ftsScore
+		}
 
 		// Apply decay + access boost (per ScrubJay-MEM).
 		decay := 1.0

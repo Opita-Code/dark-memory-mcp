@@ -95,7 +95,9 @@ func (c *C6AudioRecall) Recall(ctx context.Context, db *sql.DB, query, projectID
 		return nil, fmt.Errorf("C6AudioRecall hydrate: %w", err)
 	}
 	candidates := append(seeds, extra...)
-	ranked := scoreFTSPlusGraph(candidates, seeds, graphScores, c.Weights())
+	// C6 has no vector weight (Graph + CrossModal only). Phase 13
+	// T-202: nil vectorScores; falls back to ftsScore (unused).
+	ranked := scoreFTSPlusGraph(candidates, seeds, graphScores, c.Weights(), nil)
 	return topKRows(ranked, topK), nil
 }
 

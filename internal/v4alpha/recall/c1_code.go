@@ -95,7 +95,10 @@ func (c *C1CodeRecall) Recall(ctx context.Context, db *sql.DB, query, projectID 
 		return nil, fmt.Errorf("C1CodeRecall hydrate: %w", err)
 	}
 	candidates := append(seeds, extra...)
-	ranked := scoreFTSPlusGraph(candidates, seeds, graphScores, c.Weights())
+	// Phase 13 T-202: C1 has no vector weight (FTS5 + Graph only).
+	// Pass nil vectorScores; scoreFTSPlusGraph falls back to ftsScore
+	// for every row, which is the alpha.18 behavior preserved.
+	ranked := scoreFTSPlusGraph(candidates, seeds, graphScores, c.Weights(), nil)
 	return topKRows(ranked, topK), nil
 }
 

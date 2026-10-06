@@ -76,7 +76,10 @@ func (c *C5VideoRecall) Recall(ctx context.Context, db *sql.DB, query, projectID
 		return nil, fmt.Errorf("C5VideoRecall hydrate: %w", err)
 	}
 	candidates := append(seeds, extra...)
-	ranked := scoreFTSPlusGraph(candidates, seeds, graphScores, c.Weights())
+	// C5 has no vector weight (Graph + CrossModal only). Phase 13
+	// T-202: pass nil vectorScores; scoreFTSPlusGraph falls back
+	// to ftsScore, which is unused for C5's Weights blend.
+	ranked := scoreFTSPlusGraph(candidates, seeds, graphScores, c.Weights(), nil)
 	return topKRows(ranked, topK), nil
 }
 
