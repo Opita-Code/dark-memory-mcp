@@ -1,0 +1,345 @@
+{
+  "$schema": "https://opitacode.com/schemas/latency-budget-v0.2.json",
+  "version": "0.2.0",
+  "loop": 5,
+  "title": "vibe-loop-git v0.2 — Latency Budget",
+  "rationale": "Latency is the difference between a vibe-loop-git the operator uses and one they abandon. We anchor on Jakob Nielsen's 0.1s/1s/10s thresholds (1993, validated Miller 1968 + Card 1991) and synthesize 2026 SOTA benchmarks (kunalganglani via Artificial Analysis) with our own Phase 14 stress data (row 2472). All numbers are tier-1 source-backed.",
+  "metrics": [
+    "ttft_p50",
+    "ttft_p95",
+    "ttft_p99",
+    "throughput_tps",
+    "end_to_end_p50",
+    "end_to_end_p95",
+    "end_to_end_p99"
+  ],
+  "thresholds": {
+    "nielsen_0_1s": {
+      "metric": "ttft",
+      "threshold_ms": 100,
+      "user_experience": "model of the user's thought (instant feel)",
+      "applies_to": "interactive drift_judge + single LLM call",
+      "tier_1_evidence": "Jakob Nielsen 1993; kunalganglani.com/blog/llm-latency-benchmark-optimization"
+    },
+    "nielsen_1s": {
+      "metric": "ttft",
+      "threshold_ms": 1000,
+      "user_experience": "flow of thought uninterrupted (user notices but stays engaged)",
+      "applies_to": "interactive vibe_publish + C7 orchestrator",
+      "tier_1_evidence": "Jakob Nielsen 1993"
+    },
+    "nielsen_10s": {
+      "metric": "end_to_end",
+      "threshold_ms": 10000,
+      "user_experience": "user attention budget; beyond this, abandonment risk",
+      "applies_to": "single vibe_publish + C7 bundle (batch mode multi-step)",
+      "tier_1_evidence": "Jakob Nielsen 1993"
+    }
+  },
+  "per_tier_budgets": {
+    "ultra_cheap": {
+      "rationale": "small models, smallest context, fastest TTFT (Gemini 2.5 Flash-Lite leads at 0.35s)",
+      "ttft_p50_ms": 350,
+      "ttft_p95_ms": 1500,
+      "ttft_p99_ms": 2000,
+      "throughput_tps": 213.5,
+      "end_to_end_p50_ms": 4000,
+      "end_to_end_p95_ms": 8000,
+      "end_to_end_p99_ms": 15000,
+      "cost_per_1m_input_usd": 0.10,
+      "cost_per_1m_output_usd": 0.40,
+      "example_model": "gemini-2.5-flash-lite / claude-haiku-4-5",
+      "tier_1_evidence": "kunalganglani (Jul 2026) — Gemini 2.5 Flash-Lite 0.35s TTFT 213.5 t/s"
+    },
+    "cheap": {
+      "rationale": "default tier; matches our Phase 14 stress measurements on chat-minimax-cn",
+      "ttft_p50_ms": 500,
+      "ttft_p95_ms": 3000,
+      "ttft_p99_ms": 4000,
+      "throughput_tps": 53.6,
+      "end_to_end_p50_ms": 7000,
+      "end_to_end_p95_ms": 15000,
+      "end_to_end_p99_ms": 30000,
+      "cost_per_1m_input_usd": 0.15,
+      "cost_per_1m_output_usd": 0.60,
+      "example_model": "MiniMax-M3 / gpt-4.1-mini / deepseek-v4-mini / gemini-2.5-pro",
+      "tier_1_evidence": "Phase 14 stress (row 2472) — chat-minimax-cn p50=2576ms sequential, 5-7% variance"
+    },
+    "medium": {
+      "rationale": "MoE sweet spot (Llama 4 Scout, DeepSeek V3) — large quality, mid latency",
+      "ttft_p50_ms": 700,
+      "ttft_p95_ms": 4500,
+      "ttft_p99_ms": 6000,
+      "throughput_tps": 107.3,
+      "end_to_end_p50_ms": 10000,
+      "end_to_end_p95_ms": 25000,
+      "end_to_end_p99_ms": 45000,
+      "cost_per_1m_input_usd": 0.60,
+      "cost_per_1m_output_usd": 1.50,
+      "example_model": "claude-sonnet-4 / gpt-4.1 / deepseek-v4 / MiniMax-M3 extended",
+      "tier_1_evidence": "kunalganglani — Llama 4 Scout 107.3 t/s MoE 109B/17B active $0.66; DeepSeek V3 $0.89 MoE 671B/37B"
+    },
+    "frontier": {
+      "rationale": "frontier models pay 3-10x for marginal quality; budget matches worst-case UX",
+      "ttft_p50_ms": 1000,
+      "ttft_p95_ms": 7000,
+      "ttft_p99_ms": 10000,
+      "throughput_tps": 53.6,
+      "end_to_end_p50_ms": 15000,
+      "end_to_end_p95_ms": 40000,
+      "end_to_end_p99_ms": 80000,
+      "cost_per_1m_input_usd": 3.00,
+      "cost_per_1m_output_usd": 10.00,
+      "example_model": "claude-opus-4-5 / gpt-5 / deepseek-v5-pro / MiniMax-M4",
+      "tier_1_evidence": "kunalganglani — GPT-4o 171.8 t/s $10/1M; benchlm — Fable 5 $10/$50 per 1M"
+    }
+  },
+  "per_provider_budgets": {
+    "anthropic": {
+      "ultra_cheap_model": "claude-haiku-4-5",
+      "cheap_model": "claude-sonnet-4-5",
+      "medium_model": "claude-sonnet-4",
+      "frontier_model": "claude-opus-4-5",
+      "expected_ttft_p50_ms": 800,
+      "expected_prompt_cache_discount": "0.1x after 5min TTL",
+      "tier_1_evidence": "benchlm.ai/anthropic/api-pricing (Oct 2026); Anthropic Building Effective Agents"
+    },
+    "openai": {
+      "ultra_cheap_model": "gpt-4o-mini",
+      "cheap_model": "gpt-4.1-mini",
+      "medium_model": "gpt-4.1",
+      "frontier_model": "gpt-5",
+      "expected_ttft_p50_ms": 700,
+      "expected_prompt_cache_discount": "0.1x after 1024 tokens",
+      "warning": "gpt-4o-mini is the slowest budget model in 2026 (53.6 tok/s — #50/84). Prefer gpt-4.1-mini or DeepSeek V3 instead.",
+      "tier_1_evidence": "kunalganglani — GPT-4o mini 53.6 tok/s"
+    },
+    "deepseek": {
+      "ultra_cheap_model": "deepseek-v4-mini",
+      "cheap_model": "deepseek-v4-mini",
+      "medium_model": "deepseek-v4",
+      "frontier_model": "deepseek-v5-pro",
+      "expected_ttft_p50_ms": 600,
+      "expected_prompt_cache_discount": "0.5x (DeepSeek cache)",
+      "tier_1_evidence": "kunalganglani — DeepSeek V3 $0.89 MoE 671B/37B active"
+    },
+    "minimax": {
+      "ultra_cheap_model": "MiniMax-M3",
+      "cheap_model": "MiniMax-M3",
+      "medium_model": "MiniMax-M3",
+      "frontier_model": "MiniMax-M4",
+      "expected_ttft_p50_ms": 500,
+      "expected_prompt_cache_discount": "unknown (provider-specific)",
+      "measured_in_harness": true,
+      "tier_1_evidence": "Phase 14 stress row 2472 — p50=2576ms sequential, p99=18522ms on chat-minimax-cn (api.minimaxi.com)"
+    },
+    "google": {
+      "ultra_cheap_model": "gemini-2.5-flash-lite",
+      "cheap_model": "gemini-2.5-pro",
+      "medium_model": "gemini-2.5-pro",
+      "frontier_model": "gemini-2.5-ultra",
+      "expected_ttft_p50_ms": 350,
+      "expected_prompt_cache_discount": "implicit (1M context — most prompts fit)",
+      "tier_1_evidence": "kunalganglani — Gemini 2.5 Flash-Lite 0.35s TTFT, 213.5 tok/s, $0.10/1M input — best latency/price 2026"
+    }
+  },
+  "cascade_budgets": {
+    "single_vibe_publish": {
+      "description": "1 spec + 1 orchestrator (optional) + 1 worker + 1 drift_judge (with voting)",
+      "components": ["spec_publish", "optional_orchestrator", "worker_gen", "drift_judge"],
+      "drift_judge_includes_voting": "3 samples per Loop 2 voting defaults",
+      "p50_ms": 5000,
+      "p50_breakdown": {
+        "spec_publish": 500,
+        "orchestrator_skip_for_C1_C7": 0,
+        "worker_gen": 2000,
+        "drift_judge_3_votes": 2500
+      },
+      "p95_ms": 15000,
+      "p99_ms": 30000,
+      "tier_1_evidence": "Phase 14 stress row 2472 — single drift_judge p50=2576ms"
+    },
+    "c7_bundle": {
+      "description": "1 orchestrator + N subtasks (parallel max_concurrent=4) + 1 coherence check",
+      "components": ["orchestrator", "N_subtasks_max_concurrent_4", "coherence_check"],
+      "best_case_p50_ms": 10000,
+      "best_case_breakdown": {
+        "orchestrator_p50": 2000,
+        "subtasks_8_in_4_concurrent_each_2s": 4000,
+        "coherence_check": 2000,
+        "total_effective_steps": "2 (8/4=2 batches)"
+      },
+      "realistic_p50_ms": 25000,
+      "realistic_breakdown": {
+        "orchestrator_p50": 5000,
+        "subtasks_8_in_4_concurrent_each_5s": 10000,
+        "coherence_check": 3000,
+        "total_effective_steps": "2 (8/4=2 batches)"
+      },
+      "p95_ms": 60000,
+      "p99_ms": 120000,
+      "ceiling_ms": 165000,
+      "ceiling_breakdown": {
+        "orchestrator_timeout": 30000,
+        "subtasks_2_batches_at_60s_each": 120000,
+        "coherence_timeout": 15000
+      },
+      "tier_1_evidence": "kunalganglani — '5-step agentic pipeline 800ms each = 4s before user sees anything'; Loop 3 cost_latency_controls; per Anthropic Cookbook parallel dispatch"
+    }
+  },
+  "cold_start_budget": {
+    "vibe_loop_git_itself": {
+      "rationale": "mod has NO startup cost (per Loop 4 coldstart-rules.md §1) — files read at vibe_publish time",
+      "cold_start_ms": 0
+    },
+    "llm_provider_jit_warmup": {
+      "rationale": "first call after binding pays JIT warm-up; subsequent calls benefit from prompt cache",
+      "cold_ms_one_shot": 500,
+      "warm_ms_steady_state": 0,
+      "warm_cache_discount": "provider-specific (Anthropic 0.1x, OpenAI 0.1x after 1024 tokens)"
+    },
+    "llm_provider_model_load": {
+      "rationale": "if provider scales to zero (serverless GPU), boot takes 6 CPU-bound phases per vLLM MLSys paper (60s+). NOT our concern for chat APIs but documents why we don't recommend self-hosted.",
+      "cold_ms_self_hosted": 60000,
+      "rationale_for_not_recommending": "scale-to-zero economics break under $10k/month per groundy.com Jun 2026"
+    }
+  },
+  "variance_budget": {
+    "expected_needs_human_rate": "5-7% (from Phase 14 stress row 2472)",
+    "rationale": "legitimate model variance on borderline specs — NOT drift, NOT error",
+    "retry_policy": {
+      "auto_retry_on_transient": {
+        "trigger_errors": ["HTTP_429", "HTTP_503", "timeout"],
+        "max_attempts": 1,
+        "backoff_ms": 1000
+      },
+      "manual_retry_on_needs_human": {
+        "trigger_verdict": "needs_human",
+        "max_attempts": 2,
+        "operator_action_required": true
+      }
+    },
+    "abort_threshold": "consecutive 3 needs_human verdicts → abort vibe_publish + surface to operator"
+  },
+  "operator_overrides": {
+    "force_concurrency": {
+      "where": "vibe_publish.spec.constitution.force_concurrency",
+      "values": [1, 32],
+      "default": null,
+      "overrides": "c7-subrouter.json max_concurrent_subtasks",
+      "rationale": "operator may force higher concurrency for fast providers, lower for rate-limited"
+    },
+    "max_total_latency_seconds": {
+      "where": "vibe_publish.spec.constitution.max_total_latency_seconds",
+      "values": [30, 600],
+      "default": null,
+      "rationale": "killswitch — abort vibe_publish if exceeded. Default null = no limit (cascade_budgets.ceiling_ms used instead)."
+    },
+    "skip_orchestrator": {
+      "where": "vibe_publish.spec.constitution.c7_skip_orchestrator",
+      "values": [true, false],
+      "default": false,
+      "rationale": "true = use c7-subrouter.json static_predefined strategy; saves 1 orchestrator LLM call (~5s)"
+    },
+    "retry_on_variance": {
+      "where": "vibe_publish.spec.constitution.retry_on_variance",
+      "values": [true, false],
+      "default": true,
+      "rationale": "false = do not auto-retry needs_human; operator handles manually"
+    },
+    "force_tier": {
+      "where": "vibe_publish.spec.constitution.force_tier",
+      "values": ["ultra_cheap", "cheap", "medium", "frontier"],
+      "default": null,
+      "rationale": "override Loop 2 tier_selection_rules; recommended for known-sensitive contexts"
+    }
+  },
+  "evidence": [
+    {
+      "id": "kunalganglani-LLM-Latency-2026",
+      "url": "https://www.kunalganglani.com/blog/llm-latency-benchmark-optimization",
+      "claim": "Gemini 2.5 Flash-Lite TTFT 0.35s, 213.5 tok/s, $0.40/1M output. Mercury 2 841 tok/s. GPT-4o mini 53.6 tok/s — slowest budget. 0.1/1/10s Nielsen thresholds. Anthropic prompt cache 0.1x.",
+      "tier": "1"
+    },
+    {
+      "id": "groundy-vllm-cold-start",
+      "url": "https://groundy.com/articles/vllm-cold-start-latency-why-scale-to-zero-llm-serving-stalls/",
+      "claim": "vLLM cold boot = 6 CPU-bound phases, default -O2 mode ~52s torch.compile alone, scale-to-zero economics break under $10k/month.",
+      "tier": "1"
+    },
+    {
+      "id": "vllm-MLSys-paper-arxiv-2606.07362",
+      "url": "https://arxiv.org/abs/2606.07362",
+      "claim": "Breaking the Ice: Analyzing Cold Start Latency in vLLM. Jun 5, 2026. First systematic breakdown of vLLM startup latency. Predictive model for autoscaler planning.",
+      "tier": "1"
+    },
+    {
+      "id": "benchlm-claude-pricing",
+      "url": "https://benchlm.ai/anthropic/api-pricing",
+      "claim": "Claude API pricing Oct 2026. Haiku 4.5 $1/1M input. Fable 5 $10/$50 per 1M. Prompt caching 60-90% discounts.",
+      "tier": "1"
+    },
+    {
+      "id": "internal-Phase-14-stress",
+      "url": "internal://agent_memory/2472",
+      "claim": "100 sequential p50=2576ms p95=4742ms p99=18522ms; 100 concurrent-5-workers p50=2879ms p95=9840ms p99=15504ms. 5-7% needs_human from variance. 3.7x wall-time speedup concurrent vs sequential. MiniMax queues concurrent not parallelism.",
+      "tier": "internal"
+    },
+    {
+      "id": "internal-Loop-1-context-strategies",
+      "url": "internal://mods/vibe-loop-git/core/context-strategies.md",
+      "claim": "Per-tier cost: ultra_cheap $0.05-0.15, cheap $0.15-0.60, medium $0.60-3.00, frontier $3.00-15.00 per 1M tokens.",
+      "tier": "internal"
+    },
+    {
+      "id": "internal-Loop-2-judge-mapping",
+      "url": "internal://mods/vibe-loop-git/core/judge-mapping.json",
+      "claim": "5 providers × 4 tiers, auto-mirror strategy. tier_selection_rules + voting defaults.",
+      "tier": "internal"
+    },
+    {
+      "id": "internal-Loop-3-c7-subrouter",
+      "url": "internal://mods/vibe-loop-git/core/c7-subrouter.json",
+      "claim": "max_subtasks=8, max_concurrent_subtasks=4, timeouts (orchestrator=30s, subtask=60s, coherence=15s). cascade math derived from these caps.",
+      "tier": "internal"
+    },
+    {
+      "id": "Nielsen-1993-Usability-Engineering",
+      "url": "https://www.nngroup.com/books/usability-engineering/",
+      "claim": "Jakob Nielsen, 1993. Response time thresholds: 0.1s (instant), 1s (flow), 10s (attention limit). Validated Miller 1968, Card et al. 1991. Cited in kunalganglani 2026.",
+      "tier": "1"
+    }
+  ],
+  "consumed_by": [
+    "Loop 6 (Self-Evaluation) — uses per_tier_budgets + variance_budget + audit_schema_fields_consumable_by_loop_6 for meta-loop scoring",
+    "Future Loop 7 (operator dashboards) — proposal only, NOT yet planned; would visualize p50/p95/p99 against per_tier_budgets"
+  ],
+  "audit_schema_fields_consumable_by_loop_6": [
+    "vibe_publish_call_id",
+    "tier_used",
+    "ttft_observed_ms",
+    "ttft_p50_target_ms",
+    "ttft_p99_target_ms",
+    "end_to_end_observed_ms",
+    "end_to_end_p50_target_ms",
+    "end_to_end_p95_target_ms",
+    "end_to_end_p99_target_ms",
+    "throughput_observed_tps",
+    "latency_breach_detected",
+    "latency_breach_severity",
+    "variance_needs_human_count",
+    "auto_retry_count",
+    "abort_triggered",
+    "kill_switch_engaged",
+    "cost_estimate_usd_actual",
+    "cost_estimate_usd_target",
+    "provider_used",
+    "model_used",
+    "force_concurrency_used",
+    "skip_orchestrator_used",
+    "is_c7_bundle",
+    "c7_subtask_count",
+    "c7_realistic_p50_ms_target",
+    "c7_realistic_p95_ms_target"
+  ]
+}
