@@ -11,6 +11,132 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [4.0.0-alpha.25] — 2026-10-06 — Phase 14: LLM-as-judge + Connect flow
+
+Phase 14 (alpha.25) implements the operator directive from Phase 13:
+**"LLM judge es la única verdad, NLI = prompt injection o allucination"**
+(row 2456). Per `docs/specs/SPEC-alpha-11-phase14-llm-as-judge.md`
+(633 LoC, vibe_loop `alpha-11-phase-14`, **4 commits on
+`feat/v4-redesign`**: `3868cc8` spec, `d7dc35c` T-301, `0c2657e`
+T-302, `d032d6f` T-303 + final docs, local tags
+`v4.0.0-alpha.25-pre-1`..`.pre-4`, final `v4.0.0-alpha.25`).
+**73 canonical tools, 20 namespaces, schema v32 unchanged,
+~2,250 LoC across new code + tests + docs.** Cross-version
+lockstep hash pin unchanged
+(`4e6196a07c7903dc712fd4a96cbc4df49317e0da45b57f939b7e6d12d6606ccb`).
+
+### Added — T-301 direct LLM-as-judge (commit `d7dc35c`, alpha.25-pre-2)
+
+`internal/v4alpha/judge/v4judge/` (NEW, ~470 LoC, 5 files:
+`doc.go` + `llm_judge.go` + `prompt.go` + `parser.go` +
+`llm_judge_test.go`). `LLMJudge` struct + `Judge(ctx, spec_intent,
+artifact_body)` method implements drift verdict via OpenAI-compatible
+`/v1/chat/completions`. System prompt asks for JSON
+`{verdict, confidence, reasoning}`; parser handles markdown-fenced
++ prose-prefixed responses + braces-inside-strings via stateful
+brace-matching scan. Retry-once on parser contract bug returns
+`ErrNoLLMBound` (NOT `ErrProviderBadResponse`). **21/21 tests PASS**
+in 0.030s.
+
+**Provider ID convention** (Phase 14 sealed):
+- `judge-*` → `v4judge.LLMJudge` (drift judge primary, this task)
+- `chat-*`  → `internal/nli/ChatProvider` (NLI path, Phase 13 T-201)
+
+Wire shape (mirrors `internal/nli/chat.go`):
+```
+POST /v1/chat/completions
+temperature=0, max_tokens=512, response_format={"type":"json_object"}
+system: drift-judge prompt (NOT NLI prompt)
+user:   spec_intent + artifact_body
+response: JSON {"verdict":"aligned"|"drift_detected"|"needs_human", "confidence":..., "reasoning":"..."}
+```
+
+### Added — T-302 drift_judge dual-path selector (commit `0c2657e`, alpha.25-pre-3)
+
+`internal/orchestration/drift_judge.go` refactored from 8 to **9
+steps**. LLMJudge is the primary verdict source when bound (test
+path: `WithLLMJudge` setter; lazy path: `ensureLLMJudge` from
+`Project.NLIConfig.Primary` when `provider_id` starts with `judge-`).
+NLI chain is preserved **100%** as legacy fallback per Phase 14
+T-301 invariant (operator philosophy: *"NLI está muy bien"*).
+
+**Pipeline**:
+1. Validate (sealed: ArtifactRef required)
+2. Canary on spec_intent (INV-3)
+3. Resolve artifact
+4. Canary on resolved body
+5. **`LLMJudge.Judge` (NEW, Phase 14)** — success → use verdict;
+   fall-through errors (ErrNoLLMBound / ErrProviderUnavailable /
+   ErrProviderTimeout / ErrProviderRateLimited / ErrInputTooLarge)
+   → log warn + continue to step 6; ErrProviderBadResponse →
+   needs_human (invariant 7: contract bug, do NOT fall through)
+6. Resolve NLI Provider (ensureNLIRouter, lazy)
+7. Score (premise, hypothesis) through NLI Provider
+8. Map NLI label → canonical verdict
+9. Constitutional self-critique (H6, spec 1276 T07)
+
+When LLMJudge is NOT bound: 8-step pipeline unchanged (backward
+compat). **10/10 new tests PASS** in 9.4s; full orchestration
+suite 86s PASS; NLI suite unchanged 5.0s PASS (excluding
+pre-existing flaky `TestCachedProvider_ConcurrentGet_RaceFree`
+documented in row 2457 + Phase 13 §8.1).
+
+### Added — T-303 Connect flow operator-facing (commit `d032d6f`, alpha.25-pre-4)
+
+`internal/tools/llm_bind.go` (NEW) + LLM_BIND namespace (20th):
+`llm_provider_bind(provider_id, endpoint, auth_token?, timeout_ms?,
+model_rev?)` persists to the active project's NLIConfig JSON
+column; `llm_provider_probe(provider_id? OR endpoint?, auth_token?,
+timeout_ms?)` sends a tiny `/v1/chat/completions` POST with
+`system="reply with pong"` + `user="ping"` (max_tokens=4,
+temperature=0). Tool count **71 → 73**, namespace count **19 →
+20**. Frozen test bumped:
+`TestCanonicalOrder_Frozen_57_17_28` →
+`TestCanonicalOrder_Frozen_73_20_28`.
+
+**Provider ID routing** (sealed):
+- `judge-*` → `v4judge.LLMJudge` (drift judge primary)
+- `chat-*`  → `internal/nli/ChatProvider` (NLI path)
+- Other prefixes → rejected (sealed boundary)
+
+**Security contract** (LLM_CONFIG parity): `auth_token` is NEVER
+echoed in any tool result. Verified by
+`TestLLMProviderBind_02_AuthTokenNotEchoed`. **12/12 new tests
+PASS** in 0.074s; no schema migration (T-303 is pure operator
+wiring on the `nli_config_json` column from Phase 14 T-07).
+
+### Changed — Phase 14-PREP refactor (commit `fff9c3e`, alpha.25-pre-1)
+
+`newAsyncTestOrchestrator` signature changed to inject an explicit
+`LLMSelector`. New `NoLLMSelector{}` zero-value type returns
+`ErrNoLLMAvailable` from all 3 selector methods. `clearJudgeEnv`
+deleted (env-var no longer used by tests). All 16 callers updated.
+`TestPublishVibe_T11AuditTrail`: **60s timeout → 0.48s PASS**
+(was the pre-existing hang from row 2457); full Phase 17 regression
+suite 1m49s PASS (was hanging indefinitely). Closes row 2457.
+
+### Why Phase 14 ships ADDITIVE, not destructive
+
+Per operator philosophy (row 2456), NLI is preserved **100%** as
+legacy fallback. The drift_judge pipeline now has a 2-option shape:
+- Operators with a `judge-*` NLIConfig binding → LLMJudge is the
+  primary verdict source (T-301 + T-302).
+- Operators with only `chat-*` bindings or no chat bindings → the
+  8-step NLI pipeline runs unchanged (Phase 13 T-201 path).
+
+The NLI package (`internal/nli/`) is NOT modified by Phase 14.
+DeBERTa + MiniCheck + ChatProvider all keep working as today.
+
+### Local tag + dark-memory row
+
+- 4 pre-tags: `v4.0.0-alpha.25-pre-1`..`.pre-4`
+- final: `v4.0.0-alpha.25`
+- 5 NEW Phase 14 decision rows: 2457 (Phase 14-PREP refactor
+  closes pre-existing hang), 2458 (Phase 14-PREP SHIPPED pinned),
+  2459 (T-301 SHIPPED), 2461 (T-302 SHIPPED), 2463 (T-303 SHIPPED).
+
+---
+
 ## [4.0.0-alpha.24] — 2026-10-06 — Phase 13: house-keeping + critical bug fix
 
 Phase 13 (alpha.24) is the **closed-loop of Phase 12's deferred

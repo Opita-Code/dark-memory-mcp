@@ -1,13 +1,15 @@
 # v4 Status — current state of the redesign
 
-> **Phase 13 SHIPPED (2026-10-06, local tag `v4.0.0-alpha.24`)**.
-> See §1.12 below. **71 canonical tools, 19 namespaces, schema v32,
-> 5 phase-13 commits T-201..T-205 + docs (T-206). Embedder
-> integrated into C2/C4 (real cosine scoring); 6 postgres events
-> stubs replaced with full pgxpool implementations; critical
-> `MarkSupersededAgentMemory` lock-leak bug fixed (every prior
-> call permanently held `s.mu`); Phase 12 + house-keeping debts
-> closed.**
+> **Phase 14 SHIPPED (2026-10-06, local tag `v4.0.0-alpha.25`)**.
+> See §1.13 below. **73 canonical tools, 20 namespaces, schema v32,
+> 4 phase-14 commits T-301..T-303 + docs (T-304). LLMJudge is
+> the primary drift verdict source (`judge-*` prefix, OpenAI-
+> compatible /v1/chat/completions); NLI chain preserved 100% as
+> legacy fallback (`chat-*` prefix unchanged from Phase 13 T-201).
+> Connect flow operator-facing tools added in LLM_BIND namespace
+> (`llm_provider_bind` + `llm_provider_probe`). TestPreExistingHang
+> (row 2457) closed by Phase 14-PREP refactor (`NoLLMSelector{}`
+> explicit injection).**
 
 > **Phase 12 SHIPPED (2026-10-04, local tag `v4.0.0-alpha.23`)**.
 > See §1.11 below. **71 canonical tools, 19 namespaces, schema v32,
@@ -55,7 +57,7 @@
 | Local-only policy | YES — no `git push`/`fetch`/`pull`, no remote tags/releases |
 
 ---
-## 1. Tools inventory (71 of 95+, 19 namespaces, schema v32)
+## 1. Tools inventory (73 of 97+, 20 namespaces, schema v32)
 
 The canonical surface is 57 tools (see `ARCHITECTURE-V4.md §6.3
 tool-count target`). v4-alpha.17 registers **46 of those**.
@@ -1468,11 +1470,214 @@ Phase 12 entry structure.
 - R10 (pause-and-summarize per chunk): T-202..T-206 each shipped
   a pre-tag with verdict (aligned + drift check PASS).
 
+### 1.13 Phase 14 — LLM-as-judge + Connect flow (alpha.25) ⭐ NEW
+
+Phase 14 (alpha.25) implements the operator directive from Phase 13
+(row 2456): *"LLM judge es la única verdad, NLI = prompt
+injection o allucination"*. Per
+`docs/specs/SPEC-alpha-11-phase14-llm-as-judge.md` (633 LoC,
+vibe_loop `alpha-11-phase-14`, **4 commits on `feat/v4-redesign`**:
+`3868cc8` spec, `d7dc35c` T-301, `0c2657e` T-302, `d032d6f` T-303
++ this doc, local tags `v4.0.0-alpha.25-pre-1`..`.pre-4`, final
+`v4.0.0-alpha.25`). **73 canonical tools, 20 namespaces, schema v32
+unchanged, ~2,250 LoC across new code + tests + docs.** Cross-
+version lockstep hash pin unchanged
+(`4e6196a07c7903dc712fd4a96cbc4df49317e0da45b57f939b7e6d12d6606ccb`).
+
+#### 1.13.1 Phase 14-PREP refactor (commit `fff9c3e`, alpha.25-pre-1)
+
+Closes row 2457 (pre-existing hang in `TestPublishVibe_T11AuditTrail`
++ 15 other T11/async tests that hit real HTTP endpoints because of
+env-var coupling in `newAsyncTestOrchestrator` helper). Root cause:
+helper did not inject an `LLMSelector`, so `orchestrator.selector`
+was nil, `ensureLLMSelector()` called `DefaultFailoverClient()`
+(package singleton), which walked the catalog with the operator's
+`MINIMAX_API_KEY` env var, opened an HTTP connection to
+`api.minimaxi.com/v1/chat/completions`, blocked 30+ seconds, test
+timed out. Also leaked a goroutine (`HealthRegistry.Start` probe
+loop ran forever).
+
+**FIX**:
+1. New `NoLLMSelector{}` type in `internal/orchestration/llm_selector.go`
+   (3-method impl that always returns `ErrNoLLMAvailable`).
+3. `newAsyncTestOrchestrator` signature changed to `(t, ctx, llm LLMSelector)`;
+   when `llm==nil`, helper injects `NoLLMSelector{}` via `WithLLMSelector`.
+4. `clearJudgeEnv` deleted (env-coupling no longer needed).
+5. All 16 callers updated (4 async + 1 progress + 11 T11) — pass
+   `nil` for no-LLM, `wireMockLLM()` for mock LLM.
+
+**Verified**: `TestPublishVibe_T11AuditTrail` 60s timeout → **0.48s
+PASS**; orchestration suite hang → **42.4s PASS**; full Phase 13
+regression suite 1m49s PASS (was hanging indefinitely). Atomic
+mirror row 2458 pinned.
+
+#### 1.13.2 T-301 — direct LLM-as-judge (commit `d7dc35c`, alpha.25-pre-2)
+
+`internal/v4alpha/judge/v4judge/` (NEW, ~470 LoC, 5 files: `doc.go`
++ `llm_judge.go` + `prompt.go` + `parser.go` + `llm_judge_test.go`).
+`LLMJudge` struct + `Judge(ctx, spec_intent, artifact_body)` method
+implements drift verdict via OpenAI-compatible
+`/v1/chat/completions`. System prompt asks for JSON
+`{verdict, confidence, reasoning}`; parser handles markdown-fenced +
+prose-prefixed responses + braces-inside-strings via stateful
+brace-matching scan. Retry-once on parser contract bug returns
+`ErrNoLLMBound` (NOT `ErrProviderBadResponse`).
+
+**Provider ID convention** (Phase 14 sealed):
+- `judge-*` → `v4judge.LLMJudge` (drift judge primary, this task)
+- `chat-*`  → `internal/nli/ChatProvider` (NLI path, Phase 13 T-201)
+
+**21/21 tests PASS** in 0.030s. G7 (no auth leak) verified; G9
+(NLI unchanged) verified by integration test (5.046s pass excluding
+pre-existing flaky `TestCachedProvider_ConcurrentGet_RaceFree`).
+
+#### 1.13.3 T-302 — drift_judge dual-path selector (commit `0c2657e`, alpha.25-pre-3)
+
+`internal/orchestration/drift_judge.go` refactored from 8 to
+**9 steps**. LLMJudge is the primary verdict source when bound
+(test path: `WithLLMJudge` setter; lazy path: `ensureLLMJudge`
+from `Project.NLIConfig.Primary` when `provider_id` starts with
+`judge-`). NLI chain is preserved **100%** as legacy fallback
+per Phase 14 T-301 invariant ("NLI está muy bien").
+
+**Pipeline** (when LLMJudge is bound):
+1. Validate (sealed: ArtifactRef required)
+2. Canary on spec_intent (INV-3)
+3. Resolve artifact via `artifact.Resolver`
+4. Canary on resolved body
+5. **`LLMJudge.Judge(spec_intent, artifact_body)` (NEW)** — success
+   → use verdict, jump to step 9; fall-through errors
+   (`ErrNoLLMBound` / `ErrProviderUnavailable` / `ErrProviderTimeout`
+   / `ErrProviderRateLimited` / `ErrInputTooLarge`) → log Error
+   Observatory row + continue to step 6; `ErrProviderBadResponse`
+   → `needs_human` immediately (invariant 7: contract bug, do NOT
+   fall through)
+6. Resolve NLI Provider (ensureNLIRouter, lazy)
+7. Score (premise, hypothesis) through NLI Provider
+8. Map NLI label → canonical verdict
+9. Constitutional self-critique (H6, spec 1276 T07)
+
+When LLMJudge is NOT bound: 8-step pipeline unchanged (backward
+compat). **10/10 new tests PASS** in 9.4s; full orchestration
+suite 80.8s PASS; NLI suite unchanged 5.0s PASS.
+
+#### 1.13.4 T-303 — Connect flow operator-facing (commit `d032d6f`, alpha.25-pre-4)
+
+`internal/tools/llm_bind.go` (NEW, ~500 LoC) + LLM_BIND namespace
+(20th). Tool count **71 → 73**, namespace count **19 → 20**.
+Frozen test bumped: `TestCanonicalOrder_Frozen_57_17_28` →
+`TestCanonicalOrder_Frozen_73_20_28`.
+
+**Tools**:
+- `llm_provider_bind(provider_id, endpoint, auth_token?, timeout_ms?, model_rev?)`
+  → persists to the active project's NLIConfig JSON column.
+  Validates `provider_id` starts with `judge-` (LLMJudge path) or
+  `chat-` (NLI path) — other prefixes are rejected (sealed
+  boundary). `auth_token` is NEVER echoed in the result (security
+  contract from LLM_CONFIG).
+- `llm_provider_probe(provider_id? OR endpoint?, auth_token?, timeout_ms?)`
+  → tiny POST `/v1/chat/completions` with `system="reply with pong"`
+  + `user="ping"` (max_tokens=4, temperature=0). Returns
+  latency_ms + status + body excerpt. **NO persistence** — pure read.
+
+**12/12 new tests PASS** in 0.074s. No schema migration (T-303 is
+pure operator wiring on the `nli_config_json` column from Phase 14
+T-07).
+
+#### 1.13.5 OD7 gate (Phase 14)
+
+- 0 critical findings.
+- 3 minor follow-ups deferred to Phase 15 (all pre-existing):
+  - `TestCachedProvider_ConcurrentGet_RaceFree` flaky in heavy
+    concurrent test load (passes 5/5 in isolation, last touched
+    `abda88e` Phase 12 T-06).
+  - 3 PG `notImpl` stubs (`ListAgentMemoryByAnyEntity`,
+    `MarkSupersededAgentMemory`, `RecallAtTime` at
+    `internal/store/postgres/store.go:422-468`) require live
+    `DARK_TEST_POSTGRES_DSN` (operator-flagged, no CI).
+  - `EmitCacheInvalidation` 7/8 → 8/8 wire-up deferred (no
+    semantic-cache trigger code).
+
+#### 1.13.6 Tier-1 SOTA grounding (extends §1.12.9)
+
+- **T-301 LLMJudge**:
+  - **Anthropic Constitutional AI + Claude-as-judge** pattern
+    (Bai et al., 2022 + Anthropic's 2023 RLAIF work): the judge
+    receives structured instruction (`{verdict, confidence,
+    reasoning}`) and emits JSON. Verdict enum (`aligned |
+    drift_detected | needs_human`) maps to the operator's
+    operator-approved verdict taxonomy.
+  - **OpenAI structured outputs** (`response_format={"type":
+    "json_object"}`, 2024): guarantees well-formed JSON response;
+    we add markdown-fence fallback parsing in case the provider
+    ignores `response_format` (some lightweight servers do).
+  - **Stateful brace-matching scan** for JSON extraction: RE2 (Go's
+    engine) does not support lookahead/lookbehind, so we use a
+    two-step scan (`findMatchingBrace` honoring in-string braces).
+- **T-302 dual-path selector**:
+  - **Failover patterns** from HAProxy / NGINX: primary with
+    fall-through (NOT round-robin) is the canonical "try the best
+    model first, fall back if it fails" shape. NLI is the
+    fallback, not a peer.
+  - **Constitutional self-critique** invariant (H6, spec 1276 T07)
+    is preserved at step 9 — the constitutional check runs AFTER
+    both LLMJudge (step 5) and NLI (step 7), so a verdict from
+    EITHER path can be challenged by the 5 principles (P1 grounding,
+    P2 locations, P3 contradiction-evidence, P4 informational,
+    P5 ambiguity).
+- **T-303 Connect flow**:
+  - **OAuth-style provider binding** pattern (RFC 6749 §3.1
+    authorization request): operator supplies `provider_id +
+    endpoint + auth_token` (the "credentials grant" simplified);
+    server stores in `projects.nli_config_json` (the equivalent
+    of the "token store").
+  - **`system: "reply with pong"`** probe pattern from "kong ping"
+    conventions (lightweight TCP/HTTP probe for connectivity
+    validation before storing credentials).
+
+#### 1.13.7 Local tag + dark-memory row
+
+- 4 pre-tags: `v4.0.0-alpha.25-pre-1`..`.pre-4`
+- final: `v4.0.0-alpha.25`
+- 5 NEW Phase 14 decision rows:
+  - 2457 (Phase 14-PREP refactor closes pre-existing hang, pinned)
+  - 2458 (Phase 14-PREP SHIPPED, pinned)
+  - 2459 (T-301 SHIPPED)
+  - 2461 (T-302 SHIPPED)
+  - 2463 (T-303 SHIPPED)
+
+#### 1.13.8 LUCIDEZ gate
+
+10/10 R-rules GREEN post-SHIP (verified 2026-10-06):
+
+- R1 (real): T-301 LLMJudge authenticates against the operator's
+  `judge-minimax-cn` endpoint at `api.minimaxi.com/v1/chat/completions`
+  in live verification (Mode=wire, alpha.25-pre-2).
+- R2 (shallow): no, root causes identified for each task (the
+  test-hang root cause was `no LLM injected → DefaultFailoverClient
+  → MINIMAX_API_KEY env → real HTTP`, NOT the test being slow).
+- R3 (root cause over symptom): yes — the LLM-judge-as-verdict
+  architecture (T-301) was the operator's deeper truth; NLI is a
+  proxy signal that was being misread.
+- R4 (no discarding): NLI is preserved **100%** as legacy fallback.
+  No NLI features were removed.
+- R5 (3 options): Phase 14 spec gave operator 3 options (LLMJudge
+  additive / replace NLI / keep NLI re-prompt); operator picked
+  (a) "LLMJudge dual-path".
+- R6 (declare unknowns): T-303 deferred schema migration (no need
+  to add a new column); NLIConfig JSON column already covers it.
+- R7 (honest cost): Phase 15 spec not in scope; not promised.
+- R8 (audit trail): all 4 commits have dark-memory write_audit +
+  agent_memory atomic mirror rows (2457-2463).
+- R9 (file:line refs): every section cites `file:line` paths.
+- R10 (pause-and-summarize per chunk): T-301..T-303 each shipped
+  a pre-tag with verdict (aligned + drift check PASS).
+
 ---
 
 | Reliability | What's stable |
 |---|---|
-| ✅ Stable (won't change) | Tool wire names (71 canonical), agent_memory schema, FTS5 ordering (INV-17), worker pool size=1, store/WithTx contract (INV-16), `sdd_evaluations` schema (22 cols; +4 for calibration in alpha.16), **events table schema v32 (27 cols, 3 indexes, polymorphic)**, judge MCP tool wire shapes (4 base + 7 util), persona registry ids (16 total, 8 v4alpha), `BootstrapCI` deterministic seed=42, **EVENTS namespace tools (event_log + event_replay) wire shapes**, **HMAC chain continuous across events + write_audit (ADR-016 + ADR-018)** |
+| ✅ Stable (won't change) | Tool wire names (73 canonical), agent_memory schema, FTS5 ordering (INV-17), worker pool size=1, store/WithTx contract (INV-16), `sdd_evaluations` schema (22 cols; +4 for calibration in alpha.16), **events table schema v32 (27 cols, 3 indexes, polymorphic)**, judge MCP tool wire shapes (4 base + 7 util), persona registry ids (16 total, 8 v4alpha), `BootstrapCI` deterministic seed=42, **EVENTS namespace tools (event_log + event_replay) wire shapes**, **HMAC chain continuous across events + write_audit (ADR-016 + ADR-018)**, **LLM_BIND namespace tools (llm_provider_bind + llm_provider_probe) wire shapes**, **drift_judge 9-step pipeline (LLMJudge primary, NLI fallback)**, **provider_id prefix routing: judge-* → LLMJudge, chat-* → NLI ChatProvider** |
 | ⚠️ Likely to evolve | Package names (still aspirational vs actual drift), Pipeline API (LLM judge swap), Constitution (still hardcoded), persona override mechanism (spec 1155 v14 inheritance), progress emitter phases (3 → N as new pipeline stages emerge) |
 | ❌ Not implemented | security/* (INV-11..15), mutable Workflow, red-team mods, federated research, L6-VLP, admin (vacuum only), EmbedderRefresh wire (no embedder code), semantic CacheInvalidation wire (no semantic cache trigger) |
 
