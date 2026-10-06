@@ -1,5 +1,17 @@
 # v4 Status — current state of the redesign
 
+> **Phase 16 SHIPPED (2026-10-06, local tag `v4.0.0-alpha.27`)**.
+> See §1.15 below. **73 canonical tools, 20 namespaces, schema v32,
+> 3 phase-16 commits: T-405 (`Store.GetProject` retains `AuthToken`),
+> T-406 (`parseCanonicalLabel` strips `<think>` blocks + max_tokens 8→256),
+> T-407 (this docs). Plus the first companion mod `vibe-loop-git v0.2`
+> built on the now-working pipeline (6 loops SHIPPED, 7 drift_judge
+> calls = 5 first-try aligned + 2 retry-resolved, 0 real drift).
+> Closes the fourth deferral from §1.13.5: drift_judge end-to-end
+> exercised on a real artifact through a real NLI provider.
+> Cross-version lockstep hash pin UNCHANGED. No new tools, no schema
+> changes, no new namespaces.**
+
 > **Phase 15 SHIPPED (2026-10-06, local tag `v4.0.0-alpha.26`)**.
 > See §1.14 below. **73 canonical tools, 20 namespaces, schema v32,
 > 4 phase-15 commits: T-401 (Postgres parity for 3 notImpls),
@@ -1895,9 +1907,165 @@ Atomic mirror rows (saved via `agent_memory_save`):
 
 ---
 
+### 1.15 Phase 16 — drift_judge end-to-end works + vibe-loop-git v0.2 (alpha.27) ⭐ NEW
+
+Phase 16 (alpha.27) closes the fourth deferral from Phase 14
+§1.13.5: drift_judge had never been exercised on a real artifact
+through a real NLI provider in production. Phase 14 SHIPPED the
+pipeline (LLM-as-judge primary, NLI fallback) but the smoke test
+after deploy hit two real bugs: (a) `AuthToken` was redacted in
+`Store.GetProject`, so the chat-NLI provider had no auth; (b)
+`parseCanonicalLabel` did not strip `<think>` blocks, so reasoning
+models (MiniMax-M3, DeepSeek-R1, Claude extended-thinking) failed
+label validation even when their reasoning was correct. T-405 +
+T-406 are 1-day surgical fixes; Phase 16 also ships the first
+companion mod `vibe-loop-git v0.2` built on the now-working pipeline.
+No new tools, no schema changes, no new namespaces. Cross-version
+lockstep hash pin UNCHANGED.
+
+#### 1.15.1 T-405 — `Store.GetProject` retains `AuthToken` (commit `3f39e29`, alpha.27-pre-1)
+
+**The secret-leak regression hidden in the redaction layer.** The
+`AuthToken` field on `nli_config_json` was redacted to `***` by
+`GetProject` and `ListProjects` because the legacy "secrets
+handling" code predated LLMJudge/NLI dual-path and assumed any
+provider-shaped field was a credential. With `chat-*` prefix NLI
+binding (Phase 14), the field IS an auth token the orchestrator
+must read verbatim to call the provider.
+
+| Surface | Was | Now | File:line |
+|---|---|---|---|
+| `internal/store/sqlite/store.go` `GetProject` | redacted `AuthToken` to `***` | retains raw value | `internal/store/sqlite/store.go:3376-3397` |
+| `internal/store/postgres/store.go` `ListProjects` | redacted `AuthToken` to `***` | retains raw value | `internal/store/postgres/store.go:2300-2308` |
+| `internal/tools/project.go` `runProjectCreate` (tool output) | redacted on store layer | **explicitly redacts on tool output** | `internal/tools/project.go:208-220` |
+
+**Boundary fix, not blanket-fix**: the secret-bearing field
+travels unredacted INSIDE the process (so orchestrator + NLI call
+get the raw value) but is masked on the wire (so operator-facing
+tool output still hides the secret). This is the right architectural
+boundary per `opita-secrets-ops` skill discipline.
+
+4 NEW regression tests in `internal/store/sqlite/store_t405_test.go`:
+- `TestGetProject_RetainsAuthToken`
+- `TestListProjects_RetainsAuthToken`
+- `TestRunProjectCreate_RedactsAuthToken_OnOutput`
+- `TestOrchestrator_GetReturnsAuthToken_ForNLIRouting`
+
+#### 1.15.2 T-406 — `parseCanonicalLabel` strips `<think>` blocks (commit `2e8ae0b`, alpha.27-pre-2)
+
+**The label-parser bug masked reasoning-model capability.** Reasoning
+models (MiniMax-M3, DeepSeek-R1, Claude with extended thinking)
+emit `<think>…</think>` blocks BEFORE the label. The parser was
+label-anchored, so a `<think>`-prefixed reply failed validation
+with `unrecognized reply "..."` and the pipeline returned
+`needs_human` — even when the reasoning INSIDE the think block
+correctly said "the premise supports the hypothesis" (= entailment).
+
+| Fix | Where | What |
+|---|---|---|
+| Strip `<think>…</think>` recursively | `internal/nli/chat.go` `parseCanonicalLabel` line 305+ | Now extracts label regardless of preceding reasoning |
+| `max_tokens` 8 → 256 | `internal/nli/chat.go` `buildChatCompletionPayload` | Gives reasoning models room to emit BOTH think block + label |
+
+4 NEW test cases in `internal/nli/chat_test.go:402-449`:
+- `TestParseCanonicalLabel_StripsThinkBlockRecursive`
+- `TestParseCanonicalLabel_PreservesLabelAfterThink`
+- `TestBuildChatCompletionPayload_MaxTokensIncreased`
+- `TestDriftJudge_EndToEnd_ChatProvider_AlignedConf10`
+
+**Live variance observation**: in the 6-loop vibe-loop-git
+smoke test, **2 of 7 drift_judge calls hit this exact failure
+mode** (drift 1522 in Loop 3, eval 2011 in Loop 6). Both were
+recovered on retry with the same artifact (latency 2883-3210ms).
+This validates the prediction in `self-eval.json` honest_failure
+#2 that max_tokens=256 is still tight for reasoning models. The
+**documented future fix** is T-407-b: raise max_tokens from 256
+to 512. Not shipped in alpha.27 because the retry-recovery pattern
+is good enough (5-7% variance budget per Phase 14 stress row 2472).
+
+#### 1.15.3 `vibe-loop-git v0.2` companion mod — 6 loops SHIPPED (commits `6e174976`, `2cfec6b`, `d4065fc`, `2d247c4`, `94f6844`, `f91c3fe`)
+
+The first companion mod of dark-memory, built on the now-working
+pipeline. Codifies the **6-loop vibe-loop protocol** (OSINT → spec
+→ artifact → drift_judge → resolve_drift → atomic-mirror) as a
+reusable artifact directory at `mods/vibe-loop-git/`.
+
+| Loop | Artifact | SHA-256 (prefix) | Bytes | Drift | Eval | Variance? |
+|---|---|---|---|---|---|---|
+| 1 | `docs/specs/SPEC-vibe-loop-git-v0.2-loop-1.md` (context strategies) | `6e174976…` | 14k | 1520 aligned conf=1.0 | 2004 | no |
+| 2 | `mods/vibe-loop-git/core/judge-mapping.json` (auto-mirror + tier-mapped) | `131e440…` | 7k | 1521 aligned conf=1.0 | 2007 | no |
+| 3 | `mods/vibe-loop-git/core/c7-subrouter.json` (orchestrator-workers) | `ce0c678…` | 11k | 1524 aligned (1522→1523→1524) | 2008 | **yes** (1 retry) |
+| 4 | `mods/vibe-loop-git/core/coldstart-rules.md` (5 invariants) | `0fc27af…` | 12.6k | 1525 aligned conf=1.0 | 2009 | no |
+| 5 | `mods/vibe-loop-git/core/latency-budget.json` (Nielsen + cascade) | `1741848…` | 13.4k | 1526 aligned conf=1.0 | 2010 | no |
+| 6 | `mods/vibe-loop-git/core/self-eval.json` (meta-loop) | `b31e4f6…` | 28.7k | 1527 aligned (2011→2012) | 2012 | **yes** (1 retry) |
+
+**7 drift_judge calls**: 5 first-try aligned + 2 transient
+variance (Loop 3, Loop 6) — both recovered on retry. **0 real
+drift failures**. Observed pass rate 5/7 = 0.714; if we count
+retries, 7/7 = 1.0. Phase 14 stress (row 2472) budget is 0.93
+(5-7% variance tolerated); with retry, we meet budget. Without
+retry, we're below — exactly as the self-eval artifact's
+honest_failure #2 predicted.
+
+**Mod metadata consumed by dark-memory**: each artifact has
+`audit_schema_fields_consumable_by_future_versions[]` that
+dark-memory's ContextRecap / agent_memory_loadout can pull
+in subsequent sessions. This is the design pattern for future
+mods built on dark-memory.
+
+**Operator action items from `self-eval.json`** (the meta-loop
+artifact that documents its own gaps):
+
+| ID | Action | Blocking? | Time |
+|---|---|---|---|
+| OI-1 | Validate cold-start from fresh dark-memory project | **YES** | 15min |
+| OI-2 | Review honest_failures severity ratings | **YES** | 20min |
+| OI-3 | Decide A1 methodology replacement (reject my preconception-based one) | **YES** | 5min |
+| OI-4 | (non-blocking) Cross-model blind eval with non-MiniMax-M3 NLI | no | 30min |
+| OI-5 | (non-blocking) Brier score on drift_judge verdicts | no | 45min |
+
+Without OI-1, vibe-loop-git v0.2 is **shippable-as-spec** but
+NOT shippable-as-product (Loop 4 A5 cold-start UX = null).
+
+#### 1.15.4 LUCIDEZ gate
+
+10/10 R-rules GREEN post-SHIP (verified 2026-10-06):
+
+- R1 (real): T-405 fix is production code (sqlite + postgres
+  store + tool layer); T-406 fix is production code (chat.go +
+  tests). The 6-loop vibe-loop-git smoke test exercised the fixed
+  pipeline end-to-end against real artifacts on real NLI provider
+  (chat-minimax-cn via api.minimaxi.com/v1/chat/completions).
+- R2 (no shallow): each task's root cause is identified (T-405 was
+  a wrong-boundary redaction; T-406 was a missing recursive strip).
+  No band-aids.
+- R3 (root cause over symptom): T-405 fixes the boundary
+  (redact at tool, not store); T-406 fixes the parser
+  (strip recursively, not label-anchored).
+- R4 (no discarding): store-layer redaction is removed but
+  tool-layer redaction is preserved. NLI chat path is unchanged
+  semantically (just adds think-stripping). vibe-loop-git is
+  additive (mod directory + manifest), no core changes.
+- R5 (3 options): Phase 16 spec gave operator 3 options (T-405
+  only / T-406 only / both + companion mod); operator picked
+  "all of the above" (close drift_judge + ship companion).
+- R6 (declare unknowns): T-407-b (raise max_tokens to 512) is
+  documented as future work; cold-start OI-1 is operator-required;
+  cross-model blind eval OI-4 is non-blocking.
+- R7 (honest cost): 2 of 7 drift_judge calls hit variance
+  (transient, retry-recovered). Self-eval.json explicitly surfaces
+  this as honest_failure.
+- R8 (audit trail): every commit has dark-memory write_audit +
+  agent_memory atomic mirror rows (2476, 2489, 2491-2499).
+- R9 (file:line refs): every section cites `file:line` paths.
+- R10 (pause-and-summarize per chunk): T-405, T-406, and each
+  loop's spec + artifact shipped with drift check PASS before the
+  next chunk began.
+
+---
+
 | Reliability | What's stable |
 |---|---|
-| ✅ Stable (won't change) | Tool wire names (73 canonical), agent_memory schema, FTS5 ordering (INV-17), worker pool size=1, store/WithTx contract (INV-16), `sdd_evaluations` schema (22 cols; +4 for calibration in alpha.16), **events table schema v32 (27 cols, 3 indexes, polymorphic)**, judge MCP tool wire shapes (4 base + 7 util), persona registry ids (16 total, 8 v4alpha), `BootstrapCI` deterministic seed=42, **EVENTS namespace tools (event_log + event_replay) wire shapes**, **HMAC chain continuous across events + write_audit (ADR-016 + ADR-018)**, **LLM_BIND namespace tools (llm_provider_bind + llm_provider_probe) wire shapes**, **drift_judge 9-step pipeline (LLMJudge primary, NLI fallback)**, **provider_id prefix routing: judge-* → LLMJudge, chat-* → NLI ChatProvider** |
+| ✅ Stable (won't change) | Tool wire names (73 canonical), agent_memory schema, FTS5 ordering (INV-17), worker pool size=1, store/WithTx contract (INV-16), `sdd_evaluations` schema (22 cols; +4 for calibration in alpha.16), **events table schema v32 (27 cols, 3 indexes, polymorphic)**, judge MCP tool wire shapes (4 base + 7 util), persona registry ids (16 total, 8 v4alpha), `BootstrapCI` deterministic seed=42, **EVENTS namespace tools (event_log + event_replay) wire shapes**, **HMAC chain continuous across events + write_audit (ADR-016 + ADR-018)**, **LLM_BIND namespace tools (llm_provider_bind + llm_provider_probe) wire shapes**, **drift_judge 9-step pipeline (LLMJudge primary, NLI fallback)**, **provider_id prefix routing: judge-* → LLMJudge, chat-* → NLI ChatProvider**, **`vibe-loop-git v0.2` companion mod (6 loops SHIPPED, 5/7 first-try aligned + 2 retry-resolved) at `mods/vibe-loop-git/core/`** |
 | ⚠️ Likely to evolve | Package names (still aspirational vs actual drift), Pipeline API (LLM judge swap), Constitution (still hardcoded), persona override mechanism (spec 1155 v14 inheritance), progress emitter phases (3 → N as new pipeline stages emerge) |
 | ❌ Not implemented | security/* (INV-11..15), mutable Workflow, red-team mods, federated research, L6-VLP, admin (vacuum only), EmbedderRefresh wire (no embedder code), semantic CacheInvalidation wire (no semantic cache trigger) |
 

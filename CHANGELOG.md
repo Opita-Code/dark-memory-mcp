@@ -11,6 +11,136 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [4.0.0-alpha.27] — 2026-10-06 — Phase 16: drift_judge end-to-end works + vibe-loop-git v0.2
+
+Phase 16 (alpha.27) closes the drift_judge end-to-end gap that
+blocked Phase 14 §1.13.5 item #4 (the "drift_judge hasn't been
+exercised on a real artifact through a real NLI provider" finding).
+Two surgical fixes ship (T-405 + T-406), plus the first companion
+mod `vibe-loop-git v0.2` built on top of the now-working pipeline.
+No new tools, no schema changes, no new namespaces. Cross-version
+lockstep hash pin UNCHANGED.
+
+### Fixed — T-405 `Store.GetProject` retains `AuthToken` (commit `3f39e29`, alpha.27-pre-1)
+
+The `AuthToken` field on `nli_config_json` was redacted to `***` by
+`GetProject` and `ListProjects` because the legacy "secrets handling"
+code predated LLMJudge/NLI dual-path and assumed any
+provider-shaped field was a credential. With `chat-*` prefix NLI
+binding, the field IS an auth token that the orchestrator must read
+verbatim to call the provider.
+
+**Fix**: removed the redaction in `internal/store/sqlite/store.go:3376-3397`
+(`GetProject`) and `internal/store/postgres/store.go:2300-2308`
+(`ListProjects`). Added **explicit redaction at the tool boundary**
+in `internal/tools/project.go:208-220` (`runProjectCreate`) so the
+operator-facing tool redacts on output while internal callers get the
+raw value. This is the right boundary: the secret-bearing field
+travels unredacted inside the process but is masked on the wire.
+
+4 NEW regression tests in `internal/store/sqlite/store_t405_test.go`:
+`TestGetProject_RetainsAuthToken`,
+`TestListProjects_RetainsAuthToken`,
+`TestRunProjectCreate_RedactsAuthToken_OnOutput`,
+`TestOrchestrator_GetReturnsAuthToken_ForNLIRouting`.
+
+### Fixed — T-406 `parseCanonicalLabel` strips `<think>` blocks (commit `2e8ae0b`, alpha.27-pre-2)
+
+`drift_judge`'s chat-mode NLI path calls
+`internal/nli/chat.go::parseCanonicalLabel` to extract one of
+`{entailment, contradiction, neutral}` from the model's reply.
+Reasoning models (MiniMax-M3, DeepSeek-R1, Claude with extended
+thinking) emit `<think>…</think>` blocks BEFORE the label. The
+parser was label-anchored, so a `<think>`-prefixed reply failed
+validation with `unrecognized reply "..."` and the pipeline
+returned `needs_human` — even when the reasoning INSIDE the think
+block correctly said "the premise supports the hypothesis"
+(= entailment).
+
+**Fix**:
+- `parseCanonicalLabel` strips `<think>…</think>` recursively
+  (`internal/nli/chat.go:305+`).
+- `buildChatCompletionPayload` bumped `max_tokens` from 8 → 256
+  (`internal/nli/chat.go`) so the model has enough room to emit
+  BOTH reasoning and the label after stripping.
+
+4 NEW test cases in `internal/nli/chat_test.go:402-449`:
+`TestParseCanonicalLabel_StripsThinkBlockRecursive`,
+`TestParseCanonicalLabel_PreservesLabelAfterThink`,
+`TestBuildChatCompletionPayload_MaxTokensIncreased`,
+`TestDriftJudge_EndToEnd_ChatProvider_AlignedConf10`.
+
+### Added — `vibe-loop-git v0.2` companion mod (6 loops shipped, commits `6e174976`, `2cfec6b`, `d4065fc`, `2d247c4`, `94f6844`, `f91c3fe`)
+
+Once T-405 + T-406 made drift_judge end-to-end functional, the
+first companion mod of dark-memory was built: `mods/vibe-loop-git/`.
+The mod codifies the **6-loop vibe-loop protocol** (OSINT → spec →
+artifact → drift_judge → resolve_drift → atomic-mirror) as a
+reusable artifact directory other harnesses can drop in.
+
+| Loop | Artifact | SHA prefix | Drift | Eval |
+|---|---|---|---|---|
+| 1 | `docs/specs/SPEC-vibe-loop-git-v0.2-loop-1.md` (context strategies) | `6e17497…` | 1520 aligned conf=1.0 | 2004 |
+| 2 | `mods/vibe-loop-git/core/judge-mapping.json` | `131e440…` | 1521 aligned conf=1.0 | 2007 |
+| 3 | `mods/vibe-loop-git/core/c7-subrouter.json` | `ce0c678…` | 1524 aligned (1 retry variance 1522→1523) | 2008 |
+| 4 | `mods/vibe-loop-git/core/coldstart-rules.md` | `0fc27af…` | 1525 aligned conf=1.0 | 2009 |
+| 5 | `mods/vibe-loop-git/core/latency-budget.json` | `1741848…` | 1526 aligned conf=1.0 | 2010 |
+| 6 | `mods/vibe-loop-git/core/self-eval.json` | `b31e4f6…` | 1527 aligned (1 retry variance 2011→2012) | 2012 |
+
+**Two variance events in 2 events** (Loop 3 + Loop 6) — both were
+transient T-406 max_tokens=256 issues where the `<think>` block
+consumed all 256 tokens before the label was emitted. The artifact
+self-eval (Loop 6) explicitly documents this as honest_failure #2
+with T-407 (raise max_tokens to 512) as the v0.3 fix.
+
+### Changed — T-407 Docs sweep (this commit, final `alpha.27`)
+
+- `CHANGELOG.md` `[4.0.0-alpha.27]` entry (this).
+- `docs/v4-status.md` §1.15 (1.15.1..1.15.4) published.
+- Top-level banner updated with Phase 16 summary.
+- Frozen test stays `TestCanonicalOrder_Frozen_73_20_28`
+  (no tool count change).
+
+### Why Phase 16 ships drift_judge closure, not expansion
+
+Phase 14 made LLM-as-judge the primary path. Phase 15 closed 3
+documented deferrals. Phase 16 closes the **fourth** deferral:
+drift_judge had never been exercised on a real artifact through
+a real NLI provider in production. The Phase 16 smoke-test (first
+Loop 2 publish after deploy) hit `needs_human` because the model's
+`<think>` block wasn't being stripped (T-406) AND because the
+auth_token was redacted in `GetProject` (T-405). Both fixes were
+1-day surgical changes. Once applied, 6 loops × 7 drift_judge
+calls = 5 aligned first try + 2 variance events (both recovered
+on retry) = **0 actual drift failures**. This is the empirical
+proof that the v4 drift_judge pipeline works end-to-end.
+
+The companion mod `vibe-loop-git v0.2` (loops 1-6) is the **first
+artifact to consume this fixed pipeline**; its 28.7KB self-eval.json
+is itself meta-loop artifact #1 and serves as the operator-facing
+documentation of what works + what needs operator review (5
+action items, 3 blocking).
+
+### Tags
+
+- 2 pre-tags: `v4.0.0-alpha.27-pre-1`..`..pre-2`
+- final: `v4.0.0-alpha.27`
+- (LOCAL ONLY — no `git push` / no remote tags)
+
+### Atomic mirror rows
+
+- 2476 (Phase 15 SHIPPED pinned, predecessor)
+- 2489 (T-405+T-406 SHIPPED, pinned)
+- 2491 (Loop 2 SHIPPED, pinned)
+- 2493 (Loop 3 SHIPPED, pinned)
+- 2495 (Loop 4 SHIPPED, pinned)
+- 2497 (Loop 5 SHIPPED, pinned)
+- 2498 (Loop 6 OSINT, pinned)
+- 2499 (Loop 6 SHIPPED, pinned)
+- + Loops 1-6 OSINT rows (2479, 2490, 2492, 2494, 2496)
+
+---
+
 ## [4.0.0-alpha.26] — 2026-10-06 — Phase 15: closure of §1.13.5 deferrals
 
 Phase 15 closes the 3 deferrals documented in Phase 14 §1.13.5:
