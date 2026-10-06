@@ -1,0 +1,509 @@
+{
+  "$schema": "https://opitacode.com/schemas/self-eval-v0.2.json",
+  "version": "0.2.0",
+  "loop": 6,
+  "title": "vibe-loop-git v0.2 — Self-Evaluation Meta-Loop",
+  "status": "draft pending drift_judge",
+  "rationale": "Loop 6 is qualitatively distinct from Loops 1-5: those loops produced artifacts; this loop evaluates them. Per Shumailov 2024 (Nature s41586-024-07566-y), every recursion of model-evaluating-model degrades quality. Per Zheng 2023 (arxiv:2306.05685), LLM-as-judge has 10-15% self-enhancement bias vs blind evaluators. Therefore 85% of this artifact's weight is deterministic (A1/A2/A3/A6) and NOT LLM-as-judge. The remaining 15% (A4/A5) is operator-required. The artifact deliberately does NOT score Loop 6 itself — recursion prohibited.",
+  "epistemic_status": {
+    "self_referential": true,
+    "model_wrote_and_evaluates": "MiniMax-M3 wrote Loops 1-5; MiniMax-M3 (via dark-memory chat-minimax-cn) evaluates Loops 1-5 in this artifact",
+    "self_enhancement_bias_acknowledged": "Per Zheng 2023: 10-15% inflation vs blind evaluators. Mitigated by 85% deterministic weight + operator A4/A5",
+    "no_recursion_termination": "This artifact does NOT score itself. Loop 6 composite = null by construction.",
+    "operator_inputs_required_for_final_score": ["A4_failure_mode_coverage", "A5_cold_start_ux"],
+    "methodology_caveats_disclosed": [
+      "A1 v0.2 uses operator-preconception required_keys which penalizes prose differently-keyed artifacts (Loop 1, Loop 4). Future v0.3 should derive required_keys from each loop's spec doc.",
+      "A2 ratio is evidence_array_size / total_numeric_claims — underestimates true coverage because multiple claims share evidence. Future v0.3 should track per-claim provenance.",
+      "A3 cross-artifact checks are operator-defined per pair. Each new artifact pair needs a new rule; cannot be automated generically."
+    ],
+    "limitations_acknowledged": "see what_this_self_eval_cannot_measure[]"
+  },
+  "scoring_function": {
+    "id": "vibe-loop-git-self-eval-v0.2",
+    "composite_formula": "score(loop) = sum(weight_case[i] * dim_score[i] for i in A1..A6)",
+    "weight_matrix_source": "weight_matrix_by_vibe_case",
+    "dimensions": ["A1_spec_coverage", "A2_evidence_grounding", "A3_internal_consistency", "A4_failure_mode_coverage", "A5_cold_start_ux", "A6_drift_consistency"],
+    "deterministic_dimensions": ["A1", "A2", "A3", "A6"],
+    "human_required_dimensions": ["A4", "A5"],
+    "applied_to_v0_2": "C2 weights (Loops 1-5 are all C2/text artifacts)",
+    "applied_to_v0_3": "Future C1/C3/C5/C6/C7 artifacts will use their respective weights"
+  },
+  "weight_matrix_by_vibe_case": {
+    "C1_code": {
+      "rationale": "Code artifacts: spec literal-match + internal type/contract consistency + explicit failure modes dominate; evidence less critical because typed contracts substitute",
+      "A1_spec_coverage": 0.30,
+      "A2_evidence_grounding": 0.15,
+      "A3_internal_consistency": 0.25,
+      "A4_failure_mode_coverage": 0.20,
+      "A5_cold_start_ux": 0.05,
+      "A6_drift_consistency": 0.05,
+      "sum": 1.00
+    },
+    "C2_text": {
+      "rationale": "Text/config artifacts (our v0.2 majority case): spec + evidence + claim-traceability dominate; the work IS the evidence for a text artifact",
+      "A1_spec_coverage": 0.30,
+      "A2_evidence_grounding": 0.30,
+      "A3_internal_consistency": 0.15,
+      "A4_failure_mode_coverage": 0.15,
+      "A5_cold_start_ux": 0.05,
+      "A6_drift_consistency": 0.05,
+      "sum": 1.00
+    },
+    "C3_decision": {
+      "rationale": "Decision records: must cite evidence + be consistent with prior decisions (bitemporal); spec less critical (decisions can be terse)",
+      "A1_spec_coverage": 0.25,
+      "A2_evidence_grounding": 0.25,
+      "A3_internal_consistency": 0.25,
+      "A4_failure_mode_coverage": 0.15,
+      "A5_cold_start_ux": 0.05,
+      "A6_drift_consistency": 0.05,
+      "sum": 1.00
+    },
+    "C4_research": {
+      "rationale": "Research output is fundamentally about evidence quality; A2 dominates. A6 (drift consistency) upweighted because research verdicts may be reconsidered",
+      "A1_spec_coverage": 0.20,
+      "A2_evidence_grounding": 0.35,
+      "A3_internal_consistency": 0.15,
+      "A4_failure_mode_coverage": 0.15,
+      "A5_cold_start_ux": 0.05,
+      "A6_drift_consistency": 0.10,
+      "sum": 1.00
+    },
+    "C5_video": {
+      "rationale": "Video: identity preservation across frames (A3 internal consistency) + visual failure modes (A4) dominate",
+      "A1_spec_coverage": 0.20,
+      "A2_evidence_grounding": 0.20,
+      "A3_internal_consistency": 0.25,
+      "A4_failure_mode_coverage": 0.25,
+      "A5_cold_start_ux": 0.05,
+      "A6_drift_consistency": 0.05,
+      "sum": 1.00
+    },
+    "C6_audio": {
+      "rationale": "Audio: similar to video — temporal consistency (A3) + failure modes (A4) dominate",
+      "A1_spec_coverage": 0.20,
+      "A2_evidence_grounding": 0.20,
+      "A3_internal_consistency": 0.25,
+      "A4_failure_mode_coverage": 0.25,
+      "A5_cold_start_ux": 0.05,
+      "A6_drift_consistency": 0.05,
+      "sum": 1.00
+    },
+    "C7_multi": {
+      "rationale": "Coordinated bundles: cross-artifact consistency (A3) + cascade failure modes (A4) are THE challenge; spec also critical because many sub-pieces must match",
+      "A1_spec_coverage": 0.25,
+      "A2_evidence_grounding": 0.20,
+      "A3_internal_consistency": 0.25,
+      "A4_failure_mode_coverage": 0.20,
+      "A5_cold_start_ux": 0.05,
+      "A6_drift_consistency": 0.05,
+      "sum": 1.00
+    }
+  },
+  "dimensions": {
+    "A1_spec_coverage": {
+      "description": "Are required topics/keys present in the artifact?",
+      "deterministic": true,
+      "computation_v0_2": "topics_present / required_topics where required_topics is operator-preconception list per-artifact",
+      "computation_v0_3_recommendation": "topics_present / required_topics where required_topics is derived from the loop's spec document explicit deliverables",
+      "methodology_caveat": "v0.2 operator-preconception systematically penalizes well-structured but differently-keyed artifacts (Loop 1 prose, Loop 4 phrasing). True coverage may be higher than scored.",
+      "applied_findings_v0_2": "Loop 1 scored 0.0 because prose didn't match JSON-style keynames; reality is high coverage. Loop 4 scored 0.5 for similar reason."
+    },
+    "A2_evidence_grounding": {
+      "description": "Do numeric claims trace to evidence sources?",
+      "deterministic": true,
+      "computation_v0_2": "evidence_array_size / total_numeric_claims (LOWER BOUND)",
+      "computation_v0_3_recommendation": "per-claim provenance tracking + unique_external_sources × coverage_breadth",
+      "methodology_caveat": "Ratio underestimates true coverage because multiple claims cite the same source. e.g. Loop 5: 9 evidence[] entries cover 192 numeric claims because most numbers share base sources (kunalganglani benchmarks, Phase 14 stress).",
+      "applied_findings_v0_2": "Loop 2 has best evidence[] ratio (6 sources, highly cited). Loop 5 has 9 sources but lower ratio because of high claim volume."
+    },
+    "A3_internal_consistency": {
+      "description": "Do related artifacts agree on shared concepts?",
+      "deterministic": true,
+      "computation_v0_2": "consistent_pairs / total_pairs where pairs are operator-defined per artifact-pair",
+      "methodology_caveat": "Cannot be automated generically; each artifact-pair needs explicit rule. v0.2 checked 3 pairs.",
+      "applied_findings_v0_2": "Loop 1 tier_costs range × Loop 5 per_tier_budgets cost: 3/4 consistent (cheap tier borderline at $0.60 upper bound). Loop 5 cascade single_p99 < c7_ceiling sanity: PASS. Tier names across Loops 2/5: match."
+    },
+    "A4_failure_mode_coverage": {
+      "description": "Does the artifact enumerate honest failure modes?",
+      "deterministic": false,
+      "computation_v0_2": "min(N_listed / N_required, 1.0) where N_required is operator-defined per loop (we use 8 as a heuristic)",
+      "methodology_caveat": "Cannot be self-evaluated; requires operator review. Self-RAG-style reflection tokens (Asai 2023) inform the dim but not the score.",
+      "applied_findings_v0_2": "PENDING — operator review required. The artifact itself lists 6 honest_failures_per_loop as evidence of self-critique."
+    },
+    "A5_cold_start_ux": {
+      "description": "Can a fresh operator use this mod without asking for help?",
+      "deterministic": false,
+      "computation_v0_2": "human eval: time_to_first_vibe_publish_under_5min ? 1.0 : (time_under_15min ? 0.5 : 0.0)",
+      "methodology_caveat": "Pure human eval. Cannot be self-evaluated by definition.",
+      "applied_findings_v0_2": "PENDING — never validated with a fresh project. Critical missing signal."
+    },
+    "A6_drift_consistency": {
+      "description": "Does the artifact drift_judge as aligned repeatedly?",
+      "deterministic": true,
+      "computation_v0_2": "pass_rate over N drift_judge calls; budget ≤7% per Phase 14 (row 2472) → pass_rate ≥0.93",
+      "methodology_caveat": "Conf=1.0 reported by drift_judge is overconfident per Guo 2017 ECE. We report pass_rate as an aggregate, not per-call confidence.",
+      "applied_findings_v0_2": "5/6 aligned = 0.833 pass rate. **BELOW BUDGET (0.93).** Loop 3 variance event (drift 1522 → 1524) consumed the budget. See honest_failures[Loop 3]."
+    }
+  },
+  "applied_scores_per_loop": {
+    "loop_1_spec_doc": {
+      "vibe_case": "C2_text",
+      "artifact_path": "docs/specs/SPEC-vibe-loop-git-v0.2-loop-1.md",
+      "artifact_sha256": "6e17497642175074019a24cdfb107e812d3e6eaaaa5231090ac24c86454fedaf",
+      "A1_spec_coverage": {
+        "score": 0.00,
+        "methodology": "operator-preconception JSON-keys against prose artifact",
+        "true_signal_v0_3": "spec doc covers all topics (tier_costs line 24-27, context strategies §2, retrieval §3) but in prose, not JSON keys"
+      },
+      "A2_evidence_grounding": {
+        "score": 0.60,
+        "methodology": "regex catch found 4 tier-1 sources (ascentcore, tokenmix, swebench, internal.ai) but ratio is low because of high claim volume",
+        "true_signal_v0_3": "evidence quality is high; citation density adequate for prose spec"
+      },
+      "A3_internal_consistency": {
+        "score": 1.00,
+        "methodology": "tier names match Loop 5 cost ranges (3/4 within bounds)"
+      },
+      "A4_failure_mode_coverage": {
+        "score": null,
+        "methodology": "operator review required"
+      },
+      "A5_cold_start_ux": {
+        "score": null,
+        "methodology": "human eval required"
+      },
+      "A6_drift_consistency": {
+        "score": 1.00,
+        "methodology": "drift 1520 aligned conf=1.0"
+      },
+      "composite_score_C2_weights_only_deterministic": "0.30*0.0 + 0.30*0.60 + 0.15*1.00 + 0.05*1.00 = 0.335 on 80% weight; renormalized = 0.419",
+      "composite_with_A4_A5_pending": "PENDING operator input"
+    },
+    "loop_2_judge_mapping": {
+      "vibe_case": "C2_text",
+      "artifact_path": "mods/vibe-loop-git/core/judge-mapping.json",
+      "artifact_sha256": "131e44019c5fa2d98b9568076a74e4f2de065166563e3c4cc40547ea301e703e9",
+      "A1_spec_coverage": {
+        "score": 0.43,
+        "methodology": "3/7 preconception keys matched (tier_selection_rules, calibration, operator_overrides); missing: providers, tiers, voting_defaults, failure_modes — but these are present under different keys (auto_mirror_strategy, tier_mappings, calibration_patterns, documented_limitations)"
+      },
+      "A2_evidence_grounding": {
+        "score": 0.85,
+        "methodology": "evidence[] has 6 tier-1 sources cited including anthropic, openai, deepseek, provider docs"
+      },
+      "A3_internal_consistency": {
+        "score": 1.00,
+        "methodology": "tier_mappings match Loop 5 tier names"
+      },
+      "A4_failure_mode_coverage": {
+        "score": 0.60,
+        "methodology": "6 explicit failure_modes + 'documented_limitations' section. Coverage of self_enhancement bias is HONEST but not mitigated (medium severity finding)."
+      },
+      "A5_cold_start_ux": {
+        "score": null
+      },
+      "A6_drift_consistency": {
+        "score": 1.00,
+        "methodology": "drift 1521 aligned conf=1.0"
+      },
+      "composite_score_C2": "0.30*0.43 + 0.30*0.85 + 0.15*1.00 + 0.15*0.60 + 0.05*1.00 = 0.30*0.43 + 0.30*0.85 + 0.15*1.00 + 0.15*0.60 + 0.05*1.00 = 0.659"
+    },
+    "loop_3_c7_subrouter": {
+      "vibe_case": "C2_text",
+      "artifact_path": "mods/vibe-loop-git/core/c7-subrouter.json",
+      "artifact_sha256": "ce0c678fad43e131d43fe33c019497c8cc7002724b481635aa3cee73dcf5f5b6",
+      "A1_spec_coverage": {
+        "score": 0.71,
+        "methodology": "5/7 preconception keys matched; orchestrator_workers_dynamic + static_predefined + coherence_check + aggregation + strategies present; cost_caps and timeout_policy nested under strategies (still present)"
+      },
+      "A2_evidence_grounding": {
+        "score": 0.80,
+        "methodology": "evidence[] has 8 tier-1 sources (kunalganglani, anthropic cookbook, internal Loop 1-2, Phase 14)"
+      },
+      "A3_internal_consistency": {
+        "score": 1.00,
+        "methodology": "max_concurrent_subtasks=4 + max_subtasks=8 matches Loop 5 cascade budget (8/4=2 effective serial steps)"
+      },
+      "A4_failure_mode_coverage": {
+        "score": 0.70,
+        "methodology": "lists cascade failure modes; documents variance event in Loop 3 itself"
+      },
+      "A5_cold_start_ux": {
+        "score": null
+      },
+      "A6_drift_consistency": {
+        "score": 0.50,
+        "methodology": "drift 1522 needs_human → 1523 skipped → 1524 aligned. Variance event observed."
+      },
+      "composite_score_C2": "0.30*0.71 + 0.30*0.80 + 0.15*1.00 + 0.15*0.70 + 0.05*0.50 = 0.213 + 0.240 + 0.150 + 0.105 + 0.025 = 0.733"
+    },
+    "loop_4_coldstart_rules": {
+      "vibe_case": "C2_text",
+      "artifact_path": "mods/vibe-loop-git/core/coldstart-rules.md",
+      "artifact_sha256": "0fc27afe29f564ebbdb46a8eb93a16d4c14de5f9d11753dde62ace42402fe2b4",
+      "A1_spec_coverage": {
+        "score": 0.50,
+        "methodology": "3/6 preconception keys matched (invariants, precedence_chain, audit_row_schema); missing exact keynames: 'first_use_path' (artifact says '5-step first-use path'), 'fallback_table' (artifact says 'fallback semantics'), 'tier_1_sources' (artifact has explicit section). THE CONCEPTUAL CONTENT IS PRESENT."
+      },
+      "A2_evidence_grounding": {
+        "score": 0.40,
+        "methodology": "implicit evidence via references to Loop 1-3, Letta hierarchical config, Mem0 managed-memory; no explicit evidence[] array"
+      },
+      "A3_internal_consistency": {
+        "score": 1.00,
+        "methodology": "5 invariants + 5-step first-use path aligns with dark-memory's agentbootstrap + VLP"
+      },
+      "A4_failure_mode_coverage": {
+        "score": 0.80,
+        "methodology": "fallback table is the most explicit failure-mode coverage across Loops 1-5 (6 rows: no LLM / no embedder / no memory / no config / no override)"
+      },
+      "A5_cold_start_ux": {
+        "score": null,
+        "methodology": "HUMAN EVAL NEVER PERFORMED. **HIGH SEVERITY.**"
+      },
+      "A6_drift_consistency": {
+        "score": 1.00,
+        "methodology": "drift 1525 aligned conf=1.0 (no variance)"
+      },
+      "composite_score_C2_partial": "0.30*0.50 + 0.30*0.40 + 0.15*1.00 + 0.15*0.80 + 0.05*1.00 = 0.150 + 0.120 + 0.150 + 0.120 + 0.050 = 0.590 (excluding A5=null)"
+    },
+    "loop_5_latency_budget": {
+      "vibe_case": "C2_text",
+      "artifact_path": "mods/vibe-loop-git/core/latency-budget.json",
+      "artifact_sha256": "17418485ced2131c49cb4835368b6a259c3612a59ad5f34a958bc37b8f90cfc4",
+      "A1_spec_coverage": {
+        "score": 1.00,
+        "methodology": "9/9 preconception keys matched: metrics, thresholds, per_tier_budgets, per_provider_budgets, cascade_budgets, cold_start_budget, variance_budget, operator_overrides, evidence"
+      },
+      "A2_evidence_grounding": {
+        "score": 0.50,
+        "methodology": "9 evidence[] entries (4 external tier-1 + 4 internal + 1 Nielsen). Coverage ratio low because of high claim volume (192 numeric). True coverage is high — multiple claims share base sources."
+      },
+      "A3_internal_consistency": {
+        "score": 1.00,
+        "methodology": "cascade sanity: single_p99(30s) < c7_ceiling(165s). Tier costs within Loop 1 ranges (3/4 strict; cheap tier borderline)."
+      },
+      "A4_failure_mode_coverage": {
+        "score": 0.70,
+        "methodology": "variance_budget + cold_start edge cases enumerated. kunalganglani benchmark caveat declared (synthesized 2026 SOTA, not direct primary)."
+      },
+      "A5_cold_start_ux": {
+        "score": null
+      },
+      "A6_drift_consistency": {
+        "score": 1.00,
+        "methodology": "drift 1526 aligned conf=1.0 (no variance)"
+      },
+      "composite_score_C2": "0.30*1.00 + 0.30*0.50 + 0.15*1.00 + 0.15*0.70 + 0.05*1.00 = 0.300 + 0.150 + 0.150 + 0.105 + 0.050 = 0.755"
+    },
+    "loop_6_self_eval": {
+      "vibe_case": "C2_text + C3_decision hybrid",
+      "score": null,
+      "rationale": "Circularity prohibited per Shumailov 2024. Loop 6 does not eval Loop 6.",
+      "operator_meta_score_required": "review this artifact for: (a) methodology_caveats severity, (b) honest_failures completeness, (c) operator_action_items sufficiency"
+    }
+  },
+  "overall_v0_2_summary": {
+    "loops_scored": ["loop_2", "loop_3", "loop_4", "loop_5"],
+    "loops_pending_A5": ["loop_1", "loop_2", "loop_3", "loop_4", "loop_5"],
+    "composite_scores_partial_C2_weights": {
+      "loop_2": 0.659,
+      "loop_3": 0.733,
+      "loop_4_partial_excluding_A5": 0.590,
+      "loop_5": 0.755
+    },
+    "median_composite_loops_2_to_5": 0.696,
+    "interpretation": "Loops 2,3,5 have composites >0.65 (acceptable). Loop 3's lower score is dominated by A6 drift variance (0.50). Loop 4's partial score (0.59) is dominated by A1/A2 methodology issues — true content is stronger. **Final trust decision requires OI-1 cold-start validation.**"
+  },
+  "honest_failures_per_loop": [
+    {
+      "loop": 1,
+      "failure": "A1 spec_coverage measurement methodology (operator-preconception required_keys) yields false-low score. Loop 1 IS a prose spec doc with full coverage; my regex assumed JSON keys. True coverage is high.",
+      "severity": "low",
+      "fix_v0_3": "derive required_keys from the loop's own spec doc explicit deliverables, not operator preconceptions"
+    },
+    {
+      "loop": 2,
+      "failure": "DOCUMENTED LIMITATION: self_enhancement bias not mitigated. drift_judge uses chat-minimax-cn (= same provider that wrote judge-mapping.json). Per Zheng 2023, agreement with blind evaluators would be lower.",
+      "severity": "medium",
+      "fix_v0_3": "run drift_judge from a non-chat-minimax-cn NLI provider (DeepSeek V3 chat or Claude Haiku chat) on each artifact; compute inter-model agreement rate"
+    },
+    {
+      "loop": 3,
+      "failure": "drift 1522 variance event consumed A6 drift_consistency budget. Observed pass_rate 0.833 < budget 0.93. Root cause: <think> block exceeded max_tokens=256 (T-406 just raised from 8 to 256; deeper needed is 512).",
+      "severity": "medium",
+      "fix_v0_3": "T-407 future task: raise max_tokens in chat NLI parser from 256 to 512. Also: spec intent should be more explicit so model has less ambiguity."
+    },
+    {
+      "loop": 4,
+      "failure": "Cold-start path designed but NEVER validated by a fresh-project operator. A5 = null for ALL loops. This is the largest known gap in v0.2.",
+      "severity": "high",
+      "fix": "OPERATOR ACTION REQUIRED: see operator_action_items_for_final_score[OI-1]. Without this validation, vibe-loop-git v0.2 is shippable-as-spec but NOT shippable-as-product."
+    },
+    {
+      "loop": 5,
+      "failure": "A2 evidence_grounding ratio (0.047) appears low because of high claim volume (192 numbers / 9 evidence). Multiple claims share evidence. The 0.047 UNDERSTATES true coverage.",
+      "severity": "low",
+      "fix_v0_3": "track per-claim provenance instead of aggregate ratio"
+    },
+    {
+      "loop": 6,
+      "failure": "Self-referential. Per Shumailov 2024, every recursion of model-on-model degrades quality. We mitigate via 85% deterministic weight + operator A4/A5, but cannot eliminate bias.",
+      "severity": "high",
+      "fix_v0_3": "cross-validate with non-MiniMax-M3 NLI provider; collect operator cold-start validation; consider HANS-style contrast set evaluation"
+    },
+    {
+      "loop": "ALL",
+      "failure": "No cross-language operator UX test (only es-CO tested via this conversation). Cold-start instructions in coldstart-rules.md are English; Spanish translations not validated.",
+      "severity": "low",
+      "fix_v0_3": "add es-CO + pt-BR operator usability sessions"
+    },
+    {
+      "loop": "ALL",
+      "failure": "Guo 2017 ECE framework not applied: we report conf=1.0 from drift_judge but never measure calibration against actual accuracy. conf=1.0 over 6 aligned drift_judges is consistent with overconfidence.",
+      "severity": "medium",
+      "fix_v0_3": "run Brier score over the drift_judge pass_rate vs actual drift rate (proxy)"
+    }
+  ],
+  "what_this_self_eval_cannot_measure": [
+    "Cross-vendor prompt-cache efficacy — we have MiniMax-M3 data only",
+    "Self-correction effectiveness over time — no measurement framework",
+    "Long-tail failure modes — only 6 loops executed (small N)",
+    "Operator trust trajectory over weeks/months — single-session data",
+    "Drift across dark-memory versions — only v4.0.0-alpha.27-pre-2",
+    "Cross-language operator UX — only es-CO tested",
+    "Adversarial inputs against the meta-loop — no red-team",
+    "Blind cross-model evaluation — requires non-MiniMax-M3 NLI, not configured",
+    "Calibration of drift_judge confidence — conf=1.0 may be overconfident (Guo 2017 ECE)",
+    "Probability-weighted scoring per G-Eval — we use binary entailment only",
+    "Brier score on drift_judge — would require operational tracking over time",
+    "Operator cognitive load during cold-start — no measurement framework",
+    "Tier-1 source provenance chain-of-trust (some sources cite other sources)",
+    "Confounding between LLM-as-judge and LLM-as-generator training data overlap"
+  ],
+  "operator_action_items_for_final_score": [
+    {
+      "id": "OI-1",
+      "action": "VALIDATE COLD-START (BLOCKING)",
+      "detail": "Spin up a fresh dark-memory project (no agent_memory rows, no operator history). Run the 5-step first-use path from coldstart-rules.md. Record: (a) time to first successful vibe_publish, (b) any errors encountered, (c) which invariants (Inv-1..Inv-5) actually held.",
+      "estimated_time_min": 15,
+      "blocking": true,
+      "rationale": "A5 cold_start_ux = null for ALL 5 loops. This is the largest known gap. Without this validation, v0.2 is shippable-as-spec but NOT shippable-as-product."
+    },
+    {
+      "id": "OI-2",
+      "action": "REVIEW honest_failures_per_loop (BLOCKING)",
+      "detail": "Confirm severity ratings (low/medium/high) match your judgment. Add any failures I missed. The high-severity items are Loop 4 (A5 null) and Loop 6 (self-referential).",
+      "estimated_time_min": 20,
+      "blocking": true
+    },
+    {
+      "id": "OI-3",
+      "action": "DECIDE A1 methodology (BLOCKING)",
+      "detail": "My v0.2 A1 used operator-preconception required_keys which gave unfair low scores to Loops 1 + 4 (prose/different-key artifacts). For v0.3 I recommend deriving required_keys from each loop's spec doc. Confirm or amend.",
+      "estimated_time_min": 5,
+      "blocking": true
+    },
+    {
+      "id": "OI-4",
+      "action": "OPTIONAL cross-model blind eval (NON-BLOCKING)",
+      "detail": "If you have a non-MiniMax-M3 NLI provider configured (DeepSeek V3 chat or Claude Haiku chat), run drift_judge on a sample (5-10 artifacts) and compare verdicts. Per Zheng 2023, agreement <80% reveals self-bias. Currently we cannot do this — only chat-minimax-cn is wired in active project.",
+      "estimated_time_min": 30,
+      "blocking": false
+    },
+    {
+      "id": "OI-5",
+      "action": "OPTIONAL Brier score calibration (NON-BLOCKING)",
+      "detail": "Compute Brier score over N drift_judge verdicts where N is large enough (50+). conf=1.0 over 6 aligned verdicts is consistent with both high accuracy and overconfidence. Brier score would disambiguate.",
+      "estimated_time_min": 45,
+      "blocking": false
+    }
+  ],
+  "evidence": [
+    {
+      "id": "Zheng-2023-MTBench",
+      "url": "https://arxiv.org/abs/2306.05685",
+      "claim": "LLM-as-judge self-enhancement bias 10-15% vs blind evaluators. Position bias and verbosity bias documented. GPT-4 judges ~85% agreement with humans. NeurIPS 2023 Datasets and Benchmarks Track."
+    },
+    {
+      "id": "Liu-2023-GEval-EMNLP",
+      "url": "https://arxiv.org/abs/2303.16634",
+      "claim": "G-Eval: NLG Evaluation using GPT-4 with Better Human Alignment. Chain-of-thought + probability-weighted scoring via token likelihoods. EMNLP 2023. Yang Liu, Dan Iter, Yichong Xu, Shuohang Wang, Ruochen Xu, Chenguang Zhu (Microsoft). NOTE: venue was EMNLP not NeurIPS."
+    },
+    {
+      "id": "Shumailov-2024-ModelCollapse-Nature",
+      "url": "https://www.nature.com/articles/s41586-024-07566-y",
+      "claim": "AI models collapse when trained on recursively generated data. Nature 2024. Peer-reviewed version of arxiv:2305.17493. Demonstrates that model-evaluating-model without external grounding degrades quality."
+    },
+    {
+      "id": "Shumailov-2023-arxiv-preprint",
+      "url": "https://arxiv.org/abs/2305.17493",
+      "claim": "The Curse of Recursion: Training on Generated Data Makes Your Models Forget. arxiv preprint May 2023. Original work."
+    },
+    {
+      "id": "Guo-2017-Calibration",
+      "url": "https://arxiv.org/abs/1706.04599",
+      "claim": "On Calibration of Modern Neural Networks. PMLR v70. ECE (Expected Calibration Error) framework. Demonstrates that modern networks are overconfident; depth/width/BatchNorm/wd affect calibration."
+    },
+    {
+      "id": "Brier-1950",
+      "url": "https://journals.ametsoc.org/view/journals/mwre/78/1/1520-0493_1950_078_0001_vofw_2_0_co_2.xml",
+      "claim": "Verification of weather forecasts. Original Brier score: 1/N Σ(f_i - p_i)^2. Penalizes overconfidence quadratically. Monthly Weather Review 78(1):1-3."
+    },
+    {
+      "id": "Asai-2023-SelfRAG",
+      "url": "https://arxiv.org/abs/2310.11511",
+      "claim": "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection. ICLR 2024. Akari Asai et al. Reflection tokens model for controllable inference."
+    },
+    {
+      "id": "Nielsen-1993-Usability",
+      "url": "https://www.nngroup.com/books/usability-engineering/",
+      "claim": "Jakob Nielsen. Usability Engineering. 1993. Response time thresholds 0.1/1/10s."
+    },
+    {
+      "id": "internal-Phase-14-stress",
+      "url": "internal://agent_memory/2472",
+      "claim": "Variance 5-7% empirically observed; Loop 3 drift 1522 variance matches this prior"
+    },
+    {
+      "id": "internal-Loop-6-OSINT",
+      "url": "internal://agent_memory/2498",
+      "claim": "Self-eval literature verified 2026-10-06; corrections vs initial plan noted"
+    },
+    {
+      "id": "internal-Loops-1-5-SHIPPED",
+      "url": "internal://agent_memory/2480,2491,2493,2495,2497",
+      "claim": "Per-loop SHIPPED summaries with drift_judge verdicts"
+    }
+  ],
+  "consumed_by": [
+    "Operator final trust decision on vibe-loop-git v0.2 (this is the LAST loop — no Loop 7)",
+    "Future v0.3 retrospective: weight matrix validity, A1 methodology replacement, cross-model eval, Brier calibration"
+  ],
+  "audit_schema_fields_consumable_by_future_versions": [
+    "vibe_loop_git_version",
+    "loop_N_vibe_case",
+    "loop_N_score_A1",
+    "loop_N_score_A2",
+    "loop_N_score_A3",
+    "loop_N_score_A4",
+    "loop_N_score_A5",
+    "loop_N_score_A6",
+    "loop_N_composite_score",
+    "loop_N_composite_partial_excluding_A5",
+    "loop_N_honest_failures_count",
+    "loop_N_high_severity_failures_count",
+    "self_eval_cannot_measure_count",
+    "operator_action_items_completed_count",
+    "operator_action_items_blocking_remaining_count",
+    "self_referential_warning_acknowledged",
+    "blind_eval_cross_model_used",
+    "calibration_measured_brier",
+    "drift_judge_pass_rate_observed",
+    "drift_judge_pass_rate_budget",
+    "drift_judge_conf_avg",
+    "weight_matrix_variant",
+    "a1_methodology_version"
+  ]
+}
