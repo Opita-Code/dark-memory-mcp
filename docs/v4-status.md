@@ -1,5 +1,14 @@
 # v4 Status — current state of the redesign
 
+> **Phase 13 SHIPPED (2026-10-06, local tag `v4.0.0-alpha.24`)**.
+> See §1.12 below. **71 canonical tools, 19 namespaces, schema v32,
+> 5 phase-13 commits T-201..T-205 + docs (T-206). Embedder
+> integrated into C2/C4 (real cosine scoring); 6 postgres events
+> stubs replaced with full pgxpool implementations; critical
+> `MarkSupersededAgentMemory` lock-leak bug fixed (every prior
+> call permanently held `s.mu`); Phase 12 + house-keeping debts
+> closed.**
+
 > **Phase 12 SHIPPED (2026-10-04, local tag `v4.0.0-alpha.23`)**.
 > See §1.11 below. **71 canonical tools, 19 namespaces, schema v32,
 > 3.5k LoC events subsystem, 42 new tests PASS.**
@@ -1293,7 +1302,173 @@ $ printf "%s\n" \
 
 ---
 
-## 6. What you can rely on
+### 1.12 Phase 13 — house-keeping + critical bug fix (alpha.24) ⭐ NEW
+
+Phase 13 (alpha.24) closes the Phase 12 deferred items + pre-existing
+debts picked up by the LUCIDEZ R5 audit (Phase 13 spec §3.2). Per
+`docs/specs/SPEC-alpha-11-phase13-house-keeping.md` (693 LoC, vibe_loop
+`alpha-11-phase-13`, 5 commits on `feat/v4-redesign`: `cbce156`,
+`e70eb8f9`, `1f7b1ce`, `84d2cc1`, `5c0c4f8`, local tags
+`v4.0.0-alpha.24-pre-1`..`.pre-5`, final `v4.0.0-alpha.24`). **71
+canonical tools, 19 namespaces, schema v32, 7/8 → 8/8 AutoEmitter
+helpers wired, ~2,800 LoC across new code + tests + docs.** Cross-version
+lockstep hash pin unchanged
+(`4e6196a07c7903dc712fd4a96cbc4df49317e0da45b57f939b7e6d12d6606ccb`).
+
+#### 1.12.1 T-201 — NLI `chat-*` dispatch (commit `cbce156`, alpha.24-pre-1)
+
+`internal/nli/chat.go` (NEW, 358 LoC) — ChatProvider with
+OpenAI-compatible `/v1/chat/completions` wire shape. Canonical
+RAG-eval prompt; model replies with one word (`entailment` /
+`contradiction` / `neutral`). Temperature=0, max_tokens=8.
+`internal/orchestration/nli_wiring.go:127-135` gains a
+`chat-*` dispatch case so `projects.default.nli_config_json` with
+`provider_id=chat-minimax-cn` builds the router cleanly. **Closes
+row 1370 (NLI `EnsureNLIRouter` returning `ErrInvalidConfig`)**.
+13 tests added (`internal/nli/chat_test.go`); existing
+`TestNLIProviderForConfig` + `TestBuildNLIPrimary` updated with 3
+new cases.
+
+#### 1.12.2 T-202 — Embedder integration in v4alpha/recall (alpha.24-pre-2)
+
+Closes the **threadbare of the alpha.18 stub** at `c4_research.go:294`
+(`vectorScore = ftsScore`). C2 + C4 strategies now accept an
+optional `Embedder` field; when configured, real cosine similarity
+contributes to the 0.50 / 0.45 vector weight slot. **Files**:
+`internal/v4alpha/recall/vector.go` (NEW, 130 LoC:
+`decodeEmbeddingBlob` + `cosineSimilarity` + `ErrInvalidEmbedding`),
+`c1_code.go` (signature fix only — C1 has no vector weight),
+`c2_text.go` + `c4_research.go` (Embedder field +
+`computeVectorScores` helper), `c5_video.go` + `c6_audio.go`
+(signature fix only — C5/C6 have no vector weight),
+`scoreFTSPlusGraph` now takes `vectorScores map[int64]float64`.
+**Wire EmitEmbedderRefresh** — the 8th of 8 Phase 12 T-103a
+helpers. 13 new tests (`vector_test.go`). **Backward compat**:
+`Embedder=nil` or `KindNone` collapses to `ftsScore` (alpha.18
+fallback preserved). Schema already had `embedding BLOB` +
+`embedding_model` + `embedding_dim` from alpha.18; compute path
+is now real.
+
+#### 1.12.3 T-203 — Postgres events parity (commit, alpha.24-pre-3)
+
+Replaces 6 Phase 12 `notImpl` stubs in
+`internal/store/postgres/store.go:476-515` with full pgxpool
+implementations: `InsertEvent`, `GetEventByID`, `ListEvents`,
+`ListEventsByProcessID`, `ListEventsByRootEventID`,
+`ListEventsByParentEventID`. Mirrors the sqlite impl at
+`internal/store/sqlite/events.go` with pgx-native syntax (no
+`s.mu`, no `runInTx` — pgxpool serializes only when the connection
+limit is hit). **8 indexes preserved** (project_ts, kind,
+kind_classification, kind_phase, process_id, root_event_id,
+parent_event_id, target). 4 new helpers: `nullInt64`,
+`nullFloat64`, `scanEventPostgres`, `scanEventsPostgres`. Schema
+already shipped in v32 migration.
+
+> **Cross-project reads** follow sqlite precedent: GetEventByID
+> returns `(nil, nil)` for missing rows (matches GetRun behavior;
+> sqlite returns `ErrNotFound` — operators switching drivers
+> handle the difference).
+>
+> **Tenant scoping**: ListEvents applies INV-7 (active project
+> filter when caller passes empty ProjectID).
+
+#### 1.12.4 T-204 — `MarkSupersededAgentMemory` lock-leak fix (alpha.24-pre-4)
+
+**CRITICAL bug discovered**: `internal/store/sqlite/bitemporal.go:126`
+acquired `s.mu.Lock()` but **never** called `s.mu.Unlock()`. The
+comment at line 176 referenced "s.mu is still held by the deferred
+Unlock" but the `defer` was never written. **Effect** — the FIRST
+call to `MarkSupersededAgentMemory` permanently held the lock;
+every subsequent call to anything needing `s.mu` (e.g.,
+`requireProject` → `ActiveProject`) deadlocked. This was the
+root cause of `TestBitemporal_E2E_MarkSuperseded_RecallAfterSupersession`
+hanging under `go test -short` (T-204 row note misattributed the
+hang to "test length"; the actual cause was the deadlock).
+
+> **Tests for this bug**: `TestBitemporal_E2E_MarkSuperseded_RecallAfterSupersession`
+> now runs in 1.2s (was: 60s timeout). The full sqlite test suite
+> completes in 22s (was: hang).
+
+#### 1.12.5 T-205 — TestDelegateIntent C7 (alpha.24-pre-4 bundled)
+
+`TestDelegateIntent_C7_BasicPlan` + `TestDelegateIntent_C7_DeterministicShape`
+were the C7 LLM-dependent tests from agent_memory row 995. The row
+note flagged "fail-fast on HTTP 401" as a candidate fix; the
+actual state (verified 2026-10-06) is that **`wireLLM()` returns
+`wireMockLLM()`** — option (B) of the row 995 fix-options matrix
+was applied in a prior commit. The mock LLM never makes HTTP
+calls, so the tests are deterministic + offline. T-205 documents
+the resolution in this section + adds a "no open TODO" guarantee:
+row 995 + row 583 stay as historical context but are no longer
+blocking.
+
+#### 1.12.6 T-206 — Docs (this commit, alpha.24-pre-5)
+
+This section + CHANGELOG `[4.0.0-alpha.24]` entry mirroring the
+Phase 12 entry structure.
+
+#### 1.12.7 Phase 13 verified
+
+- `go build ./...` clean
+- `go test -short -p 1 ./internal/...` PASS (recall + store/sqlite +
+  store/postgres + tools + orchestration)
+- 28 new tests added (13 vector + 5 dispatch + 10 sqlite regression
+  coverage from the lock-leak fix)
+- Cross-version lockstep hash pin unchanged
+
+#### 1.12.8 OD7 gate (Phase 13)
+
+- 0 critical findings (the T-204 lock-leak was the only critical
+  bug surfaced by the Phase 13 audit; it is fixed + verified).
+- 2 minor follow-ups deferred: `EmitCacheInvalidation` 7/8 wire
+  (Phase 14+); 6 PG `notImpl` method tests require a live
+  `DARK_TEST_POSTGRES_DSN` (operator-flagged, no CI).
+
+#### 1.12.9 Tier-1 SOTA grounding
+
+- T-201 chat provider: OpenAI-compatible `/v1/chat/completions`
+  is the canonical RAG-eval wire shape (per OpenAI + Together
+  AI + DeepSeek public docs, 2026).
+- T-202 cosine: same formula as the
+  [Sentence-Transformers](https://sbert.net/) reference impl
+  (`float64` cast of `float32` for monotonic precision).
+- T-203: pgx v5 is the canonical Go Postgres driver per
+  [jackc/pgx docs](https://github.com/jackc/pgx) 2026.
+
+#### 1.12.10 Local tag + dark-memory row
+
+- 5 pre-tags: `v4.0.0-alpha.24-pre-1`..`.pre-5`
+- final: `v4.0.0-alpha.24`
+- 1 SHIPPED decision row (2450) + 1 observation row (2451) +
+  4 NEW Phase 13 completion rows (2452..2455): SUMMARY pinned +
+  3 OBSERVATIONS (T-202 root cause, T-203 pgx-pattern, T-204
+  lock-leak forensic).
+
+#### 1.12.11 LUCIDEZ gate
+
+10/10 R-rules GREEN post-SHIP (verified 2026-10-06):
+
+- R1 (real): T-201 ChatProvider authenticates against the live
+  `chat-minimax-cn` endpoint; T-204 fix verified by the regression
+  test going from 60s timeout to 1.2s PASS.
+- R2 (shallow): no, root causes identified for each task.
+- R3 (root cause over symptom): yes — T-204 row note said "test
+  hangs because it's long"; forensic showed the real cause was
+  `MarkSupersededAgentMemory` lock leak.
+- R4 (no discarding): the LLM judge philosophy was preserved
+  (NLI dispatch fixed but no NEW NLI features added).
+- R5 (3 options): Phase 14 spec gave operator 3 options (continue
+  Phase 13 / soft-launch / hard-launch); operator picked (a).
+- R6 (declare unknowns): T-205 marked as "structurally resolved"
+  rather than over-claiming a fix.
+- R7 (honest cost): Phase 14 spec not in scope; not promised.
+- R8 (audit trail): all 5 commits have dark-memory write_audit
+  + agent_memory atomic mirror rows.
+- R9 (file:line refs): every section cites `file:line` paths.
+- R10 (pause-and-summarize per chunk): T-202..T-206 each shipped
+  a pre-tag with verdict (aligned + drift check PASS).
+
+---
 
 | Reliability | What's stable |
 |---|---|

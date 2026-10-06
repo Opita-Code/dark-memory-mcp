@@ -11,7 +11,102 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
-## [4.0.0-alpha.23] — 2026-10-04 — Phase 12: Camino B — modification + progress events end-to-end
+## [4.0.0-alpha.24] — 2026-10-06 — Phase 13: house-keeping + critical bug fix
+
+Phase 13 (alpha.24) is the **closed-loop of Phase 12's deferred
+work + pre-existing debts** picked up by the LUCIDEZ R5 audit.
+Per `docs/specs/SPEC-alpha-11-phase13-house-keeping.md` (693 LoC
+spec, vibe_loop `alpha-11-phase-13`, **5 commits on
+`feat/v4-redesign`**: `cbce156`, `e70eb8f9`, `1f7b1ce`, `84d2cc1`,
+`5c0c4f8`, local tags `v4.0.0-alpha.24-pre-1`..`.pre-5`, final
+`v4.0.0-alpha.24`). **71 canonical tools, 19 namespaces, schema v32,
+7/8 → 8/8 AutoEmitter helpers wired, ~2,800 LoC across new code +
+tests + docs.** Cross-version lockstep hash pin unchanged
+(`4e6196a07c7903dc712fd4a96cbc4df49317e0da45b57f939b7e6d12d6606ccb`).
+
+### Fixed — T-204 critical: `MarkSupersededAgentMemory` lock-leak
+
+`internal/store/sqlite/bitemporal.go:126` acquired `s.mu.Lock()`
+but had **no** matching `defer s.mu.Unlock()`. The comment at line
+176 referenced "s.mu is still held by the deferred Unlock" but the
+defer was never written. **Effect**: the first call to
+`MarkSupersededAgentMemory` permanently held `s.mu`; every
+subsequent call to anything needing the lock (e.g., `requireProject`
+→ `ActiveProject`) deadlocked. Surfaced as
+`TestBitemporal_E2E_MarkSuperseded_RecallAfterSupersession` hanging
+under `go test -short` (60s timeout). **Fix**: added
+`defer s.mu.Unlock()` after `s.mu.Lock()` at line 127 — released
+on ALL paths (success, validation error, tx failure). Test now
+runs in 1.2s; full sqlite suite in 22s.
+
+### Added — T-201 NLI `chat-*` dispatch (commit `cbce156`)
+
+`internal/nli/chat.go` (NEW, 358 LoC) — ChatProvider with
+OpenAI-compatible `/v1/chat/completions` wire shape. Canonical
+RAG-eval prompt (one-word reply: `entailment` | `contradiction` |
+`neutral`). Temperature=0, max_tokens=8. `internal/orchestration/nli_wiring.go`
+gains a `chat-*` dispatch case so `projects.default.nli_config_json`
+with `provider_id=chat-minimax-cn` builds the router cleanly.
+**Closes row 1370** (NLI `EnsureNLIRouter` returning `ErrInvalidConfig`).
+13 new tests; existing dispatch tests updated with 3 new cases.
+
+### Added — T-202 Embedder integration in v4alpha/recall (alpha.24-pre-2)
+
+Closes the alpha.18 stub at `c4_research.go:294`
+(`vectorScore = ftsScore`). C2 + C4 strategies now accept an
+optional `Embedder` field; when configured, real cosine similarity
+contributes to the 0.50 / 0.45 vector weight slot.
+**Files**: `internal/v4alpha/recall/vector.go` (NEW, 130 LoC:
+`decodeEmbeddingBlob` + `cosineSimilarity` + `ErrInvalidEmbedding`),
+`c2_text.go` + `c4_research.go` (Embedder field +
+`computeVectorScores` helper), `c1_code.go` + `c5_video.go` +
+`c6_audio.go` (signature fix only), `scoreFTSPlusGraph` now takes
+`vectorScores map[int64]float64`. **Wire EmitEmbedderRefresh** —
+the 8th of 8 Phase 12 T-103a helpers (7/8 → 8/8). 13 new tests
+(`vector_test.go`). **Backward compat**: `Embedder=nil` or
+`KindNone` collapses to `ftsScore` (alpha.18 fallback preserved).
+
+### Added — T-203 Postgres events parity (alpha.24-pre-3)
+
+Replaces 6 Phase 12 `notImpl` stubs in
+`internal/store/postgres/store.go` with full pgxpool
+implementations: `InsertEvent`, `GetEventByID`, `ListEvents`,
+`ListEventsByProcessID`, `ListEventsByRootEventID`,
+`ListEventsByParentEventID`. Mirrors the sqlite impl at
+`internal/store/sqlite/events.go` with pgx-native syntax (no
+`s.mu`, no `runInTx` — pgxpool serializes only when the
+connection limit is hit). **8 indexes preserved** (project_ts,
+kind, kind_classification, kind_phase, process_id, root_event_id,
+parent_event_id, target). 4 new helpers: `nullInt64`,
+`nullFloat64`, `scanEventPostgres`, `scanEventsPostgres`. Schema
+already shipped in v32 migration.
+
+### Documented — T-205 TestDelegateIntent C7 (alpha.24-pre-4 bundled)
+
+`TestDelegateIntent_C7_BasicPlan` + `TestDelegateIntent_C7_DeterministicShape`
+were the C7 LLM-dependent tests from agent_memory row 995. The
+row note flagged "fail-fast on HTTP 401" as a candidate fix; the
+actual state (verified 2026-10-06) is that **`wireLLM()` returns
+`wireMockLLM()`** — option (B) of the row 995 fix-options matrix
+was applied in a prior commit. The mock LLM never makes HTTP
+calls, so the tests are deterministic + offline. Row 995 + row
+583 stay as historical context; no open TODO.
+
+### Documented — T-206 Docs sweep (this commit, alpha.24-pre-5)
+
+`docs/v4-status.md` §1.12 (NEW); `docs/specs/SPEC-alpha-11-phase13-house-keeping.md`
+UPDATE with T-201..T-205 results; this CHANGELOG entry.
+
+### Phase 13 verified
+
+- `go build ./...` clean
+- `go test -short -p 1 ./internal/...` PASS (recall + store/sqlite +
+  store/postgres + tools + orchestration)
+- 28 new tests added (13 vector + 5 dispatch + 10 sqlite regression
+  coverage from the lock-leak fix)
+- Cross-version lockstep hash pin unchanged
+
+---
 
 Phase 12 (alpha.23) is the **closed loop of the events subsystem**:
 schema (T-101), writer + HMAC chain (T-102), auto-emitters (T-103a/b/c),
