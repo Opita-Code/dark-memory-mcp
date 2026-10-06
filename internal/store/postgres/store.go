@@ -2294,15 +2294,17 @@ func (s *Store) GetProject(ctx context.Context, projectID string) (*project.Proj
 	if defaultAgent != nil {
 		p.DefaultAgentID = *defaultAgent
 	}
-	// v2.20.0 T07: parse nli_config_json. Parse failures are logged
-	// + treated as no-config (graceful degradation). AuthToken is
-	// stripped on read — never echoed in tool results.
+	// T-405 (v4.0.0-alpha.27-pre-1): parse nli_config_json. Parse failures
+	// are logged + treated as no-config (graceful degradation). AuthToken
+	// is RETAINED on read — internal callers (orchestration NLIProvider
+	// build, llm_provider_probe) need the bearer. Tool result paths
+	// MUST call NLIConfig.Redacted() themselves before serializing.
 	if nliJSON != nil && *nliJSON != "" {
 		var cfg project.NLIConfig
 		if err := json.Unmarshal([]byte(*nliJSON), &cfg); err != nil {
 			fmt.Fprintf(os.Stderr, "dark-memory: projects[%s].nli_config_json parse failed: %v\n", projectID, err)
 		} else {
-			p.NLIConfig = cfg.Redacted()
+			p.NLIConfig = &cfg
 		}
 	}
 	return &p, nil
@@ -2350,13 +2352,15 @@ func (s *Store) ListProjects(ctx context.Context, limit int) ([]project.Project,
 		if defaultAgent != nil {
 			p.DefaultAgentID = *defaultAgent
 		}
-		// v2.20.0 T07: parse nli_config_json; same posture as sqlite.
+		// T-405 (v4.0.0-alpha.27-pre-1): see GetProject above. ListProjects
+		// returns full NLIConfig (with token); tool layer redacts at
+		// the result boundary.
 		if nliJSON != nil && *nliJSON != "" {
 			var cfg project.NLIConfig
 			if err := json.Unmarshal([]byte(*nliJSON), &cfg); err != nil {
 				fmt.Fprintf(os.Stderr, "dark-memory: projects[%s].nli_config_json parse failed: %v\n", p.ProjectID, err)
 			} else {
-				p.NLIConfig = cfg.Redacted()
+				p.NLIConfig = &cfg
 			}
 		}
 		out = append(out, p)

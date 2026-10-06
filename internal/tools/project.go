@@ -204,8 +204,14 @@ func runProjectCreate(ctx context.Context, s store.Store, in ProjectCreateInput)
 	// existing default_agent_id on idempotent replay so callers can
 	// verify what was already configured. v2.20.0 T07: also surface
 	// the existing NLIConfig (with AuthToken redacted — the Store
-	// layer strips it on read).
+	// layer strips it on read). T-405: Store.GetProject now RETURNS
+	// the full token (so orchestration + llm_provider_probe can use
+	// it). The redaction must happen HERE at the tool result boundary.
 	if existing, err := s.GetProject(ctx, in.ProjectID); err == nil && existing != nil {
+		nliForTool := existing.NLIConfig
+		if nliForTool != nil {
+			nliForTool = nliForTool.Redacted()
+		}
 		return &ProjectCreateResult{
 			ProjectID:        existing.ProjectID,
 			DisplayName:      existing.DisplayName,
@@ -213,7 +219,7 @@ func runProjectCreate(ctx context.Context, s store.Store, in ProjectCreateInput)
 			ConstitutionID:   existing.ConstitutionID,
 			ConstitutionVer:  existing.ConstitutionVer,
 			DefaultAgentID:   existing.DefaultAgentID,
-			NLIConfig:        existing.NLIConfig,
+			NLIConfig:        nliForTool,
 			CreatedAt:        existing.CreatedAt,
 			IdempotentReplay: true,
 		}, nil

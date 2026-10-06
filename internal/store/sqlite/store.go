@@ -3379,8 +3379,20 @@ func (s *Store) GetProject(ctx context.Context, projectID string) (*project.Proj
 			// Log to stderr; keep going with no NLIConfig.
 			fmt.Fprintf(os.Stderr, "dark-memory: projects[%s].nli_config_json parse failed: %v\n", projectID, err)
 		} else {
-			// Strip AuthToken on read — never echoed in tool results.
-			p.NLIConfig = cfg.Redacted()
+			// T-405 (v4.0.0-alpha.27-pre-1): Store.GetProject returns the
+			// FULL config (with AuthToken) so internal callers can use it:
+			//
+			//   - orchestration.EnsureNLIRouter builds the NLIProvider's
+			//     HTTP client which needs the bearer to reach the LLM.
+			//   - tools.llm_provider_probe sends the bearer on a tiny POST.
+			//
+			// Tool result paths that surface the config to the operator
+			// (e.g. tools/project.go::runProjectCreate) MUST call
+			// NLIConfig.Redacted() themselves before serializing. Defense
+			// in depth: the DB stores the token (encrypted-at-rest is the
+			// operator's responsibility); the transport layer strips it
+			// on the wire; the tool layer strips it in the result payload.
+			p.NLIConfig = &cfg
 		}
 	}
 	return &p, nil
@@ -3433,7 +3445,10 @@ func (s *Store) ListProjects(ctx context.Context, limit int) ([]project.Project,
 			if err := json.Unmarshal([]byte(nliJSON.String), &cfg); err != nil {
 				fmt.Fprintf(os.Stderr, "dark-memory: projects[%s].nli_config_json parse failed: %v\n", p.ProjectID, err)
 			} else {
-				p.NLIConfig = cfg.Redacted()
+				// T-405 (v4.0.0-alpha.27-pre-1): see GetProject above for the
+				// rationale. ListProjects is consumed by tool layer paths
+				// (project_list etc.) which redact at the result boundary.
+				p.NLIConfig = &cfg
 			}
 		}
 		out = append(out, p)
