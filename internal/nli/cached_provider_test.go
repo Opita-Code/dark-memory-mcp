@@ -301,3 +301,103 @@ func TestCachedProvider_Integration_ErrorThenSuccess(t *testing.T) {
 		t.Errorf("HTTP calls=%d, want 2 (errors not cached, third is cache hit)", calls.Load())
 	}
 }
+// --- Phase 15 T-403: Single-flight stress tests ----------------------------
+
+func TestCachedProvider_ConcurrentGet_1000xNoFlake(t *testing.T) {
+	t.Parallel()
+	stub := &stubProvider{id: "p", scoreToRet: Score{Label: LabelEntailment, ProviderID: "p"}}
+	cache, _ := NewInMemoryLRU(100)
+	c, _ := NewCachedProvider(stub, cache, time.Hour)
+	const N = 100
+	const iterations = 1000
+	for i := 0; i < iterations; i++ {
+		var wg sync.WaitGroup
+		wg.Add(N)
+		for j := 0; j < N; j++ {
+			go func() {
+				defer wg.Done()
+				_, err := c.Score(context.Background(), "p", "h")
+				if err != nil {
+					t.Errorf("Score: %v", err)
+				}
+			}()
+		}
+		wg.Wait()
+	}
+	// After the FIRST goroutine in the very first batch call, the cache
+	// is populated and ALL subsequent calls (rest of first batch + 999
+	// more batches × 100 goroutines each) hit the cache. Total inner
+	// calls = 1 (the winner of the very first batch). Without the
+	// single-flight fix, this number would be ~50,000+.
+	if got := stub.calls.Load(); got != 1 {
+		t.Errorf("total inner calls=%d, want 1 (single-flight winner only)", got)
+	}
+}
+
+func TestCachedProvider_DifferentKeys_ParallelInner(t *testing.T) {
+	t.Parallel()
+	stub := &stubProvider{id: "p", scoreToRet: Score{Label: LabelEntailment, ProviderID: "p"}}
+	cache, _ := NewInMemoryLRU(100)
+	c, _ := NewCachedProvider(stub, cache, time.Hour)
+	const N = 10
+	var wg sync.WaitGroup
+	wg.Add(N)
+	for j := 0; j < N; j++ {
+		j := j
+		go func() {
+			defer wg.Done()
+			// Each goroutine uses a UNIQUE key.
+			_, err := c.Score(context.Background(), "p", string(rune('a'+j)))
+			if err != nil {
+				t.Errorf("Score: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	// 10 goroutines × 10 different keys = 10 inner calls.
+	if got := stub.calls.Load(); got != N {
+		t.Errorf("inner calls=%d, want %d (different keys must NOT dedup)", got, N)
+	}
+}
+
+func TestCachedProvider_Stats_ReflectsWaiters(t *testing.T) {
+	t.Parallel()
+	stub := &stubProvider{
+		id:         "p",
+		scoreToRet: Score{Label: LabelEntailment, ProviderID: "p"},
+		delay:      20 * time.Millisecond,
+	}
+	cache, _ := NewInMemoryLRU(100)
+	c, _ := NewCachedProvider(stub, cache, time.Hour)
+	const N = 50
+	var wg sync.WaitGroup
+	wg.Add(N)
+	for j := 0; j < N; j++ {
+		go func() {
+			defer wg.Done()
+			_, err := c.Score(context.Background(), "p", "h")
+			if err != nil {
+				t.Errorf("Score: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+	// Without delay: 1 Misses (winner), 49 Hits (cache hits after
+	// winner populated). With delay: the FIRST goroutine acquires mu,
+	// enters singleflight, calls inner; the others block on mu. Once
+	// mu is released (after the winner Put+Delete), the next goroutine
+	// acquires mu, double-checks cache, sees the entry (winner Put'd),
+	// returns it as a cache hit. So with delay we get exactly 1 Misses
+	// and 49 Hits — the waiters counter only increments for callers
+	// that arrived between the winner's LoadOrStore and close(done).
+	st := c.Stats()
+	if st.Misses != 1 {
+		t.Errorf("Misses=%d, want 1 (single-flight winner only)", st.Misses)
+	}
+	if st.Hits+st.Waiters != N-1 {
+		t.Errorf("Hits+Waiters=%d, want %d (rest must be hits or waiters)", st.Hits+st.Waiters, N-1)
+	}
+	if st.InnerErrors != 0 {
+		t.Errorf("InnerErrors=%d, want 0", st.InnerErrors)
+	}
+}
