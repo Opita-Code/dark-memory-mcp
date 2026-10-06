@@ -35,6 +35,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,6 +47,7 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/safety"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/event"
+	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/judge/v4judge"
 	"github.com/dark-agents/dark-memory-mcp/internal/vlp"
 )
 
@@ -84,6 +86,21 @@ type Orchestrator struct {
 	//   inject the production chain.
 	nliProvider   nli.Provider
 	nliHTTPClient nli.HFInferenceClient // injectable for tests
+
+	// Phase 14 T-302: LLMJudge (internal/v4alpha/judge/v4judge) is
+	// the primary drift verdict source. When bound, DriftJudge tries
+	// it FIRST; on ErrNoLLMBound / ErrProviderUnavailable /
+	// ErrProviderTimeout / ErrProviderRateLimited, the pipeline
+	// falls through to the legacy NLI chain (T-301 invariant: NLI
+	// preserved 100%). On ErrProviderBadResponse (contract bug), the
+	// pipeline does NOT fall through — the model itself is wrong, so
+	// needs_human + Error Observatory row is the right outcome.
+	//
+	// Built lazily by ensureLLMJudge from Project.NLIConfig when the
+	// primary binding's provider_id has the "judge-" prefix. Wired by
+	// main.go from the persisted NLIConfig JSON column. Tests inject
+	// via WithLLMJudge.
+	llmJudge *v4judge.LLMJudge
 
 	// v2.20.0 T08: URLFetcher for the artifact resolver. nil →
 	// URL/artifact_id resolution returns ErrNotConfigured (the
@@ -233,6 +250,29 @@ func (o *Orchestrator) WithNLIRouter(p nli.Provider) *Orchestrator {
 	return o
 }
 
+// WithLLMJudge attaches a v4judge.LLMJudge to the orchestrator.
+// Used by Phase 14 T-302 (drift_judge dual-path selector).
+//
+// When non-null, DriftJudge tries the LLMJudge FIRST and uses its
+// output as the canonical verdict. On fall-through errors
+// (ErrNoLLMBound / ErrProviderUnavailable / ErrProviderTimeout /
+// ErrProviderRateLimited / ErrInputTooLarge), the pipeline falls back
+// to the legacy NLI chain (preserved 100% per T-301 invariant). On
+// ErrProviderBadResponse (contract bug), the pipeline does NOT fall
+// through — returns needs_human + Error Observatory row.
+//
+// When no LLMJudge is injected, ensureLLMJudge (the lazy fallback)
+// constructs one from Project.NLIConfig when the primary binding's
+// provider_id has the "judge-" prefix. nil → no LLM step at all
+// (drift_judge is purely NLI, backward compat).
+//
+// Production wiring is main.go at boot from the persisted
+// NLIConfig JSON column. Tests inject via this setter.
+func (o *Orchestrator) WithLLMJudge(j *v4judge.LLMJudge) *Orchestrator {
+	o.llmJudge = j
+	return o
+}
+
 // WithNLIHTTPClient injects the HTTP client used by the NLI Provider
 // factories (DeBERTaProvider, MiniCheckProvider). nil →
 // http.DefaultClient. For tests, pass an httptest.Server-bound client.
@@ -274,6 +314,64 @@ func (o *Orchestrator) EnsureNLIRouter(ctx context.Context) (nli.Provider, error
 	}
 	o.nliProvider = p
 	return p, nil
+}
+
+// ensureLLMJudge is the lazy fallback for the Phase 14 T-302 dual-path
+// selector. It builds an LLMJudge from the active project's NLIConfig
+// when the primary binding's provider_id has the "judge-" prefix.
+//
+// Behavior:
+//   - llmJudge pre-injected via WithLLMJudge → returns it (test path).
+//   - active project has no NLIConfig / disabled → returns nil
+//     (drift_judge is purely NLI, backward compat).
+//   - primary provider_id does NOT start with "judge-" → returns nil
+//     (operator opted out of LLMJudge; drift_judge is purely NLI).
+//   - primary provider_id starts with "judge-" → builds LLMJudge from
+//     the primary config (http.DefaultClient for production). Caches
+//     on the orchestrator so the build only runs once per boot.
+//
+// The wire format is OpenAI-compatible /v1/chat/completions
+// (mirrors internal/nli/chat.go::ChatProvider), so the same endpoint +
+// auth token work for both the NLI chat-* path and the LLMJudge judge-*
+// path. The primary distinction is the ProviderID prefix: chat-* routes
+// to NLIChat (SNLI-2018 task), judge-* routes to LLMJudge (drift-judge
+// task with JSON verdict shape).
+//
+// Returns (nil, nil) when no LLM path applies. Returns an error when
+// LLMJudge construction itself fails (provider_id has judge- prefix but
+// endpoint is malformed, etc.) — callers must decide whether to fall
+// through to NLI or surface the error.
+func (o *Orchestrator) ensureLLMJudge(ctx context.Context) (*v4judge.LLMJudge, error) {
+	if o.llmJudge != nil {
+		return o.llmJudge, nil
+	}
+	activeProject := o.Store.ActiveProject()
+	if activeProject == "" {
+		return nil, nil
+	}
+	proj, err := o.Store.GetProject(ctx, activeProject)
+	if err != nil {
+		return nil, err
+	}
+	if proj == nil || proj.NLIConfig == nil || !proj.NLIConfig.Enabled {
+		return nil, nil
+	}
+	if !strings.HasPrefix(proj.NLIConfig.Primary.ProviderID, "judge-") {
+		return nil, nil
+	}
+	pc := v4judge.ProviderConfig{
+		ProviderID: proj.NLIConfig.Primary.ProviderID,
+		Endpoint:   proj.NLIConfig.Primary.Endpoint,
+		AuthToken:  proj.NLIConfig.Primary.AuthToken,
+		TimeoutMS:  proj.NLIConfig.Primary.TimeoutMS,
+		ModelRev:   proj.NLIConfig.Primary.ModelRev,
+	}
+	j, err := v4judge.NewLLMJudge(pc, http.DefaultClient)
+	if err != nil {
+		return nil, fmt.Errorf("ensure llm judge: %w", err)
+	}
+	o.llmJudge = j
+	return j, nil
 }
 
 // WithURLFetcher injects the URLFetcher used by the artifact

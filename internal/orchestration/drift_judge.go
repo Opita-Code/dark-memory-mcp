@@ -21,6 +21,35 @@
 //	contradiction → drift_detected (artifact diverges from spec)
 //	neutral       → needs_human   (model can't decide; operator review)
 //
+// # Phase 14 T-302: dual-path selector (LlmJudge primary, NLI fallback)
+//
+// DriftJudge now tries LLMJudge FIRST (when a "judge-*" provider is
+// bound) and falls through to the NLI chain on any fall-through error.
+// The NLI chain is preserved 100% per Phase 14 T-301 invariant
+// (operator philosophy: "NLI está muy bien"). When LLMJudge is not
+// bound, the pipeline runs the 8-step NLI path unchanged.
+//
+// The 9-step pipeline (when LLMJudge is bound):
+//
+//  1. Validate (sealed: ArtifactRef required)
+//  2. Canary on spec_intent (INV-3)
+//  3. Resolve artifact via artifact.Resolver
+//  4. Canary on resolved body
+//  5. LLMJudge.Judge(spec_intent, artifact_body) [NEW, Phase 14]
+//     - Success → use verdict, jump to step 9
+//     - ErrNoLLMBound / ErrProviderUnavailable / ErrProviderTimeout
+//       / ErrProviderRateLimited / ErrInputTooLarge → log Error
+//       Observatory row + continue step 5 (NLI fallback)
+//     - ErrProviderBadResponse → needs_human (contract bug, do NOT
+//       fall through)
+//  6. Resolve NLI Provider (ensureNLIRouter, lazy)
+//  7. Score (premise, hypothesis) through NLI Provider
+//  8. Map NLI label → canonical verdict
+//  9. Constitutional self-critique (H6, spec 1276 T07)
+//
+// The 8-step pipeline (when LLMJudge is NOT bound, backward compat):
+//  skip step 5; steps 6-9 become 5-8.
+//
 // # Backward compatibility
 //
 // `Judge` (in judge.go) still accepts Content for non-drift eval_types
@@ -46,6 +75,10 @@
 //     + Error Observatory (model misbehaved).
 //  6. The drift_judge does NOT log the artifact body or the AuthToken.
 //     Latency + verdict + provider_id + SHA-256 are logged.
+//  7. (Phase 14 T-302) LLMJudge.ErrProviderBadResponse does NOT fall
+//     through to NLI. NLI drift must answer a Stanford-2018 NLI task
+//     that LLMJudge is bypassing by design; mixing the two verdicts
+//     would reintroduce the architectural mismatch Phase 14 closes.
 package orchestration
 
 import (
@@ -60,6 +93,7 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/errorobs"
 	"github.com/dark-agents/dark-memory-mcp/internal/nli"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
+	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/judge/v4judge"
 )
 
 // DriftJudgeInput is the request to evaluate an artifact against a
@@ -151,7 +185,122 @@ func (o *Orchestrator) DriftJudge(ctx context.Context, in DriftJudgeInput) (*Dri
 		return nil, fmt.Errorf("%w: drift_judge artifact body contains canary token", store.ErrCanaryInPayload)
 	}
 
-	// 5. Resolve the NLI Provider. Returns (nil, nil) → default
+	// 5. (Phase 14 T-302) Try LLMJudge FIRST. When bound (via
+	//    WithLLMJudge or ensureLLMJudge from Project.NLIConfig
+	//    primary "judge-*" prefix), LLMJudge is the primary drift
+	//    verdict source. The NLI chain becomes the legacy fallback.
+	//
+	//    Success → use the verdict directly. The downstream NLI
+	//    resolution (step 6) is skipped entirely.
+	//
+	//    Fall-through errors (ErrNoLLMBound / ErrProviderUnavailable /
+	//    ErrProviderTimeout / ErrProviderRateLimited / ErrInputTooLarge)
+	//    → log Error Observatory row + continue to step 6. These are
+	//    transient / infra conditions; NLI gives the operator a
+	//    second chance.
+	//
+	//    ErrProviderBadResponse (contract bug) → return needs_human
+	//    immediately. The model itself is wrong; NLI cannot rescue
+	//    a broken LLMJudge contract. The error is recorded in
+	//    Error Observatory for the operator to fix.
+	//
+	//    nil LLMJudge (no judge-* binding) → skip entirely, behave
+	//    as 8-step pipeline. Backward compat.
+	if llmJudge, err := o.ensureLLMJudge(ctx); err != nil {
+		// LLMJudge construction failed (malformed endpoint, etc.).
+		// Treat as fall-through: log + continue to NLI. The NLI
+		// chain gives the operator a verdict.
+		o.RecordError(ctx, "drift_judge", o.activeSessionID(ctx),
+			fmt.Errorf("ensure llm judge: %w", err), errorobs.SeverityWarn)
+	} else if llmJudge != nil {
+		scoreStart := time.Now()
+		llmVerdict, llmErr := llmJudge.Judge(ctx, in.SpecIntent, string(resolved.Bytes))
+		llmLatency := time.Since(scoreStart).Milliseconds()
+		if llmErr != nil {
+			if errors.Is(llmErr, v4judge.ErrProviderBadResponse) {
+				// Contract bug — return immediately. Do NOT fall
+				// through to NLI (invariant 7).
+				o.RecordError(ctx, "drift_judge", o.activeSessionID(ctx),
+					llmErr, errorobs.SeverityError)
+				out := &DriftJudgeOutput{
+					Verdict:        "needs_human",
+					Confidence:     0,
+					ProviderID:     llmJudge.ID(),
+					Reasoning:      fmt.Sprintf("llmjudge contract bug: %v", llmErr),
+					CritiqueReason: "",
+					LatencyMS:      llmLatency,
+				}
+				out.ArtifactSource = string(resolved.Source)
+				out.ArtifactSHA256 = hexBytes(resolved.ContentSHA256)
+				out.ArtifactPath = resolved.Path
+				out.ArtifactSize = int64(len(resolved.Bytes))
+				out.ArtifactTrunc = resolved.Truncated
+				out.VerdictJSON = formatDriftJudgeVerdictJSON(out, resolved)
+				return out, nil
+			}
+			// Fall-through errors — log + continue to step 6.
+			o.RecordError(ctx, "drift_judge", o.activeSessionID(ctx),
+				fmt.Errorf("llmjudge fallback to nli: %w", llmErr), errorobs.SeverityWarn)
+		} else {
+			// LLMJudge succeeded. Build the DriftJudgeOutput directly,
+			// then run self-critique (step 9). Skip NLI entirely.
+			confidence := float32(llmVerdict.Confidence)
+			verdict := llmVerdict.Verdict
+			// Sanity: the LLMJudge verdict must be one of the
+			// canonical 3 values. Anything else → needs_human.
+			switch verdict {
+			case "aligned", "drift_detected", "needs_human":
+				// pass
+			default:
+				verdict = "needs_human"
+			}
+			critique := constitution.SelfCritique(constitution.SelfCritiqueInput{
+				Verdict:        verdict,
+				NLILabel:       "", // LLMJudge doesn't produce NLI labels
+				NLIConfidence:  float64(llmVerdict.Confidence),
+				SpecIntent:     in.SpecIntent,
+				ArtifactBody:   string(resolved.Bytes),
+				ArtifactSHA:    hexBytes(resolved.ContentSHA256),
+				ArtifactSource: string(resolved.Source),
+				ArtifactPath:   resolved.Path,
+				ArtifactSize:   int64(len(resolved.Bytes)),
+			})
+			if !critique.Passed {
+				verdict = "needs_human"
+				out := &DriftJudgeOutput{
+					Verdict:        verdict,
+					Confidence:     confidence,
+					Reasoning:      fmt.Sprintf("self_critique_override: %s (was %s)", critique.Reason, llmVerdict.Verdict),
+					CritiqueReason: critique.Reason,
+					ProviderID:     llmJudge.ID(),
+					LatencyMS:      llmLatency,
+				}
+				out.ArtifactSource = string(resolved.Source)
+				out.ArtifactSHA256 = hexBytes(resolved.ContentSHA256)
+				out.ArtifactPath = resolved.Path
+				out.ArtifactSize = int64(len(resolved.Bytes))
+				out.ArtifactTrunc = resolved.Truncated
+				out.VerdictJSON = formatDriftJudgeVerdictJSON(out, resolved)
+				return out, nil
+			}
+			out := &DriftJudgeOutput{
+				Verdict:        verdict,
+				Confidence:     confidence,
+				ProviderID:     llmJudge.ID(),
+				LatencyMS:      llmLatency,
+				ArtifactSource: string(resolved.Source),
+				ArtifactSHA256: hexBytes(resolved.ContentSHA256),
+				ArtifactPath:   resolved.Path,
+				ArtifactSize:   int64(len(resolved.Bytes)),
+				ArtifactTrunc:  resolved.Truncated,
+				Reasoning:      llmVerdict.Reasoning,
+			}
+			out.VerdictJSON = formatDriftJudgeVerdictJSON(out, resolved)
+			return out, nil
+		}
+	}
+
+	// 6. Resolve the NLI Provider. Returns (nil, nil) → default
 	// chain (DeBERTa-only, no cache, no fallback).
 	provider, err := o.EnsureNLIRouter(ctx)
 	if err != nil {
@@ -183,7 +332,7 @@ func (o *Orchestrator) DriftJudge(ctx context.Context, in DriftJudgeInput) (*Dri
 		}
 	}
 
-	// 6. Score (premise, hypothesis). The Router enforces size caps
+	// 7. Score (premise, hypothesis). The Router enforces size caps
 	// (MaxPremiseBytes / MaxHypothesisBytes). Oversized artifact
 	// body → ErrInputTooLarge → operator escalates.
 	scoreStart := time.Now()
@@ -193,16 +342,17 @@ func (o *Orchestrator) DriftJudge(ctx context.Context, in DriftJudgeInput) (*Dri
 		return o.handleScoreError(ctx, scoreErr, resolved, scoreLatency)
 	}
 
-	// 7. Map NLI label → canonical verdict.
+	// 8. Map NLI label → canonical verdict.
 	verdict := nliLabelToDriftVerdict(score.Label)
 	confidence := float32(score.Confidence)
 
-	// 8. v2.20.0 H6 invariant (spec 1276 T07): constitutional self-critique
-	// MUST run AFTER NLI validation (constitution_after_nli). If SelfCritique
-	// fails any of the 5 principles, the verdict is overridden to
-	// "needs_human" so the operator reviews the constitutional concern.
-	// SelfCritique is a pure function (no I/O), so it cannot fail at
-	// runtime — only the input determines Passed.
+	// 9. v2.20.0 H6 invariant (spec 1276 T07): constitutional self-critique
+	// MUST run AFTER LLMJudge or NLI validation (constitution_after_judge).
+	// If SelfCritique fails any of the 5 principles, the verdict is
+	// overridden to "needs_human" so the operator reviews the
+	// constitutional concern. SelfCritique is a pure function (no
+	// I/O), so it cannot fail at runtime — only the input determines
+	// Passed.
 	critique := constitution.SelfCritique(constitution.SelfCritiqueInput{
 		Verdict:        verdict,
 		NLILabel:       string(score.Label),
