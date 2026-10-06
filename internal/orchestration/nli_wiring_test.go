@@ -163,7 +163,8 @@ func TestNLIProviderForConfig_NoCache_RawProvider(t *testing.T) {
 
 // TestNLIProviderForConfig_UnknownProviderID_Rejects verifies that
 // unknown provider prefixes are rejected at construction. The operator
-// must use deberta* or minicheck* today.
+// must use deberta*, minicheck*, or chat-* (the latter added by
+// Phase 13 T-201 to close row 1370 / Phase H5 partial).
 func TestNLIProviderForConfig_UnknownProviderID_Rejects(t *testing.T) {
 	cfg := validDebConfig()
 	cfg.Primary.ProviderID = "gpt-jury-1"
@@ -174,6 +175,10 @@ func TestNLIProviderForConfig_UnknownProviderID_Rejects(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "unknown provider_id") {
 		t.Errorf("error: got %q, want substring 'unknown provider_id'", err)
+	}
+	// Phase 13 T-201: the error message lists the supported prefixes.
+	if !strings.Contains(err.Error(), "chat-*") {
+		t.Errorf("error: got %q, want substring 'chat-*' in supported list", err)
 	}
 }
 
@@ -233,7 +238,8 @@ func TestNLIProviderForConfig_NilHTTPClient_DefaultsToDefaultClient(t *testing.T
 }
 
 // TestBuildNLIPrimary_DispatchesByPrefix — sanity: each prefix
-// yields the corresponding Provider type.
+// yields the corresponding Provider type. Phase 13 T-201 added the
+// chat-* case; this test pins all three.
 func TestBuildNLIPrimary_DispatchesByPrefix(t *testing.T) {
 	hc := &http.Client{Transport: &countingTransport{}}
 	deb, err := buildNLIPrimary(project.NLIPrimary{
@@ -258,6 +264,104 @@ func TestBuildNLIPrimary_DispatchesByPrefix(t *testing.T) {
 	}
 	if _, ok := minicheck.(*nli.MiniCheckProvider); !ok {
 		t.Errorf("minicheck: got %T", minicheck)
+	}
+
+	// Phase 13 T-201: chat-* prefix → ChatProvider (closes row 1370).
+	chat, err := buildNLIPrimary(project.NLIPrimary{
+		ProviderID: "chat-minimax-cn",
+		Endpoint:   "http://x/chat",
+		TimeoutMS:  5000,
+	}, hc, 1024, 1024)
+	if err != nil {
+		t.Fatalf("chat: %v", err)
+	}
+	if _, ok := chat.(*nli.ChatProvider); !ok {
+		t.Errorf("chat: got %T, want *nli.ChatProvider", chat)
+	}
+	if got := chat.ID(); got != "chat-minimax-cn" {
+		t.Errorf("chat ID: got %q, want chat-minimax-cn (verbatim provider_id)", got)
+	}
+}
+
+// TestNLIProviderForConfig_ChatPrimary_BuildsProvider — end-to-end:
+// an enabled ChatProvider config produces a wrapped Provider whose
+// ID is the chat provider_id (verbatim). Caches pass through.
+func TestNLIProviderForConfig_ChatPrimary_BuildsProvider(t *testing.T) {
+	cfg := validDebConfig()
+	cfg.Primary.ProviderID = "chat-minimax-cn"
+	cfg.Primary.Endpoint = "http://localhost/chat"
+	cfg.Primary.ModelRev = "MiniMax-M3"
+	cfg.MaxCacheEntries = 0 // skip cache so we get the raw ChatProvider
+	hc := &http.Client{Transport: &countingTransport{}}
+	p, err := nliProviderForConfig(context.Background(), cfg, hc)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if p == nil {
+		t.Fatal("expected non-nil provider")
+	}
+	if _, ok := p.(*nli.ChatProvider); !ok {
+		t.Errorf("expected *nli.ChatProvider, got %T", p)
+	}
+	if got := p.ID(); got != "chat-minimax-cn" {
+		t.Errorf("ID: got %q, want chat-minimax-cn", got)
+	}
+}
+
+// TestNLIProviderForConfig_ChatPrimary_WithCache — chat provider
+// wrapped in CachedProvider when MaxCacheEntries > 0. Cache key
+// flows from the chat provider ID verbatim.
+func TestNLIProviderForConfig_ChatPrimary_WithCache(t *testing.T) {
+	cfg := validDebConfig()
+	cfg.Primary.ProviderID = "chat-minimax-cn"
+	cfg.Primary.Endpoint = "http://localhost/chat"
+	cfg.Primary.ModelRev = "MiniMax-M3"
+	cfg.MaxCacheEntries = 1000
+	hc := &http.Client{Transport: &countingTransport{}}
+	p, err := nliProviderForConfig(context.Background(), cfg, hc)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if p == nil {
+		t.Fatal("expected non-nil provider")
+	}
+	if _, ok := p.(*nli.CachedProvider); !ok {
+		t.Errorf("expected *nli.CachedProvider wrapping ChatProvider, got %T", p)
+	}
+	if got := p.ID(); got != "chat-minimax-cn" {
+		t.Errorf("ID: got %q, want chat-minimax-cn (cache passes through)", got)
+	}
+}
+
+// TestNLIProviderForConfig_ChatPrimary_WithFallbackRouter — chat-
+// primary + minicheck-fallback → Router. The Router's ID is the
+// primary's ID (provenance flows through).
+func TestNLIProviderForConfig_ChatPrimary_WithFallbackRouter(t *testing.T) {
+	cfg := validDebConfig()
+	cfg.Primary.ProviderID = "chat-deepseek"
+	cfg.Primary.Endpoint = "http://localhost/chat"
+	cfg.Primary.ModelRev = "deepseek-chat"
+	cfg.MaxCacheEntries = 0
+	cfg.FallbackEnabled = true
+	cfg.Fallback = project.NLIPrimary{
+		ProviderID: "minicheck-roberta-large",
+		Endpoint:   "http://localhost/minicheck",
+		AuthToken:  "fb-token",
+		TimeoutMS:  5000,
+	}
+	hc := &http.Client{Transport: &countingTransport{}}
+	p, err := nliProviderForConfig(context.Background(), cfg, hc)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if p == nil {
+		t.Fatal("expected non-nil provider")
+	}
+	if _, ok := p.(*nli.Router); !ok {
+		t.Errorf("expected *nli.Router, got %T", p)
+	}
+	if got := p.ID(); got != "chat-deepseek" {
+		t.Errorf("ID: got %q, want chat-deepseek (primary's ID flows through)", got)
 	}
 }
 

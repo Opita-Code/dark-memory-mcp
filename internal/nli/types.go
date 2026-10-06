@@ -38,6 +38,9 @@
 //   - deberta.go    : DeBERTa-v3-large-mnli HTTP client (HuggingFace Inference).
 //   - minicheck.go  : MiniCheck HTTP client (self-hosted; binary classifier,
 //                     mapped to 3-label via two thresholds).
+//   - chat.go       : ChatProvider — OpenAI-compatible chat completions API
+//                     (dispatch path for `chat-*` provider_ids; added by
+//                     Phase 13 T-201, 2026-10-06, closes row 1370).
 //   - router.go     : Primary + fallback selection per Policy.
 //   - *_test.go     : property-based + boundary + httptest.Server.
 package nli

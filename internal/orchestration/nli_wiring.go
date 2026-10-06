@@ -3,7 +3,19 @@
 // v2.20.0 T08 (spec 1276): wire nli.Provider from Project.NLIConfig
 // (added in T07). The drift_judge pipeline reads the project's NLIConfig,
 // constructs a Provider chain (Router → CachedProvider → DeBERTaProvider/
-// MiniCheckProvider), and routes the drift score through it.
+// MiniCheckProvider/ChatProvider), and routes the drift score through it.
+//
+// Phase 13 T-201 (alpha.24-pre-1, 2026-10-06): added the `chat-*`
+// dispatch case to close the Phase H5 / row 1370 gap. Operators with
+// OpenAI-compatible chat completions configs (e.g. "chat-minimax-cn"
+// against https://api.minimaxi.com/v1/chat/completions,
+// "chat-deepseek" against https://api.deepseek.com/v1/chat/completions)
+// previously hit `ErrInvalidConfig: unknown provider_id` and drift_judge
+// returned needs_human@0 even though the DB config was valid. The fix
+// dispatches `chat-*` to internal/nli/ChatProvider which uses the
+// OpenAI chat-completions API with a standard RAG-eval NLI prompt
+// (model replies with one canonical word: entailment / contradiction /
+// neutral; we map that to the 3-label space).
 //
 // Hard invariants (sealed):
 //
@@ -112,6 +124,11 @@ func nliProviderForConfig(ctx context.Context, nliCfg *project.NLIConfig, hc nli
 //
 //	"deberta*"        → DeBERTaProvider (HuggingFace Inference)
 //	"minicheck*"      → MiniCheckProvider (self-hosted HTTP)
+//	"chat-*"          → ChatProvider (OpenAI-compatible chat completions)
+//
+// Phase 13 T-201 (alpha.24-pre-1, 2026-10-06): added the "chat-*"
+// dispatch case for the operator's chat-provider configs (closes
+// row 1370 / Phase H5 partial).
 //
 // Anything else → ErrInvalidConfig. The operator can extend the
 // dispatch via a project.NLIConfig fixture when new providers land
@@ -129,8 +146,10 @@ func buildNLIPrimary(p project.NLIPrimary, hc nli.HFInferenceClient, maxPBytes, 
 		return nli.NewDeBERTaProvider(pc, hc, maxPBytes, maxHBytes)
 	case strings.HasPrefix(p.ProviderID, "minicheck"):
 		return nli.NewMiniCheckProvider(pc, hc, maxPBytes, maxHBytes)
+	case strings.HasPrefix(p.ProviderID, "chat-"):
+		return nli.NewChatProvider(pc, hc, maxPBytes, maxHBytes)
 	default:
-		return nil, fmt.Errorf("%w: unknown provider_id %q (only deberta* and minicheck* supported)",
+		return nil, fmt.Errorf("%w: unknown provider_id %q (supported: deberta*, minicheck*, chat-*)",
 			nli.ErrInvalidConfig, p.ProviderID)
 	}
 }
