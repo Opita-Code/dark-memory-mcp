@@ -1,0 +1,170 @@
+{
+  "$schema": "https://opitacode.com/schemas/judge-mapping-v0.2.json",
+  "version": "0.2.0",
+  "loop": 2,
+  "title": "vibe-loop-git v0.2 — Judge Mapping (Auto-Mirror + Tiered Calibration)",
+  "nli_strategy": "auto_mirror_llm_judge_with_model_selection",
+  "rationale": "Per Loop 1 OSINT (mem0/mastra/RouteLLM tier-1 sources) + operator pivot row 2486, drift_judge must reuse the harness's primary LLM as its own judge. NO new API keys, NO new endpoints, NO operator onboarding. Tier selection follows Anthropic's 'routing easy → cheap, hard → capable' pattern (Building Effective Agents, Dec 2024). Calibration rules derive from MT-Bench bias analysis.",
+  "model_per_provider": {
+    "anthropic": {
+      "ultra_cheap": "claude-haiku-4-5",
+      "cheap": "claude-sonnet-4-5",
+      "medium": "claude-sonnet-4",
+      "frontier": "claude-opus-4-5"
+    },
+    "openai": {
+      "ultra_cheap": "gpt-4o-mini",
+      "cheap": "gpt-4.1-mini",
+      "medium": "gpt-4.1",
+      "frontier": "gpt-5"
+    },
+    "deepseek": {
+      "ultra_cheap": "deepseek-v4-mini",
+      "cheap": "deepseek-v4-mini",
+      "medium": "deepseek-v4",
+      "frontier": "deepseek-v5-pro"
+    },
+    "minimax": {
+      "ultra_cheap": "MiniMax-M3",
+      "cheap": "MiniMax-M3",
+      "medium": "MiniMax-M3",
+      "frontier": "MiniMax-M4"
+    },
+    "google": {
+      "ultra_cheap": "gemini-2.5-flash",
+      "cheap": "gemini-2.5-pro",
+      "medium": "gemini-2.5-pro",
+      "frontier": "gemini-2.5-ultra"
+    }
+  },
+  "tier_selection_rules": {
+    "default": "cheap",
+    "by_vibe_case": {
+      "C1": "ultra_cheap",
+      "C2": "ultra_cheap",
+      "C3": "cheap",
+      "C4": "cheap",
+      "C5": "medium",
+      "C6": "medium",
+      "C7": "medium"
+    },
+    "by_artifact_size": {
+      "<=4096": "ultra_cheap",
+      "<=16384": "cheap",
+      ">16384": "medium"
+    },
+    "min_floor": "cheap"
+  },
+  "calibration": {
+    "position_swap": {
+      "enabled_when_model_size": ">=medium",
+      "agree_threshold": 0.8,
+      "rationale": "MT-Bench §3: position bias is strong in smaller judges; for >=medium we run both orderings and require agreement"
+    },
+    "reference_baseline": {
+      "escalate_when_conf_below": 0.7,
+      "rationale": "When primary judge returns low confidence, escalate one tier to a more capable model to re-judge with a known-good reference in the prompt"
+    },
+    "voting": {
+      "enabled_when_vibe_case_in": ["C7"],
+      "enabled_when_artifact_size_gt": 16384,
+      "sample_count": 3,
+      "majority_threshold": 0.6,
+      "rationale": "Multi-agent / large artifacts benefit from ensemble; conf = modal probability across N samples"
+    },
+    "length_bias_mitigation": {
+      "prompt_clause": "Disregard response length; judge by correctness, completeness, and consistency only.",
+      "rationale": "MT-Bench §3: verbosity bias is universal; explicit prompt clause significantly reduces it"
+    },
+    "thinking_block_stripping": {
+      "enabled_when_model_emits_think_blocks": true,
+      "rationale": "2026 reasoning models (MiniMax-M3, DeepSeek-R1, Claude extended thinking) emit <think>...</think> before canonical answer; T-406 implements this in nli/chat.go::parseCanonicalLabel"
+    }
+  },
+  "failure_mode_mitigations": {
+    "position_bias": "swap artifact ordering; verdict requires both orderings agree (for >=medium tier)",
+    "verbosity_bias": "length-disregard prompt clause applied to every NLI prompt",
+    "self_enhancement_bias": "DOCUMENTED LIMITATION — auto-mirror uses same family as artifact author; opt for cross_family_judge operator override to avoid (uses a different provider from author_family)",
+    "calibration_drift": "entropy-based escalation when conf < 0.6 → needs_human",
+    "sycophantic_judge": "system prompt includes 'You are an honest evaluator, not a yes-man; reject artifacts that fail the criterion'",
+    "reasoning_truncation": "max_tokens=256 + thinking-block stripping (T-406 fix); if model still truncates, escalate tier"
+  },
+  "operator_overrides": {
+    "force_tier": {
+      "where": "vibe_publish.spec.constitution.force_tier",
+      "values": ["ultra_cheap", "cheap", "medium", "frontier"],
+      "rationale": "operator may force a tier regardless of vibe_case/size rules"
+    },
+    "force_provider": {
+      "where": "vibe_publish.spec.constitution.force_provider",
+      "values": ["anthropic", "openai", "deepseek", "minimax", "google"],
+      "rationale": "operator may force cross-family judge to mitigate self-enhancement bias"
+    },
+    "cross_family_judge": {
+      "where": "vibe_publish.spec.constitution.cross_family_judge",
+      "values": ["auto", "always", "never"],
+      "default": "auto",
+      "rationale": "always = always use a different provider than the artifact author; never = always same provider; auto = let tier_selection_rules decide"
+    },
+    "voting_sample_count": {
+      "where": "vibe_publish.spec.constitution.voting_n",
+      "default": 3,
+      "rationale": "operator may increase N for higher-stakes drift_judge"
+    }
+  },
+  "evidence": [
+    {
+      "id": "MT-Bench",
+      "url": "https://arxiv.org/abs/2306.05685",
+      "claim": "GPT-4 80%+ agreement with human preferences; identified biases: position, verbosity, self-enhancement. Mitigation: swap positions + reference-based calibration. NeurIPS 2023 Datasets and Benchmarks Track.",
+      "tier": "1"
+    },
+    {
+      "id": "Mixture-of-Agents",
+      "url": "https://arxiv.org/abs/2406.04692",
+      "claim": "Layered ensemble (6 layers × 6 agents) achieves 65.1% on AlpacaEval 2.0 vs GPT-4 Omni 57.5%; aggregated ensemble > single model.",
+      "tier": "1"
+    },
+    {
+      "id": "Anthropic-Building-Effective-Agents",
+      "url": "https://www.anthropic.com/research/building-effective-agents",
+      "claim": "Tier-1 vendor pattern guide. Routing: 'Routing easy/common questions to smaller, cost-efficient models like Claude Haiku 4.5 and hard/unusual questions to more capable models like Claude Sonnet 4.5.' Parallelization: sectioning + voting. Evaluator-optimizer: generate → evaluate → refine loop.",
+      "tier": "1"
+    },
+    {
+      "id": "Tan-LLM-Annotation-Survey",
+      "url": "https://arxiv.org/abs/2402.13446",
+      "claim": "EMNLP 2024 survey confirms LLM-judge is the SOTA scalable evaluation method for data annotation/synthesis tasks.",
+      "tier": "1"
+    },
+    {
+      "id": "Anthropic-Claude-Opus-4-1",
+      "url": "https://www.anthropic.com/news/claude-opus-4-1",
+      "claim": "Hybrid reasoning model; extended thinking up to 64K tokens. Confirms T-406 insight that 2026 reasoning models emit <think>...</think> before canonical answer.",
+      "tier": "1"
+    },
+    {
+      "id": "DESIGN-PIVOT-2486",
+      "url": "internal://agent_memory/2486",
+      "claim": "Operator's correction: NLI = LLMJudge auto-mirror. NO new API keys, NO new endpoints. User segmentation via prefix. ZERO-CONFIG pre-configuration is mandatory per operator profile.",
+      "tier": "internal"
+    }
+  ],
+  "consumed_by": [
+    "Loop 3 (C7 Multi-Agent Sub-routing) — uses tier_selection_rules.by_vibe_case + voting",
+    "Loop 4 (Cold-Start Bootstrap) — uses model_per_provider.minimax.minimax-M3 as default",
+    "Loop 5 (Latency Axis) — uses tier cost/latency mapping",
+    "Loop 6 (Self-Evaluation) — uses evidence array + failure_mode_mitigations for self-check"
+  ],
+  "audit_schema_fields_consumable_by_loop_6": [
+    "nli_strategy",
+    "tier_used",
+    "voting_sample_count",
+    "position_swap_applied",
+    "cross_family_judge_applied",
+    "length_bias_mitigation_applied",
+    "conf_score",
+    "escalations",
+    "evidence_ids"
+  ]
+}
