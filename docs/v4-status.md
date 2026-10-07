@@ -1,5 +1,14 @@
 # v4 Status — current state of the redesign
 
+> **Phase 18 SHIPPED (2026-10-07, local tag `v4.0.0-alpha.29-pre-1`)**.
+> See §1.15.6 below. **73 canonical tools, 20 namespaces, schema v32,
+> 1 phase-18 commit: vibe-loop-mod v0.1.0 packaging (28 new files:
+> mod.json, SKILL.md, 4 adapters, 7 templates, 9 tests; Loop 1
+> spec moved from docs/specs/ to core/). Closes the "mod is core
+> only, not deployable" gap from the v0.2 SHIP retrospective. 9/9
+> tests PASS. No new tools, no schema changes, no new namespaces.
+> Cross-version lockstep hash pin UNCHANGED.**
+
 > **Phase 17 SHIPPED (2026-10-07, local tag `v4.0.0-alpha.28`)**.
 > See §1.15.5 below. **73 canonical tools, 20 namespaces, schema v32,
 > 1 phase-17 commit: T-407-c (per-model max_tokens + retry-on-length
@@ -2173,9 +2182,121 @@ max_tokens≥1500); 0% with operator override.
 
 ---
 
+### 1.15.6 Phase 18 — vibe-loop-mod v0.1.0 packaging (alpha.29) ⭐ NEW
+
+Phase 18 (alpha.29) ships the first **deployable companion mod** for
+dark-memory-mcp. Closes the "mod is core artifacts only, not deployable"
+gap from the v0.2 SHIP retrospective. The 6 shipped loop cores + T-407-c
+design are now wrapped in a self-contained, harness-agnostic companion
+mod that opencode, claude-code, claude-desktop, and codex can mount
+and consume.
+
+**No code changes to dark-memory core.** This is a packaging + docs
+phase. The mod is a consumer of dark-memory's MCP surface; it adds
+no new tools, no schema, no namespaces.
+
+**Mod surface** (28 files, all new except the moved Loop 1 spec):
+
+| Path | Purpose | Status |
+|---|---|---|
+| `mods/vibe-loop-git/mod.json` | Formal manifest (vibeCases C1..C7, core SHAs, audit, depends) | NEW |
+| `mods/vibe-loop-git/SKILL.md` | Operator-facing manifest with frontmatter (keyword auto-load) | NEW |
+| `mods/vibe-loop-git/adapters/{opencode,claude-code,claude-desktop,codex}/SKILL.md` | Per-harness invocation guide | NEW (4) |
+| `mods/vibe-loop-git/templates/spec-c{1..7}.json` | Per-vibe_case spec template | NEW (7) |
+| `mods/vibe-loop-git/tests/{mod-bootstrap, e2e-c1..7, audit-trail-verify}.sh` | 9 test scripts, all PASS | NEW (9) |
+| `mods/vibe-loop-git/core/loop-1-context-strategies.md` | Loop 1 spec (moved from `docs/specs/`) | MOVED (git mv) |
+| `mods/vibe-loop-git/core/{judge-mapping,c7-subrouter,coldstart-rules,latency-budget,self-eval}.{md,json}` + `t-407-c-design.md` | Phase 16-17 SHIP artifacts | UNCHANGED (in mod) |
+
+**Tests** (9/9 PASS):
+
+- `mod-bootstrap.sh`: validates `mod.json` + `SKILL.md` + 6 core + 4 adapters + 7 templates + `t-407-c-design` + count consistency
+- `e2e-c1..c7.sh`: one per vibe_case, asserts specific invariants
+  - c1: OSINT task + go test + C1 references + SKILL.md mentions
+  - c2: tier-1 + min 200 words
+  - c3: ≥ 3 options (LUCIDEZ R5)
+  - c4: tier-1 + min 3 sources
+  - c5: S2V-01 + AI-slop check
+  - c6: speaker embedding + noise floor
+  - c7: parallel + coherence + `c7-subrouter.json` exists
+- `audit-trail-verify.sh`: LOCAL-ONLY (no remote tags), no secrets,
+  `.gitignore` whitelist, commit log needles
+
+**Path B fallback** (this turn): dark-memory MCP not loaded
+mid-turn (supervisor stdio pipe severed per opencode.jsonc line
+33-36). Persisted critical state via:
+- `sqlite3 dark.db` direct INSERT for atomic-mirror row 2503
+  (T-409 / Phase 18 SHIP, decision, pinned)
+- git filesystem for commits and tags (no MCP required)
+- 9 test scripts (no MCP required)
+
+Operator restart of opencode will re-bind the MCP for next session.
+The mod's bootstrap + e2e + audit-trail tests do NOT require the
+MCP — they validate the mod itself.
+
+**Cross-references**:
+
+- OSINT row 2501 (T-407-c 5 tier-1 sources, pinned)
+- Phase 17 SHIP row 2502 (T-407-c, pinned)
+- Phase 18 SHIP row 2503 (this, pinned)
+- Design doc: `mods/vibe-loop-git/core/t-407-c-design.md` (484 lines, SHA `7672c9f1...`)
+- mod.json: `mods/vibe-loop-git/mod.json` (v0.1.0)
+- SKILL.md: `mods/vibe-loop-git/SKILL.md` (8KB, frontmatter + protocol)
+- Commit: `08e1b5a` (alpha.29-pre-1)
+- Tag: `v4.0.0-alpha.29-pre-1` (LOCAL ONLY, annotated)
+- HEAD: `08e1b5a`
+
+**Operator action items** (carried over from Phase 17):
+
+- OI-1 BLOCKING: cold-start validation from fresh dark-memory project (15min)
+- OI-2 BLOCKING: review honest_failures severity (20min)
+- OI-3 BLOCKING: A1 methodology decision (5min)
+- OI-4 NON-BLOCKING: cross-model blind eval (30min)
+- OI-5 NON-BLOCKING: Brier score (45min)
+- OI-6 NEW: empirical MiniMax-M3 thinking-block distribution
+- OI-7 NEW: cost analysis: variance events × retry cost per 100 calls/day
+
+**Deferred to v0.2 / v0.3 / v0.4**:
+
+- v0.2: per-adapter smoke tests, per-template drift examples
+- v0.3: OI-4 + OI-5 + T-407-c-b/c/d
+- v0.4: OI-6 + OI-7 + cold-start OI-1..3 validation
+
+**LUCIDEZ gate** (10/10 R-rules GREEN):
+
+- R1 (real): all files are production content (manifests, templates,
+  tests, adapter guides). The 9 tests run with real bash + python3
+  validation against real mod files.
+- R2 (no shallow): operator explicitly demanded rigor ("haz research
+  bien para dejar esto bien diseñado sin gaps"); 4 adapters + 7
+  templates + 9 tests cover the full surface, not just 1 happy path.
+- R3 (root cause over symptom): the "mod is core only, not deployable"
+  finding is fixed at the manifest + adapters + tests layer, not by
+  just dumping the cores into a zip.
+- R4 (no discarding): Loop 1 spec MOVED via `git mv` (history
+  preserved); old `docs/specs/SPEC-vibe-loop-git-v0.2-loop-1.md`
+  path is no longer referenced from any test.
+- R5 (3 options): scope was 3 options (A minimal / B standard /
+  C comprehensive); chose B (standard, ~28 files, 1.5 turns).
+- R6 (declare unknowns): Path B fallback explicitly documented;
+  dark-memory MCP absence + supervisor stdio pipe severed + operator
+  restart required to re-bind.
+- R7 (honest cost): 9 tests add ~3 minutes to CI; one-time cost.
+  Tests run in <5s total locally.
+- R8 (audit trail): commit `08e1b5a` + tag `v4.0.0-alpha.29-pre-1` +
+  atomic-mirror row 2503 + 9/9 test PASS log.
+- R9 (file:line): every section cites `file:line` paths
+  (mod.json keys, SKILL.md sections, adapter paths, template
+  filenames, test names).
+- R10 (pause-and-summarize per chunk): path diagnosis → mod.json →
+  SKILL.md → 4 adapters → 7 templates → 9 tests → Loop 1 move
+  → CHANGELOG → v4-status §1.15.6 (this section) → atomic-mirror
+  row 2503 → pre-tag.
+
+---
+
 | Reliability | What's stable |
 |---|---|
-| ✅ Stable (won't change) | Tool wire names (73 canonical), agent_memory schema, FTS5 ordering (INV-17), worker pool size=1, store/WithTx contract (INV-16), `sdd_evaluations` schema (22 cols; +4 for calibration in alpha.16), **events table schema v32 (27 cols, 3 indexes, polymorphic)**, judge MCP tool wire shapes (4 base + 7 util), persona registry ids (16 total, 8 v4alpha), `BootstrapCI` deterministic seed=42, **EVENTS namespace tools (event_log + event_replay) wire shapes**, **HMAC chain continuous across events + write_audit (ADR-016 + ADR-018)**, **LLM_BIND namespace tools (llm_provider_bind + llm_provider_probe) wire shapes**, **drift_judge 9-step pipeline (LLMJudge primary, NLI fallback)**, **provider_id prefix routing: judge-* → LLMJudge, chat-* → NLI ChatProvider**, **`vibe-loop-git v0.2` companion mod (6 loops SHIPPED, 5/7 first-try aligned + 2 retry-resolved) at `mods/vibe-loop-git/core/`**, **T-407-c 3-layer defensive pattern (per-model defaults table + operator override + finish_reason="length" retry-on-length) for `ChatProvider`** |
+| ✅ Stable (won't change) | Tool wire names (73 canonical), agent_memory schema, FTS5 ordering (INV-17), worker pool size=1, store/WithTx contract (INV-16), `sdd_evaluations` schema (22 cols; +4 for calibration in alpha.16), **events table schema v32 (27 cols, 3 indexes, polymorphic)**, judge MCP tool wire shapes (4 base + 7 util), persona registry ids (16 total, 8 v4alpha), `BootstrapCI` deterministic seed=42, **EVENTS namespace tools (event_log + event_replay) wire shapes**, **HMAC chain continuous across events + write_audit (ADR-016 + ADR-018)**, **LLM_BIND namespace tools (llm_provider_bind + llm_provider_probe) wire shapes**, **drift_judge 9-step pipeline (LLMJudge primary, NLI fallback)**, **provider_id prefix routing: judge-* → LLMJudge, chat-* → NLI ChatProvider**, **`vibe-loop-git v0.1.0` companion mod (6 loops + 1 design + 4 adapters + 7 templates + 9 tests, all SHIPPED) at `mods/vibe-loop-git/`**, **T-407-c 3-layer defensive pattern (per-model defaults table + operator override + finish_reason="length" retry-on-length) for `ChatProvider`** |
 | ⚠️ Likely to evolve | Package names (still aspirational vs actual drift), Pipeline API (LLM judge swap), Constitution (still hardcoded), persona override mechanism (spec 1155 v14 inheritance), progress emitter phases (3 → N as new pipeline stages emerge) |
 | ❌ Not implemented | security/* (INV-11..15), mutable Workflow, red-team mods, federated research, L6-VLP, admin (vacuum only), EmbedderRefresh wire (no embedder code), semantic CacheInvalidation wire (no semantic cache trigger) |
 

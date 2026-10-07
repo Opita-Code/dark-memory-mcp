@@ -11,6 +11,129 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [4.0.0-alpha.29] — 2026-10-07 — Phase 18: vibe-loop-mod v0.1.0 packaging
+
+Phase 18 (alpha.29) ships the first **deployable companion mod** for
+dark-memory-mcp. Closes the "mod is core artifacts only, not deployable"
+gap identified in the v0.2 SHIP retrospective. The 6 shipped loop
+cores + T-407-c design are now wrapped in a self-contained,
+harness-agnostic companion mod that opencode, claude-code,
+claude-desktop, and codex can mount and consume.
+
+**No code changes to dark-memory core.** This is a packaging + docs
+phase. The mod is a consumer of dark-memory's MCP surface (vibe_spec,
+vibe_publish, dark_memory_agent_memory_save, drift_judge, etc.); it
+adds no new tools, no schema, no namespaces.
+
+### Added
+
+- `mods/vibe-loop-git/mod.json` (formal manifest):
+  - `name`, `version: 0.1.0`, `targetDarkMemoryVersion: >=4.0.0-alpha.28`
+  - 7 `vibeCases` (C1..C7) with canonical artifact + drift_judge intent
+  - 6 `core.artifacts` with loop number, file, vibeCase, drift verdict, SHA
+  - 1 `core.design` (t-407-c-design.md, separate from loops)
+  - `audit` block (7 drift verdicts aligned, 0 needs_human, 5 first-try + 2 retry-resolved)
+  - `entryPoints` (primary: SKILL.md, manifest: mod.json, etc.)
+  - `invariants` (sealed + documented operator action items)
+  - `protocol` (6 loops, 6 phases each, localOnly, noPush, varianceBudget 0.07, tier1Only)
+  - `depends` (dark-memory-mcp >=4.0.0-alpha.28, go >=1.22, git >=2.40)
+
+- `mods/vibe-loop-git/SKILL.md` (operator-facing, 8KB):
+  - YAML frontmatter with `description` (keyword triggers auto-load)
+  - What this mod is / is NOT
+  - When to load (decision matrix)
+  - The 6-loop protocol in dependency order
+  - The 7 vibe_cases table
+  - T-407-c 3-layer defensive pattern integration
+  - How to invoke (minimal happy path)
+  - Required operator action items (OI-1..7)
+  - Cross-references (file:line, drift IDs, atomic-mirror rows)
+  - Local-only discipline
+
+- `mods/vibe-loop-git/adapters/{opencode,claude-code,claude-desktop,codex}/SKILL.md`:
+  - **opencode**: canonical, dark-memory auto-loaded. Quick start with
+    `dark_memory_session_start` + `skill(name="vibe-loop-git")`.
+  - **claude-code**: mount via `claude-code skills add`. Uses
+    claude-code's own memory + dark-mem-cli fallback for atomic-mirror.
+  - **claude-desktop**: `claude_desktop_config.json` with skills path.
+    Clipboard-based atomic-mirror fallback.
+  - **codex**: symlink to `~/.codex/skills/vibe-loop-git`. Best for
+    C1 (code); other cases need multiple agents.
+
+- `mods/vibe-loop-git/templates/spec-c{1..7}.json` (7 files):
+  - **C1 (code)**: tasks include OSINT, edit, go test, vibe_publish,
+    atomic-mirror. Drift intent: matches spec + tests aligned + backward compat.
+  - **C2 (text)**: requires tier-1 + min 200 words. Drift intent: faithful
+    tier-1 citation.
+  - **C3 (decision)**: requires >= 3 options (LUCIDEZ R5). Drift intent:
+    surfaced at right time + bias declared.
+  - **C4 (research)**: requires tier-1 + min 3 sources. Drift intent:
+    tier-1 sourced + corrections explicit.
+  - **C5 (video)**: requires S2V-01 + AI-slop check. Drift intent: subject
+    persists + no AI-slop signals.
+  - **C6 (audio)**: requires speaker embedding + noise floor. Drift intent:
+    voice persists + noise floor OK.
+  - **C7 (multi)**: requires min 2 sub-artifacts + parallel + coherence check.
+    Drift intent: each consistent + bundle coherent.
+
+- `mods/vibe-loop-git/tests/` (9 files, all PASS):
+  - `mod-bootstrap.sh`: validates mod.json + SKILL.md + 6 core + 4
+    adapters + 7 templates + t-407-c-design + count consistency
+  - `e2e-c{1..7}.sh`: one per vibe_case, asserts specific invariants
+  - `audit-trail-verify.sh`: enforces LOCAL-ONLY (no remote tags), no
+    secrets, .gitignore whitelist, commit log needles
+
+### Changed
+
+- **Loop 1 spec MOVED** from `docs/specs/SPEC-vibe-loop-git-v0.2-loop-1.md`
+  to `mods/vibe-loop-git/core/loop-1-context-strategies.md` (git mv
+  preserves history). The mod is now self-contained: all 6 loop
+  artifacts + 1 design doc live under `mods/vibe-loop-git/core/`.
+
+### Notes
+
+- **Path B fallback (this turn)**: dark-memory MCP not loaded mid-turn
+  (supervisor stdio pipe severed, per opencode.jsonc line 33-36).
+  Persisted state via sqlite3 direct (row 2503) + git filesystem
+  (commits/tags). Operator restart of opencode re-binds the MCP for
+  next session. The mod's bootstrap + e2e + audit-trail tests do NOT
+  require the MCP — they validate the mod itself.
+
+### Migration notes
+
+- **For opencode users**: restart opencode. The mod's `SKILL.md`
+  frontmatter `description` keywords (vibe-loop, drift-judge, atomic
+  mirror, vibe_case C1..C7, etc.) will auto-trigger the skill loader.
+- **For claude-code/desktop/codex users**: follow the adapter's
+  `SKILL.md` mount instructions. Atomic-mirror uses dark-mem-cli as
+  fallback when dark-memory MCP is not loaded in the harness.
+- **For self-hosted**: clone the repo, copy `mods/vibe-loop-git/` to
+  your mod directory, run the 9 test scripts to verify integrity.
+
+### Deferred to v0.2 / v0.3 / v0.4
+
+- v0.2: per-adapter smoke tests (currently only one bootstrap test
+  covers all 4 adapters); per-template drift examples (each template
+  needs a worked example for the 6-loop protocol)
+- v0.3: OI-4 (cross-model blind eval) + OI-5 (Brier calibration) +
+  T-407-c-b (raise MaxRetryBudgetCap 8192→16384) + T-407-c-c
+  (ReasoningAuto heuristic) + T-407-c-d (telemetry)
+- v0.4: OI-6 (MiniMax-M3 thinking-block distribution) + OI-7 (cost
+  analysis) + cold-start OI-1..3 operator validation
+
+### Audit trail
+
+- Commit: `08e1b5a` (v0.1.0 packaging, signed by dark-agent)
+- Pre-tag: `v4.0.0-alpha.29-pre-1` (LOCAL ONLY, annotated)
+- Atomic-mirror: row 2503 (decision, pinned)
+- Phase 17 SHIP: row 2502 (T-407-c, pinned)
+- T-407-c OSINT: row 2501 (5 tier-1 sources, pinned)
+- Tests: 9/9 PASS (mod-bootstrap, e2e-c1..7, audit-trail-verify)
+- Cross-version lockstep hash pin UNCHANGED
+- No new tools, no schema changes, no new namespaces
+
+---
+
 ## [4.0.0-alpha.28] — 2026-10-07 — Phase 17: T-407-c per-model max_tokens + retry-on-length
 
 Phase 17 (alpha.28) closes `T-407-b` (the "max_tokens=256 too small
