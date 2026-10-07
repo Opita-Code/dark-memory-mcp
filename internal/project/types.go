@@ -168,6 +168,18 @@ type NLIPrimary struct {
 	AuthToken  string `json:"auth_token,omitempty"`
 	TimeoutMS  int64  `json:"timeout_ms,omitempty"`
 	ModelRev   string `json:"model_rev,omitempty"`
+	// MaxTokensOverride is the operator's per-request completion budget
+	// override (in tokens). 0 → use the reasoning-model defaults table
+	// (see internal/nli/chat.go::resolveMaxTokens).
+	//
+	// T-407-c (v4.0.0-alpha.28): 2026 reasoning models (Anthropic
+	// extended thinking, DeepSeek-R1, OpenAI o-series, MiniMax-M3)
+	// burn their entire completion budget on internal thinking and
+	// emit finish_reason="length" + empty content. The default 256
+	// caused 28% variance in drift_judge; the operator can override
+	// here without code changes. See chat.go §3 for the defaults
+	// table and retry-on-length logic.
+	MaxTokensOverride int `json:"max_tokens_override,omitempty"`
 }
 
 // Validate enforces the hard invariants. Returns nil if NLIConfig

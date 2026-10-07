@@ -78,8 +78,8 @@ func TestChatProvider_Score_HappyPath(t *testing.T) {
 				if !strings.Contains(string(body), `"temperature":0`) {
 					t.Errorf("body missing temperature:0: %s", body)
 				}
-				if !strings.Contains(string(body), `"max_tokens":8`) {
-					t.Errorf("body missing max_tokens:8: %s", body)
+				if !strings.Contains(string(body), `"max_tokens":1024`) {
+					t.Errorf("body missing max_tokens:1024: %s", body)
 				}
 				w.Header().Set("Content-Type", "application/json")
 				fmt.Fprintf(w, `{"choices":[{"message":{"role":"assistant","content":%q}}]}`, tc.reply)
@@ -385,15 +385,18 @@ func TestChatProvider_Score_Timeout(t *testing.T) {
 // the wire shape doesn't drift across Go encoding/json version bumps
 // (we manually marshal for stable field order; this is the test that
 // catches accidental struct-field reordering).
+//
+// T-407-c (v4.0.0-alpha.28): max_tokens is now a parameter, not a
+// constant. This test passes 1024 explicitly to lock the wire shape.
 func TestChatProvider_BuildChatCompletionPayload_StableFieldOrder(t *testing.T) {
-	payload, err := buildChatCompletionPayload("test-model", "the sky is blue", "the sky is blue")
+	payload, err := buildChatCompletionPayload("test-model", 1024, "the sky is blue", "the sky is blue")
 	if err != nil {
 		t.Fatalf("buildChatCompletionPayload: %v", err)
 	}
 	got := string(payload)
 	// Note: encoding/json escapes the system prompt's embedded quotes
 	// as \" and newlines as \n. We mirror that in the expected literal.
-	want := `{"model":"test-model","messages":[{"role":"system","content":"You are a precise Natural Language Inference (NLI) classifier. Given a premise and a hypothesis, you reply with EXACTLY ONE of these three words, with no surrounding punctuation, no quotes, no explanation: \"entailment\" (the premise supports the hypothesis), \"contradiction\" (the premise refutes the hypothesis), or \"neutral\" (the premise neither supports nor refutes the hypothesis). Reply with only the word. No other output is valid."},{"role":"user","content":"Premise:\nthe sky is blue\n\nHypothesis:\nthe sky is blue\n\nReply with one word."}],"temperature":0,"max_tokens":8}`
+	want := `{"model":"test-model","messages":[{"role":"system","content":"You are a precise Natural Language Inference (NLI) classifier. Given a premise and a hypothesis, you reply with EXACTLY ONE of these three words, with no surrounding punctuation, no quotes, no explanation: \"entailment\" (the premise supports the hypothesis), \"contradiction\" (the premise refutes the hypothesis), or \"neutral\" (the premise neither supports nor refutes the hypothesis). Reply with only the word. No other output is valid."},{"role":"user","content":"Premise:\nthe sky is blue\n\nHypothesis:\nthe sky is blue\n\nReply with one word."}],"temperature":0,"max_tokens":1024}`
 	if got != want {
 		t.Errorf("payload mismatch:\ngot:  %s\nwant: %s", got, want)
 	}
@@ -453,5 +456,283 @@ func TestChatProvider_ParseCanonicalLabel(t *testing.T) {
 				t.Errorf("raw %q: got confidence %v, want 1.0", tc.raw, conf)
 			}
 		})
+	}
+}
+
+// ============================================================================
+// T-407-c (v4.0.0-alpha.28): per-model max_tokens resolution + retry-on-length
+// ============================================================================
+
+// TestResolveMaxTokens_OverrideWins: when MaxTokensOverride > 0 it
+// takes precedence over the table. The operator escape hatch.
+func TestResolveMaxTokens_OverrideWins(t *testing.T) {
+	got := resolveMaxTokens("MiniMax-M3", 4096)
+	want := 4096
+	if got != want {
+		t.Errorf("override=4096 with MiniMax-M3: got %d, want %d", got, want)
+	}
+}
+
+// TestResolveMaxTokens_TableHit: when no override, look up model in table.
+func TestResolveMaxTokens_TableHit(t *testing.T) {
+	cases := []struct {
+		modelRev  string
+		wantTokens int
+	}{
+		{"MiniMax-M3", 1024},
+		{"claude-sonnet-4-20260101", 2048}, // prefix match
+		{"claude-3-7-sonnet-20250219", 1024},
+		{"deepseek-r1-distill-llama-70b", 4096},
+		{"o1-preview-2024-09-12", 8192},
+		{"gpt-4o-2024-08-06", 256},
+		{"gpt-4o-mini", 256},
+		{"gpt-5-turbo", 1024},
+	}
+	for _, tc := range cases {
+		t.Run(tc.modelRev, func(t *testing.T) {
+			got := resolveMaxTokens(tc.modelRev, 0)
+			if got != tc.wantTokens {
+				t.Errorf("resolveMaxTokens(%q, 0) = %d, want %d", tc.modelRev, got, tc.wantTokens)
+			}
+		})
+	}
+}
+
+// TestResolveMaxTokens_LongestPrefixWins: claude-sonnet-4-20260101
+// should match the longer "claude-sonnet-4" before any shorter prefix
+// (regression: greedy-first bug would mask late entries).
+func TestResolveMaxTokens_LongestPrefixWins(t *testing.T) {
+	// MiniMax-M2-prefixed should match MiniMax-M2 (1024), not MiniMax-M3 (also 1024 here).
+	got := resolveMaxTokens("MiniMax-M2-preview", 0)
+	want := 1024
+	if got != want {
+		t.Errorf("MiniMax-M2-preview: got %d, want %d (longest-prefix match)", got, want)
+	}
+}
+
+// TestResolveMaxTokens_UnknownModel: unknown model falls through to
+// DefaultFallbackMaxTokens (1024) via the empty-pattern catch-all row.
+func TestResolveMaxTokens_UnknownModel(t *testing.T) {
+	got := resolveMaxTokens("some-future-reasoning-model-v9000", 0)
+	want := DefaultFallbackMaxTokens
+	if got != want {
+		t.Errorf("unknown model: got %d, want %d (DefaultFallback)", got, want)
+	}
+}
+
+// TestResolveMaxTokens_ZeroOverride: override=0 → use table. (NOT
+// 0 → fallback. Override=0 is "not set".)
+func TestResolveMaxTokens_ZeroOverride(t *testing.T) {
+	got := resolveMaxTokens("MiniMax-M3", 0)
+	want := 1024
+	if got != want {
+		t.Errorf("override=0 with MiniMax-M3: got %d, want %d (table hit, NOT override)", got, want)
+	}
+}
+
+// TestBuildChatCompletionPayload_AllKnownModels is the matrix test for
+// T-407-c: confirm every entry in reasoningModelMaxTokens produces a
+// payload with the expected max_tokens value. Backstops against table
+// edits that forget to update the resolver.
+func TestBuildChatCompletionPayload_AllKnownModels(t *testing.T) {
+	type modelCase struct {
+		modelRev   string
+		wantTokens int
+	}
+	cases := []modelCase{
+		{"claude-opus-4-5", 2048},
+		{"claude-opus-4-6-preview", 2048},
+		{"claude-sonnet-4-20260101", 2048},
+		{"claude-haiku-4-5", 1024},
+		{"claude-3-7-sonnet", 1024},
+		{"deepseek-r1", 4096},
+		{"deepseek-reasoner", 4096},
+		{"deepseek-v3-20250101", 1024},
+		{"deepseek-flash", 512},
+		{"o3-mini", 4096},
+		{"o4-mini", 4096},
+		{"o3", 8192},
+		{"o1-preview", 8192},
+		{"gpt-4o", 256},
+		{"gpt-4o-mini", 256},
+		{"gpt-5", 1024},
+		{"MiniMax-M3", 1024},
+		{"MiniMax-M2", 1024},
+		{"unknown-model-9000", DefaultFallbackMaxTokens},
+	}
+	for _, tc := range cases {
+		t.Run(tc.modelRev, func(t *testing.T) {
+			payload, err := buildChatCompletionPayload(tc.modelRev, resolveMaxTokens(tc.modelRev, 0), "p", "h")
+			if err != nil {
+				t.Fatalf("buildChatCompletionPayload: %v", err)
+			}
+			want := fmt.Sprintf(`"max_tokens":%d`, tc.wantTokens)
+			if !strings.Contains(string(payload), want) {
+				t.Errorf("payload missing %s: %s", want, payload)
+			}
+		})
+	}
+}
+
+// TestParseChatCompletionResponse_FinishReasonLength_Empty: when the
+// model hits finish_reason="length" with empty content, parse returns
+// ErrTruncatedResponse (T-407-c). This is the trigger for Score's retry.
+func TestParseChatCompletionResponse_FinishReasonLength_Empty(t *testing.T) {
+	body := []byte(`{"choices":[{"finish_reason":"length","message":{"role":"assistant","content":""}}]}`)
+	_, _, err := parseChatCompletionResponse(body)
+	if !errors.Is(err, ErrTruncatedResponse) {
+		t.Errorf("got err=%v, want ErrTruncatedResponse", err)
+	}
+}
+
+// TestParseChatCompletionResponse_FinishReasonLength_OnlyThink: when
+// the model hit length with only a <think> block (no visible label),
+// also ErrTruncatedResponse (the label didn't make it through).
+func TestParseChatCompletionResponse_FinishReasonLength_OnlyThink(t *testing.T) {
+	body := []byte(`{"choices":[{"finish_reason":"length","message":{"role":"assistant","content":"<think>\nlots of reasoning that consumed the budget\n</think>"}}]}`)
+	_, _, err := parseChatCompletionResponse(body)
+	if !errors.Is(err, ErrTruncatedResponse) {
+		t.Errorf("got err=%v, want ErrTruncatedResponse (think-only truncated)", err)
+	}
+}
+
+// TestParseChatCompletionResponse_FinishReasonStop: normal happy path
+// with finish_reason="stop" returns the label (regression: T-406's
+// <think> strip still works).
+func TestParseChatCompletionResponse_FinishReasonStop(t *testing.T) {
+	body := []byte(`{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"<think>reasoning</think>\n\nentailment"}}]}`)
+	label, conf, err := parseChatCompletionResponse(body)
+	if err != nil {
+		t.Fatalf("parseChatCompletionResponse: %v", err)
+	}
+	if label != LabelEntailment {
+		t.Errorf("label: got %s, want entailment", label)
+	}
+	if conf != 1.0 {
+		t.Errorf("confidence: got %v, want 1.0", conf)
+	}
+}
+
+// TestParseChatCompletionResponse_FinishReasonLength_WithLabel: when
+// the model hit length BUT already emitted the label, return the label
+// (truncation AFTER the label is harmless — no retry needed).
+func TestParseChatCompletionResponse_FinishReasonLength_WithLabel(t *testing.T) {
+	body := []byte(`{"choices":[{"finish_reason":"length","message":{"role":"assistant","content":"entailment"}}]}`)
+	label, _, err := parseChatCompletionResponse(body)
+	if err != nil {
+		t.Fatalf("parseChatCompletionResponse: %v", err)
+	}
+	if label != LabelEntailment {
+		t.Errorf("label after length: got %s, want entailment", label)
+	}
+}
+
+// TestChatProvider_Score_RetryOnTruncation: end-to-end retry. The mock
+// returns ErrTruncatedResponse on first call, success on second. The
+// second call MUST use a 4× budget (verifiable via request body).
+func TestChatProvider_Score_RetryOnTruncation(t *testing.T) {
+	var (
+		firstCallTokens   int
+		secondCallTokens  int
+		firstCallSeen     bool
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		tokens := 0
+		if strings.Contains(string(body), `"max_tokens":256`) {
+			tokens = 256
+		} else if strings.Contains(string(body), `"max_tokens":1024`) {
+			tokens = 1024
+		}
+		if !firstCallSeen {
+			firstCallSeen = true
+			firstCallTokens = tokens
+			// First call: respond truncated (reasoning hit length).
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprintf(w, `{"choices":[{"finish_reason":"length","message":{"role":"assistant","content":""}}]}`)
+			return
+		}
+		secondCallTokens = tokens
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"entailment"}}]}`)
+	}))
+	defer srv.Close()
+
+	// Use a GPT-4o model (default 256) so the 4× retry is observable.
+	p, err := NewChatProvider(
+		ProviderConfig{ProviderID: "chat-test", Endpoint: srv.URL, TimeoutMS: 5000, ModelRev: "gpt-4o"},
+		stubClient(srv), 1024, 1024)
+	if err != nil {
+		t.Fatalf("NewChatProvider: %v", err)
+	}
+	score, err := p.Score(context.Background(), "p", "h")
+	if err != nil {
+		t.Fatalf("Score: %v", err)
+	}
+	if score.Label != LabelEntailment {
+		t.Errorf("label: got %s, want entailment", score.Label)
+	}
+	if firstCallTokens != 256 {
+		t.Errorf("first call max_tokens: %d, want 256 (GPT-4o default)", firstCallTokens)
+	}
+	if secondCallTokens != 1024 {
+		t.Errorf("second call max_tokens: %d, want 1024 (4× retry)", secondCallTokens)
+	}
+}
+
+// TestChatProvider_Score_BothAttemptsTruncated: when both attempts hit
+// ErrTruncatedResponse, Score returns ErrProviderBadResponse with a
+// diagnostic message. The retry budget cap (MaxRetryBudgetCap) is
+// reachable but we don't need to hit it for this test.
+func TestChatProvider_Score_BothAttemptsTruncated(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"choices":[{"finish_reason":"length","message":{"role":"assistant","content":""}}]}`)
+	}))
+	defer srv.Close()
+
+	p, err := NewChatProvider(
+		ProviderConfig{ProviderID: "chat-test", Endpoint: srv.URL, TimeoutMS: 5000, ModelRev: "MiniMax-M3"},
+		stubClient(srv), 1024, 1024)
+	if err != nil {
+		t.Fatalf("NewChatProvider: %v", err)
+	}
+	_, err = p.Score(context.Background(), "p", "h")
+	if err == nil {
+		t.Fatal("expected error after 2 truncated attempts, got nil")
+	}
+	if !errors.Is(err, ErrProviderBadResponse) {
+		t.Errorf("got err=%v, want ErrProviderBadResponse (wrapped)", err)
+	}
+	// Diagnostic message should mention retries exhausted.
+	if !strings.Contains(err.Error(), "retries exhausted") {
+		t.Errorf("error message missing 'retries exhausted': %v", err)
+	}
+}
+
+// TestChatProvider_LegacyProviderConfig_NoMaxTokensOverride: confirms
+// ProviderConfig without MaxTokensOverride still works (backward compat).
+// The field defaults to 0 → resolveMaxTokens uses the table.
+func TestChatProvider_LegacyProviderConfig_NoMaxTokensOverride(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		// MiniMax-M3 default = 1024
+		if !strings.Contains(string(body), `"max_tokens":1024`) {
+			t.Errorf("body missing max_tokens:1024: %s", body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"entailment"}}]}`)
+	}))
+	defer srv.Close()
+
+	p, err := NewChatProvider(
+		ProviderConfig{ProviderID: "chat-test", Endpoint: srv.URL, TimeoutMS: 5000, ModelRev: "MiniMax-M3"},
+		stubClient(srv), 1024, 1024)
+	if err != nil {
+		t.Fatalf("NewChatProvider: %v", err)
+	}
+	_, err = p.Score(context.Background(), "p", "h")
+	if err != nil {
+		t.Fatalf("Score: %v", err)
 	}
 }

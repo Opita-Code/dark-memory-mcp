@@ -159,12 +159,18 @@ func buildNLIPrimary(p project.NLIPrimary, hc nli.HFInferenceClient, maxPBytes, 
 // the type defs. Defined as a free function (not a method) because
 // project.NLIPrimary is a non-local type and Go forbids methods on
 // non-local types defined in other packages.
+//
+// T-407-c (v4.0.0-alpha.28): passes MaxTokensOverride so operators
+// can escape the per-model defaults table for chat providers whose
+// model_rev is unknown to resolveMaxTokens or whose workload needs
+// a different budget than the table default.
 func nliPrimaryToProviderConfig(p project.NLIPrimary) nli.ProviderConfig {
 	return nli.ProviderConfig{
-		ProviderID: p.ProviderID,
-		Endpoint:   p.Endpoint,
-		AuthToken:  p.AuthToken,
-		TimeoutMS:  p.TimeoutMS,
-		ModelRev:   p.ModelRev,
+		ProviderID:        p.ProviderID,
+		Endpoint:          p.Endpoint,
+		AuthToken:         p.AuthToken,
+		TimeoutMS:         p.TimeoutMS,
+		ModelRev:          p.ModelRev,
+		MaxTokensOverride: p.MaxTokensOverride,
 	}
 }

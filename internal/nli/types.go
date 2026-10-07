@@ -146,6 +146,17 @@ type ProviderConfig struct {
 	// ModelRev is the model revision (commit sha or version). Empty
 	// → provider leaves Score.ModelRev empty.
 	ModelRev string
+	// MaxTokensOverride is the operator's per-request completion budget
+	// override (in tokens). 0 → use the reasoning-model defaults table
+	// resolved by ModelRev via resolveMaxTokens() in chat.go.
+	//
+	// T-407-c (v4.0.0-alpha.28): 2026 reasoning models consume their
+	// entire completion budget on internal thinking (TokenMix Q1 2026
+	// wallet logs: 40% empty returns on DeepSeek-R1 + max_tokens=200).
+	// Override exists as an escape hatch for operators whose model is
+	// not in the defaults table or whose workload needs a tighter/
+	// looser budget than the table default.
+	MaxTokensOverride int
 }
 
 // DefaultTunables (A14 anti-pattern guard: concrete numbers, no zeros).
