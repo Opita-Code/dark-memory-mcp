@@ -1,0 +1,47 @@
+{
+  "$schema": "https://dark-agents.dev/schemas/vibe-spec/v0.1.json",
+  "vibe_case": "C4",
+  "label": "research",
+  "title": "<loop-N>: research on <topic>",
+  "spec": {
+    "intent": "What question this research answers",
+    "files_expected": [
+      "**/*-osint*.md",
+      "OR atomic-mirror row with kind=finding"
+    ],
+    "tests_expected": [],
+    "drift_judge_intent": "Are all claims tier-1 sourced? Are corrections to common misconceptions explicit?",
+    "tier1_sources_required": true,
+    "tier1_min_count": 3,
+    "tier1_sources": [],
+    "open_questions": []
+  },
+  "tasks": [
+    {
+      "id": "L<N>.1",
+      "description": "OSINT: parallel web_search + academic_search + web_fetch for <topic>",
+      "duration_min": 30
+    },
+    {
+      "id": "L<N>.2",
+      "description": "Verify each candidate source is tier-1 (vendor > NVD > arXiv > news)",
+      "duration_min": 15
+    },
+    {
+      "id": "L<N>.3",
+      "description": "Document corrections to common misconceptions explicitly",
+      "duration_min": 15
+    },
+    {
+      "id": "L<N>.4",
+      "description": "dark_memory_agent_memory_save row with kind=finding, content includes all tier-1 sources with URLs + corrections",
+      "duration_min": 5
+    }
+  ],
+  "exit_criteria": [
+    ">= tier1_min_count tier-1 sources cited with URL",
+    "All claims sourced (no unsourced claims)",
+    "Corrections to common misconceptions explicit",
+    "atomic-mirror row saved with kind=finding, pinned"
+  ]
+}

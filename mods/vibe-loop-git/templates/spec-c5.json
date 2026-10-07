@@ -1,0 +1,50 @@
+{
+  "$schema": "https://dark-agents.dev/schemas/vibe-spec/v0.1.json",
+  "vibe_case": "C5",
+  "label": "video",
+  "title": "<loop-N>: video consistency check on <subject>",
+  "spec": {
+    "intent": "What subject/style must persist across the video",
+    "files_expected": [
+      "video-output/*.mp4",
+      "S2V-01 subject reference image"
+    ],
+    "tests_expected": [],
+    "drift_judge_intent": "Does the subject persist? Does the style hold? Are there AI-slop signals (extra fingers, morphing objects)?",
+    "subject_reference_required": true,
+    "tier1_sources": [],
+    "open_questions": []
+  },
+  "tasks": [
+    {
+      "id": "L<N>.1",
+      "description": "Prepare S2V-01 subject reference (single front-facing image, well-lit, neutral expression)",
+      "duration_min": 15
+    },
+    {
+      "id": "L<N>.2",
+      "description": "OSINT: read the dark-video-consistency skill for current model-specific guidance (Hailuo 2.3 I2V vs MiniMax H3 vs Veo 3)",
+      "duration_min": 20
+    },
+    {
+      "id": "L<N>.3",
+      "description": "Generate N clips with subject reference + style reference",
+      "duration_min": 60
+    },
+    {
+      "id": "L<N>.4",
+      "description": "Vision review: check each clip for subject persistence + AI-slop signals",
+      "duration_min": 30
+    },
+    {
+      "id": "L<N>.5",
+      "description": "dark_memory_agent_memory_save row with kind=observation, content includes subject descriptor + style anchor + AI-slop score per clip",
+      "duration_min": 5
+    }
+  ],
+  "exit_criteria": [
+    "Subject reference present + S2V-01 model used",
+    "All clips pass vision review (no extra fingers, no morphing, subject persists)",
+    "atomic-mirror row saved with kind=observation"
+  ]
+}

@@ -1,0 +1,46 @@
+{
+  "$schema": "https://dark-agents.dev/schemas/vibe-spec/v0.1.json",
+  "vibe_case": "C2",
+  "label": "text",
+  "title": "<loop-N>: <short description of the prose/spec>",
+  "spec": {
+    "intent": "What this prose should establish (1-2 sentences)",
+    "files_expected": [
+      "**/*.md"
+    ],
+    "tests_expected": [],
+    "drift_judge_intent": "Does the prose faithfully cite tier-1 sources? Is the conclusion supported by evidence?",
+    "min_word_count": 200,
+    "tier1_sources_required": true,
+    "tier1_sources": [],
+    "open_questions": []
+  },
+  "tasks": [
+    {
+      "id": "L<N>.1",
+      "description": "OSINT: gather 3+ tier-1 sources (vendor blogs, NVD, arXiv)",
+      "duration_min": 20
+    },
+    {
+      "id": "L<N>.2",
+      "description": "Write the markdown spec at <path>",
+      "duration_min": 30
+    },
+    {
+      "id": "L<N>.3",
+      "description": "vibe_publish artifact_ref=file on the .md",
+      "duration_min": 10
+    },
+    {
+      "id": "L<N>.4",
+      "description": "dark_memory_agent_memory_save row with kind=finding (OSINT) + kind=decision (SHIP)",
+      "duration_min": 5
+    }
+  ],
+  "exit_criteria": [
+    "Prose file is >= min_word_count",
+    "All factual claims cite a tier-1 source with URL",
+    "drift_judge verdict = aligned (conf >= 0.9)",
+    "atomic-mirror rows saved with both finding and decision kinds"
+  ]
+}

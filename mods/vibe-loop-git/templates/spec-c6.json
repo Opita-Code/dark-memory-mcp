@@ -1,0 +1,50 @@
+{
+  "$schema": "https://dark-agents.dev/schemas/vibe-spec/v0.1.json",
+  "vibe_case": "C6",
+  "label": "audio",
+  "title": "<loop-N>: audio consistency check on <speaker>",
+  "spec": {
+    "intent": "What speaker/voice must persist across the audio",
+    "files_expected": [
+      "audio-output/*.wav",
+      "speaker embedding (xtts-v2 or similar)"
+    ],
+    "tests_expected": [],
+    "drift_judge_intent": "Does the voice persist? Is the noise floor acceptable? Are there hallucinated breaths/clicks?",
+    "speaker_embedding_required": true,
+    "tier1_sources": [],
+    "open_questions": []
+  },
+  "tasks": [
+    {
+      "id": "L<N>.1",
+      "description": "Prepare speaker embedding (6+ second clean sample, no background music)",
+      "duration_min": 10
+    },
+    {
+      "id": "L<N>.2",
+      "description": "OSINT: read SOTA TTS docs (ElevenLabs, XTTS, OpenAI TTS, Coqui) for current voice cloning best practices",
+      "duration_min": 20
+    },
+    {
+      "id": "L<N>.3",
+      "description": "Generate N clips with speaker embedding + script",
+      "duration_min": 45
+    },
+    {
+      "id": "L<N>.4",
+      "description": "Audio review: check for voice consistency + noise floor + hallucinated artifacts",
+      "duration_min": 20
+    },
+    {
+      "id": "L<N>.5",
+      "description": "dark_memory_agent_memory_save row with kind=observation, content includes speaker descriptor + noise floor + artifact count per clip",
+      "duration_min": 5
+    }
+  ],
+  "exit_criteria": [
+    "Speaker embedding present + voice cloning model used",
+    "All clips pass audio review (voice persists, noise floor < -50dB, no hallucinated artifacts)",
+    "atomic-mirror row saved with kind=observation"
+  ]
+}

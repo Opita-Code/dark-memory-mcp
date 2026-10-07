@@ -1,0 +1,199 @@
+{
+  "$schema": "https://dark-agents.dev/schemas/mod/v0.1.json",
+  "kind": "companion-mod",
+  "name": "vibe-loop-git",
+  "displayName": "Vibe-Loop Git Protocol",
+  "version": "0.1.0",
+  "targetDarkMemoryVersion": ">=4.0.0-alpha.28",
+  "description": "A 6-loop vibe-loop protocol for dark-memory-mcp that turns any artifact (code, text, decision, research, video, audio, multi-bundle) into a drift-judged, atomic-mirrored, version-controlled work product. Each loop follows OSINT → spec → artifact → drift_judge → resolve_drift → atomic_mirror. Built on the now-working drift_judge pipeline (Phase 16 SHIPPED) + T-407-c 3-layer defensive pattern for reasoning models.",
+  "license": "proprietary",
+  "authors": [
+    {
+      "name": "dark-agent",
+      "operator": "nico",
+      "email": "dark-agent@ops.local"
+    }
+  ],
+  "tags": [
+    "vibe-loop",
+    "drift-judge",
+    "agent-memory",
+    "osint-first",
+    "atomic-mirror",
+    "phase-16",
+    "phase-17",
+    "t-407-c"
+  ],
+  "homepage": "https://github.com/dark-agents/dark-memory-mcp/tree/feat/v4-redesign/mods/vibe-loop-git",
+  "repository": {
+    "type": "git",
+    "url": "file:///C:/Users/Nico/Documents/dark-memory-mcp"
+  },
+  "bugs": "https://github.com/dark-agents/dark-memory-mcp/issues",
+  "audit": {
+    "firstShipped": "2026-10-06",
+    "firstTag": "v4.0.0-alpha.27",
+    "currentTag": "v4.0.0-alpha.28",
+    "loopsShipped": 6,
+    "driftJudgesRun": 7,
+    "driftVerdicts": {
+      "aligned": 7,
+      "needs_human": 0,
+      "firstTryAligned": 5,
+      "retryResolved": 2
+    }
+  },
+  "depends": {
+    "dark-memory-mcp": ">=4.0.0-alpha.28",
+    "go": ">=1.22",
+    "git": ">=2.40"
+  },
+  "vibeCases": {
+    "C1": {
+      "label": "code",
+      "description": "Source code change in dark-memory-mcp or downstream projects",
+      "canonicalArtifact": "internal/**/*.{go,ts,tsx,js,jsx}",
+      "driftJudgeIntent": "Does the diff match the spec's intent? Are tests aligned? Is backward compat preserved?"
+    },
+    "C2": {
+      "label": "text",
+      "description": "Markdown or prose spec / research / decisions",
+      "canonicalArtifact": "**/*.md",
+      "driftJudgeIntent": "Does the prose faithfully cite tier-1 sources? Is the conclusion supported by evidence?"
+    },
+    "C3": {
+      "label": "decision",
+      "description": "Operational decision (architecture, scope, deferral)",
+      "canonicalArtifact": "**/DECISIONS.md OR atomic-mirror row with kind=decision",
+      "driftJudgeIntent": "Was this decision surfaced at the right time? Are 3 options documented? Is the bias declared?"
+    },
+    "C4": {
+      "label": "research",
+      "description": "OSINT-driven research finding (tier-1 sourced)",
+      "canonicalArtifact": "mods/vibe-loop-git/core/*-osint*.md OR atomic-mirror row with kind=finding",
+      "driftJudgeIntent": "Are all claims tier-1 sourced? Are corrections to common misconceptions explicit?"
+    },
+    "C5": {
+      "label": "video",
+      "description": "AI-generated video (subject consistency, style consistency)",
+      "canonicalArtifact": "video-output/*.mp4 + S2V-01 subject reference",
+      "driftJudgeIntent": "Does the subject persist? Does the style hold? Are there AI-slop signals (extra fingers, morphing objects)?"
+    },
+    "C6": {
+      "label": "audio",
+      "description": "AI-generated audio (voice consistency, noise floor)",
+      "canonicalArtifact": "audio-output/*.wav + speaker embedding",
+      "driftJudgeIntent": "Does the voice persist? Is the noise floor acceptable? Are there hallucinated breaths/clicks?"
+    },
+    "C7": {
+      "label": "multi",
+      "description": "Coordinated bundle of independent artifacts (multi-agent subrouter)",
+      "canonicalArtifact": "mods/vibe-loop-git/core/c7-subrouter.json + N bundled artifacts",
+      "driftJudgeIntent": "Is each artifact internally consistent? Is the bundle coherent? Are sub-router heuristics correct?"
+    }
+  },
+  "protocol": {
+    "loops": 6,
+    "perLoopPhases": [
+      "OSINT (parallel web + academic + web_fetch — tier-1 only)",
+      "SPEC (vibe_spec with structured tasks)",
+      "ARTIFACT (concrete file/decision)",
+      "DRIFT_JUDGE (LLM-as-judge evaluates artifact vs spec intent)",
+      "RESOLVE_DRIFT (accept or revise)",
+      "ATOMIC_MIRROR (dark_memory_agent_memory_save)"
+    ],
+    "localOnly": true,
+    "noPush": true,
+    "varianceBudget": 0.07,
+    "tier1Only": true,
+    "selfEvalEnabled": true,
+    "selfEvalScoring": "domain-varying weights (per vibe_case) + 6 dimensions (A1 required_keys coverage, A2 evidence coverage, A3 schema stability, A4 operator_review, A5 operator_acceptance, A6 drift_judge_pass_rate)"
+  },
+  "core": {
+    "directory": "core/",
+    "artifacts": [
+      {
+        "loop": 1,
+        "file": "core/loop-1-context-strategies.md",
+        "vibeCase": "C2",
+        "title": "Context strategies per tier",
+        "driftId": 1520,
+        "verdict": "aligned",
+        "sha256Prefix": "6e174976"
+      },
+      {
+        "loop": 2,
+        "file": "core/judge-mapping.json",
+        "vibeCase": "C3",
+        "title": "Judge model auto-mirror + tier-mapped",
+        "driftId": 1521,
+        "verdict": "aligned",
+        "sha256Prefix": "131e440"
+      },
+      {
+        "loop": 3,
+        "file": "core/c7-subrouter.json",
+        "vibeCase": "C7",
+        "title": "Orchestrator-workers subrouter + coherence check",
+        "driftId": 1524,
+        "verdict": "aligned (after 1522->1523 retry)",
+        "sha256Prefix": "ce0c678"
+      },
+      {
+        "loop": 4,
+        "file": "core/coldstart-rules.md",
+        "vibeCase": "C2",
+        "title": "5 cold-start invariants + 5-step path + fallback semantics",
+        "driftId": 1525,
+        "verdict": "aligned",
+        "sha256Prefix": "0fc27af"
+      },
+      {
+        "loop": 5,
+        "file": "core/latency-budget.json",
+        "vibeCase": "C3",
+        "title": "Nielsen thresholds + cascade math + variance budget",
+        "driftId": 1526,
+        "verdict": "aligned",
+        "sha256Prefix": "1741848"
+      },
+      {
+        "loop": 6,
+        "file": "core/self-eval.json",
+        "vibeCase": "C3",
+        "title": "Meta-loop self-evaluation with domain-varying weights",
+        "driftId": 1527,
+        "verdict": "aligned (after 2011->2012 retry)",
+        "sha256Prefix": "b31e4f6"
+      }
+    ],
+    "design": {
+      "file": "core/t-407-c-design.md",
+      "title": "T-407-c per-model max_tokens + retry-on-length design",
+      "sha256Prefix": "7672c9f1"
+    }
+  },
+  "entryPoints": {
+    "primary": "SKILL.md",
+    "manifest": "mod.json",
+    "changelog": "CHANGELOG.md",
+    "readme": "README.md",
+    "adapters": "adapters/{opencode,claude-code,claude-desktop,codex}/SKILL.md",
+    "templates": "templates/spec-c{1..7}.json",
+    "tests": "tests/{bootstrap,e2e-c{1..7},audit-trail-verify}.sh"
+  },
+  "invariants": {
+    "sealed": [
+      "Tier-1 only sourcing (no blog-only / reddit / X for factual claims)",
+      "Vibe-publish retry pattern (T-406: 2 transient variance events recovered, 0 real drift)",
+      "Local-only git workflow (no push, no remote tags)",
+      "Cross-version lockstep hash pin UNCHANGED across phase boundaries"
+    ],
+    "documented": [
+      "OI-1: cold-start validation from fresh project (BLOCKING for product)",
+      "OI-2/OI-3: review failures + A1 methodology (BLOCKING)",
+      "OI-4/OI-5: cross-model blind eval + Brier calibration (NON-BLOCKING, v0.3)",
+      "OI-6/OI-7: empirical MiniMax-M3 thinking-block distribution + cost analysis (NEW T-407-c)"
+    ]
+  }
+}

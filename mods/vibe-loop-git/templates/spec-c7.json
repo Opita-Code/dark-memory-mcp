@@ -1,0 +1,64 @@
+{
+  "$schema": "https://dark-agents.dev/schemas/vibe-spec/v0.1.json",
+  "vibe_case": "C7",
+  "label": "multi",
+  "title": "<loop-N>: coordinated bundle of <N> artifacts",
+  "spec": {
+    "intent": "What the bundle achieves as a whole + how sub-artifacts depend",
+    "files_expected": [
+      "mods/vibe-loop-git/core/c7-subrouter.json",
+      "N bundled artifacts (each in its own loop spec)"
+    ],
+    "tests_expected": [],
+    "drift_judge_intent": "Is each artifact internally consistent? Is the bundle coherent? Are sub-router heuristics correct?",
+    "min_sub_artifacts": 2,
+    "parallel_execution": true,
+    "coherence_check_required": true,
+    "tier1_sources": [],
+    "open_questions": []
+  },
+  "tasks": [
+    {
+      "id": "L<N>.1",
+      "description": "OSINT: research multi-agent orchestration patterns (orchestrator-workers, parallel debate, hierarchical)",
+      "duration_min": 30
+    },
+    {
+      "id": "L<N>.2",
+      "description": "Define N sub-artifacts + their dependencies + coherence check criteria",
+      "duration_min": 30
+    },
+    {
+      "id": "L<N>.3",
+      "description": "Write c7-subrouter.json with sub-router heuristics (per context-strategy from Loop 1)",
+      "duration_min": 30
+    },
+    {
+      "id": "L<N>.4",
+      "description": "Execute N parallel sub-loops (each in its own session for isolation)",
+      "duration_min": 120
+    },
+    {
+      "id": "L<N>.5",
+      "description": "Run coherence check on the bundle (does it hang together?)",
+      "duration_min": 30
+    },
+    {
+      "id": "L<N>.6",
+      "description": "vibe_publish artifact_ref=file on c7-subrouter.json + N sub-artifacts",
+      "duration_min": 15
+    },
+    {
+      "id": "L<N>.7",
+      "description": "dark_memory_agent_memory_save row with kind=decision, content includes bundle manifest + coherence verdict",
+      "duration_min": 5
+    }
+  ],
+  "exit_criteria": [
+    "c7-subrouter.json written with heuristics",
+    ">= min_sub_artifacts sub-artifacts produced and drift-judged aligned",
+    "Coherence check PASS (bundle hangs together)",
+    "atomic-mirror row saved with kind=decision, pinned"
+  ],
+  "variance_note": "C7 is the most variance-prone case due to N parallel sub-loops. Plan for 5-7% needs_human budget per Phase 14 stress."
+}

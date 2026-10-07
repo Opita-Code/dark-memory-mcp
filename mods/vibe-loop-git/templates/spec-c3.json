@@ -1,0 +1,46 @@
+{
+  "$schema": "https://dark-agents.dev/schemas/vibe-spec/v0.1.json",
+  "vibe_case": "C3",
+  "label": "decision",
+  "title": "<loop-N>: <decision being made>",
+  "spec": {
+    "intent": "The decision and its 3 options",
+    "files_expected": [
+      "**/DECISIONS.md",
+      "OR atomic-mirror row with kind=decision"
+    ],
+    "tests_expected": [],
+    "drift_judge_intent": "Was this decision surfaced at the right time? Are 3 options documented? Is the bias declared?",
+    "options_required": 3,
+    "tier1_sources": [],
+    "open_questions": []
+  },
+  "tasks": [
+    {
+      "id": "L<N>.1",
+      "description": "Identify 3+ options for the decision (per LUCIDEZ R5)",
+      "duration_min": 10
+    },
+    {
+      "id": "L<N>.2",
+      "description": "Document the bias (your pre-existing preference + why)",
+      "duration_min": 5
+    },
+    {
+      "id": "L<N>.3",
+      "description": "Pick one option + justify against the others",
+      "duration_min": 10
+    },
+    {
+      "id": "L<N>.4",
+      "description": "dark_memory_agent_memory_save row with kind=decision, content includes the 3 options + bias + chosen one",
+      "duration_min": 5
+    }
+  ],
+  "exit_criteria": [
+    ">= 3 options documented",
+    "Bias declared",
+    "Chosen option justified against alternatives",
+    "atomic-mirror row saved with kind=decision, pinned"
+  ]
+}

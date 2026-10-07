@@ -1,0 +1,57 @@
+{
+  "$schema": "https://dark-agents.dev/schemas/vibe-spec/v0.1.json",
+  "vibe_case": "C1",
+  "label": "code",
+  "title": "<loop-N>: <short description>",
+  "spec": {
+    "intent": "What this code change should accomplish (1-2 sentences)",
+    "files_expected": [
+      "internal/<package>/<file>.go"
+    ],
+    "tests_expected": [
+      "internal/<package>/<file>_test.go"
+    ],
+    "drift_judge_intent": "Does the diff match the spec's intent? Are tests aligned? Is backward compat preserved?",
+    "backward_compat": true,
+    "tier1_sources": [],
+    "open_questions": []
+  },
+  "tasks": [
+    {
+      "id": "L<N>.1",
+      "description": "OSINT: <tier-1 sources for this code change>",
+      "duration_min": 15
+    },
+    {
+      "id": "L<N>.2",
+      "description": "Edit internal/<file>.go: <specific change>",
+      "duration_min": 20
+    },
+    {
+      "id": "L<N>.3",
+      "description": "Edit internal/<file>_test.go: <test cases>",
+      "duration_min": 20
+    },
+    {
+      "id": "L<N>.4",
+      "description": "Run go test ./internal/<package>/... and verify pass",
+      "duration_min": 5
+    },
+    {
+      "id": "L<N>.5",
+      "description": "vibe_publish artifact_ref=file on changed files",
+      "duration_min": 10
+    },
+    {
+      "id": "L<N>.6",
+      "description": "dark_memory_agent_memory_save row with drift verdict + file:line refs",
+      "duration_min": 5
+    }
+  ],
+  "exit_criteria": [
+    "All L<N>.x tasks completed",
+    "go test PASS for the package",
+    "drift_judge verdict = aligned (conf >= 0.9)",
+    "atomic-mirror row saved with kind=decision, pinned"
+  ]
+}
