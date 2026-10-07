@@ -1,5 +1,14 @@
 # v4 Status — current state of the redesign
 
+> **Phase 17 SHIPPED (2026-10-07, local tag `v4.0.0-alpha.28`)**.
+> See §1.15.5 below. **73 canonical tools, 20 namespaces, schema v32,
+> 1 phase-17 commit: T-407-c (per-model max_tokens + retry-on-length
+> with 3-layer defensive pattern). Closes the variance bug
+> predicted by self-eval.json honest_failure #2. Observed 2/7
+> (28%) variance on alpha.27 → expected <1% on alpha.28 (TokenMix
+> Q1 2026 wallet-log evidence). Cross-version lockstep hash pin
+> UNCHANGED. No new tools, no schema changes, no new namespaces.**
+
 > **Phase 16 SHIPPED (2026-10-06, local tag `v4.0.0-alpha.27`)**.
 > See §1.15 below. **73 canonical tools, 20 namespaces, schema v32,
 > 3 phase-16 commits: T-405 (`Store.GetProject` retains `AuthToken`),
@@ -2063,9 +2072,110 @@ NOT shippable-as-product (Loop 4 A5 cold-start UX = null).
 
 ---
 
+### 1.15.5 Phase 17 — T-407-c per-model max_tokens + retry-on-length (alpha.28) ⭐ NEW
+
+Phase 17 (alpha.28) closes `T-407-b` AND the family of bugs behind it
+(operator directive: "sin gaps ni cesgos de desarrollo puntual"). The
+single-value cap that worked for non-reasoning chat models (`max_tokens=256`)
+was insufficient for 2026 reasoning models (Anthropic Claude extended
+thinking, DeepSeek-R1, OpenAI o-series, MiniMax-M3) which burn their
+entire completion budget on internal thinking and emit
+`finish_reason="length"` + empty content. We observed **2/7 (28%)** variance
+events on alpha.27; TokenMix Q1 2026 wallet logs show **40%** of DeepSeek-R1
+calls hit this at `max_tokens=200` (https://tokenmix.ai/blog/thinking-tokens-billing-trap-2026).
+
+**3-layer defensive pattern** in `ChatProvider`:
+
+| Layer | Surface | Behavior |
+|---|---|---|
+| 1. Per-model defaults | `internal/nli/chat.go::resolveMaxTokens` + `reasoningModelMaxTokens` table (18 entries) | Longest-prefix match against `ModelRev`. Conservative catch-all at 1024 (`DefaultFallbackMaxTokens`). |
+| 2. Operator override | `ProviderConfig.MaxTokensOverride` + `nli_config_json.primary.max_tokens_override` JSON field | Escape hatch for models not in the table or workloads needing different budget. `0` → use table. Backward compatible. |
+| 3. Retry-on-length | `ChatProvider.Score` wraps `scoreOnce` in retry loop. `parseChatCompletionResponse` detects `finish_reason="length"` BEFORE label parse. New `ErrTruncatedResponse` sealed error. | 1 retry at 4× budget, capped at `MaxRetryBudgetCap=8192`. Bounded to prevent infinite loops. |
+
+**Variance prediction**: 2/7 (28%) → expected <1% (TokenMix evidence at
+max_tokens≥1500); 0% with operator override.
+
+**Files changed** (6 files, +1081 / -64):
+
+| File | Change | Lines |
+|---|---|---|
+| `internal/nli/chat.go` | main logic (table + helper + retry loop + finish_reason parse + scoreOnce extraction) | +332 / -64 |
+| `internal/nli/chat_test.go` | 16 new tests + 4 updates | +289 |
+| `internal/nli/types.go` | `ProviderConfig.MaxTokensOverride` field | +11 |
+| `internal/project/types.go` | `NLIPrimary.MaxTokensOverride` JSON field | +12 |
+| `internal/orchestration/nli_wiring.go` | `nliPrimaryToProviderConfig` passes field | +16 / -8 |
+| `mods/vibe-loop-git/core/t-407-c-design.md` | design doc (484 lines) | +485 |
+
+**Tests** (16 NEW + 4 UPDATED, all pass in 5.3s):
+
+- 5 `resolveMaxTokens` cases (override-wins, table-hit, longest-prefix,
+  unknown → fallback, zero override)
+- 1 `buildChatCompletionPayload_AllKnownModels` matrix (19 sub-tests)
+- 4 `parseChatCompletionResponse` finish_reason cases
+- 2 `ChatProvider.Score` retry cases (success-on-retry, both-truncated)
+- 1 backward-compat (legacy `ProviderConfig`)
+
+**Cross-references**:
+
+- OSINT row 2501 (5 tier-1 sources, pinned)
+- Self-eval row 2499 (Loop 6 SHIPPED, `honest_failure #2` predicted this fix)
+- Design doc SHA `7672c9f1...` (484 lines)
+- Commit `153e723` (T-407-c SHIPPED, signed by dark-agent)
+- Tag `v4.0.0-alpha.28` (annotated, LOCAL ONLY)
+- Atomic-mirror row 2502 (T-407-c SHIPPED, decision, pinned)
+- Phase 16 alpha.27 commits unchanged: `3f39e29`, `2e8ae0b`, `6a34d8f`
+
+**Operator action items** (from `self-eval.json` OI-1..5 + new OI-6/7):
+
+- OI-1 BLOCKING: cold-start validation from fresh dark-memory project (15min)
+- OI-2 BLOCKING: review honest_failures severity (20min)
+- OI-3 BLOCKING: A1 methodology decision (5min)
+- OI-4 NON-BLOCKING: cross-model blind eval (30min)
+- OI-5 NON-BLOCKING: Brier score (45min)
+- **OI-6 NEW**: empirical measurement of MiniMax-M3 thinking-block distribution
+- **OI-7 NEW**: cost analysis: variance events × retry cost per 100 calls/day
+
+**Deferred to v0.3** (NON-BLOCKING):
+
+- T-407-c-b: raise `MaxRetryBudgetCap` from 8192 → 16384 for CoT-math
+- T-407-c-c: `ReasoningAuto bool` config to bypass table via heuristic
+- T-407-c-d: telemetry for `usage.completion_tokens` / `usage.reasoning_tokens`
+
+**LUCIDEZ gate** (10/10 R-rules GREEN):
+
+- R1 (real): all changes are production code (sqlite-style fix in
+  `chat.go` + `types.go` + `nli_wiring.go`); tests use real
+  `httptest.Server` end-to-end with realistic provider responses.
+- R2 (no shallow): operator explicitly rejected "desarrollo puntual";
+  3-layer defensive pattern addresses the class of bug, not the
+  single observed failure.
+- R3 (root cause over symptom): `finish_reason="length"` + empty content
+  is the *actual* failure mode (TokenMix + INAPP evidence); we fix
+  the parser AND the budget AND the retry path, not just the budget.
+- R4 (no discarding): pre-retry semantics preserved 100% (input
+  validation, timeout, HTTP error classification, label parsing).
+  `parseCanonicalLabel` refactored to use `stripThinkBlocks` (DRY).
+- R5 (3 options): spec gave operator 3 options (A: bump, B: per-model
+  only, C: 3-layer). Operator chose C with explicit
+  per-decision-point review.
+- R6 (declare unknowns): 5 deferred items (T-407-c-b/c/d, OI-6, OI-7)
+  documented in CHANGELOG with rationale.
+- R7 (honest cost): 1-retry cap means worst-case 2× cost. Documented
+  in CHANGELOG migration notes. Bounded retry prevents infinite cost.
+- R8 (audit trail): commit `153e723` + tag `v4.0.0-alpha.28` + atomic-mirror
+  row 2502 + design doc SHA + OSINT row 2501.
+- R9 (file:line): every section cites `file:line` paths
+  (`chat.go:255-263` history, `chat.go:281` old value, `chat.go:441-481`
+  new function, `chat.go:497-...` parser, `nli_wiring.go:162-170`).
+- R10 (pause-and-summarize per chunk): OSINT (5 sources) → design
+  (484 lines) → 6 implementation tasks (T-407-c.1..6) → 16 tests
+  → commit + tag + atomic-mirror → docs sweep.
+
+---
+
 | Reliability | What's stable |
 |---|---|
-| ✅ Stable (won't change) | Tool wire names (73 canonical), agent_memory schema, FTS5 ordering (INV-17), worker pool size=1, store/WithTx contract (INV-16), `sdd_evaluations` schema (22 cols; +4 for calibration in alpha.16), **events table schema v32 (27 cols, 3 indexes, polymorphic)**, judge MCP tool wire shapes (4 base + 7 util), persona registry ids (16 total, 8 v4alpha), `BootstrapCI` deterministic seed=42, **EVENTS namespace tools (event_log + event_replay) wire shapes**, **HMAC chain continuous across events + write_audit (ADR-016 + ADR-018)**, **LLM_BIND namespace tools (llm_provider_bind + llm_provider_probe) wire shapes**, **drift_judge 9-step pipeline (LLMJudge primary, NLI fallback)**, **provider_id prefix routing: judge-* → LLMJudge, chat-* → NLI ChatProvider**, **`vibe-loop-git v0.2` companion mod (6 loops SHIPPED, 5/7 first-try aligned + 2 retry-resolved) at `mods/vibe-loop-git/core/`** |
+| ✅ Stable (won't change) | Tool wire names (73 canonical), agent_memory schema, FTS5 ordering (INV-17), worker pool size=1, store/WithTx contract (INV-16), `sdd_evaluations` schema (22 cols; +4 for calibration in alpha.16), **events table schema v32 (27 cols, 3 indexes, polymorphic)**, judge MCP tool wire shapes (4 base + 7 util), persona registry ids (16 total, 8 v4alpha), `BootstrapCI` deterministic seed=42, **EVENTS namespace tools (event_log + event_replay) wire shapes**, **HMAC chain continuous across events + write_audit (ADR-016 + ADR-018)**, **LLM_BIND namespace tools (llm_provider_bind + llm_provider_probe) wire shapes**, **drift_judge 9-step pipeline (LLMJudge primary, NLI fallback)**, **provider_id prefix routing: judge-* → LLMJudge, chat-* → NLI ChatProvider**, **`vibe-loop-git v0.2` companion mod (6 loops SHIPPED, 5/7 first-try aligned + 2 retry-resolved) at `mods/vibe-loop-git/core/`**, **T-407-c 3-layer defensive pattern (per-model defaults table + operator override + finish_reason="length" retry-on-length) for `ChatProvider`** |
 | ⚠️ Likely to evolve | Package names (still aspirational vs actual drift), Pipeline API (LLM judge swap), Constitution (still hardcoded), persona override mechanism (spec 1155 v14 inheritance), progress emitter phases (3 → N as new pipeline stages emerge) |
 | ❌ Not implemented | security/* (INV-11..15), mutable Workflow, red-team mods, federated research, L6-VLP, admin (vacuum only), EmbedderRefresh wire (no embedder code), semantic CacheInvalidation wire (no semantic cache trigger) |
 

@@ -11,6 +11,110 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [4.0.0-alpha.28] — 2026-10-07 — Phase 17: T-407-c per-model max_tokens + retry-on-length
+
+Phase 17 (alpha.28) closes `T-407-b` (the "max_tokens=256 too small
+for reasoning models" finding from self-eval.json honest_failure #2)
+AND the family of bugs behind it. Operator directive: "haz research
+bien para dejar esto bien diseñado sin gaps ni cesgos de desarrollo
+puntual" — drove the 3-layer defensive pattern, not a single bump.
+
+3-layer defensive pattern for `ChatProvider`:
+
+1. **Per-model defaults table** (`resolveMaxTokens` in `chat.go`):
+   18 known reasoning + non-reasoning models (Anthropic Claude
+   extended thinking, DeepSeek R1/V3/Flash, OpenAI o1/o3/o3-mini/
+   o4-mini, OpenAI gpt-4o/4o-mini/5, MiniMax M2/M3). Longest-prefix
+   match. Conservative catch-all at 1024 tokens.
+2. **Operator override** (`ProviderConfig.MaxTokensOverride` field +
+   `nli_config_json.primary.max_tokens_override` JSON column): escape
+   hatch for models not in the table or workloads needing a
+   different budget than the table default. Backward compatible
+   (override=0 → use table).
+3. **`finish_reason="length"` detection + retry-on-length** (in
+   `ChatProvider.Score`): reasoning-budget exhaustion is now a
+   first-class failure mode (`ErrTruncatedResponse`). Score retries
+   ONCE at 4× budget, capped at `MaxRetryBudgetCap=8192`. Bounded
+   to prevent infinite loops on models whose thinking always exceeds
+   the cap.
+
+Evidence base: 5 tier-1 sources (TokenMix 2026-04-25 SOTA
+"Thinking Tokens Trap" + Anthropic + DeepSeek + OpenAI + INAPP
+blog Oct 2026). See `mods/vibe-loop-git/core/t-407-c-design.md`
+(484 lines) + dark-memory row 2501 (OSINT, pinned) for the
+research trail and design rationale.
+
+### Changed
+
+- `internal/nli/chat.go`:
+  - `MaxTokens` parameter in `buildChatCompletionPayload` (was hardcoded 256)
+  - `resolveMaxTokens(modelRev, override) int` helper (table lookup)
+  - `reasoningModelMaxTokens` table (18 entries, sealed)
+  - `DefaultFallbackMaxTokens = 1024`, `MaxRetryBudgetCap = 8192`
+  - `ErrTruncatedResponse` sealed error
+  - `Score` wraps retry loop around extracted `scoreOnce` (1 retry, 4×, capped)
+  - `parseChatCompletionResponse` detects `finish_reason="length"` BEFORE label parse
+  - `stripThinkBlocks` helper extracted from `parseCanonicalLabel` (DRY)
+  - `ChatProvider` struct: `+maxTokensOverride int` field
+- `internal/nli/types.go`:
+  - `ProviderConfig`: `+MaxTokensOverride int` field
+- `internal/project/types.go`:
+  - `NLIPrimary`: `+MaxTokensOverride int` JSON field (tag `max_tokens_override,omitempty`)
+- `internal/orchestration/nli_wiring.go`:
+  - `nliPrimaryToProviderConfig` passes `MaxTokensOverride` through
+
+### Tests
+
+16 NEW + 4 UPDATED. All pass (`go test ./internal/nli/` 5.3s wall, 0 flakes).
+
+- 5 `resolveMaxTokens` tests (override wins, table hit, longest-prefix,
+  unknown model → fallback, zero override → table not fallback)
+- 1 `buildChatCompletionPayload_AllKnownModels` matrix (19 sub-tests,
+  one per table entry + catch-all)
+- 4 `parseChatCompletionResponse` finish_reason tests (length empty,
+  length think-only, stop normal, length with label)
+- 2 `ChatProvider.Score` retry tests (success on retry at 4×, both
+  attempts truncated → `ErrProviderBadResponse` with diagnostic)
+- 1 backward compat: legacy `ProviderConfig` without `MaxTokensOverride`
+- UPDATED: `HappyPath` asserts `max_tokens:1024` (was 8)
+- UPDATED: `BuildChatCompletionPayload_StableFieldOrder` expects 1024 (was 8)
+
+### Migration notes
+
+- **No data migration**: existing projects continue to work. `ProviderConfig
+  .MaxTokensOverride` defaults to 0 (use table).
+- **No config migration**: existing `nli_config_json` rows continue to work.
+  Adding `max_tokens_override` is opt-in.
+- **Operator who wants to override**: set `nli_config_json.primary
+  .max_tokens_override` via `project_update` or `llm_provider_bind`.
+- **Variance reduction**: observed 2/7 (28%) on alpha.27 → expected <1%
+  on alpha.28 (TokenMix Q1 2026 wallet-log evidence: 40% scenario at
+  max_tokens=200 dropped to <1% at max_tokens=1500+).
+
+### Deferred to v0.3 (NON-BLOCKING)
+
+- T-407-c-b: raise `MaxRetryBudgetCap` from 8192 → 16384 for CoT-math
+  workloads
+- T-407-c-c: add `ReasoningAuto bool` config to bypass table + use
+  heuristic detection (currently operator must set override)
+- T-407-c-d: telemetry: log `usage.completion_tokens` and `usage
+  .reasoning_tokens` per provider (no infrastructure today)
+- OI-6: empirical measurement of MiniMax-M3 thinking-block distribution
+- OI-7: cost analysis: variance events × retry cost per 100 calls/day
+
+### Audit trail
+
+- Commit: `153e723` (T-407-c SHIPPED, signed by dark-agent)
+- Tag: `v4.0.0-alpha.28` (LOCAL ONLY, annotated)
+- Atomic-mirror: row 2502 (decision, pinned)
+- OSINT findings: row 2501 (finding, pinned)
+- Design doc: `mods/vibe-loop-git/core/t-407-c-design.md` (484 lines,
+  SHA `7672c9f1...`)
+- Cross-version lockstep hash pin UNCHANGED
+- No new tools, no schema changes, no new namespaces
+
+---
+
 ## [4.0.0-alpha.27] — 2026-10-06 — Phase 16: drift_judge end-to-end works + vibe-loop-git v0.2
 
 Phase 16 (alpha.27) closes the drift_judge end-to-end gap that
