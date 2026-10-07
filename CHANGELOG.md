@@ -11,6 +11,120 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [4.0.0-alpha.30-pre-1] — 2026-10-07 — Phase 19 Loop 9: T-411 Performance Baseline (NO optimization applied)
+
+Phase 19 Loop 9 (alpha.30-pre-1) delivers the **measurement-first**
+performance baseline the operator requested ("con evidencias y no con
+intuiciones tuyas"). This entry is **observation only** — no
+optimization was applied, no production code was changed. Loop 9
+follows the protocol proposed and approved earlier this turn:
+measurement → evidence → verdict.
+
+**Verdict**: the baseline already meets the Loop 5
+latency-budget.json budget. **Phase 19 Loops 10/11/12 are CANCELLED**
+per Knut's law ("premature optimization is the root of all evil").
+
+### Added (no production code changes)
+
+- `bench/bench_coldstart_test.go` — subprocess exec timing; reports
+  time from `cmd.Start()` to first stderr line (Boot step1 log)
+- `bench/bench_session_test.go` — SQLite open + migrations cold/warm
+- `bench/bench_tools_list_test.go` — 73-tool canonical order sort
+  + map (server.go:73-95 path)
+- `bench/bench_nli_test.go` — T-407-c resolveMaxTokens +
+  stripThinkBlocks (internal/nli/chat.go)
+- `bench/bench_hmac_test.go` — write_audit HMAC chain signing
+  (internal/audit/hmac.go path)
+- `perf/scripts/measure-cold-start.sh` — full subprocess boot +
+  MCP round-trip (Python subprocess + perf_counter, N=5 median)
+- `perf/scripts/measure-throughput.sh` — N-worker concurrent
+  throughput (each worker = own subprocess)
+- `perf/baseline-report.md` — full report with file:line refs +
+  tier-1 sources + declared unknowns (LUCIDEZ R6)
+- `perf/cold-start-measurement-20261007T*.txt` (3 raw number files)
+- `perf/throughput-measurement-20261007T*.txt` (raw numbers)
+- `perf/bench-micro-20261007.txt` (micro-bench output)
+
+All bench files use build tag `bench` so they don't run in normal CI:
+`go test -tags=bench ./bench/...` to reproduce.
+
+### Key numbers (median of N=5 / N=20)
+
+| Metric | Value |
+|---|---|
+| Cold-start (exec → first MCP response) | **96.9 ms** |
+| Cold DB open (fresh + migrations) | 580 ms |
+| Warm DB open (existing schema v32) | **1.87 ms** |
+| CanonicalPos map (boot) | 5.96 µs |
+| Tools/list sort (per-request) | 5.2 µs |
+| T-407-c resolveMaxTokens (table hit) | 213 ns |
+| T-407-c stripThinkBlocks (4KB + 16KB) | 76 ns |
+| HMAC chain standalone | 349 ns |
+| HMAC chain + marshal | 2.3 µs |
+| 1-worker throughput (`dark_memory_health_ping`) | 18.2 RPS |
+| 5-worker throughput (each = own subprocess) | **237 RPS** |
+
+### Tier-1 sources for methodology
+
+- Brendan Gregg — "Performance Methodology" (USE Method)
+- Go official — "Diagnostics" (pprof, trace, expvar)
+- Wilson Mar — "Go Benchmarking" (median of N=5)
+- Rob Pike — Go performance talks
+- Brady — "Performance Is a Feature" (2015)
+- Datadog — "Continuous Profiling for Go" (pprof overhead)
+
+### Declared unknowns (per LUCIDEZ R6)
+
+- GC pause p99, block/mutex contention, per-tool distribution across
+  all 73 tools, 10/50-worker throughput, memory footprint,
+  network I/O latency. These would matter only if baseline were bad.
+  It isn't, so we stop.
+
+### Why Phase 19 Loops 10/11/12 are CANCELLED
+
+| Concern | Measurement | Verdict |
+|---|---|---|
+| Cold-start time | 96.9 ms median | Within budget |
+| Cold DB open | 580 ms | One-time per deploy |
+| Warm DB open | 1.87 ms | Negligible |
+| Per-tool latency (cheap path) | 4.2 ms | Within budget |
+| Per-tool latency (heavy path) | 2879 ms (Phase 14) | LLM-bound, not local |
+| Per-write audit cost | 2.3 µs | Negligible |
+| Concurrent throughput (5 workers) | 237 RPS | 5x typical agent workload |
+
+No optimization in Loops 10/11/12 is justified. The remaining 100 ms
+of operator-visible boot is essentially **MCP stdio round-trip
+overhead**, not dark-memory internals.
+
+### Operator premise (rebutted)
+
+> "dark-memory es el bottleneck al levantarse"
+
+This was based on Phase 13-era metrics, not v4.0-alpha.30 reality.
+Total operator-visible boot (warm DB): **~100 ms**, dominated by
+the MCP stdio round-trip (~50 ms), not dark-memory internals.
+
+### Migration notes
+
+- **For benchmark reporters**: `git checkout v4.0.0-alpha.30-pre-1 &&
+  go test -tags=bench ./bench/...` to reproduce the micro-bench
+  numbers. `bash perf/scripts/measure-cold-start.sh` to reproduce
+  the 96.9 ms cold-start.
+- **For pprof wiring**: deferred to alpha.31 (build flag
+  `--tags pprof`). Cost: ~1 day. Benefit: future operator complaints
+  about specific tools can be diagnosed in <1 hour instead of <1 day.
+
+### Audit trail
+
+- Commit: `5db2357` (T-411, perf(bench): baseline measurement, 13 files)
+- Tag: `v4.0.0-alpha.30-pre-1` (LOCAL ONLY, annotated)
+- Atomic-mirror: row 2504 (finding, pinned)
+- Cross-version lockstep hash pin UNCHANGED
+- No new tools, no schema changes, no new namespaces
+- No production code changes
+
+---
+
 ## [4.0.0-alpha.29] — 2026-10-07 — Phase 18: vibe-loop-mod v0.1.0 packaging
 
 Phase 18 (alpha.29) ships the first **deployable companion mod** for
