@@ -1,0 +1,51 @@
+goos: windows
+goarch: amd64
+pkg: github.com/dark-agents/dark-memory-mcp/bench
+cpu: AMD Ryzen 5 5600 6-Core Processor              
+BenchmarkColdStartSubprocess-12                 	      20	  22746555 ns/op	     17609 us/boot	   45861 B/op	     313 allocs/op
+BenchmarkColdStartSubprocess-12                 	      20	  21243840 ns/op	     16524 us/boot	   45749 B/op	     312 allocs/op
+BenchmarkColdStartSubprocess-12                 	      20	  19674580 ns/op	     17163 us/boot	   45732 B/op	     312 allocs/op
+BenchmarkHMACChainStandalone-12                 	      20	       415.0 ns/op	      43 B/op	       1 allocs/op
+BenchmarkHMACChainStandalone-12                 	      20	       430.0 ns/op	      43 B/op	       1 allocs/op
+BenchmarkHMACChainStandalone-12                 	      20	       330.0 ns/op	      43 B/op	       1 allocs/op
+BenchmarkHMACChainMarshal-12                    	      20	      2550 ns/op	    1408 B/op	      11 allocs/op
+BenchmarkHMACChainMarshal-12                    	      20	      2085 ns/op	    1406 B/op	      11 allocs/op
+BenchmarkHMACChainMarshal-12                    	      20	      2335 ns/op	    1348 B/op	      11 allocs/op
+BenchmarkHMACChainMarshalLarge-12               	      20	      2360 ns/op	    1470 B/op	      11 allocs/op
+BenchmarkHMACChainMarshalLarge-12               	      20	      1945 ns/op	    1470 B/op	      11 allocs/op
+BenchmarkHMACChainMarshalLarge-12               	      20	      2370 ns/op	    1470 B/op	      11 allocs/op
+BenchmarkResolveMaxTokens_OverrideWins-12       	      20	        10.00 ns/op	       0 B/op	       0 allocs/op
+BenchmarkResolveMaxTokens_OverrideWins-12       	      20	        10.00 ns/op	       0 B/op	       0 allocs/op
+BenchmarkResolveMaxTokens_OverrideWins-12       	      20	         5.000 ns/op	       0 B/op	       0 allocs/op
+BenchmarkResolveMaxTokens_TableHit-12           	      20	       325.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkResolveMaxTokens_TableHit-12           	      20	       295.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkResolveMaxTokens_TableHit-12           	      20	       290.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkResolveMaxTokens_LongestPrefix-12      	      20	       295.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkResolveMaxTokens_LongestPrefix-12      	      20	       290.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkResolveMaxTokens_LongestPrefix-12      	      20	       280.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkResolveMaxTokens_UnknownFallback-12    	      20	       280.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkResolveMaxTokens_UnknownFallback-12    	      20	       255.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkResolveMaxTokens_UnknownFallback-12    	      20	       395.0 ns/op	       0 B/op	       0 allocs/op
+BenchmarkResolveMaxTokens_AllKnown-12           	      20	      1720 ns/op	       0 B/op	       0 allocs/op
+BenchmarkResolveMaxTokens_AllKnown-12           	      20	      1540 ns/op	       0 B/op	       0 allocs/op
+BenchmarkResolveMaxTokens_AllKnown-12           	      20	      1620 ns/op	       0 B/op	       0 allocs/op
+BenchmarkStripThinkBlocks-12                    	      20	        90.00 ns/op	       0 B/op	       0 allocs/op
+BenchmarkStripThinkBlocks-12                    	      20	        95.00 ns/op	       0 B/op	       0 allocs/op
+BenchmarkStripThinkBlocks-12                    	      20	        90.00 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSessionStartColdFresh-12               	      20	 536399365 ns/op	    307044 us/open	  372092 B/op	    4755 allocs/op
+BenchmarkSessionStartColdFresh-12               	      20	 656061570 ns/op	    436760 us/open	  368786 B/op	    4746 allocs/op
+BenchmarkSessionStartColdFresh-12               	      20	 580215615 ns/op	    192442 us/open	  369011 B/op	    4749 allocs/op
+BenchmarkSessionStartWarm-12                    	      20	   1782510 ns/op	      2057 us/open	   16614 B/op	     387 allocs/op
+BenchmarkSessionStartWarm-12                    	      20	   1867935 ns/op	      1613 us/open	   16780 B/op	     399 allocs/op
+BenchmarkSessionStartWarm-12                    	      20	   1995415 ns/op	      2999 us/open	   16780 B/op	     399 allocs/op
+BenchmarkToolsCanonicalOrder-12                 	      20	      7785 ns/op	    8944 B/op	      79 allocs/op
+BenchmarkToolsCanonicalOrder-12                 	      20	      5915 ns/op	    8944 B/op	      79 allocs/op
+BenchmarkToolsCanonicalOrder-12                 	      20	      9510 ns/op	    8944 B/op	      79 allocs/op
+BenchmarkToolsListSort-12                       	      20	      6160 ns/op	     424 B/op	       3 allocs/op
+BenchmarkToolsListSort-12                       	      20	      4030 ns/op	     424 B/op	       3 allocs/op
+BenchmarkToolsListSort-12                       	      20	      5215 ns/op	     424 B/op	       3 allocs/op
+BenchmarkToolsListFull-12                       	      20	      4000 ns/op	     424 B/op	       3 allocs/op
+BenchmarkToolsListFull-12                       	      20	      4080 ns/op	     424 B/op	       3 allocs/op
+BenchmarkToolsListFull-12                       	      20	      3995 ns/op	     424 B/op	       3 allocs/op
+PASS
+ok  	github.com/dark-agents/dark-memory-mcp/bench	38.940s

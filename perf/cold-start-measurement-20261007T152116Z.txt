@@ -1,0 +1,7 @@
+[boot-to-full-tools-list response]
+  run 1: 96.9 ms
+  run 2: 99.8 ms
+  run 3: 139.4 ms
+  run 4: 63.8 ms
+  run 5: 81.0 ms
+Comparison: this is the FRESH-DEPLOY scenario, NOT drift_judge pipeline
