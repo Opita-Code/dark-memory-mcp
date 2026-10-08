@@ -45,12 +45,12 @@
     "firstShipped": "2026-10-06",
     "firstTag": "v4.0.0-alpha.27",
     "currentTag": "v4.0.0-alpha.30",
-    "loopsShipped": 11,
-    "driftJudgesRun": 20,
+    "loopsShipped": 12,
+    "driftJudgesRun": 21,
     "driftVerdicts": {
-      "aligned": 17,
+      "aligned": 18,
       "needs_human": 1,
-      "firstTryAligned": 15,
+      "firstTryAligned": 16,
       "retryResolved": 2
     }
   },
@@ -300,6 +300,15 @@
         "driftId": null,
         "verdict": "operator override (MINIMAX-M3 nli=neutral false-positive pattern, eval 2019)",
         "sha256Prefix": "883b3149"
+      },
+      {
+        "loop": 12,
+        "file": "internal/vibeflow/arbitration.go",
+        "vibeCase": "C8",
+        "title": "L12.1 G19 epistemic arbitration (fixes gate G19's real defect: it re-runs judge(grounding_check) on the SAME provider/model and presents repetition as verification; grounded in Panickssery/Bowman/Feng 2024 arXiv:2404.13076 self-preference; rule: a verdict is only disputed by INDEPENDENT evidence, correlated re-judging is idempotent; independence ladder none->always abstain / correlated->may uphold with grade held flat, never overturn / independent->the only rung that may overturn; EvalType excluded from independence so eval_type cannot manufacture independence; incomplete identity falls back to correlated; non-decisive verdicts are inert in BOTH directions; RULE D the unexamined default leaves undisputed verdicts GradeUnverified; operator authority recorded as BasisOperatorAuthority at GradeUnverified so authority is never laundered into evidence; exhaustive matrix 1600 combos -> abstain=1408 uphold=144 overturn=48, only 48 can overturn and all require an independent authority; 3 defects found by the tests incl. ClassifyIndependence comparing structs so the headline rule never fired; 25 new tests, 322/322 total green, vet/fmt clean, race clean, ALIGNED 5th consecutive)",
+        "driftId": null,
+        "verdict": "aligned (drift_judge eval 2029, nli=entailment conf=1.0)",
+        "sha256Prefix": "24a05b16"
       }
     ],
     "design": {
