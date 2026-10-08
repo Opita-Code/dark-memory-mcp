@@ -174,23 +174,54 @@ If `EV > 0`, escalate. If `EV <= 0`, stay degraded.
 
 ## Layer 3 — Adaptive depth (L8.3)
 
-**When**: On every gate fire, the block size is computed from the current `task_length_class`.
+**When**: On every `vibe_publish`, the depth level is computed from the (Mode, TaskClass) matrix + persona modifiers.
 
-**What**: The gate-protocol.md block size scales with predicted task length. 3 sizes:
+**What**: 6 depth levels (not 3 — granular enough to differentiate a typo fix from a small refactor):
 
-| Task class | Block size (tokens) | Content |
-|---|---|---|
-| `short` | ~500 | spec digest + 1 pinned memory |
-| `medium` | ~2,000 | spec + 3 pinned + key memories + constitution summary |
-| `long` | ~3,800 | full block (current behavior) |
+| Depth | spec.intent | tasks | drift iters | mem writes | When |
+|---|---|---|---|---|---|
+| 0 (skip) | 0 | 0 | 0 | 0 | typo fix, lookup, ModeOff+Short |
+| 1 (minimal) | ≤20w | 0 | 0 | 1 | small task, ModeOff+Medium |
+| 2 (light) | ≤100w | ≤3 | 0 | 1 | medium task, ModeOff+Long |
+| 3 (standard) | ≤200w | ≤7 | 1 | 3 | ModeDegraded+Medium, default |
+| 4 (full) | ≤500w | ≤12 | 2 | 5 | ModeFull+Medium, ModeDegraded+Long |
+| 5 (exhaustive) | ≤2000w | ≤20 | 3+consensus | 6+ | ModeFull+Long+Expert+C7 |
 
-**Cost**: Same as current (1-4 tool calls), but the *content* is smaller for short tasks.
+**Calibration rules** (applied in order, all additive, cap [0, 5]):
 
-**Citation**: Anthropic Sept 2024 "Contextual Retrieval" (row 2536). Key insight: 50-100 tokens of *high-signal* context reduces retrieval failure 49%. Smaller + sharper beats larger + noisier. Loop 9 will do the same on the per-chunk level (delta-based), Loop 8.3 does it on the per-block level.
+1. **Base** = matrix(Mode, TaskClass):
+   - ModeOff × {Short=0, Medium=1, Long=2}
+   - ModeDegraded × {Short=1, Medium=2, Long=3}
+   - ModeFull × {Short=2, Medium=3, Long=4}
+2. **TierExpert** +1 (experts want more context)
+3. **TierNovice** -1 (novices drown in large specs)
+4. **RushMode** -1 (cost-lens: user cost minimal)
+5. **VibeCase C3/C7** +1 (image and mixed-bundle need deliberation)
+6. **MultiArtifact** +1 (covering N files needs more detail)
+
+**Why 6 levels, not 3**: a typo fix (Depth 0) is not the same as a small refactor (Depth 1) nor a medium task (Depth 2). With only 3 levels, the cost-lens forces 80% of jobs into the wrong bucket.
+
+**Audit-friendly**: `DepthDecision` records every modifier with name+delta, so drift_judge can verify the emitted spec matched the assigned depth. `Reason` is a one-line human-readable summary like `base=2 +1(tier:expert) → standard(3)`.
+
+**Citation**: Anthropic Sept 2024 "Contextual Retrieval" (row 2536). 50-100 tokens of *high-signal* context reduces retrieval failure 49%. Smaller + sharper beats larger + noisier. The depth limits encode this — the LLM is told to respect `IntentMaxWords` rather than emit a 2000-word spec on a typo fix.
+
+**Files**:
+- `internal/vibeflow/depth.go` — Depth enum, BlockSizes, DepthConfig, ComputeDepth, BlockSizesFor, DepthDecision
+- `internal/vibeflow/depth_test.go` — 31 tests covering each level, each modifier, caps, cost-lens killer test, 10-personas mapping, reproducibility
+- 31 new tests, 108/108 PASS in vibeflow package
 
 ### Mapping in gate-protocol.md
 
-The current gate-protocol.md template has 7 sections (per loop-7 design). For `short` tasks, only section 1 (spec digest) and section 5 (1 pinned memory) are emitted. For `medium`, sections 1-4 + 6. For `long`, all 7.
+The current gate-protocol.md template has 7 sections (per loop-7 design). The depth level maps to which sections are emitted:
+
+| Depth | Sections emitted |
+|---|---|
+| 0 (skip) | (none — raw LLM call) |
+| 1 (minimal) | section 1 (spec digest, ≤20 words) |
+| 2 (light) | sections 1, 2 (≤3 tasks, no drift) |
+| 3 (standard) | sections 1-4 + 6 (≤7 tasks, 1 drift iter) |
+| 4 (full) | sections 1-7 (≤12 tasks, 2 drift iters) |
+| 5 (exhaustive) | sections 1-7 (≤20 tasks, 3 drift iters + consensus) |
 
 ## State persistence
 
