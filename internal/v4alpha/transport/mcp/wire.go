@@ -66,6 +66,7 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/event"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/judge"
 	"github.com/dark-agents/dark-memory-mcp/internal/vibecase"
+	"github.com/dark-agents/dark-memory-mcp/internal/vibeflow"
 )
 
 // RunDelegateIntentCore executes the v4alpha DECIDE→EXTRACT→MIND→CURATE
@@ -262,7 +263,87 @@ func RunDelegateIntentCore(
 		CacheHit:     cacheHit,
 		Verdict:      verdict,
 		Alternatives: altOut,
+		TaskClass:    buildTaskClassAdvisory(in, decision),
 	}, nil
+}
+
+// routerLengthThreshold is delegation/router.go's `len(task) > 200`.
+// Duplicated as a literal in two places inside the router already; it
+// is published here so the advisory can compare against it. If the
+// router's threshold ever changes, this constant must change with it —
+// that duplication is the price of not refactoring the router's DECIDE
+// contract as part of an instrumentation commit.
+const routerLengthThreshold = 200
+
+// buildTaskClassAdvisory runs the canonical vibeflow classifier over
+// the task text and publishes the result WITHOUT letting it influence
+// Decision. Pure, deterministic, no I/O — the classifier reads only the
+// message and vibe_case already in hand.
+//
+// AgreesWithRouter is computed honestly: it is nil unless the router's
+// decision was actually length-driven. If DECIDE chose "delegate"
+// because of a coordination marker ("in parallel") or because
+// vibe_case==C7, then a length-only router would have decided
+// differently, and claiming agreement would be a fabricated comparison.
+// Reporting nil says "these two are not comparable for this call", which
+// is the truthful answer.
+func buildTaskClassAdvisory(in DelegateIntentInput, decision string) *TaskClassAdvisory {
+	class, confidence, features := vibeflow.Classify(in.TaskDescription, in.VibeCase)
+
+	lengthDriven := decision == "inline" ||
+		(!hasCoordinationMarker(in.TaskDescription) && in.VibeCase != "C7")
+
+	var agrees *bool
+	if lengthDriven {
+		// Agreement is not "would it delegate" — it is whether the
+		// classifier and the router reach the SAME decision. Comparing a
+		// bare delegate/not-delegate flag against the decision would
+		// invert the meaning for exactly the short-task case that
+		// matters most.
+		routerWouldDelegate := len(in.TaskDescription) > routerLengthThreshold
+		a := routerWouldDelegate == (decision == "delegate")
+		agrees = &a
+	}
+
+	return &TaskClassAdvisory{
+		Class:            string(class),
+		Confidence:       confidence,
+		Grade:            "modeled",
+		TokenCount:       features.TokenCount,
+		MultiStep:        features.MultiStep,
+		HasCode:          features.HasCodeSignals,
+		RouterThreshold:  routerLengthThreshold,
+		AgreesWithRouter: agrees,
+		Caveat: "advisory only — this block did NOT influence decision; the router's " +
+			"`len(task) > 200` rule remains the single decision-maker. Class is a deterministic " +
+			"heuristic over the task text, not an observation of how the task behaved. " +
+			"(Loop 8 L8.1a; classification is not yet wired into DECIDE.)",
+	}
+}
+
+// hasCoordinationMarker mirrors the keyword set in
+// delegation/router.go DecideDelegation. Needed to tell whether DECIDE
+// was length-driven or marker-driven.
+//
+// This is a THIRD copy of that list (router.go, and here). Duplicating
+// is deliberate and temporary: importing the router's unexported
+// matcher would couple instrumentation to DECIDE's internals, and
+// exporting it is a larger refactor than an instrumentation commit
+// should carry. The duplication is bounded, documented, and will be
+// deleted the moment the measurement window closes — at which point the
+// decision about Classify is made with data instead of by argument.
+func hasCoordinationMarker(task string) bool {
+	lower := strings.ToLower(task)
+	for _, m := range []string{
+		"delegate", "sub-agent", "subagent", "parallel", "concurrent",
+		"step by step", "first ... then", "and then", "split into",
+		"subtask", "in parallel",
+	} {
+		if strings.Contains(lower, m) {
+			return true
+		}
+	}
+	return false
 }
 
 // buildExtractorForWire constructs a delegation.Extractor for use by

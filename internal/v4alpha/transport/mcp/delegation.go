@@ -10,16 +10,16 @@
 // (deterministic; "first ... then" only matched the exact substring).
 //
 // Phase 7 alpha.19 (this file):
-//   1. DECIDE: same deterministic priority chain (refusal > delegation
-//      markers > C7 > length>200 > inline).
-//   2. EXTRACT: NEW. When DECIDE=delegate AND (length>200 OR vibe=C7),
-//      invoke the LLM via the judge-delegator persona to extract atomic
-//      non-overlapping subtasks. Validated by drift_judge (eval_type=
-//      subtask_extraction). Failures surface as needs_human with
-//      alternatives[].
-//   3. MIND: same as alpha.18.1 (composeSystemPrompt per subtask).
-//   4. CURATE: stub in Chunk 7.1 (subagent_register + delegation_context
-//      land in Chunk 7.2).
+//  1. DECIDE: same deterministic priority chain (refusal > delegation
+//     markers > C7 > length>200 > inline).
+//  2. EXTRACT: NEW. When DECIDE=delegate AND (length>200 OR vibe=C7),
+//     invoke the LLM via the judge-delegator persona to extract atomic
+//     non-overlapping subtasks. Validated by drift_judge (eval_type=
+//     subtask_extraction). Failures surface as needs_human with
+//     alternatives[].
+//  3. MIND: same as alpha.18.1 (composeSystemPrompt per subtask).
+//  4. CURATE: stub in Chunk 7.1 (subagent_register + delegation_context
+//     land in Chunk 7.2).
 //
 // # Wire shape v2 (alpha.19, additive over v1)
 //
@@ -78,7 +78,7 @@ type DelegateIntentSubtask struct {
 	Description       string   `json:"description"`
 	SystemPrompt      string   `json:"system_prompt"`
 	Tools             []string `json:"tools"`
-	Model             string             `json:"model"`
+	Model             string   `json:"model"`
 	SubagentID        string   `json:"subagent_id,omitempty"`
 	DelegationContext string   `json:"delegation_context,omitempty"`
 }
@@ -102,12 +102,75 @@ type DelegateIntentAlternative struct {
 // Phase 9 alpha.20 Chunk 8.1: exported (capitalized) so v3 binary
 // can decode the output without re-declaring the schema.
 type DelegateIntentOutput struct {
-	Decision     string                      `json:"decision"`     // "inline"|"delegate"|"refused"
-	Reasoning    string                      `json:"reasoning"`   // multi-phase trace
-	Subtasks     []DelegateIntentSubtask      `json:"subtasks"`    // 0..N subtasks
-	CacheHit     bool                        `json:"cache_hit"`   // NEW alpha.19
-	Verdict      string                      `json:"verdict"`     // NEW alpha.19
+	Decision     string                      `json:"decision"`               // "inline"|"delegate"|"refused"
+	Reasoning    string                      `json:"reasoning"`              // multi-phase trace
+	Subtasks     []DelegateIntentSubtask     `json:"subtasks"`               // 0..N subtasks
+	CacheHit     bool                        `json:"cache_hit"`              // NEW alpha.19
+	Verdict      string                      `json:"verdict"`                // NEW alpha.19
 	Alternatives []DelegateIntentAlternative `json:"alternatives,omitempty"` // NEW alpha.19 (needs_human only)
+
+	// TaskClass (Phase 21 L8.1a instrumentation) reports what the
+	// canonical vibeflow classifier sees in the task, ALONGSIDE the
+	// router's own decision. It does not influence Decision.
+	//
+	// WHY IT IS ADVISORY AND NOT LOAD-BEARING
+	// --------------------------------------
+	// DECIDE already routes on `len(task) > 200` (delegation/router.go:73).
+	// Classify is richer — keywords, language, code signals, multi-artifact
+	// — so adopting it as the router would CHANGE WHO GETS DELEGATED, and
+	// therefore change spend. That is a design decision with a cost, and
+	// Phase 20's own closeout says the optimizations are not yet switched
+	// on because nobody has measured them against a real baseline.
+	//
+	// So this runs the classifier and publishes its verdict WITHOUT
+	// acting on it. After a measurement window the operator can compare
+	// `router_threshold` against `task_class.class` on real traffic and
+	// decide with data instead of by argument. Until then, the cost of a
+	// second opinion is one deterministic function call and the benefit
+	// is that the decision to adopt it becomes evidence-based.
+	//
+	// Adding it as a third opinion alongside the router would be the
+	// failure mode this whole phase documents; this is explicitly NOT
+	// that. The router remains the single decision-maker.
+	TaskClass *TaskClassAdvisory `json:"task_class,omitempty"`
+}
+
+// TaskClassAdvisory is the published output of vibeflow.Classify for
+// one delegate_intent call. Carries its own epistemic status: the
+// classifier is a deterministic heuristic, so its output is ModeLED,
+// never MEASURED — the same downward-only rule L11.2 applies to the
+// drift judge's confidence.
+type TaskClassAdvisory struct {
+	// Class is the canonical task class from vibeflow.Classify
+	// (short | medium | long | …).
+	Class string `json:"class"`
+
+	// Confidence is the classifier's own score in 0..1.
+	Confidence float64 `json:"confidence"`
+
+	// Grade is the evidence status of this whole block. Always
+	// "modeled" — the classifier is a heuristic over the task text,
+	// not an observation of how the task actually behaved.
+	Grade string `json:"grade"`
+
+	// TokenCount / Features is what the classifier actually saw, so an
+	// operator can judge the input rather than trust the label.
+	TokenCount int  `json:"token_count"`
+	MultiStep  bool `json:"multi_step"`
+	HasCode    bool `json:"has_code_signals"`
+
+	// RouterThreshold is the router's own length cutoff, published here
+	// so the two opinions are comparable in one place.
+	RouterThreshold int `json:"router_threshold"`
+
+	// AgreesWithRouter is nil when the two cannot be compared (the
+	// router decided on a coordination marker or vibe_case, not on
+	// length). When non-nil, it says whether a length-only router
+	// would have reached the same decision.
+	AgreesWithRouter *bool `json:"agrees_with_router,omitempty"`
+
+	// Caveat states what this block is not. Never empty.
+	Caveat string `json:"caveat"`
 }
 
 func registerDelegationTools(s *Server) {

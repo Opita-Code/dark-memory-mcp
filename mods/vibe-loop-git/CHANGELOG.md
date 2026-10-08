@@ -3,6 +3,96 @@
 All notable changes to **vibe-loop-git** are documented in this file.
 Format: [version] — date — summary. Local tags only (no push).
 
+## [0.4.3] — 2026-10-08 — L8.1a instrumented as ADVISORY, and why it is not wired into DECIDE
+
+Second Phase 21 primitive. This one is deliberately **not**
+load-bearing, and the reason matters more than the feature.
+
+### Added
+
+`delegate_intent` now returns `task_class`: what the canonical
+`vibeflow.Classify` sees in the task, published next to the router's own
+decision. Class, confidence, grade, token count, multi-step and code
+signals, plus the router's own `router_threshold` so the two opinions
+are comparable in one place.
+
+### Why advisory and not wired
+
+DECIDE already routes on `len(task) > 200`
+(`internal/v4alpha/delegation/router.go:73`). `Classify` is richer —
+keywords, language detection, code signals, multi-artifact. Adopting it
+as the router would change **who gets delegated**, and therefore change
+spend.
+
+That is a design decision with a cost attached, and Phase 20's own
+closeout says these optimizations were never switched on *because
+nobody measured them against a real baseline*. Flipping one now would
+repeat the exact error the phase was criticized for, on the phase's own
+code.
+
+So it runs and reports, and changes nothing. After a measurement window
+the operator compares `router_threshold` against `task_class.class` on
+real traffic and decides with data instead of by argument.
+
+### Three things this deliberately does not do
+
+1. **It is not a second opinion competing with the router.** The router
+   remains the single decision-maker. Adding a competing opinion would
+   be the failure mode this whole phase documents.
+2. **`agrees_with_router` is `null`, not `false`, when DECIDE was not
+   length-driven.** If the router delegated on a coordination marker or
+   on `vibe_case=C7`, a length-only router would have decided
+   differently — but reporting `false` would present a comparison the
+   router never performed as if it were a disagreement. `null` says
+   "not comparable for this call", which is the truthful answer.
+3. **The grade is `modeled`, never `measured`.** A deterministic
+   heuristic over task text is a projection, not an observation. Same
+   downward-only rule L11.2 applies to the drift judge's confidence.
+
+### A bug the wiring test caught
+
+`agrees_with_router` initially computed `len(task) > threshold` — that
+is "would it delegate", not "do they agree". For the short-task case
+that inverted the meaning and reported disagreement where there was
+agreement.
+
+`TestL8_1a_AgreesIsComputedWhenLengthDriven` caught it. The correction
+compares the router's hypothetical decision against the actual one.
+
+### The load-bearing test
+
+`TestL8_1a_DecisionIsUnchanged` asserts that for five inputs — short,
+long, coordination marker, C7, C8 — the instrumented pipeline returns
+exactly what `delegation.DecideDelegation` returns.
+
+An instrumentation commit that accidentally moved a routing decision
+would be worse than no instrumentation: it would silently change who
+pays for what. That test is the guarantee it did not.
+
+### Duplication, bounded and marked
+
+`hasCoordinationMarker` is a third copy of the router's keyword list
+(the router has two internally). Importing the router's unexported
+matcher would couple instrumentation to DECIDE's internals; exporting it
+is a larger refactor than an instrumentation commit should carry. Marked
+in-code as temporary, to be deleted when the measurement window closes.
+
+### Rejected, with reasons
+
+- **`ComputeVerdict`** — needs a `CostSummary`, and `CostSummary` has
+  zero producers outside `internal/vibeflow`. Wiring it means first
+  inventing a cost subsystem. Inventing the input to justify the output
+  is the failure this phase exists to prevent.
+- **`ComputeConvergence` at `delegate_intent`** — needs a set of
+  findings from multiple delegates. `delegate_intent` spawns one
+  subagent; no collector exists. Same objection.
+
+### Audit
+
+`go vet` clean, `gofmt` clean on all 3 touched files, 6/6 new tests pass,
+and the pre-existing `v4alpha/delegation` + `v4alpha/vibe` suites pass
+unchanged — which is the evidence that no behavior moved.
+
 ## [0.4.2] — 2026-10-08 — correct four false claims in the mod's own manifest
 
 Documentation-only. No Go changed. The point of this entry is that the

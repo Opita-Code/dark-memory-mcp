@@ -34,10 +34,10 @@ license: proprietary
 metadata:
   author: dark-agent
   operator: nico
-  version: 0.4.2
+  version: 0.4.3
   dark-memory-mcp-version: ">=4.0.0-alpha.30"
   loops-shipped: 13
-  phase-20: CLOSED 2026-10-08 (6 loops, 9 artifacts, 360 tests, 23 drift judges, 8 consecutive ALIGNED). Library layer — 8 of 9 primitives still unwired; Loop 11.2 wired in Phase 21. See core/phase-20-closeout.md.
+  phase-20: CLOSED 2026-10-08 (6 loops, 9 artifacts, 360 tests, 23 drift judges, 8 consecutive ALIGNED). Library layer — 7 of 9 primitives still unwired. Phase 21 wired L11.2 (labels its own confidence) and instrumented L8.1a (advisory, non-load-bearing). See core/phase-20-closeout.md.
   drift-verdicts: 20-aligned-1-needs_human (2 operator-overrides for MiniMax-M3 false-positive pattern)
   loop-7-vibe-case: C8
 ---
