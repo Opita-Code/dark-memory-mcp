@@ -133,10 +133,25 @@ type PublishResult struct {
 	DriftID          int64   `json:"drift_id,omitempty"`
 	BrandEvalID      int64   `json:"brand_eval_id,omitempty"`
 	ComplianceEvalID int64   `json:"compliance_eval_id,omitempty"`
-	Verdict          string  `json:"verdict"`     // aligned | drift_detected | needs_human | skipped | pending
-	Confidence       float32 `json:"confidence"`  // 0..1; 0 if skipped or no-LLM
-	NextAction       string  `json:"next_action"` // publish | reconcile | human_gate | poll
-	Reasoning        string  `json:"reasoning"`   // human-readable explanation
+	Verdict          string  `json:"verdict"`    // aligned | drift_detected | needs_human | skipped | pending
+	Confidence       float32 `json:"confidence"` // 0..1; 0 if skipped or no-LLM
+	// ConfidenceGrade + ConfidenceCaveat (Phase 21 wiring, L11.2).
+	// Confidence has shipped as a BARE number since v2.0 — every
+	// harness reads 0.9 without knowing what the 0.9 is. These two
+	// fields carry the epistemic status of that number to the
+	// operator at the point of consumption.
+	//
+	// ConfidenceGrade is one of the four L11.1 rungs:
+	// unverified | estimated | modeled | measured.
+	// ConfidenceCaveat explains why, and is never empty.
+	//
+	// The load-bearing case: verdict="skipped" or "pending" yields
+	// confidence_grade="unverified", because a 0 there means no LLM
+	// ran — not a measured zero.
+	ConfidenceGrade  string `json:"confidence_grade"`
+	ConfidenceCaveat string `json:"confidence_caveat"`
+	NextAction       string `json:"next_action"` // publish | reconcile | human_gate | poll
+	Reasoning        string `json:"reasoning"`   // human-readable explanation
 
 	// AuditProvenance (C6 dark-cli hookup): when non-nil, this is
 	// the provenance projection from the dark-cli AuditRecord the
@@ -161,6 +176,30 @@ type PublishResult struct {
 	// running in the background and Verdict="pending". The operator
 	// polls pipeline_status(artifact_id) for the final verdict.
 	Async bool `json:"async,omitempty"`
+}
+
+// applyConfidenceGrade sets ConfidenceGrade + ConfidenceCaveat from
+// the verdict and confidence the production path actually produced.
+//
+// Phase 21 L11.2 wiring. There is exactly ONE derivation of the grade
+// and every construction path funnels through this method. That is
+// deliberate: Loop 11.1 shipped a library with a zero-caller problem,
+// and this is the defensive countermeasure against the opposite
+// failure — a second place that grades confidence slightly differently
+// and quietly disagrees with the first.
+//
+// ProviderID/ModelRev are not plumbed through runJudgePipeline (it
+// returns only verdict, confidence, reasoning and two eval ids), so the
+// authority caveat renders "unknown". That is the honest reading: we
+// know a judge produced the number, but the call path does not tell us
+// which one. Naming a provider we did not observe would be a guess.
+func (r *PublishResult) applyConfidenceGrade() {
+	o := vibeflow.JudgeOutcome{
+		Verdict:    r.Verdict,
+		Confidence: r.Confidence,
+	}
+	r.ConfidenceGrade = vibeflow.GradeJudgeConfidence(o).String()
+	r.ConfidenceCaveat = vibeflow.JudgeConfidenceCaveat(o)
 }
 
 // PublishVibe is the canonical publish entry point. See package doc.
@@ -289,6 +328,10 @@ func (o *Orchestrator) PublishVibe(ctx context.Context, in PublishVibeInput) (*P
 		NextAction: "human_gate",
 		Reasoning:  "drift check pending",
 	}
+	// L11.2 wiring: the pessimistic default carries NO observation, so
+	// it is graded before anything runs. Any return path that forgets
+	// to re-grade inherits the honest floor instead of a bare number.
+	result.applyConfidenceGrade()
 	// C6 dark-cli hookup: if the audit gate accepted, attach the
 	// provenance projection. nil on bypass or missing-record.
 	if o.pendingAuditProvenance != nil {
@@ -319,6 +362,17 @@ func (o *Orchestrator) PublishVibe(ctx context.Context, in PublishVibeInput) (*P
 		result.Verdict = "pending"
 		result.NextAction = "poll"
 		result.Reasoning = "async drift check running; poll pipeline_status(artifact_id=" + fmt.Sprintf("%d", artifactID) + ")"
+		// L11.2 wiring: RE-GRADE after the verdict flips to pending.
+		//
+		// Bug found by TestWiring_L11_2_AsyncPendingIsUnverified: the
+		// constructor grades the pessimistic "needs_human" default, so
+		// without this re-grade the async return shipped
+		// verdict=pending carrying the caveat "no judge provider
+		// recorded" — a caveat about the wrong state. The grade was
+		// right (unverified either way) but the reason was wrong, which
+		// is exactly the L11.1 failure class: structurally valid,
+		// semantically false.
+		result.applyConfidenceGrade()
 		// Persist the pending drift report first so pipeline_status
 		// returns a row immediately (not nil).
 		dPending := &vibeflow.DriftReport{
@@ -348,6 +402,10 @@ func (o *Orchestrator) PublishVibe(ctx context.Context, in PublishVibeInput) (*P
 	verdict, confidence, reasoning, brandEvalID, compEvalID := o.runJudgePipeline(ctx, wc, in, specID, artifactID, activeAgentID, autoCheck)
 	result.Verdict = verdict
 	result.Confidence = confidence
+	// L11.2 wiring: re-grade now that the judge has actually run. This
+	// is the line that turns a bare float32 into a labeled number for
+	// every sync vibe_publish call.
+	result.applyConfidenceGrade()
 	result.Reasoning = reasoning
 	result.BrandEvalID = brandEvalID
 	result.ComplianceEvalID = compEvalID
@@ -702,6 +760,7 @@ func (o *Orchestrator) runAsyncJudgePipeline(
 				DriftID:       pendingDriftID,
 				ActiveAgentID: activeAgentID,
 			}
+			hooked.applyConfidenceGrade()
 			if in.Artifact.AutoSaveDecision {
 				o.autoSaveDecisionOnAligned(bgCtx, wc, specID, artifactID, in, hooked, activeAgentID)
 			}

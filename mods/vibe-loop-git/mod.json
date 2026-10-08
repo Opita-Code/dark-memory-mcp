@@ -3,9 +3,9 @@
   "kind": "companion-mod",
   "name": "vibe-loop-git",
   "displayName": "Vibe-Loop Git Protocol",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "targetDarkMemoryVersion": ">=4.0.0-alpha.30",
-  "description": "A 13-loop vibe-loop protocol for dark-memory-mcp. Loops 1-6 turn any artifact (code, text, decision, research, video, audio, multi-bundle) into a drift-judged, atomic-mirrored, version-controlled work product. Loop 7 (vibe-flow, vibe_case C8) adds ambient workflow gating: 23 events E1-E23, 25 gates G1-G25, 18 of 20 dark-memory namespaces wired via gate-trigger-matrix.json + gate-protocol.md. Loops 8-13 (Phase 20, SHIPPED 2026-10-08) add the honesty layer: <5min mitigation, model-tier and cost transparency, a measured token economy, operator-visible epistemic labeling (Kadavath calibration), G19 drift arbitration (Panickssery 2024), and the sub-agent handoff contract. Built on the drift_judge pipeline (Phase 16 SHIPPED) + T-407-c 3-layer defensive pattern (Phase 17 SHIPPED) + C8 vibe_case + 8th vibe_case taxonomy expansion (alpha.30). IMPORTANT: Loops 8-13 are a verified library with ZERO production callers as of closeout — see core/phase-20-closeout.md section 1.",
+  "description": "A 13-loop vibe-loop protocol for dark-memory-mcp. Loops 1-6 turn any artifact (code, text, decision, research, video, audio, multi-bundle) into a drift-judged, atomic-mirrored, version-controlled work product. Loop 7 (vibe-flow, vibe_case C8) adds ambient workflow gating: 23 events E1-E23, 25 gates G1-G25, 18 of 20 dark-memory namespaces wired via gate-trigger-matrix.json + gate-protocol.md. Loops 8-13 (Phase 20, SHIPPED 2026-10-08) add the honesty layer: <5min mitigation, model-tier and cost transparency, a measured token economy, operator-visible epistemic labeling (Kadavath calibration), G19 drift arbitration (Panickssery 2024), and the sub-agent handoff contract. Built on the drift_judge pipeline (Phase 16 SHIPPED) + T-407-c 3-layer defensive pattern (Phase 17 SHIPPED) + C8 vibe_case + 8th vibe_case taxonomy expansion (alpha.30). IMPORTANT: Loops 8-13 are a verified library with ZERO production callers as of closeout â€” see core/phase-20-closeout.md section 1. UPDATE Phase 21: Loop 11.2 is WIRED — vibe_publish now returns confidence_grade + confidence_caveat beside confidence. The other eight Phase 20 primitives remain unwired.",
   "license": "proprietary",
   "authors": [
     {
@@ -46,14 +46,14 @@
     "firstTag": "v4.0.0-alpha.27",
     "currentTag": "v4.0.0-alpha.30",
     "loopsShipped": 13,
-    "driftJudgesRun": 22,
+    "driftJudgesRun": 23,
     "driftVerdicts": {
-      "aligned": 19,
-      "needs_human": 1,
-      "firstTryAligned": 17,
-      "retryResolved": 2
+      "aligned": 20,
+      "needs_human": 1
     },
-    "phase20": "CLOSED 2026-10-08 (operator green light). Loops 8-13 shipped: 9 artifacts, 351/351 tests, 22 drift judges, 6 consecutive ALIGNED (2025-2030). NOT WIRED: zero production callers for any Phase 20 symbol; bin/dark-mem-mcp.exe predates the work. Closeout: core/phase-20-closeout.md. Open debt: gofmt on 14 pre-existing vibeflow files (694 lines, cosmetic); StateDelegating absent from internal/vlp; 4 Postgres subagent methods return notImpl; Strong/MiniMax pricing still a placeholder."
+    "phase20": "CLOSED 2026-10-08 (operator green light). Loops 8-13 shipped: 9 artifacts, 351/351 tests, 22 drift judges, 6 consecutive ALIGNED (2025-2030). NOT WIRED: zero production callers for any Phase 20 symbol; bin/dark-mem-mcp.exe predates the work. Closeout: core/phase-20-closeout.md. Open debt: gofmt on 14 pre-existing vibeflow files (694 lines, cosmetic); StateDelegating absent from internal/vlp; 4 Postgres subagent methods return notImpl; Strong/MiniMax pricing still a placeholder.",
+    "firstTryAligned": 18,
+    "phase21": "OPEN 2026-10-08. L11.2 WIRED: GradeJudgeConfidence/JudgeConfidenceCaveat label the confidence the production vibe_publish path already emits. PublishResult gains confidence_grade + confidence_caveat. 3 graded return paths + 1 re-grade after the async pending flip. Eval 2032 ALIGNED. Rejected ComputeVerdict as unwirable: CostSummary has zero producers, so wiring it would require inventing a cost subsystem. Remaining L8-13 primitives still unwired."
   },
   "depends": {
     "dark-memory-mcp": ">=4.0.0-alpha.28",
@@ -113,7 +113,7 @@
   "protocol": {
     "loops": 13,
     "perLoopPhases": [
-      "OSINT (parallel web + academic + web_fetch — tier-1 only)",
+      "OSINT (parallel web + academic + web_fetch â€” tier-1 only)",
       "SPEC (vibe_spec with structured tasks)",
       "ARTIFACT (concrete file/decision)",
       "DRIFT_JUDGE (LLM-as-judge evaluates artifact vs spec intent)",
@@ -254,7 +254,7 @@
         "vibeCase": "C8",
         "title": "L9.1 model tier selection (3 tiers Fast/Balanced/Strong, 7-rule calibration, ModelConfig, 26 new tests, 134/134 total green)",
         "driftId": null,
-        "verdict": "operator override (drift_judge eval 2024 needs_human, nli=neutral false-positive — matches pattern in rows 1372/2017/2019)",
+        "verdict": "operator override (drift_judge eval 2024 needs_human, nli=neutral false-positive â€” matches pattern in rows 1372/2017/2019)",
         "sha256Prefix": "c4de9997"
       },
       {
@@ -315,7 +315,7 @@
         "loop": 13,
         "file": "internal/vibeflow/handoff.go",
         "vibeCase": "C8",
-        "title": "L13.1 sub-agent handoff contract (the CONTRACT, not a new mechanism — agent_memory_delegate, mindset_apply, subagent_register and internal/delegation/router.go already exist per rows 200/201/206; row 251 pinned the 5-stage thesis CURATE/MIND/ISOLATE/RECOVER/SYNTHESIZE; adds the missing piece: EVERY epistemic rule from L11/L12 must survive the delegation boundary; OPTION A per operator decision: extended L12.1 JudgeSource with Origin as a third axis instead of a parallel notion of independence; OriginUnspecified is the zero value so L12.1's 7 classifications are preserved byte-for-byte and pinned by TestL13_BackCompat; ORIGIN CAN ONLY DEGRADE INDEPENDENCE, NEVER CREATE IT, and origin diversity never rescues a shared model because two instances of one model are sampling variance not decorrelated error; HEADLINE PROPERTY headcount is not evidence — convergence grade derives from DIVERSITY never from how many delegates agreed (n=2,3,5,10,50,100 all held flat at incoming grade on one model; 2 delegates on 2 models promote modeled->measured); empty panel is not unanimity; a panel spanning several claims corroborates none and escalates to Arbitrate; Finding carries Grade+Source+Caveat and HandoffSpec.Validate rejects a sub-measured finding with no caveat; only ResolutionAbstain disputes travel so a child cannot inherit an unaudited claim as settled; GradedFindings routes through the L11.1 Claim surface; reuses L11.1 EvidenceGrade and L12.1 Basis/Resolution/Independence with no parallel vocabulary; 4 defects found while building including an INVERTED LADDER where a delegated artifact came out strictly LESS independent than a self-judged one, and a LAUNDERING BUG where ComputeConvergence treated distinct finding IDs as agreement and PROMOTED a panel reporting opposite things to measured; fixed by grouping on Finding.Claim and renaming Agrees->SameClaim since semantic agreement is an LLM judgment not a string comparison; 29 new tests, 351/351 total green, vet/fmt clean, race clean, ALIGNED 6th consecutive",
+        "title": "L13.1 sub-agent handoff contract (the CONTRACT, not a new mechanism â€” agent_memory_delegate, mindset_apply, subagent_register and internal/delegation/router.go already exist per rows 200/201/206; row 251 pinned the 5-stage thesis CURATE/MIND/ISOLATE/RECOVER/SYNTHESIZE; adds the missing piece: EVERY epistemic rule from L11/L12 must survive the delegation boundary; OPTION A per operator decision: extended L12.1 JudgeSource with Origin as a third axis instead of a parallel notion of independence; OriginUnspecified is the zero value so L12.1's 7 classifications are preserved byte-for-byte and pinned by TestL13_BackCompat; ORIGIN CAN ONLY DEGRADE INDEPENDENCE, NEVER CREATE IT, and origin diversity never rescues a shared model because two instances of one model are sampling variance not decorrelated error; HEADLINE PROPERTY headcount is not evidence â€” convergence grade derives from DIVERSITY never from how many delegates agreed (n=2,3,5,10,50,100 all held flat at incoming grade on one model; 2 delegates on 2 models promote modeled->measured); empty panel is not unanimity; a panel spanning several claims corroborates none and escalates to Arbitrate; Finding carries Grade+Source+Caveat and HandoffSpec.Validate rejects a sub-measured finding with no caveat; only ResolutionAbstain disputes travel so a child cannot inherit an unaudited claim as settled; GradedFindings routes through the L11.1 Claim surface; reuses L11.1 EvidenceGrade and L12.1 Basis/Resolution/Independence with no parallel vocabulary; 4 defects found while building including an INVERTED LADDER where a delegated artifact came out strictly LESS independent than a self-judged one, and a LAUNDERING BUG where ComputeConvergence treated distinct finding IDs as agreement and PROMOTED a panel reporting opposite things to measured; fixed by grouping on Finding.Claim and renaming Agrees->SameClaim since semantic agreement is an LLM judgment not a string comparison; 29 new tests, 351/351 total green, vet/fmt clean, race clean, ALIGNED 6th consecutive",
         "driftId": null,
         "verdict": "aligned (drift_judge eval 2030, nli=entailment conf=1.0)",
         "sha256Prefix": "9521188f"

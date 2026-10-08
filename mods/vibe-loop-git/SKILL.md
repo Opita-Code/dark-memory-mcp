@@ -18,8 +18,9 @@ description: |
   in alpha.28). LOCAL-ONLY — never git push.
 
   IMPORTANT: Loops 8-13 are a verified library with NO production
-  callers yet. See core/phase-20-closeout.md §1 before assuming any
-  runtime effect.
+  callers yet, except Loop 11.2 (Phase 21) which now labels the
+  confidence that vibe_publish actually emits. See
+  core/phase-20-closeout.md §1 before assuming any runtime effect.
 
   Triggers on keywords: vibe-loop, vibe loop, vibe-loop-git, vibe loop
   protocol, drift-judge loop, atomic-mirror loop, OSINT-first workflow,
@@ -31,11 +32,11 @@ license: proprietary
 metadata:
   author: dark-agent
   operator: nico
-  version: 0.4.0
+  version: 0.4.1
   dark-memory-mcp-version: ">=4.0.0-alpha.30"
   loops-shipped: 13
-  phase-20: CLOSED 2026-10-08 (6 loops, 9 artifacts, 351 tests, 22 drift judges, 6 consecutive ALIGNED). Library layer only — zero production callers. See core/phase-20-closeout.md.
-  drift-verdicts: 19-aligned-1-needs_human (2 operator-overrides for MiniMax-M3 false-positive pattern)
+  phase-20: CLOSED 2026-10-08 (6 loops, 9 artifacts, 360 tests, 23 drift judges, 8 consecutive ALIGNED). Library layer — 8 of 9 primitives still unwired; Loop 11.2 wired in Phase 21. See core/phase-20-closeout.md.
+  drift-verdicts: 20-aligned-1-needs_human (2 operator-overrides for MiniMax-M3 false-positive pattern)
   loop-7-vibe-case: C8
 ---
 
@@ -101,11 +102,16 @@ Loop 13: sub-agent handoff          (C8 — delegation contract)
   ↓ headcount is not evidence; only unresolved disputes travel
 ```
 
-**Phase 20 is a verified library with zero production callers.** The
-primitives exist, are tested (351/351) and drift-judged (22 evals, 6
-consecutive ALIGNED), but nothing in the running MCP invokes them yet,
+**Phase 20 is a verified library. Eight of its nine primitives still have
+zero production callers.** The primitives exist, are tested (360/360) and
+drift-judged (23 evals), but nothing in the running MCP invokes them yet,
 and `bin/dark-mem-mcp.exe` predates all of it. Read
 `core/phase-20-closeout.md` §1 before assuming a runtime effect.
+
+**Phase 21 wires the first one (L11.2):** `vibe_publish` now returns
+`confidence_grade` and `confidence_caveat` alongside `confidence`. A
+`skipped` or `pending` verdict grades `unverified` — because a 0 there
+means no LLM ran, not a measured zero.
 
 **Per-loop phases (6)**:
 

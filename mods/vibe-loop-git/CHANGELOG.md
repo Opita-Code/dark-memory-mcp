@@ -3,6 +3,49 @@
 All notable changes to **vibe-loop-git** are documented in this file.
 Format: [version] — date — summary. Local tags only (no push).
 
+## [0.4.1] — 2026-10-08 — Phase 21 OPENS: the first Phase 20 primitive actually wired
+
+Phase 20's closeout finding was that all nine primitives had **zero
+production callers**. This release wires exactly ONE of them — and
+rejects the originally proposed one.
+
+### Added
+- **L11.2 — the production path now labels its own confidence.** `PublishResult` gains `confidence_grade` (`unverified | estimated | modeled | measured`) and `confidence_caveat`. Every `vibe_publish` response used to ship `{"verdict":"needs_human","confidence":0.9}` as a bare number; that is the precise failure Loop 11 L11.1 was written to fix, sitting in the one output the operator reads on every publish.
+- **`internal/vibeflow/judgegrade.go`** — `GradeJudgeConfidence`, `JudgeConfidenceCaveat`, `JudgeConfidenceClaim`. Reuses the L11.1 `Claim`/`EvidenceGrade` types; adds no new epistemic vocabulary, no new grade, no new struct family.
+- **`internal/orchestration/publish_vibe_l11_2_wiring_test.go`** — wiring tests. These exist because Phase 20's lesson is that a green library suite proves the rules are correct and says nothing about whether the production path calls them. Every test drives the real `PublishVibe` entry point and asserts on what the harness actually receives.
+- **`internal/vibeflow/judgegrade_test.go`** — 9 ladder tests.
+
+### Changed
+- `internal/orchestration/publish_vibe.go`: 3 graded construction paths + 1 re-grade after the async `pending` flip. All grading funnels through a single method `(*PublishResult).applyConfidenceGrade()` so there is exactly one derivation that could disagree with itself.
+
+### The rules, as shipped
+| verdict | grade | why |
+|---|---|---|
+| `skipped` | `unverified` | confidence 0 means **no LLM ran** — not a measured zero |
+| `pending` | `unverified` | check still running; nothing observed |
+| `needs_human` (infra failure, conf 0) | `unverified` | the judge never ran |
+| any real judge output | `measured` | it is a real recorded observation |
+| *all cases* | — | measured is still qualified: one authority judging is **correlated, not independent review** (L12.1) |
+
+Never `estimated` or `modeled`: this number is either an observation or absent. Downward-only — once unverified, a larger confidence never strengthens it.
+
+### Rejected: ComputeVerdict
+It was the proposed wiring and it was the wrong one. `ComputeVerdict` needs a `CostSummary`, and `CostSummary` has **zero producers** outside `internal/vibeflow/` (verified by grep). Wiring it would have required inventing a cost-recording subsystem first. Inventing the input to justify shipping the output is the exact failure this phase exists to prevent. The confidence was better: a real observation that only needed a label.
+
+### Two bugs the wiring tests caught
+1. **Async re-grade.** The constructor grades the pessimistic `needs_human` default, then the async branch flips the verdict to `pending`. Without a re-grade, `verdict=pending` shipped carrying the caveat "no judge provider recorded" — a caveat about the wrong state. Structurally valid, semantically false: the L11.1 failure class. Caught by reading the rendered output, not by structural assertions.
+2. **"unknown" read as "no provider".** The authority caveat rendered "single-judge measurement from unknown", which contradicts "a judge ran" in the same sentence. Now it says the call path does not return the provider id — honest instead of ambiguous.
+
+### Known limitations — still true
+- **`runJudgePipeline` does not plumb `provider_id`/`model_rev`**, so the authority caveat cannot name the judge. `applyConfidenceGrade` documents this: naming a provider we did not observe would be a guess.
+- **8 of the 9 Phase 20 primitives remain unwired.** This release is the first, not the fix.
+- gofmt debt on 14 pre-existing `internal/vibeflow` files (694 lines) unchanged; the 4 files touched here are gofmt-clean.
+- `bin/dark-mem-mcp.exe` is still stale — **this wiring is not in the running binary until it is rebuilt.**
+
+### Audit
+`internal/vibeflow`: 360/360 PASS (was 351). `internal/orchestration`: PASS. `go vet` clean on both, race detector clean on both, gofmt clean on all 4 touched files.
+drift_judge: eval 2032 → ALIGNED. 23 run, 20 ALIGNED, 18 first-try, 8 consecutive ALIGNED.
+
 ## [0.4.0] — 2026-10-08 — Phase 20 CLOSED (Loops 8-13, the honesty layer)
 
 Six loops shipped in one phase, unified by a single idea: *a system that
