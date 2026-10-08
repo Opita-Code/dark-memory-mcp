@@ -45,12 +45,12 @@
     "firstShipped": "2026-10-06",
     "firstTag": "v4.0.0-alpha.27",
     "currentTag": "v4.0.0-alpha.30",
-    "loopsShipped": 10,
-    "driftJudgesRun": 19,
+    "loopsShipped": 11,
+    "driftJudgesRun": 20,
     "driftVerdicts": {
-      "aligned": 16,
+      "aligned": 17,
       "needs_human": 1,
-      "firstTryAligned": 14,
+      "firstTryAligned": 15,
       "retryResolved": 2
     }
   },
@@ -282,6 +282,15 @@
         "driftId": null,
         "verdict": "aligned (drift_judge eval 2027, nli=entailment conf=1.0)",
         "sha256Prefix": "6a993da6"
+      },
+      {
+        "loop": 11,
+        "file": "internal/vibeflow/operatorstatus.go",
+        "vibeCase": "C8",
+        "title": "L11.1 operator visibility + epistemic labeling (Kadavath 2022 calibration + selective prediction applied to the system's own self-report; EvidenceGrade unverified/estimated/modeled/measured with only measured Trusted; confidence propagates DOWNWARD only so a verdict can never exceed its weakest input; ANTI-HALLUCINATION GUARD: zero recorded calls always yields insufficient-data, never helping; every operator-facing number wrapped in a Claim with grade+source+caveat so no bare numbers can exist; verdict compares measured spend vs modeled baseline so it can never grade above modeled; epsilon-free sign comparison so a 0.000001 overspend reports hurting; always-present honesty footer stating the readout is not an independent evaluation; 41 new tests, 297/297 total green, go vet clean, race clean, ALIGNED 4th consecutive)",
+        "driftId": null,
+        "verdict": "aligned (drift_judge eval 2028, nli=entailment conf=1.0)",
+        "sha256Prefix": "5fb4576e"
       },
       {
         "loop": 8,
