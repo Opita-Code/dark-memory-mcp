@@ -287,9 +287,37 @@ type Store interface {
 	ActiveProject() string
 	// CreateProject inserts a new project. Idempotent on (project_id).
 	CreateProject(ctx context.Context, p *project.Project) error
-	// GetProject returns a project by id, or nil if missing.
+	// GetProject returns a project by id, or nil if missing, with
+	// NLIConfig auth tokens REDACTED.
+	//
+	// Phase 21 (operator decision, option C): the store is the
+	// redaction boundary on the read path. A bearer token for a
+	// third-party LLM provider must not be echoed back to any generic
+	// caller. The credential has to be persisted (the provider is
+	// called later), but returning it from every read means any new
+	// read-path handler inherits a leak by accident.
 	GetProject(ctx context.Context, projectID string) (*project.Project, error)
-	// ListProjects returns all non-archived projects newest-first.
+	// GetProjectRaw returns the project WITH NLIConfig auth tokens
+	// intact.
+	//
+	// SEALED EXCEPTION -- call only from code that must actually
+	// authenticate outbound: building the judge/NLI provider from the
+	// project's binding, or a read-modify-write of the binding
+	// itself. Today those four call sites are
+	// orchestration.EnsureNLIRouter, orchestration.ensureLLMJudge,
+	// tools.llm_provider_bind and tools.llm_provider_probe.
+	//
+	// Using GetProject where GetProjectRaw is required is a real bug,
+	// not a style nit: provider_bind merges partially against the
+	// loaded config, so a redacted read silently WIPES the stored
+	// token. New call sites must justify themselves here.
+	GetProjectRaw(ctx context.Context, projectID string) (*project.Project, error)
+	// ListProjects returns all non-archived projects newest-first,
+	// with NLIConfig auth tokens REDACTED.
+	//
+	// There is deliberately no ListProjectsRaw. No caller needs a
+	// bulk credential read, and a bulk secret read is the shape of a
+	// mass-leak; if one is ever required it must be added on purpose.
 	ListProjects(ctx context.Context, limit int) ([]project.Project, error)
 	// ArchiveProject soft-deletes (sets archived_at). Idempotent.
 	ArchiveProject(ctx context.Context, projectID string) error

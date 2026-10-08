@@ -2260,7 +2260,20 @@ func (s *Store) CreateProject(ctx context.Context, p *project.Project) error {
 	return nil
 }
 
+// GetProject returns the project with NLIConfig auth tokens redacted.
+// See store.Store.GetProject for why the store is the redaction boundary.
 func (s *Store) GetProject(ctx context.Context, projectID string) (*project.Project, error) {
+	p, err := s.GetProjectRaw(ctx, projectID)
+	if err != nil || p == nil {
+		return p, err
+	}
+	p.NLIConfig = p.NLIConfig.Redacted()
+	return p, nil
+}
+
+// GetProjectRaw returns the project with auth tokens intact.
+// Sealed exception -- see store.Store.GetProjectRaw.
+func (s *Store) GetProjectRaw(ctx context.Context, projectID string) (*project.Project, error) {
 	var p project.Project
 	var desc, consID, consVer, archived, parent, drift, defaultAgent, nliJSON *string
 	err := s.pool.QueryRow(ctx,
@@ -2304,6 +2317,8 @@ func (s *Store) GetProject(ctx context.Context, projectID string) (*project.Proj
 		if err := json.Unmarshal([]byte(*nliJSON), &cfg); err != nil {
 			fmt.Fprintf(os.Stderr, "dark-memory: projects[%s].nli_config_json parse failed: %v\n", projectID, err)
 		} else {
+			// GetProjectRaw: the credential is returned on purpose.
+			// See store.Store.GetProjectRaw for the allowed call sites.
 			p.NLIConfig = &cfg
 		}
 	}
@@ -2360,7 +2375,11 @@ func (s *Store) ListProjects(ctx context.Context, limit int) ([]project.Project,
 			if err := json.Unmarshal([]byte(*nliJSON), &cfg); err != nil {
 				fmt.Fprintf(os.Stderr, "dark-memory: projects[%s].nli_config_json parse failed: %v\n", p.ProjectID, err)
 			} else {
-				p.NLIConfig = &cfg
+				// Phase 21 (operator decision, option C): redact in the
+				// store. See the sqlite twin for why the old comment
+				// ("project_list etc. redact at the result boundary") was
+				// false: no such tool exists.
+				p.NLIConfig = cfg.Redacted()
 			}
 		}
 		out = append(out, p)

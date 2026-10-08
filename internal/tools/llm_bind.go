@@ -55,7 +55,11 @@ import (
 // Tests can substitute a stub.
 type llmBindStore interface {
 	ActiveProject() string
-	GetProject(ctx context.Context, projectID string) (*project.Project, error)
+	// GetProjectRaw, not GetProject: both tools below need the real
+	// bearer, and provider_bind merges partially against the loaded
+	// config, so a redacted read would silently wipe the stored
+	// token. Sealed exception -- see store.Store.GetProjectRaw.
+	GetProjectRaw(ctx context.Context, projectID string) (*project.Project, error)
 	CreateProject(ctx context.Context, p *project.Project) error
 }
 
@@ -279,7 +283,7 @@ func runLLMProviderBind(ctx context.Context, in LLMProviderBindInput) (*ToolResp
 
 	// Load current project (or create the scaffolding for a fresh
 	// project that has no NLIConfig yet).
-	proj, err := st.GetProject(ctx, active)
+	proj, err := st.GetProjectRaw(ctx, active)
 	if err != nil {
 		return nil, fmt.Errorf("llm_provider_bind: get active project %q: %w", active, err)
 	}
@@ -372,7 +376,7 @@ func runLLMProviderProbe(ctx context.Context, in LLMProviderProbeInput) (*ToolRe
 		if active == "" {
 			return nil, store.ErrSessionRequired
 		}
-		proj, err := st.GetProject(ctx, active)
+		proj, err := st.GetProjectRaw(ctx, active)
 		if err != nil {
 			return nil, fmt.Errorf("llm_provider_probe: get active project %q: %w", active, err)
 		}

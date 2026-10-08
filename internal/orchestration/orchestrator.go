@@ -301,7 +301,9 @@ func (o *Orchestrator) EnsureNLIRouter(ctx context.Context) (nli.Provider, error
 	if activeProject == "" {
 		return nil, nil
 	}
-	proj, err := o.Store.GetProject(ctx, activeProject)
+	// GetProjectRaw: the NLI/LLM judge needs the real bearer.
+	// Sealed exception -- see store.Store.GetProjectRaw.
+	proj, err := o.Store.GetProjectRaw(ctx, activeProject)
 	if err != nil {
 		return nil, err
 	}
@@ -349,7 +351,9 @@ func (o *Orchestrator) ensureLLMJudge(ctx context.Context) (*v4judge.LLMJudge, e
 	if activeProject == "" {
 		return nil, nil
 	}
-	proj, err := o.Store.GetProject(ctx, activeProject)
+	// GetProjectRaw: the NLI/LLM judge needs the real bearer.
+	// Sealed exception -- see store.Store.GetProjectRaw.
+	proj, err := o.Store.GetProjectRaw(ctx, activeProject)
 	if err != nil {
 		return nil, err
 	}

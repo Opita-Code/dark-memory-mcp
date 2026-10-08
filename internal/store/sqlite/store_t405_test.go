@@ -1,17 +1,31 @@
 // Copyright 2026 Nico. All rights reserved.
-// T-405 regression tests (v4.0.0-alpha.27-pre-1): Store.GetProject +
-// Store.ListProjects must RETAIN the AuthToken on read (so internal
-// callers like orchestration.EnsureNLIRouter and tools.llm_provider_probe
-// can use it). Tool result paths MUST call NLIConfig.Redacted() themselves.
+// T-405 regression tests, as revised by Phase 21 (operator decision,
+// option C).
 //
-// Root cause of the regression: Store.GetProject previously called
-// cfg.Redacted() unconditionally. The redaction was meant for tool
-// output boundaries but accidentally leaked into internal callers that
-// need the bearer to reach the LLM. Result: every drift_judge call
-// returned needs_human ("nli score failed: nli: provider unavailable")
-// because the HTTP request went out with no Authorization header.
+// HISTORY, because this contract has now moved twice and the reason
+// matters more than the rule:
 //
-// These tests assert the new contract end-to-end with a real sqlite DB.
+//   1. Original design: Store.GetProject called cfg.Redacted() on read.
+//      Every internal caller therefore got an EMPTY bearer. T-405
+//      (alpha.27-pre-1) diagnosed this correctly: drift_judge returned
+//      needs_human ("nli score failed: nli: provider unavailable")
+//      because the HTTP request went out with no Authorization header.
+//   2. T-405's fix was to invert the store: return the RAW config and
+//      push redaction onto tool result paths. That fixed the outage but
+//      left the three internal/tools project tests red -- they still
+//      asserted the original contract and nothing updated them. The repo
+//      carried a contract change with its own tests left failing.
+//   3. Phase 21 (option C) resolves it instead of picking a side: the
+//      store REDACTS on the generic read paths (GetProject,
+//      ListProjects) and exposes GetProjectRaw as a sealed accessor for
+//      the four call sites that must actually authenticate. The T-405
+//      outage cannot recur, because the orchestrator no longer depends
+//      on the generic path leaking a credential.
+//
+// These tests assert BOTH halves of that contract against a real sqlite
+// DB, because either half alone is a trap: redaction without a raw seam
+// breaks drift_judge (the T-405 outage), and a raw seam without
+// redaction re-introduces the credential leak.
 
 package sqlite
 
@@ -29,8 +43,8 @@ import (
 
 // testStoreWithProject opens a fresh on-disk sqlite store, seeds the
 // "default" project with a NLIConfig that has a real (visible) bearer,
-// and returns (store, cleanup). Used by TestGetProject_RetainsAuthToken
-// + TestListProjects_RetainsAuthToken.
+// and returns (store, cleanup). Used by TestGetProject_RedactsAuthToken,
+// TestGetProjectRaw_RetainsAuthToken and TestListProjects_RedactsAuthToken.
 func testStoreWithProject(t *testing.T) (*Store, func()) {
 	t.Helper()
 	ctx := context.Background()
@@ -68,12 +82,13 @@ func testStoreWithProject(t *testing.T) (*Store, func()) {
 	return s, func() { _ = s.Close() }
 }
 
-// TestGetProject_RetainsAuthToken — T-405 regression guard.
-// Pre-fix, GetProject returned cfg.Redacted() and the orchestrator
-// built an NLIProvider with an empty bearer → HTTP 401 → needs_human.
-// Post-fix, GetProject MUST return the full token so internal callers
-// can build working NLIProviders.
-func TestGetProject_RetainsAuthToken(t *testing.T) {
+// TestGetProject_RedactsAuthToken -- the generic read path must NOT
+// hand a bearer to a caller that did not explicitly ask for it.
+//
+// This is the assertion the whole option-C change rests on, and it is
+// the exact test internal/tools/project_test.go has been failing since
+// T-405 inverted the contract and never updated it.
+func TestGetProject_RedactsAuthToken(t *testing.T) {
 	s, cleanup := testStoreWithProject(t)
 	defer cleanup()
 
@@ -84,20 +99,61 @@ func TestGetProject_RetainsAuthToken(t *testing.T) {
 	if p == nil || p.NLIConfig == nil {
 		t.Fatal("project or NLIConfig nil")
 	}
-	if p.NLIConfig.Primary.AuthToken == "" {
-		t.Fatal("GetProject stripped AuthToken (regression of T-405): internal callers " +
-			"need the bearer to reach the LLM")
+	if p.NLIConfig.Primary.AuthToken != "" {
+		t.Errorf("GetProject leaked AuthToken: %q", p.NLIConfig.Primary.AuthToken)
 	}
-	if p.NLIConfig.Primary.AuthToken != "sk-TEST-DO-NOT-LEAK-1234567890" {
-		t.Errorf("AuthToken mutated: got prefix=%q, want sk-TEST-",
-			p.NLIConfig.Primary.AuthToken[:min(8, len(p.NLIConfig.Primary.AuthToken))])
+	if p.NLIConfig.Fallback.AuthToken != "" {
+		t.Errorf("GetProject leaked Fallback AuthToken: %q", p.NLIConfig.Fallback.AuthToken)
+	}
+	// Non-secret fields must survive redaction, or a redacted config is
+	// useless to a caller that legitimately needs provider metadata.
+	if p.NLIConfig.Primary.ProviderID != "chat-minimax-cn" {
+		t.Errorf("redaction destroyed ProviderID: %q", p.NLIConfig.Primary.ProviderID)
+	}
+	if p.NLIConfig.Primary.Endpoint == "" {
+		t.Error("redaction destroyed Endpoint")
+	}
+	if !p.NLIConfig.Enabled {
+		t.Error("redaction destroyed Enabled")
 	}
 }
 
-// TestListProjects_RetainsAuthToken — T-405 regression guard.
-// ListProjects is the bulk path used by project_list tools. Same
-// contract: retain the token; tool layer redacts at output.
-func TestListProjects_RetainsAuthToken(t *testing.T) {
+// TestGetProjectRaw_RetainsAuthToken -- the sealed seam MUST return the
+// real credential.
+//
+// THIS IS THE TEST THAT PROTECTS drift_judge. T-405 was a real outage:
+// empty bearer -> HTTP 401 -> needs_human on every drift_judge call.
+// That bug is easy to reintroduce, because "we redact at the store now"
+// is exactly how it came back the first time. If someone repoints the
+// orchestrator at GetProject, or drops GetProjectRaw, this fails and the
+// judge outage returns with it.
+func TestGetProjectRaw_RetainsAuthToken(t *testing.T) {
+	s, cleanup := testStoreWithProject(t)
+	defer cleanup()
+
+	p, err := s.GetProjectRaw(context.Background(), "default")
+	if err != nil {
+		t.Fatalf("GetProjectRaw: %v", err)
+	}
+	if p == nil || p.NLIConfig == nil {
+		t.Fatal("project or NLIConfig nil")
+	}
+	if p.NLIConfig.Primary.AuthToken != "sk-TEST-DO-NOT-LEAK-1234567890" {
+		t.Errorf("GetProjectRaw did not return the bearer (drift_judge would 401): got %q",
+			p.NLIConfig.Primary.AuthToken)
+	}
+}
+
+// TestListProjects_RedactsAuthToken -- the bulk read path redacts too.
+//
+// The comment this replaces claimed ListProjects is "the bulk path used
+// by project_list tools" which redacted at output. There has never been
+// a project_list tool; the only consumer is orchestration.memory_state,
+// which counts projects and never needs a credential. So nothing
+// redacted this path -- a comment asserted a guarantee that did not
+// exist. There is deliberately no ListProjectsRaw: a bulk secret read is
+// the shape of a mass-leak.
+func TestListProjects_RedactsAuthToken(t *testing.T) {
 	s, cleanup := testStoreWithProject(t)
 	defer cleanup()
 
@@ -112,9 +168,9 @@ func TestListProjects_RetainsAuthToken(t *testing.T) {
 		if p.NLIConfig == nil {
 			continue // archived or no config — acceptable
 		}
-		if p.NLIConfig.Primary.AuthToken == "" {
-			t.Errorf("ListProjects stripped AuthToken for project %q (regression of T-405)",
-				p.ProjectID)
+		if p.NLIConfig.Primary.AuthToken != "" {
+			t.Errorf("ListProjects leaked AuthToken for project %q: %q",
+				p.ProjectID, p.NLIConfig.Primary.AuthToken)
 		}
 	}
 }
@@ -166,9 +222,10 @@ func TestGetProject_NLIConfigParseFailure_DoesNotStripConfig(t *testing.T) {
 	}
 }
 
-// TestNLIConfig_Redacted_StillWorks — guard against accidentally
-// breaking the redaction helper. Even though Store no longer calls it,
-// tools/project.go + ProjectCreateResult still rely on it.
+// TestNLIConfig_Redacted_StillWorks -- guard against accidentally
+// breaking the redaction helper. Store.GetProject and ListProjects call
+// it on every read now, and tools/project.go + ProjectCreateResult still
+// rely on it for the create result.
 func TestNLIConfig_Redacted_StillWorks(t *testing.T) {
 	c := &project.NLIConfig{
 		Enabled: true,

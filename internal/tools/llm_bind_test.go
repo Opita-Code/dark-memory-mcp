@@ -61,7 +61,9 @@ func (s *stubLLMBindStore) ActiveProject() string {
 	return s.activeProjectID
 }
 
-func (s *stubLLMBindStore) GetProject(ctx context.Context, id string) (*project.Project, error) {
+// GetProjectRaw mirrors the sealed store accessor: the stub must hand back
+// the credential, exactly as the real store does for these four call sites.
+func (s *stubLLMBindStore) GetProjectRaw(ctx context.Context, id string) (*project.Project, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.getErr != nil {
@@ -143,7 +145,7 @@ func TestLLMProviderBind_01_HappyPath(t *testing.T) {
 		t.Error("AuthPresent: got false, want true")
 	}
 	// Persisted to stub
-	persisted, err := stub.GetProject(context.Background(), "default")
+	persisted, err := stub.GetProjectRaw(context.Background(), "default")
 	if err != nil {
 		t.Fatalf("GetProject: %v", err)
 	}
@@ -244,7 +246,7 @@ func TestLLMProviderBind_06_PreservesFallback(t *testing.T) {
 		t.Fatalf("bind 1: %v", err)
 	}
 	// Manually set a fallback on the stub project.
-	p, _ := stub.GetProject(context.Background(), "default")
+	p, _ := stub.GetProjectRaw(context.Background(), "default")
 	p.NLIConfig.Fallback = project.NLIPrimary{
 		ProviderID: "chat-fallback",
 		Endpoint:   "https://fallback.test/v1/chat/completions",
@@ -259,7 +261,7 @@ func TestLLMProviderBind_06_PreservesFallback(t *testing.T) {
 	if _, err := runLLMProviderBind(context.Background(), in2); err != nil {
 		t.Fatalf("bind 2: %v", err)
 	}
-	got, _ := stub.GetProject(context.Background(), "default")
+	got, _ := stub.GetProjectRaw(context.Background(), "default")
 	if got.NLIConfig.Fallback.ProviderID != "chat-fallback" {
 		t.Errorf("Fallback.ProviderID: got %q, want chat-fallback (preserved)", got.NLIConfig.Fallback.ProviderID)
 	}
@@ -347,7 +349,7 @@ func TestLLMProviderProbe_02_ResolvesFromActiveProject(t *testing.T) {
 	llmBindStoreOverride = nil
 	stub := newStubLLMBindStore()
 	seedDefaultProject(stub)
-	p, _ := stub.GetProject(context.Background(), "default")
+	p, _ := stub.GetProjectRaw(context.Background(), "default")
 	p.NLIConfig = &project.NLIConfig{
 		Enabled: true,
 		Primary: project.NLIPrimary{
@@ -400,7 +402,7 @@ func TestLLMProviderProbe_04_UnknownProviderID(t *testing.T) {
 	stub := newStubLLMBindStore()
 	seedDefaultProject(stub)
 	// Seed an NLIConfig so the "no NLIConfig" branch is bypassed.
-	p, _ := stub.GetProject(context.Background(), "default")
+	p, _ := stub.GetProjectRaw(context.Background(), "default")
 	p.NLIConfig = &project.NLIConfig{
 		Enabled: true,
 		Primary: project.NLIPrimary{

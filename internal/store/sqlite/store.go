@@ -3333,7 +3333,20 @@ func (s *Store) CreateProject(ctx context.Context, p *project.Project) error {
 	return nil
 }
 
+// GetProject returns the project with NLIConfig auth tokens redacted.
+// See store.Store.GetProject for why the store is the redaction boundary.
 func (s *Store) GetProject(ctx context.Context, projectID string) (*project.Project, error) {
+	p, err := s.GetProjectRaw(ctx, projectID)
+	if err != nil || p == nil {
+		return p, err
+	}
+	p.NLIConfig = p.NLIConfig.Redacted()
+	return p, nil
+}
+
+// GetProjectRaw returns the project with auth tokens intact.
+// Sealed exception -- see store.Store.GetProjectRaw.
+func (s *Store) GetProjectRaw(ctx context.Context, projectID string) (*project.Project, error) {
 	if err := validateProjectID(projectID); err != nil {
 		return nil, err
 	}
@@ -3379,19 +3392,19 @@ func (s *Store) GetProject(ctx context.Context, projectID string) (*project.Proj
 			// Log to stderr; keep going with no NLIConfig.
 			fmt.Fprintf(os.Stderr, "dark-memory: projects[%s].nli_config_json parse failed: %v\n", projectID, err)
 		} else {
-			// T-405 (v4.0.0-alpha.27-pre-1): Store.GetProject returns the
-			// FULL config (with AuthToken) so internal callers can use it:
+			// GetProjectRaw returns the FULL config (with AuthToken).
+			// Only four call sites may use it:
 			//
-			//   - orchestration.EnsureNLIRouter builds the NLIProvider's
-			//     HTTP client which needs the bearer to reach the LLM.
-			//   - tools.llm_provider_probe sends the bearer on a tiny POST.
+			//   - orchestration.EnsureNLIRouter   (NLI provider client)
+			//   - orchestration.ensureLLMJudge   (LLMJudge)
+			//   - tools.llm_provider_bind         (partial merge; a
+			//     redacted read here would WIPE the stored token)
+			//   - tools.llm_provider_probe       (sends the bearer)
 			//
-			// Tool result paths that surface the config to the operator
-			// (e.g. tools/project.go::runProjectCreate) MUST call
-			// NLIConfig.Redacted() themselves before serializing. Defense
-			// in depth: the DB stores the token (encrypted-at-rest is the
-			// operator's responsibility); the transport layer strips it
-			// on the wire; the tool layer strips it in the result payload.
+			// This reverses the T-405 policy, which pointed the wrong
+			// way: the store returned raw and the tool layer was asked
+			// to redact. In practice only project_create redacted, so
+			// every other reader inherited a live credential.
 			p.NLIConfig = &cfg
 		}
 	}
@@ -3445,10 +3458,14 @@ func (s *Store) ListProjects(ctx context.Context, limit int) ([]project.Project,
 			if err := json.Unmarshal([]byte(nliJSON.String), &cfg); err != nil {
 				fmt.Fprintf(os.Stderr, "dark-memory: projects[%s].nli_config_json parse failed: %v\n", p.ProjectID, err)
 			} else {
-				// T-405 (v4.0.0-alpha.27-pre-1): see GetProject above for the
-				// rationale. ListProjects is consumed by tool layer paths
-				// (project_list etc.) which redact at the result boundary.
-				p.NLIConfig = &cfg
+				// Phase 21 (operator decision, option C): redact in the
+				// store. The comment here previously claimed the tool
+				// layer redacted via "project_list etc." -- false, no
+				// such tool exists. The only consumer is
+				// orchestration.memory_state, which counts projects and
+				// never needs a credential. So nothing redacted this
+				// path; only a comment claimed that it did.
+				p.NLIConfig = cfg.Redacted()
 			}
 		}
 		out = append(out, p)
