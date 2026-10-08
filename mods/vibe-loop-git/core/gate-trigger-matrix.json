@@ -12,14 +12,49 @@
       "event": "session_start",
       "gate": "G01.bootstrap-full",
       "tools": [
-        {"namespace": "SESSION", "tool": "session_start"},
-        {"namespace": "CONTEXT", "tool": "recall", "args": {"scope": "project"}},
-        {"namespace": "POLICY", "tool": "active_policy"},
-        {"namespace": "OBSERVABILITY", "tool": "memory_state"},
-        {"namespace": "ERROR_OBS", "tool": "error_summary", "args": {"hours": 1}},
-        {"namespace": "AGENT_MEMORY", "tool": "agent_memory_list", "args": {"pinned_only": true, "scope": "project", "limit": 50}},
-        {"namespace": "AGENT_BOOTSTRAP", "tool": "agent_recommend_companions"},
-        {"namespace": "PROJECT", "tool": "project_create"}
+        {
+          "namespace": "SESSION",
+          "tool": "session_start"
+        },
+        {
+          "namespace": "CONTEXT",
+          "tool": "recall",
+          "args": {
+            "scope": "project"
+          }
+        },
+        {
+          "namespace": "POLICY",
+          "tool": "active_policy"
+        },
+        {
+          "namespace": "OBSERVABILITY",
+          "tool": "memory_state"
+        },
+        {
+          "namespace": "ERROR_OBS",
+          "tool": "error_summary",
+          "args": {
+            "hours": 1
+          }
+        },
+        {
+          "namespace": "AGENT_MEMORY",
+          "tool": "agent_memory_list",
+          "args": {
+            "pinned_only": true,
+            "scope": "project",
+            "limit": 50
+          }
+        },
+        {
+          "namespace": "AGENT_BOOTSTRAP",
+          "tool": "agent_recommend_companions"
+        },
+        {
+          "namespace": "PROJECT",
+          "tool": "project_create"
+        }
       ],
       "failmode": "if error_summary reports fatal in last hour, surface to operator before first tool call"
     },
@@ -28,9 +63,27 @@
       "event": "first_tool_call",
       "gate": "G02.spec-context",
       "tools": [
-        {"namespace": "AGENT_MEMORY", "tool": "agent_memory_recall", "args": {"query": "active spec open todos"}},
-        {"namespace": "CONTEXT", "tool": "spec_context", "args": {"spec_id": "last_active"}},
-        {"namespace": "CONTEXT", "tool": "artifact_context", "args": {"artifact_id": "last"}}
+        {
+          "namespace": "AGENT_MEMORY",
+          "tool": "agent_memory_recall",
+          "args": {
+            "query": "active spec open todos"
+          }
+        },
+        {
+          "namespace": "CONTEXT",
+          "tool": "spec_context",
+          "args": {
+            "spec_id": "last_active"
+          }
+        },
+        {
+          "namespace": "CONTEXT",
+          "tool": "artifact_context",
+          "args": {
+            "artifact_id": "last"
+          }
+        }
       ],
       "failmode": "if no spec active, surface 'no spec bound' inline; agent can still proceed if explicit opt-out"
     },
@@ -39,10 +92,34 @@
       "event": "file_edit_attempt",
       "gate": "G03.scope-validate",
       "tools": [
-        {"namespace": "CONTEXT", "tool": "spec_context", "args": {"spec_id": "active"}},
-        {"namespace": "AGENT_MEMORY", "tool": "agent_memory_recall", "args": {"query": "<file_path> scope ADR"}},
-        {"namespace": "JUDGE", "tool": "judgment_history", "args": {"target_id": "<file_path>"}},
-        {"namespace": "AGENT_MEMORY", "tool": "agent_memory_entities", "args": {"query": "<file_path>"}}
+        {
+          "namespace": "CONTEXT",
+          "tool": "spec_context",
+          "args": {
+            "spec_id": "active"
+          }
+        },
+        {
+          "namespace": "AGENT_MEMORY",
+          "tool": "agent_memory_recall",
+          "args": {
+            "query": "<file_path> scope ADR"
+          }
+        },
+        {
+          "namespace": "JUDGE",
+          "tool": "judgment_history",
+          "args": {
+            "target_id": "<file_path>"
+          }
+        },
+        {
+          "namespace": "AGENT_MEMORY",
+          "tool": "agent_memory_entities",
+          "args": {
+            "query": "<file_path>"
+          }
+        }
       ],
       "failmode": "if no spec_context, surface 'unbound scope' inline; agent can edit but with warning"
     },
@@ -52,9 +129,29 @@
       "trigger": ">=3 file edits in 5 min",
       "gate": "G04.pause-summarize",
       "tools": [
-        {"namespace": "CONTEXT", "tool": "recall", "args": {"scope": "session", "since_token": "last"}},
-        {"namespace": "OBSERVABILITY", "tool": "writes", "args": {"session_id": "self", "limit": 20}},
-        {"namespace": "OBSERVABILITY", "tool": "audit_export", "args": {"limit": 20}}
+        {
+          "namespace": "CONTEXT",
+          "tool": "recall",
+          "args": {
+            "scope": "session",
+            "since_token": "last"
+          }
+        },
+        {
+          "namespace": "OBSERVABILITY",
+          "tool": "writes",
+          "args": {
+            "session_id": "self",
+            "limit": 20
+          }
+        },
+        {
+          "namespace": "OBSERVABILITY",
+          "tool": "audit_export",
+          "args": {
+            "limit": 20
+          }
+        }
       ],
       "failmode": "R10 prompt inject: 'qué sé? qué NO sé? qué asumí?'; agent pauses for one think turn"
     },
@@ -64,9 +161,28 @@
       "trigger": "agent types one of: no sé, creo que, supongo, no estoy seguro, maybe, I think",
       "gate": "G05.recall-doubt",
       "tools": [
-        {"namespace": "AGENT_MEMORY", "tool": "agent_memory_recall", "args": {"query": "<doubt_topic>"}},
-        {"namespace": "AGENT_MEMORY", "tool": "prograph_query", "args": {"query": "<doubt_topic>", "depth": 2}},
-        {"namespace": "RESEARCH", "tool": "research_recall", "args": {"query": "<doubt_topic>"}}
+        {
+          "namespace": "AGENT_MEMORY",
+          "tool": "agent_memory_recall",
+          "args": {
+            "query": "<doubt_topic>"
+          }
+        },
+        {
+          "namespace": "AGENT_MEMORY",
+          "tool": "prograph_query",
+          "args": {
+            "query": "<doubt_topic>",
+            "depth": 2
+          }
+        },
+        {
+          "namespace": "RESEARCH",
+          "tool": "research_recall",
+          "args": {
+            "query": "<doubt_topic>"
+          }
+        }
       ],
       "failmode": "if recall returns 0 rows AND research returns 0 rows, surface 'no prior context' inline; agent proceeds but flags uncertainty"
     },
@@ -76,10 +192,35 @@
       "trigger": "agent types one of: no funciona, no es posible, no existe, doesn't work, cannot, impossible, no hay manera de",
       "gate": "G06.recall-before-deny",
       "tools": [
-        {"namespace": "AGENT_MEMORY", "tool": "agent_memory_recall", "args": {"query": "<denial_claim>", "scope": "project"}},
-        {"namespace": "ERROR_OBS", "tool": "error_list", "args": {"domain": "<relevant>"}},
-        {"namespace": "ERROR_OBS", "tool": "error_summary", "args": {"hours": 24}},
-        {"namespace": "AGENT_MEMORY", "tool": "recall_bitemporal", "args": {"t": "now"}}
+        {
+          "namespace": "AGENT_MEMORY",
+          "tool": "agent_memory_recall",
+          "args": {
+            "query": "<denial_claim>",
+            "scope": "project"
+          }
+        },
+        {
+          "namespace": "ERROR_OBS",
+          "tool": "error_list",
+          "args": {
+            "domain": "<relevant>"
+          }
+        },
+        {
+          "namespace": "ERROR_OBS",
+          "tool": "error_summary",
+          "args": {
+            "hours": 24
+          }
+        },
+        {
+          "namespace": "AGENT_MEMORY",
+          "tool": "recall_bitemporal",
+          "args": {
+            "t": "now"
+          }
+        }
       ],
       "failmode": "if recall finds contradicting pinned decision, surface it inline; agent must qualify the claim"
     },
@@ -89,8 +230,21 @@
       "trigger": "agent about to call: webfetch, websearch, research_topic, fetch_url",
       "gate": "G07.cache-check",
       "tools": [
-        {"namespace": "RESEARCH", "tool": "research_recall", "args": {"query": "<topic>"}},
-        {"namespace": "AGENT_MEMORY", "tool": "agent_memory_recall", "args": {"query": "<topic>", "kind": "finding"}}
+        {
+          "namespace": "RESEARCH",
+          "tool": "research_recall",
+          "args": {
+            "query": "<topic>"
+          }
+        },
+        {
+          "namespace": "AGENT_MEMORY",
+          "tool": "agent_memory_recall",
+          "args": {
+            "query": "<topic>",
+            "kind": "finding"
+          }
+        }
       ],
       "failmode": "if cache miss, continue with research_topic or webfetch; if cache hit, surface the prior finding"
     },
@@ -100,10 +254,36 @@
       "trigger": "agent invokes a Task() / Agent() call",
       "gate": "G08.delegation",
       "tools": [
-        {"namespace": "DELEGATION", "tool": "delegate_intent", "args": {"task_description": "<task>", "vibe_case": "<case>"}},
-        {"namespace": "MINDSET", "tool": "mindset_apply", "args": {"task_description": "<task>", "vibe_case": "<case>"}},
-        {"namespace": "AGENT_MEMORY", "tool": "agent_memory_delegate", "args": {"subagent_id": "<uuid>"}},
-        {"namespace": "AGENT_MEMORY", "tool": "subagent_register", "args": {"subagent_id": "<uuid>"}}
+        {
+          "namespace": "DELEGATION",
+          "tool": "delegate_intent",
+          "args": {
+            "task_description": "<task>",
+            "vibe_case": "<case>"
+          }
+        },
+        {
+          "namespace": "MINDSET",
+          "tool": "mindset_apply",
+          "args": {
+            "task_description": "<task>",
+            "vibe_case": "<case>"
+          }
+        },
+        {
+          "namespace": "AGENT_MEMORY",
+          "tool": "agent_memory_delegate",
+          "args": {
+            "subagent_id": "<uuid>"
+          }
+        },
+        {
+          "namespace": "AGENT_MEMORY",
+          "tool": "subagent_register",
+          "args": {
+            "subagent_id": "<uuid>"
+          }
+        }
       ],
       "failmode": "if delegate_intent returns needs_human, surface to operator before spawn"
     },
@@ -113,9 +293,21 @@
       "trigger": "agent changes vibe_case (e.g. C1->C2, C2->C7)",
       "gate": "G09.rubric-load",
       "tools": [
-        {"namespace": "JUDGE", "tool": "judge_list_personas"},
-        {"namespace": "CONTEXT", "tool": "spec_context", "args": {"spec_id": "new"}},
-        {"namespace": "POLICY", "tool": "active_policy"}
+        {
+          "namespace": "JUDGE",
+          "tool": "judge_list_personas"
+        },
+        {
+          "namespace": "CONTEXT",
+          "tool": "spec_context",
+          "args": {
+            "spec_id": "new"
+          }
+        },
+        {
+          "namespace": "POLICY",
+          "tool": "active_policy"
+        }
       ],
       "failmode": "no fail mode (advisory only)"
     },
@@ -125,9 +317,25 @@
       "trigger": ">5 min between tool calls",
       "gate": "G10.heartbeat",
       "tools": [
-        {"namespace": "SESSION", "tool": "session_heartbeat"},
-        {"namespace": "CONTEXT", "tool": "recall", "args": {"scope": "session", "since_token": "last"}},
-        {"namespace": "OBSERVABILITY", "tool": "writes", "args": {"limit": 10}}
+        {
+          "namespace": "SESSION",
+          "tool": "session_heartbeat"
+        },
+        {
+          "namespace": "CONTEXT",
+          "tool": "recall",
+          "args": {
+            "scope": "session",
+            "since_token": "last"
+          }
+        },
+        {
+          "namespace": "OBSERVABILITY",
+          "tool": "writes",
+          "args": {
+            "limit": 10
+          }
+        }
       ],
       "failmode": "no fail mode; advisory only"
     },
@@ -137,10 +345,36 @@
       "trigger": "any tool call returns ErrInternal or ErrStoreError",
       "gate": "G11.error-triage",
       "tools": [
-        {"namespace": "ERROR_OBS", "tool": "error_summary", "args": {"hours": 1}},
-        {"namespace": "ERROR_OBS", "tool": "error_get", "args": {"id": "<err_id>"}},
-        {"namespace": "ERROR_OBS", "tool": "error_resolve", "args": {"id": "<err_id>", "note": "<root_cause>"}},
-        {"namespace": "AGENT_MEMORY", "tool": "agent_memory_save", "args": {"kind": "observation", "title": "gotcha: <error>"}}
+        {
+          "namespace": "ERROR_OBS",
+          "tool": "error_summary",
+          "args": {
+            "hours": 1
+          }
+        },
+        {
+          "namespace": "ERROR_OBS",
+          "tool": "error_get",
+          "args": {
+            "id": "<err_id>"
+          }
+        },
+        {
+          "namespace": "ERROR_OBS",
+          "tool": "error_resolve",
+          "args": {
+            "id": "<err_id>",
+            "note": "<root_cause>"
+          }
+        },
+        {
+          "namespace": "AGENT_MEMORY",
+          "tool": "agent_memory_save",
+          "args": {
+            "kind": "observation",
+            "title": "gotcha: <error>"
+          }
+        }
       ],
       "failmode": "if error is fatal, pause session and surface; agent must wait for operator"
     },
@@ -150,9 +384,28 @@
       "trigger": "operator re-loads an older spec (vibe_spec with spec_id older than current)",
       "gate": "G12.spec-recontext",
       "tools": [
-        {"namespace": "CONTEXT", "tool": "spec_context", "args": {"spec_id": "<old_id>"}},
-        {"namespace": "AGENT_MEMORY", "tool": "recall_bitemporal", "args": {"t": "<spec.created_at>"}},
-        {"namespace": "AGENT_MEMORY", "tool": "agent_memory_recall", "args": {"query": "<spec_topic>", "kind": "decision"}}
+        {
+          "namespace": "CONTEXT",
+          "tool": "spec_context",
+          "args": {
+            "spec_id": "<old_id>"
+          }
+        },
+        {
+          "namespace": "AGENT_MEMORY",
+          "tool": "recall_bitemporal",
+          "args": {
+            "t": "<spec.created_at>"
+          }
+        },
+        {
+          "namespace": "AGENT_MEMORY",
+          "tool": "agent_memory_recall",
+          "args": {
+            "query": "<spec_topic>",
+            "kind": "decision"
+          }
+        }
       ],
       "failmode": "no fail mode (advisory only)"
     },
@@ -162,10 +415,28 @@
       "trigger": "agent changes llm provider/anthropic/dialect",
       "gate": "G13.model-probe",
       "tools": [
-        {"namespace": "LLM_CONFIG", "tool": "llm_provider_status"},
-        {"namespace": "LLM_BIND", "tool": "llm_provider_probe", "args": {"provider_id": "<new>"}},
-        {"namespace": "JUDGE", "tool": "judge_list_personas"},
-        {"namespace": "EMBEDDER", "tool": "embedder_setup_prompt", "args": {"consent": "auto"}}
+        {
+          "namespace": "LLM_CONFIG",
+          "tool": "llm_provider_status"
+        },
+        {
+          "namespace": "LLM_BIND",
+          "tool": "llm_provider_probe",
+          "args": {
+            "provider_id": "<new>"
+          }
+        },
+        {
+          "namespace": "JUDGE",
+          "tool": "judge_list_personas"
+        },
+        {
+          "namespace": "EMBEDDER",
+          "tool": "embedder_setup_prompt",
+          "args": {
+            "consent": "auto"
+          }
+        }
       ],
       "failmode": "if probe returns latency > 10s p50 or fail, surface to operator"
     },
@@ -175,10 +446,35 @@
       "trigger": "agent references a different project_id than the active session's",
       "gate": "G14.project-context",
       "tools": [
-        {"namespace": "PROJECT", "tool": "project_create", "args": {"project_id": "<new>"}},
-        {"namespace": "SESSION", "tool": "session_resume", "args": {"session_id": "<new_session>"}},
-        {"namespace": "CONTEXT", "tool": "recall", "args": {"scope": "project", "project_id": "<new>"}},
-        {"namespace": "POLICY", "tool": "active_policy", "args": {"project_id": "<new>"}}
+        {
+          "namespace": "PROJECT",
+          "tool": "project_create",
+          "args": {
+            "project_id": "<new>"
+          }
+        },
+        {
+          "namespace": "SESSION",
+          "tool": "session_resume",
+          "args": {
+            "session_id": "<new_session>"
+          }
+        },
+        {
+          "namespace": "CONTEXT",
+          "tool": "recall",
+          "args": {
+            "scope": "project",
+            "project_id": "<new>"
+          }
+        },
+        {
+          "namespace": "POLICY",
+          "tool": "active_policy",
+          "args": {
+            "project_id": "<new>"
+          }
+        }
       ],
       "failmode": "if cross-project probe is rejected (INV-7), surface to operator"
     },
@@ -188,9 +484,29 @@
       "trigger": "after any Edit/Write completes successfully",
       "gate": "G15.artifact-anchor",
       "tools": [
-        {"namespace": "AGENT_MEMORY", "tool": "agent_memory_save", "args": {"kind": "link", "title": "atomic mirror of <path>:<line>"}},
-        {"namespace": "VIBE", "tool": "vibe_publish", "args": {"artifact_ref": "<file>", "async_drift_check": true}},
-        {"namespace": "JUDGE", "tool": "judgment_history", "args": {"target_id": "<file>"}}
+        {
+          "namespace": "AGENT_MEMORY",
+          "tool": "agent_memory_save",
+          "args": {
+            "kind": "link",
+            "title": "atomic mirror of <path>:<line>"
+          }
+        },
+        {
+          "namespace": "VIBE",
+          "tool": "vibe_publish",
+          "args": {
+            "artifact_ref": "<file>",
+            "async_drift_check": true
+          }
+        },
+        {
+          "namespace": "JUDGE",
+          "tool": "judgment_history",
+          "args": {
+            "target_id": "<file>"
+          }
+        }
       ],
       "failmode": "no fail mode; advisory only (auto-anchor)"
     },
@@ -200,9 +516,25 @@
       "trigger": "a discrete code delta is complete (commit-equivalent)",
       "gate": "G16.spec-coherence",
       "tools": [
-        {"namespace": "CONTEXT", "tool": "recall", "args": {"scope": "project"}},
-        {"namespace": "AGENT_MEMORY", "tool": "agent_memory_recall", "args": {"query": "spec violations", "kind": "observation"}},
-        {"namespace": "OBSERVABILITY", "tool": "anomalies"}
+        {
+          "namespace": "CONTEXT",
+          "tool": "recall",
+          "args": {
+            "scope": "project"
+          }
+        },
+        {
+          "namespace": "AGENT_MEMORY",
+          "tool": "agent_memory_recall",
+          "args": {
+            "query": "spec violations",
+            "kind": "observation"
+          }
+        },
+        {
+          "namespace": "OBSERVABILITY",
+          "tool": "anomalies"
+        }
       ],
       "failmode": "if spec drift detected, surface the violation; agent decides whether to fix or pause"
     },
@@ -212,8 +544,23 @@
       "trigger": "before session_close call",
       "gate": "G17.atomic-mirror",
       "tools": [
-        {"namespace": "AGENT_MEMORY", "tool": "agent_memory_save", "args": {"kind": "decision", "title": "<SESS> SHIPPED", "pinned": true}},
-        {"namespace": "OBSERVABILITY", "tool": "audit_export", "args": {"actor": "self", "session_id": "self"}}
+        {
+          "namespace": "AGENT_MEMORY",
+          "tool": "agent_memory_save",
+          "args": {
+            "kind": "decision",
+            "title": "<SESS> SHIPPED",
+            "pinned": true
+          }
+        },
+        {
+          "namespace": "OBSERVABILITY",
+          "tool": "audit_export",
+          "args": {
+            "actor": "self",
+            "session_id": "self"
+          }
+        }
       ],
       "failmode": "no fail mode; gate atomic-mirror is idempotent"
     },
@@ -223,9 +570,30 @@
       "trigger": "vibe_publish verdict=drift_detected",
       "gate": "G18.drift-recover",
       "tools": [
-        {"namespace": "JUDGE", "tool": "judgment_history", "args": {"target_id": "<artifact>", "eval_type": "drift_judge"}},
-        {"namespace": "VIBE", "tool": "resolve_drift", "args": {"drift_id": "<id>", "decision": "reject"}},
-        {"namespace": "DELEGATION", "tool": "delegate_intent", "args": {"task_description": "fix drift on <artifact>", "vibe_case": "C1"}}
+        {
+          "namespace": "JUDGE",
+          "tool": "judgment_history",
+          "args": {
+            "target_id": "<artifact>",
+            "eval_type": "drift_judge"
+          }
+        },
+        {
+          "namespace": "VIBE",
+          "tool": "resolve_drift",
+          "args": {
+            "drift_id": "<id>",
+            "decision": "reject"
+          }
+        },
+        {
+          "namespace": "DELEGATION",
+          "tool": "delegate_intent",
+          "args": {
+            "task_description": "fix drift on <artifact>",
+            "vibe_case": "C1"
+          }
+        }
       ],
       "failmode": "if drift already rejected 2x, escalate to operator"
     },
@@ -235,9 +603,28 @@
       "trigger": "operator types 'false positive' or 'drift judge wrong'",
       "gate": "G19.operator-verify",
       "tools": [
-        {"namespace": "JUDGE", "tool": "judgment_history", "args": {"target": "<artifact>"}},
-        {"namespace": "RESEARCH", "tool": "research_recall", "args": {"query": "<claim>"}},
-        {"namespace": "JUDGE", "tool": "judge", "args": {"eval_type": "grounding_check", "persona_id": "critic"}}
+        {
+          "namespace": "JUDGE",
+          "tool": "judgment_history",
+          "args": {
+            "target": "<artifact>"
+          }
+        },
+        {
+          "namespace": "RESEARCH",
+          "tool": "research_recall",
+          "args": {
+            "query": "<claim>"
+          }
+        },
+        {
+          "namespace": "JUDGE",
+          "tool": "judge",
+          "args": {
+            "eval_type": "grounding_check",
+            "persona_id": "critic"
+          }
+        }
       ],
       "failmode": "no fail mode; operator-verify is a manual escape hatch"
     },
@@ -247,10 +634,33 @@
       "trigger": "same failure 3+ times in session",
       "gate": "G20.escalate",
       "tools": [
-        {"namespace": "ERROR_OBS", "tool": "error_list", "args": {"tool_name": "<X>"}},
-        {"namespace": "ERROR_OBS", "tool": "error_summary"},
-        {"namespace": "AGENT_MEMORY", "tool": "agent_memory_recall", "args": {"query": "<X> failure history", "kind": "observation"}},
-        {"namespace": "DELEGATION", "tool": "delegate_intent", "args": {"task_description": "offload retry strategy for <X>", "vibe_case": "C7"}}
+        {
+          "namespace": "ERROR_OBS",
+          "tool": "error_list",
+          "args": {
+            "tool_name": "<X>"
+          }
+        },
+        {
+          "namespace": "ERROR_OBS",
+          "tool": "error_summary"
+        },
+        {
+          "namespace": "AGENT_MEMORY",
+          "tool": "agent_memory_recall",
+          "args": {
+            "query": "<X> failure history",
+            "kind": "observation"
+          }
+        },
+        {
+          "namespace": "DELEGATION",
+          "tool": "delegate_intent",
+          "args": {
+            "task_description": "offload retry strategy for <X>",
+            "vibe_case": "C7"
+          }
+        }
       ],
       "failmode": "if delegate_intent returns needs_human, pause and surface to operator"
     },
@@ -260,10 +670,32 @@
       "trigger": "active_policy differs from snapshot 1 min ago",
       "gate": "G21.constitution-audit",
       "tools": [
-        {"namespace": "POLICY", "tool": "active_policy", "args": {"snapshot": "before"}},
-        {"namespace": "POLICY", "tool": "active_policy"},
-        {"namespace": "AGENT_MEMORY", "tool": "agent_memory_save", "args": {"kind": "decision", "title": "constitution delta"}},
-        {"namespace": "OBSERVABILITY", "tool": "audit_export", "args": {"since_id": "last"}}
+        {
+          "namespace": "POLICY",
+          "tool": "active_policy",
+          "args": {
+            "snapshot": "before"
+          }
+        },
+        {
+          "namespace": "POLICY",
+          "tool": "active_policy"
+        },
+        {
+          "namespace": "AGENT_MEMORY",
+          "tool": "agent_memory_save",
+          "args": {
+            "kind": "decision",
+            "title": "constitution delta"
+          }
+        },
+        {
+          "namespace": "OBSERVABILITY",
+          "tool": "audit_export",
+          "args": {
+            "since_id": "last"
+          }
+        }
       ],
       "failmode": "if change is from a parallel agent (race), surface a warning"
     },
@@ -273,8 +705,21 @@
       "trigger": "operator query: 'what happened in this session?'",
       "gate": "G22.event-stream-debug",
       "tools": [
-        {"namespace": "EVENTS", "tool": "event_log", "args": {"kind": "modification", "session_id": "self"}},
-        {"namespace": "EVENTS", "tool": "event_replay", "args": {"event_id": "last"}}
+        {
+          "namespace": "EVENTS",
+          "tool": "event_log",
+          "args": {
+            "kind": "modification",
+            "session_id": "self"
+          }
+        },
+        {
+          "namespace": "EVENTS",
+          "tool": "event_replay",
+          "args": {
+            "event_id": "last"
+          }
+        }
       ],
       "failmode": "no fail mode"
     },
@@ -284,21 +729,51 @@
       "trigger": "VLP state change (idle -> drafting_spec -> spec_active -> drift_judging -> complete/needs_human/aborted)",
       "gate": "G23.vlp-transition",
       "tools": [
-        {"namespace": "L6-VLP", "tool": "vlp_handle_event", "args": {"event": "transition", "verdict": "<state>"}}
+        {
+          "namespace": "L6-VLP",
+          "tool": "vlp_handle_event",
+          "args": {
+            "event": "transition",
+            "verdict": "<state>"
+          }
+        }
       ],
       "failmode": "no fail mode; gate drives the VLP state machine"
     }
   ],
   "summary": {
     "events": 23,
-    "gates": 25,
+    "gates": 23,
     "namespaces_wired": [
-      "SESSION", "RESEARCH", "AGENT_BOOTSTRAP", "VIBE", "CONTEXT", "AGENT_MEMORY",
-      "MINDSET", "DELEGATION", "LLM_CONFIG", "LLM_BIND", "JUDGE", "POLICY",
-      "OBSERVABILITY", "ERROR_OBS", "EVENTS", "L6-VLP", "EMBEDDER", "PROJECT"
+      "SESSION",
+      "RESEARCH",
+      "AGENT_BOOTSTRAP",
+      "VIBE",
+      "CONTEXT",
+      "AGENT_MEMORY",
+      "MINDSET",
+      "DELEGATION",
+      "LLM_CONFIG",
+      "LLM_BIND",
+      "JUDGE",
+      "POLICY",
+      "OBSERVABILITY",
+      "ERROR_OBS",
+      "EVENTS",
+      "L6-VLP",
+      "EMBEDDER",
+      "PROJECT"
     ],
     "namespaces_total": 20,
-    "namespaces_unwired": ["ADMIN", "JUDGE_UTIL"],
-    "namespaces_unwired_rationale": "ADMIN is invoked indirectly via G11 error_triage when schema_version mismatch; JUDGE_UTIL is invoked via G19 judge(eval_type=prompt_injection_scan). Both are reachable through gates; not directly named for clarity."
+    "namespaces_unwired": [
+      "ADMIN",
+      "JUDGE_UTIL"
+    ],
+    "namespaces_unwired_rationale": "ADMIN is invoked indirectly via G11 error_triage when schema_version mismatch; JUDGE_UTIL is invoked via G19 judge(eval_type=prompt_injection_scan). Both are reachable through gates; not directly named for clarity.",
+    "gatesReserved": [
+      "G24",
+      "G25"
+    ],
+    "gatesReservedRationale": "Reserved slots for ad-hoc operator-defined triggers. NOT implemented gates, and they have no matrix entry. The 23 concrete gates are G01-G23, one per event E01-E23. Before 0.4.2 a single 'gates: 25' count conflated implemented gates with reserved slots."
   }
 }

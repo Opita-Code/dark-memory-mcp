@@ -124,7 +124,11 @@ following filters:
 
 ---
 
-## 4. The 25 Vibe-Flow Gates (G1-G25)
+## 4. The 23 Vibe-Flow Gates (G01-G23)
+
+(G24 and G25 are reserved slots for ad-hoc
+operator-defined triggers — see §4.1. They are not
+implemented gates.)
 
 Each gate = `(trigger event) → (1-2 tool calls) → (PASS | inline note)`.
 Gates are **advisory**, not blocking. They fire from the system prompt,

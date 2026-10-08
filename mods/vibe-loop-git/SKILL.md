@@ -7,9 +7,11 @@ description: |
   atomic-mirrored, version-controlled work product. Loops 1-6 follow
   OSINT → spec → artifact → drift_judge → resolve_drift → atomic_mirror.
   Loop 7 (vibe-flow mode, vibe_case C8) adds ambient workflow gating:
-  23 events E1-E23 fire across a normal session; 25 named gates G1-G25
+  23 events E1-E23 fire across a normal session; 23 named gates G01-G23
   intercept each event with 1-4 dark-memory tool calls; the agent stays
-  in flow via inline notes (NOT intrusive blocking). Loops 8-13 (Phase 20,
+  in flow via inline notes (NOT intrusive blocking). G24 and G25 are
+  RESERVED slots for ad-hoc operator-defined triggers — not implemented
+  gates, and they have no matrix entry. Loops 8-13 (Phase 20,
   SHIPPED 2026-10-08) add the honesty layer: <5min mitigation, model-tier
   + cost transparency, a measured token economy, operator-visible
   epistemic labeling, G19 drift arbitration, and the sub-agent handoff
@@ -32,7 +34,7 @@ license: proprietary
 metadata:
   author: dark-agent
   operator: nico
-  version: 0.4.1
+  version: 0.4.2
   dark-memory-mcp-version: ">=4.0.0-alpha.30"
   loops-shipped: 13
   phase-20: CLOSED 2026-10-08 (6 loops, 9 artifacts, 360 tests, 23 drift judges, 8 consecutive ALIGNED). Library layer — 8 of 9 primitives still unwired; Loop 11.2 wired in Phase 21. See core/phase-20-closeout.md.
@@ -235,7 +237,7 @@ all phase boundaries. Tags are local (`v4.0.0-alpha.28` etc.).
 - `adapters/claude-code/SKILL.md` — Claude Code equivalent
 - `adapters/claude-desktop/SKILL.md` — Claude Desktop equivalent
 - `adapters/codex/SKILL.md` — OpenAI Codex equivalent
-- `templates/spec-c{1..7}.json` — per-vibe_case spec templates
+- `templates/spec-c{1..8}.json` — per-vibe_case spec templates
 - `tests/` — bootstrap, e2e-c*, audit-trail-verify
 - `core/self-eval.json` — meta-loop honesty (what this protocol can and
   cannot measure)

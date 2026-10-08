@@ -3,6 +3,57 @@
 All notable changes to **vibe-loop-git** are documented in this file.
 Format: [version] — date — summary. Local tags only (no push).
 
+## [0.4.2] — 2026-10-08 — correct four false claims in the mod's own manifest
+
+Documentation-only. No Go changed. The point of this entry is that the
+drift finding is now the *fourth* time this pattern has appeared in two
+phases, so it is recorded as a pattern and not as a one-off.
+
+### Fixed
+
+1. **`summary.gates: 25` → `23`, plus `gatesReserved: ["G24","G25"]`.**
+   23 concrete gates exist (G01-G23, one per event E01-E23). G24/G25 are
+   *reserved slots* for ad-hoc operator-defined triggers — `loop-7-vibe-flow.md`
+   §4.1 says so and has said so; the heading above it, `SKILL.md`, and the
+   manifest summary all said "25 gates". A single integer that conflates
+   implemented gates with reserved slots is a claim that cannot be checked
+   against the artifact, which is the whole problem with it.
+2. **`entryPoints.readme: "README.md"` — removed.** No such file exists.
+   Removed rather than created: `SKILL.md` is the mod's declared primary
+   entrypoint, and adding a human-facing README would create a second copy
+   of the same facts — which is precisely the mechanism that produced
+   items 1, 3 and 4 below.
+3. **`entryPoints.templates`: `spec-c{1..7}` → `spec-c{1..8}`.**
+   Eight template files exist; `spec-c8.json` shipped with the C8
+   taxonomy work and the manifest was never told.
+4. **`entryPoints.tests`**: added `e2e-c8.sh` and `gate-coverage-check.sh`.
+   Both exist; neither was listed, so the manifest understated its own
+   test surface.
+
+### Not changed, deliberately
+
+The `[0.2.0]` Loop 7 entry still says "25 named gates G1-G25". It was
+written before this correction and it describes what was believed at the
+time. A CHANGELOG is an append-only record; rewriting a shipped entry to
+match today's understanding falsifies it. The `[0.3.0]` entry already set
+the precedent of recording a documentation gap as its own entry rather
+than quietly editing history.
+
+### The pattern
+
+Three of the four are the same defect: a fact stated in more than one
+place, edited in one and not the other. Commit `fbb6f48` deleted four
+duplicated `C1..C7` allow-lists from the Go side for exactly this reason.
+
+**A claim that lives in two places will eventually be true in one of
+them.** The only durable fix is to delete the duplicate, not to keep
+re-syncing both.
+
+### Audit
+
+`tests/gate-coverage-check.sh` passes: 39 tool references resolve against
+the live registry. Both JSON files re-validated, LF-only, 0 CR bytes.
+
 ## [0.4.1] — 2026-10-08 — Phase 21 OPENS: the first Phase 20 primitive actually wired
 
 Phase 20's closeout finding was that all nine primitives had **zero

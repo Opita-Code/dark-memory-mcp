@@ -3,7 +3,7 @@
   "kind": "companion-mod",
   "name": "vibe-loop-git",
   "displayName": "Vibe-Loop Git Protocol",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "targetDarkMemoryVersion": ">=4.0.0-alpha.30",
   "description": "A 13-loop vibe-loop protocol for dark-memory-mcp. Loops 1-6 turn any artifact (code, text, decision, research, video, audio, multi-bundle) into a drift-judged, atomic-mirrored, version-controlled work product. Loop 7 (vibe-flow, vibe_case C8) adds ambient workflow gating: 23 events E1-E23, 25 gates G1-G25, 18 of 20 dark-memory namespaces wired via gate-trigger-matrix.json + gate-protocol.md. Loops 8-13 (Phase 20, SHIPPED 2026-10-08) add the honesty layer: <5min mitigation, model-tier and cost transparency, a measured token economy, operator-visible epistemic labeling (Kadavath calibration), G19 drift arbitration (Panickssery 2024), and the sub-agent handoff contract. Built on the drift_judge pipeline (Phase 16 SHIPPED) + T-407-c 3-layer defensive pattern (Phase 17 SHIPPED) + C8 vibe_case + 8th vibe_case taxonomy expansion (alpha.30). IMPORTANT: Loops 8-13 are a verified library with ZERO production callers as of closeout â€” see core/phase-20-closeout.md section 1. UPDATE Phase 21: Loop 11.2 is WIRED — vibe_publish now returns confidence_grade + confidence_caveat beside confidence. The other eight Phase 20 primitives remain unwired.",
   "license": "proprietary",
@@ -53,7 +53,8 @@
     },
     "phase20": "CLOSED 2026-10-08 (operator green light). Loops 8-13 shipped: 9 artifacts, 351/351 tests, 22 drift judges, 6 consecutive ALIGNED (2025-2030). NOT WIRED: zero production callers for any Phase 20 symbol; bin/dark-mem-mcp.exe predates the work. Closeout: core/phase-20-closeout.md. Open debt: gofmt on 14 pre-existing vibeflow files (694 lines, cosmetic); StateDelegating absent from internal/vlp; 4 Postgres subagent methods return notImpl; Strong/MiniMax pricing still a placeholder.",
     "firstTryAligned": 18,
-    "phase21": "OPEN 2026-10-08. L11.2 WIRED: GradeJudgeConfidence/JudgeConfidenceCaveat label the confidence the production vibe_publish path already emits. PublishResult gains confidence_grade + confidence_caveat. 3 graded return paths + 1 re-grade after the async pending flip. Eval 2032 ALIGNED. Rejected ComputeVerdict as unwirable: CostSummary has zero producers, so wiring it would require inventing a cost subsystem. Remaining L8-13 primitives still unwired."
+    "phase21": "OPEN 2026-10-08. L11.2 WIRED: GradeJudgeConfidence/JudgeConfidenceCaveat label the confidence the production vibe_publish path already emits. PublishResult gains confidence_grade + confidence_caveat. 3 graded return paths + 1 re-grade after the async pending flip. Eval 2032 ALIGNED. Rejected ComputeVerdict as unwirable: CostSummary has zero producers, so wiring it would require inventing a cost subsystem. Remaining L8-13 primitives still unwired.",
+    "docsCorrection": "0.4.2: three false claims in this manifest corrected. (1) entryPoints.readme pointed at README.md, which does not exist — removed rather than created, so SKILL.md stays the single source of truth instead of adding a second doc that would drift the same way. (2) entryPoints.templates said spec-c{1..7} with 8 files on disk. (3) entryPoints.tests omitted e2e-c8.sh and gate-coverage-check.sh."
   },
   "depends": {
     "dark-memory-mcp": ">=4.0.0-alpha.28",
@@ -331,10 +332,9 @@
     "primary": "SKILL.md",
     "manifest": "mod.json",
     "changelog": "CHANGELOG.md",
-    "readme": "README.md",
     "adapters": "adapters/{opencode,claude-code,claude-desktop,codex}/SKILL.md",
-    "templates": "templates/spec-c{1..7}.json",
-    "tests": "tests/{bootstrap,e2e-c{1..7},audit-trail-verify}.sh"
+    "templates": "templates/spec-c{1..8}.json",
+    "tests": "tests/{mod-bootstrap,e2e-c{1..8},gate-coverage-check,audit-trail-verify}.sh"
   },
   "invariants": {
     "sealed": [
