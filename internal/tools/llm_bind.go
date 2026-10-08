@@ -164,7 +164,7 @@ func RegisterLLMBind(reg *Registry) {
 	reg.Add(BindSimple("llm_provider_bind",
 		"Bind an LLM provider to the ACTIVE project's NLIConfig (Phase 14 T-303). provider_id must start with 'judge-' (LLMJudge path) or 'chat-' (NLI path). Persists endpoint + auth_token + timeout_ms + model_rev. auth_token is NEVER echoed in the result.",
 		MustJSONSchema(map[string]any{
-			"type":     "required",
+			"type":     "object",
 			"required": []string{"provider_id", "endpoint"},
 			"properties": map[string]any{
 				"provider_id": map[string]any{
@@ -206,7 +206,7 @@ func RegisterLLMBind(reg *Registry) {
 	reg.Add(BindSimple("llm_provider_probe",
 		"Probe an LLM provider (Phase 14 T-303). Sends a tiny /v1/chat/completions request with system='reply with pong', user='ping'. Resolves endpoint+auth_token from active project's NLIConfig when provider_id is given; uses explicit endpoint+auth_token otherwise. Returns latency_ms + status + body excerpt. NO persistence.",
 		MustJSONSchema(map[string]any{
-			"type":     "required",
+			"type":     "object",
 			"properties": map[string]any{
 				"provider_id": map[string]any{
 					"type":        "string",

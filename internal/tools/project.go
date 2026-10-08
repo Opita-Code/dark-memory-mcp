@@ -62,6 +62,23 @@ import (
 // the hard invariants. AuthToken is never echoed back in the
 // ProjectCreateResult (the Store layer strips it on read).
 func RegisterProject(reg *Registry, orch *orchestration.Orchestrator, st store.Store) {
+	// nliPrimarySchema is inlined under BOTH primary and fallback.
+	// NOTE (2026-10-08, MCP compat): do NOT use $defs/$ref here.
+	// opencode's MCP client cannot resolve JSON-Schema refs and
+	// rejects the ENTIRE tools/list ("Failed to get tools") when
+	// any single tool carries $ref. Inline duplication (~10 lines)
+	// is the compatible shape; all MCP clients accept it.
+	nliPrimarySchema := map[string]any{
+		"type":     "object",
+		"required": []string{"provider_id", "endpoint"},
+		"properties": map[string]any{
+			"provider_id": map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
+			"endpoint":    map[string]any{"type": "string", "format": "uri"},
+			"auth_token":  map[string]any{"type": "string", "maxLength": 4096, "description": "Bearer token; never echoed in tool results."},
+			"timeout_ms":  map[string]any{"type": "integer", "minimum": 1},
+			"model_rev":   map[string]any{"type": "string", "maxLength": 128},
+		},
+	}
 	reg.Add(BindStore("project_create",
 		"Create a new project (INV-7 tenant primitive). Idempotent on project_id — re-creating an existing project returns the existing row. The 'default' project is seeded on Open and cannot be re-created (returns ErrAlreadyExists).",
 		MustJSONSchema(map[string]any{
@@ -101,33 +118,20 @@ func RegisterProject(reg *Registry, orch *orchestration.Orchestrator, st store.S
 				"nli_config": map[string]any{
 					"type":        "object",
 					"description": "Optional v2.20.0 T07 per-project NLI configuration. When enabled, the project's drift_judge uses the configured primary (and optional fallback) NLI provider instead of falling through to nli.Config{}.DefaultsFor().",
-					"properties": map[string]any{
-						"enabled":             map[string]any{"type": "boolean"},
-						"primary":             map[string]any{"$ref": "#/$defs/nli_primary"},
-						"fallback":            map[string]any{"$ref": "#/$defs/nli_primary"},
-						"fallback_enabled":    map[string]any{"type": "boolean"},
-						"latency_budget_ms":   map[string]any{"type": "integer", "minimum": 1},
-						"max_premise_bytes":   map[string]any{"type": "integer", "minimum": 64},
-						"max_hypothesis_bytes": map[string]any{"type": "integer", "minimum": 16},
-						"max_cache_entries":   map[string]any{"type": "integer", "minimum": 100},
-						"cache_ttl_seconds":   map[string]any{"type": "integer", "minimum": 1},
-					},
+				"properties": map[string]any{
+					"enabled":             map[string]any{"type": "boolean"},
+					"primary":             nliPrimarySchema,
+					"fallback":            nliPrimarySchema,
+					"fallback_enabled":    map[string]any{"type": "boolean"},
+					"latency_budget_ms":   map[string]any{"type": "integer", "minimum": 1},
+					"max_premise_bytes":   map[string]any{"type": "integer", "minimum": 64},
+					"max_hypothesis_bytes": map[string]any{"type": "integer", "minimum": 16},
+					"max_cache_entries":   map[string]any{"type": "integer", "minimum": 100},
+					"cache_ttl_seconds":   map[string]any{"type": "integer", "minimum": 1},
 				},
 			},
-			"$defs": map[string]any{
-				"nli_primary": map[string]any{
-					"type":     "object",
-					"required": []string{"provider_id", "endpoint"},
-					"properties": map[string]any{
-						"provider_id": map[string]any{"type": "string", "minLength": 1, "maxLength": 128},
-						"endpoint":    map[string]any{"type": "string", "format": "uri"},
-						"auth_token":  map[string]any{"type": "string", "maxLength": 4096, "description": "Bearer token; never echoed in tool results."},
-						"timeout_ms":  map[string]any{"type": "integer", "minimum": 1},
-						"model_rev":   map[string]any{"type": "string", "maxLength": 128},
-					},
-				},
-			},
-		}),
+		},
+	}),
 		st,
 		func(ctx context.Context, s store.Store, in ProjectCreateInput) (*ProjectCreateResult, error) {
 			return runProjectCreate(ctx, s, in)
