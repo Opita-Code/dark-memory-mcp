@@ -30,3 +30,26 @@ vibe-flow/constitution/dark-memory-mcp-cerebro.constitution.toml
 # Local trash directories (reversible file moves, never commit)
 _trash-*/
 
+# SQLite artifacts. Never commit a database: they are per-machine state
+# (and can hold operator data). The canonical operator DB lives at
+# %LOCALAPPDATA%\dark-agents\dark.db, never in the repo.
+#
+# These appear in the repo root because the default DSN is the relative
+# "./dark-memory.db" (internal/server/bootstrap.go:461) — any binary or
+# test booted with cwd=repo-root creates one. They are always empty
+# (schema migrated, 0 rows) unless a test wrote to them.
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# rapid (property-based testing) failure counterexamples.
+# These are TRANSIENT RESIDUE, not fixtures. rapid writes a .fail file when
+# a property fails and does NOT delete it after the underlying bug is fixed,
+# so a committed one would read as "this test is failing" long after it
+# passes. The instance sitting here recorded vibe_case "C8" being rejected
+# as unknown on 2026-10-07; C8 is now a canonical vibe_case (commit fbb6f48)
+# and TestProperty_Spec_UnknownVibeCaseAlwaysRejected passes 100 cases.
+*.fail
+internal/v4alpha/vibe/testdata/
+
