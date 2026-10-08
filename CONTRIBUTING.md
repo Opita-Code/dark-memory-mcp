@@ -206,7 +206,7 @@ dark-mem judge --spec_intent "evaluate my_tool against ARCHITECTURE-V4.md §2.3.
 git checkout -b feat/my_tool
 git add tools/my_tool/
 git commit -m "feat(tools): my_tool — does X with Y, returns Z"
-git push origin feat/my_tool   # LOCAL ONLY policy: do not actually push
+git push origin feat/my_tool   # then open a PR
 # Open PR with the drift_judge output in the description
 ```
 

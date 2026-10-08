@@ -27,17 +27,39 @@
 [![Branch](https://img.shields.io/badge/branch-feat%2Fv4--redesign-blue)](https://github.com/Opita-Code/dark-memory-mcp)
 [![Install](https://img.shields.io/badge/install-npx%20%40opita--code%2Fdark--memory--mcp-cc3534)](docs/npm-install.md)
 
-> ## ⚠️ STATUS: v4-alpha.20 in progress
+> ## STATUS: v4-alpha.30, Phase 21 open (measured 2026-10-08)
 >
-> **You are reading the README of the v4 redesign branch**
-> (`feat/v4-redesign`). The narrative below describes the v2.20.0
-> production tree; v4-alpha.20 is a partial rewrite in progress.
+> Every number below is **measured from the running code**, not
+> remembered. `internal/tools/v4_status_consistency_test.go` fails the
+> build if this block and the live registry disagree, so it cannot rot
+> silently the way this block previously did.
 >
-> - **Branch**: `feat/v4-redesign` (local-only — no remote)
-> - **Tools**: 62 of 62 canonical tools registered (100% of canonical surface)
-> - **Schema**: `v31` (bitemporal lite + Phase 5 port; separate from v2.20.0's `v26`)
-> - **Binary**: `dark-memory-v4` (not `dark-mem-mcp`)
-> - **Project id**: `dark-memory-v4` (not `dark-mem`)
+> - **Branch**: `feat/v4-redesign`, published to the public repo
+> - **Tools**: **73** canonical tools across **20** namespaces, plus **3**
+>   env-gated armed extras (76 max). The original `97+` target from
+>   `ARCHITECTURE-V4.md` was aspirational — so the honest figure is
+>   **73/97 ≈ 75% of the originally-promised surface**, not 100%.
+> - **Schema**: **32** (stored as an integer in `schema_migrations.version`)
+> - **Binary**: **`bin/dark-mem-mcp.exe`** (31.33 MB Windows). An earlier
+>   revision of this README named `dark-memory-v4`; that file does not
+>   exist.
+> - **License**: MIT
+>
+> **Where the work actually is.** Phase 20 shipped an honesty layer
+> (Loops 8-13, 11,771 lines in `internal/vibeflow/`) but closed with
+> **zero production callers** — a verified library, not a shipped
+> feature. Phase 21 exists to wire it and is **2 of 9** primitives in:
+> L11.2 (`vibe_publish` returns `confidence_grade` + `confidence_caveat`)
+> and L8.1a (`delegate_intent` publishes `task_class` as an **advisory**
+> that does not influence routing). The remaining 7 change behaviour by
+> design and need instrument → measure → decide → flip.
+>
+> **Honest limitations.** Pre-release; no external consumers yet.
+> Dual-driver claims are asymmetric: production has only ever run
+> sqlite, and **58 Postgres store methods return `notImpl`** (0 in
+> sqlite), so the Postgres path is untested in anger. Two invariants
+> marked BLOCKING in the companion mod remain open (cold-start
+> validation from a fresh project; review-failure methodology).
 >
 > For the ground truth on what's actually shipping today, read
 > **[`docs/v4-status.md`](docs/v4-status.md)** first. The narrative

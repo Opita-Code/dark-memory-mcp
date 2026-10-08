@@ -118,13 +118,20 @@ A release that violates INV-16 or INV-17 fails the
 `internal/v4alpha/agent_memory` test suite at CI time, regardless of
 which layer introduced the violation.
 
-## Rule 7 — Local-only release policy
+## Rule 7 — Publication policy (RETIRED 2026-10-08)
 
-Every release on `feat/v4-redesign` is **local-only**:
+**This rule no longer binds.** It previously required every release on
+`feat/v4-redesign` to be local-only: no `git push`, no `git fetch`, no
+`git pull`, no remote tags, branches existing only in the local clone.
 
-- No `git push`, `git fetch`, or `git pull` against any remote.
-- No remote tags or releases.
-- All branches and tags exist only in the local clone.
+It is retired by operator decision. The repository is public at
+`github.com/Opita-Code/dark-memory-mcp`, releases are published there,
+and PRs are opened against it.
+
+The rule was not wrong when written; it became false, because the
+repository acquired a remote and went public while the rule stayed in
+place. That gap is the reason this section is rewritten rather than
+deleted: a silently missing rule is how a stale policy survives.
 - The operator may override this rule explicitly (e.g. for a
   community-mirrored OSS snapshot) by amending this constitution and
   bumping the version.

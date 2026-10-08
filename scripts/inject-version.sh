@@ -61,8 +61,19 @@ else
             describe="$(git describe --tags --always --dirty)"
             # Strip optional leading 'v' so the regex below stays simple.
             stripped="${describe#v}"
-            # Accept: X.Y.Z optional pre-release (alpha|beta|rc.N) optional -N-gSHA optional -dirty
-            if [[ "$stripped" =~ ^([0-9]+\.[0-9]+\.[0-9]+)(-(alpha|beta|rc\.[0-9]+))?(-([0-9]+)-g([0-9a-f]+))?(-dirty)?$ ]]; then
+            # Accept: X.Y.Z, optional pre-release (alpha|beta|rc, each with an
+            # optional .N suffix), an optional mod-tag segment, optional -N-gSHA,
+            # optional -dirty.
+            #
+            # G4 (fixed 2026-10-08): the old pattern was
+            #   (alpha|beta|rc\.[0-9]+)
+            # which rejected "alpha.30" (dot suffix) and could not tolerate the
+            # mod-tag segment, so this project's own tags matched NOTHING and
+            # every release stamp silently degraded to dev/unknown with
+            # IsDev=true. Verified NO MATCH against both:
+            #   4.0.0-alpha.30-vibe-loop-git-v0.4.1-4-g2a2c36d-dirty
+            #   4.0.0-alpha30-4-g2a2c36d-dirty
+            if [[ "$stripped" =~ ^([0-9]+\.[0-9]+\.[0-9]+)(-(alpha|beta|rc)(\.[0-9]+)?)?(-[A-Za-z0-9][A-Za-z0-9.-]*)?(-([0-9]+)-g([0-9a-f]+))?(-dirty)?$ ]]; then
                 version="$stripped"
                 source="git"
             elif [[ "$stripped" =~ ^[0-9a-f]+$ ]]; then

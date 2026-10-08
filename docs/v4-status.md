@@ -131,7 +131,7 @@
 |---|---|
 | Branch | `feat/v4-redesign` (from `v2.20.0`, NOT from `v3.0-void`) |
 | Last reviewed | **2026-10-08** |
-| Status | **alpha.30** — pre-release, local-only, contributors only |
+| Status | **alpha.30** — pre-release. Published to a public repo, but no external consumers yet and never validated outside the author's machine. |
 | Version constant | Resolved at build time, not a checked-in constant. `internal/version/version.go:34` holds an empty `buildVersion`, injected via `-ldflags "-X .../internal/version.buildVersion=<v>"`; falls back to `devVersion = "dev"` (`internal/version/version.go:39`), which sets `IsDev=true`. Current deployed stamp: `v4.0.0-alpha.30-vibe-loop-git-v0.4.1-4-g2a2c36d-dirty`. **Known gap (G4):** `scripts/inject-version.sh:65` cannot parse this tag format — see §1.16. |
 | Schema version | **32**, stored as an integer in `schema_migrations.version` (verified live against `dark.db` on 2026-10-08). Historical: audit_log gains `prev_hash`, `row_hash` (alpha.15); sdd_evaluations gains the 4 calibration columns (alpha.16); 5 tables gain `project_id` (alpha.17). The earlier `v4alpha/2026-09-30/004` string format no longer exists. |
 | Binary | **`bin/dark-mem-mcp.exe`** (32,854,528 bytes / 31.33 MB Windows, 2026-10-08). Note: the previously documented `dark-memory-v4` (19.66 MB) is **not a file on disk** — that claim was stale from alpha.17. |

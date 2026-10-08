@@ -1,8 +1,10 @@
 # dark-memory-mcp — operator-reproducible CI recipe
 #
-# NEVER-PUSH: this repository is local-only. There is no git remote
-# configured. This workflow YAML is committed for transparency so an
-# operator who clones the repo can run the same recipe locally with:
+# PUBLISHED: this repository is PUBLIC at
+# github.com/Opita-Code/dark-memory-mcp. The old "NEVER-PUSH / there is
+# no git remote" note was RETIRED 2026-10-08 by operator decision and was
+# factually wrong: a remote existed and had been public since 2026-07.
+# The recipe stays committed for transparency, so a cloner can run it:
 #
 #   $env:DARK_MEM_MCP_BIN = "$PWD/cmd/dark-mem-mcp/dark-mem-mcp.exe"
 #   go test ./... -count=1 -timeout 240s

@@ -19,7 +19,7 @@
 | Version | v4.0.0-alpha.1 |
 | Last reviewed | 2026-09-27 (delta from 2026-09-24 baseline) |
 | Branch | `feat/v4-redesign` (from `v2.20.0`) |
-| Local-only | YES — no `git push`/`fetch`/`pull`, no remote tags per operator policy |
+| Publication | Public repo `Opita-Code/dark-memory-mcp`. The local-only rule (no push/fetch/pull, no remote tags) is RETIRED 2026-10-08 by operator decision. |
 | Parent | [docs/archive/v3.0-research/CRITIQUE-SOTA.md §13](../archive/v3.0-research/CRITIQUE-SOTA.md) |
 
 > **🚨 ASPIRATIONAL vs ACTUAL**: this document was drafted 2026-09-24

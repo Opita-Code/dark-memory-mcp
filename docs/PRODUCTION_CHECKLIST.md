@@ -127,8 +127,9 @@ CGO_ENABLED=1 CC=gcc go test -race ./... -count=1 -timeout 240s
 ```
 
 The `-race` results are CI's responsibility on environments with a
-C compiler. The never-push policy means CI is local-only — see
-`.github/workflows/ci.yml` for the operator-reproducible recipe.
+C compiler. See `.github/workflows/ci.yml` for the reproducible recipe.
+(The never-push policy referenced here was RETIRED 2026-10-08; the
+repository is public.)
 
 ## Stale-binary gotcha (wire-test resolution)
 

@@ -302,7 +302,7 @@ unchanged:
 running.
 
 **Cross-version lockstep hash pin**: UNCHANGED across phase boundaries,
-per the local-only discipline (mod.json invariants.sealed row 4).
+per the release discipline then recorded in mod.json invariants.sealed row 4, which retired the local-only rule on 2026-10-08.
 
 ---
 

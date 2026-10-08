@@ -3,10 +3,10 @@
   "kind": "companion-mod",
   "name": "vibe-loop-git",
   "displayName": "Vibe-Loop Git Protocol",
-  "version": "0.4.4",
+  "version": "0.4.5",
   "targetDarkMemoryVersion": ">=4.0.0-alpha.30",
   "description": "A 13-loop vibe-loop protocol for dark-memory-mcp. Loops 1-6 turn any artifact (code, text, decision, research, video, audio, multi-bundle) into a drift-judged, atomic-mirrored, version-controlled work product. Loop 7 (vibe-flow, vibe_case C8) adds ambient workflow gating: 23 events E1-E23, 25 gates G1-G25, 18 of 20 dark-memory namespaces wired via gate-trigger-matrix.json + gate-protocol.md. Loops 8-13 (Phase 20, SHIPPED 2026-10-08) add the honesty layer: <5min mitigation, model-tier and cost transparency, a measured token economy, operator-visible epistemic labeling (Kadavath calibration), G19 drift arbitration (Panickssery 2024), and the sub-agent handoff contract. Built on the drift_judge pipeline (Phase 16 SHIPPED) + T-407-c 3-layer defensive pattern (Phase 17 SHIPPED) + C8 vibe_case + 8th vibe_case taxonomy expansion (alpha.30). IMPORTANT: Loops 8-13 are a verified library with ZERO production callers as of closeout â€” see core/phase-20-closeout.md section 1. UPDATE Phase 21: Loop 11.2 is WIRED — vibe_publish now returns confidence_grade + confidence_caveat beside confidence. The other eight Phase 20 primitives remain unwired.",
-  "license": "proprietary",
+  "license": "MIT",
   "authors": [
     {
       "name": "dark-agent",
@@ -38,7 +38,7 @@
   "homepage": "https://github.com/dark-agents/dark-memory-mcp/tree/feat/v4-redesign/mods/vibe-loop-git",
   "repository": {
     "type": "git",
-    "url": "file:///C:/Users/Nico/Documents/dark-memory-mcp"
+    "url": "https://github.com/Opita-Code/dark-memory-mcp"
   },
   "bugs": "https://github.com/dark-agents/dark-memory-mcp/issues",
   "audit": {
@@ -122,8 +122,7 @@
       "ATOMIC_MIRROR (dark_memory_agent_memory_save)",
       "GATE_PROMPTS (Loop 7+ only: gate-trigger-matrix fires per event; ambient workflow gating)"
     ],
-    "localOnly": true,
-    "noPush": true,
+    "publicationPolicy": "SUPERSEDED 2026-10-08: the local-only rule (no push, no remote tags) is RETIRED by operator decision. The repository is public at https://github.com/Opita-Code/dark-memory-mcp and v4 releases are published there.",
     "varianceBudget": 0.07,
     "tier1Only": true,
     "selfEvalEnabled": true,
@@ -340,7 +339,7 @@
     "sealed": [
       "Tier-1 only sourcing (no blog-only / reddit / X for factual claims)",
       "Vibe-publish retry pattern (T-406: 2 transient variance events recovered, 0 real drift)",
-      "Local-only git workflow (no push, no remote tags)",
+      "Local-only git workflow: RETIRED 2026-10-08 by operator decision; releases are published to the public repo",
       "Cross-version lockstep hash pin UNCHANGED across phase boundaries"
     ],
     "documented": [
