@@ -105,6 +105,65 @@ import (
 // envelope (chat-minimax-cn / MiniMax-M3 in this deployment), so the
 // independence computation is grounded in what the system actually
 // reported rather than in what the caller remembers.
+// Origin is the THIRD axis of independence, added in L13.1.
+//
+// L12.1 computed independence on two axes: model and provider. That is
+// sufficient when the judge and the artifact author are the same agent
+// (the row 1985 case). It is NOT sufficient once work is delegated,
+// because a delegated artifact is produced by a different agent
+// instance and the model/provider pair alone cannot say whether two
+// claims came from the same mind or from two.
+//
+// Origin answers exactly one question: WHO produced this claim.
+//
+// It is deliberately an orthogonal axis rather than a fourth field
+// folded into the model string, because origin and model fail
+// differently. Two DIFFERENT models behind one origin can still share
+// finetuning lineage. Two instances of the SAME model are sampling
+// variance, not decorrelated error. Conflating those is the mistake.
+type Origin string
+
+const (
+	// OriginUnspecified is the zero value. It means "we did not record
+	// who produced this". It is deliberately NOT OriginSelf: treating
+	// an unrecorded origin as "self" would silently change the
+	// classification of every pre-L13.1 caller. Unspecified keeps
+	// L12.1's two-axis ladder in force, which is the backward-
+	// compatible behavior.
+	OriginUnspecified Origin = ""
+
+	// OriginSelf means the claim was produced by an agent. The specific
+	// instance is not recorded, so two OriginSelf claims cannot be
+	// shown to come from different minds and therefore cannot establish
+	// independence. This is the Panickssery self-preference trap:
+	// arXiv:2404.13076 shows an evaluator scoring its own output higher
+	// than a human would.
+	OriginSelf Origin = "self"
+
+	// OriginSubagent means the claim was produced by a delegated
+	// instance, registered via subagent_register / agent_memory_delegate.
+	OriginSubagent Origin = "subagent"
+
+	// OriginOperator means a human asserted it. Authority, not evidence
+	// — see ArbitrateByOperator and BasisOperatorAuthority.
+	OriginOperator Origin = "operator"
+
+	// OriginExternal means a third party outside this system asserted
+	// it (a vendored spec, a measured benchmark, an upstream release).
+	OriginExternal Origin = "external"
+)
+
+// String renders the origin.
+func (o Origin) String() string {
+	if o == OriginUnspecified {
+		return "<unspecified>"
+	}
+	return string(o)
+}
+
+// known reports whether the origin was actually recorded.
+func (o Origin) known() bool { return o != OriginUnspecified }
+
 type JudgeSource struct {
 	// ProviderID is the judge provider, e.g. "chat-minimax-cn".
 	ProviderID string
@@ -117,21 +176,32 @@ type JudgeSource struct {
 	// computation, because asking the same authority a different
 	// question does not make the second answer independent.
 	EvalType string
+
+	// Origin is the third independence axis (L13.1). Zero value
+	// OriginUnspecified preserves L12.1's two-axis behavior exactly,
+	// so adding this field is not a breaking change for existing
+	// callers and existing tests.
+	Origin Origin
 }
 
 // String renders the source for audit output.
 func (s JudgeSource) String() string {
 	p, m := s.ProviderID, s.ModelRev
-	if p == "" && m == "" {
-		return "<unspecified>"
+	base := "<unspecified>"
+	switch {
+	case p == "" && m == "":
+		base = "<unspecified>"
+	case p == "":
+		base = m
+	case m == "":
+		base = p
+	default:
+		base = p + "/" + m
 	}
-	if p == "" {
-		return m
+	if s.Origin.known() {
+		return base + " [" + s.Origin.String() + "]"
 	}
-	if m == "" {
-		return p
-	}
-	return p + "/" + m
+	return base
 }
 
 // ---------------------------------------------------------------------------
@@ -195,45 +265,102 @@ func (i Independence) String() string {
 
 // ClassifyIndependence derives the independence of b relative to a.
 //
-// The ordering of the checks encodes the precedence of the bias axes
-// documented in arXiv:2404.13076:
+// THREE AXES (L13.1). The ordering encodes the precedence of the bias
+// sources, and the precedence itself is the design decision:
+//
+//	ORIGIN FIRST, AND IT CAN ONLY DEGRADE.
+//
+// arXiv:2404.13076 makes origin the load-bearing axis for the
+// self-preference trap: the danger is not "a model was involved" but
+// "the evaluator and the evaluatee are the same mind". A shared origin
+// is therefore never independent, regardless of how different the
+// provider strings look. Symmetrically, a missing origin on either side
+// falls back to correlated, because an unrecorded origin cannot be shown
+// to differ from a recorded one.
+//
+// Origin diversity is NEVER sufficient. Two instances of one model under
+// two roles are sampling variance, not decorrelated error — so having
+// different origins does not rescue a shared model, and the model/provider
+// ladder below still runs and still governs.
+//
+// BACKWARD COMPATIBILITY. When either side carries OriginUnspecified
+// (the zero value), the origin checks are skipped and behavior is
+// byte-identical to L12.1. Adding the axis did not change any shipped
+// classification, and TestL13_BackCompat pins that claim mechanically
+// rather than asking a reader to trust a comment.
+//
+// Then, unchanged from L12.1:
 //
 //   - Same provider AND same model → None. There is nothing to be
 //     independent of: this is the literal re-run that G19 performs
 //     today, and the null-experiment case.
-//     NOTE: this comparison deliberately ignores EvalType. Struct
-//     equality would include it, but EvalType is documented above as
-//     NOT part of the independence computation — asking one authority
-//     a differently-worded question is still asking one authority.
-//     Including it would also hand G19 a trivial way to manufacture
-//     independence by changing eval_type, which is the exact cheat
-//     this file closes.
-//   - Same non-empty model → Correlated, EVEN ACROSS providers. The
-//     paper's finding is about the model recognizing its own output;
-//     serving the same weights from two vendors does not break that.
-//   - Same non-empty provider → Correlated. Shared serving stack and,
-//     in practice, shared fine-tuning lineage.
+//     EvalType is deliberately excluded from this comparison. Struct
+//     equality would include it, but changing eval_type on one model
+//     must not manufacture independence — that would hand G19 a trivial
+//     cheat.
+//   - Same non-empty model → Correlated, EVEN ACROSS providers.
+//   - Same non-empty provider → Correlated.
 //   - Both models AND both providers known and differing → Independent.
-//     This is the only class that earns the right to dispute.
-//   - Otherwise → Correlated. Conservative default: independence that
-//     cannot be PROVEN is not claimed. A missing field must never be
-//     read as a clean bill of independence.
+//   - Otherwise → Correlated. Independence that cannot be proven is not
+//     claimed, and a missing field is never a clean bill.
 func ClassifyIndependence(a, b JudgeSource) Independence {
-	if a.ProviderID == b.ProviderID && a.ModelRev == b.ModelRev {
+	bothKnown := a.Origin.known() && b.Origin.known()
+	bothUnrecorded := !a.Origin.known() && !b.Origin.known()
+	oneKnown := a.Origin.known() != b.Origin.known()
+	sameWeights := a.ProviderID == b.ProviderID && a.ModelRev == b.ModelRev
+
+	// Step 1 — None means THE IDENTICAL AUTHORITY. That holds when both
+	// sides are the same weights AND the origin cannot distinguish them
+	// as separate minds: either both unrecorded (the L12.1 case), or
+	// both recorded as the SAME origin.
+	//
+	// The explicit exclusion of known-DIFFERENT origins is the L13.1
+	// fix. Two instances sharing one model and provider are distinct
+	// processes, not one authority asked twice, so calling that None
+	// would understate the evidence — and it inverted the ladder,
+	// reporting a delegated artifact as LESS independent than a
+	// self-judged one.
+	if sameWeights && (bothUnrecorded || (bothKnown && a.Origin == b.Origin)) {
 		return IndependenceNone
 	}
-	if a.ProviderID == "" && a.ModelRev == "" && b.ProviderID == "" && b.ModelRev == "" {
-		return IndependenceNone
+
+	// Step 2 — origin axis. It can only degrade, never create.
+	//
+	// Same recorded origin: these claims cannot be shown to come from
+	// different minds, however different the provider strings look.
+	// arXiv:2404.13076 makes origin the load-bearing axis for the
+	// self-preference trap — the danger is not "a model was involved"
+	// but "the evaluator and the evaluatee are the same mind".
+	if bothKnown && a.Origin == b.Origin {
+		return IndependenceCorrelated
 	}
+
+	// Step 3 — a half-recorded origin cannot prove difference.
+	if oneKnown {
+		return IndependenceCorrelated
+	}
+
+	// Step 4 — same model: distinct instances of one set of weights are
+	// sampling variance, not decorrelated error. Different origins do
+	// NOT rescue this.
 	if a.ModelRev != "" && a.ModelRev == b.ModelRev {
 		return IndependenceCorrelated
 	}
+
+	// Step 5 — same provider: shared serving stack and, in practice,
+	// shared fine-tuning lineage.
 	if a.ProviderID != "" && a.ProviderID == b.ProviderID {
 		return IndependenceCorrelated
 	}
+
+	// Step 6 — all axes differ and are recorded. The only rung that
+	// earns the right to dispute.
 	if a.ModelRev != "" && b.ModelRev != "" && a.ProviderID != "" && b.ProviderID != "" {
 		return IndependenceIndependent
 	}
+
+	// Step 7 — incomplete identity. Independence that cannot be proven
+	// is not claimed.
 	return IndependenceCorrelated
 }
 
