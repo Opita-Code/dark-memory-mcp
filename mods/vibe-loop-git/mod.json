@@ -46,11 +46,11 @@
     "firstTag": "v4.0.0-alpha.27",
     "currentTag": "v4.0.0-alpha.30",
     "loopsShipped": 8,
-    "driftJudgesRun": 12,
+    "driftJudgesRun": 13,
     "driftVerdicts": {
-      "aligned": 10,
+      "aligned": 11,
       "needs_human": 0,
-      "firstTryAligned": 8,
+      "firstTryAligned": 9,
       "retryResolved": 2
     }
   },
@@ -228,6 +228,15 @@
         "driftId": null,
         "verdict": "aligned (drift_judge eval 2020, nli=entailment conf=1.0)",
         "sha256Prefix": "98068536"
+      },
+      {
+        "loop": 8,
+        "file": "internal/vibeflow/mode.go",
+        "vibeCase": "C8",
+        "title": "L8.2 lazy activation state machine (3 modes, 5 signals, LastSignal field, PanicMod, 35 new tests, 77/77 total green)",
+        "driftId": null,
+        "verdict": "aligned (drift_judge eval 2021, nli=entailment conf=1.0)",
+        "sha256Prefix": "ec7c4142"
       },
       {
         "loop": 8,
