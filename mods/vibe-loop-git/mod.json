@@ -46,11 +46,11 @@
     "firstTag": "v4.0.0-alpha.27",
     "currentTag": "v4.0.0-alpha.30",
     "loopsShipped": 8,
-    "driftJudgesRun": 11,
+    "driftJudgesRun": 12,
     "driftVerdicts": {
-      "aligned": 9,
+      "aligned": 10,
       "needs_human": 0,
-      "firstTryAligned": 7,
+      "firstTryAligned": 8,
       "retryResolved": 2
     }
   },
@@ -219,6 +219,15 @@
         "driftId": null,
         "verdict": "aligned (drift_judge eval 2018, nli=entailment conf=1.0)",
         "sha256Prefix": "c50e217a"
+      },
+      {
+        "loop": 8,
+        "file": "internal/vibeflow/context.go",
+        "vibeCase": "C8",
+        "title": "L8.1b persona-tier detection (Context struct, tier modifiers, 4 new features, 38/38 tests green)",
+        "driftId": null,
+        "verdict": "aligned (drift_judge eval 2020, nli=entailment conf=1.0)",
+        "sha256Prefix": "98068536"
       },
       {
         "loop": 8,
