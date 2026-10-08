@@ -3,9 +3,9 @@
   "kind": "companion-mod",
   "name": "vibe-loop-git",
   "displayName": "Vibe-Loop Git Protocol",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "targetDarkMemoryVersion": ">=4.0.0-alpha.30",
-  "description": "A 7-loop vibe-loop protocol for dark-memory-mcp. Loops 1-6 turn any artifact (code, text, decision, research, video, audio, multi-bundle) into a drift-judged, atomic-mirrored, version-controlled work product. Loop 7 (vibe-flow, vibe_case C8) adds ambient workflow gating: 23 events E1-E23, 25 gates G1-G25, 18 of 20 dark-memory namespaces wired via gate-trigger-matrix.json + gate-protocol.md. Built on the drift_judge pipeline (Phase 16 SHIPPED) + T-407-c 3-layer defensive pattern (Phase 17 SHIPPED) + C8 vibe_case new in vibe-loop-git v0.2.0 (alpha.30).",
+  "description": "An 8-loop vibe-loop protocol for dark-memory-mcp. Loops 1-6 turn any artifact (code, text, decision, research, video, audio, multi-bundle) into a drift-judged, atomic-mirrored, version-controlled work product. Loop 7 (vibe-flow, vibe_case C8) adds ambient workflow gating: 23 events E1-E23, 25 gates G1-G25, 18 of 20 dark-memory namespaces wired via gate-trigger-matrix.json + gate-protocol.md. Loop 8 (<5min mitigation, L8.1a SHIPPED) adds Layer 1 heuristic classifier: deterministic, zero-LLM-call task-length prediction with per-vibe_case calibration (C1..C8) for the 10 personas (5 technical + 5 cross-cutting) under the cost-lens constraint (dev cost unbounded, user cost minimal). Built on the drift_judge pipeline (Phase 16 SHIPPED) + T-407-c 3-layer defensive pattern (Phase 17 SHIPPED) + C8 vibe_case + 8th vibe_case taxonomy expansion (alpha.30).",
   "license": "proprietary",
   "authors": [
     {
@@ -22,11 +22,18 @@
     "atomic-mirror",
     "phase-16",
     "phase-17",
+    "phase-20",
     "t-407-c",
     "vibe-flow",
     "loop-7",
+    "loop-8",
     "c8",
-    "ambient-guidance"
+    "ambient-guidance",
+    "5min-mitigation",
+    "horvitz",
+    "fast-frugal",
+    "cost-lens",
+    "10-personas"
   ],
   "homepage": "https://github.com/dark-agents/dark-memory-mcp/tree/feat/v4-redesign/mods/vibe-loop-git",
   "repository": {
@@ -38,12 +45,12 @@
     "firstShipped": "2026-10-06",
     "firstTag": "v4.0.0-alpha.27",
     "currentTag": "v4.0.0-alpha.30",
-    "loopsShipped": 7,
-    "driftJudgesRun": 9,
+    "loopsShipped": 8,
+    "driftJudgesRun": 11,
     "driftVerdicts": {
-      "aligned": 7,
+      "aligned": 9,
       "needs_human": 0,
-      "firstTryAligned": 5,
+      "firstTryAligned": 7,
       "retryResolved": 2
     }
   },
@@ -103,14 +110,15 @@
     }
   },
   "protocol": {
-    "loops": 7,
+    "loops": 8,
     "perLoopPhases": [
       "OSINT (parallel web + academic + web_fetch — tier-1 only)",
       "SPEC (vibe_spec with structured tasks)",
       "ARTIFACT (concrete file/decision)",
       "DRIFT_JUDGE (LLM-as-judge evaluates artifact vs spec intent)",
       "RESOLVE_DRIFT (accept or revise)",
-      "ATOMIC_MIRROR (dark_memory_agent_memory_save)"
+      "ATOMIC_MIRROR (dark_memory_agent_memory_save)",
+      "GATE_PROMPTS (Loop 7+ only: gate-trigger-matrix fires per event; ambient workflow gating)"
     ],
     "localOnly": true,
     "noPush": true,
@@ -202,6 +210,24 @@
         "driftId": 1530,
         "verdict": "operator override (MINIMAX-M3 false-positive pattern)",
         "sha256Prefix": "927a8aa8"
+      },
+      {
+        "loop": 8,
+        "file": "internal/vibeflow/classifier.go",
+        "vibeCase": "C8",
+        "title": "L8.1a heuristic upfront classifier (5 features, 8 vibe_case thresholds, 22/22 tests green)",
+        "driftId": null,
+        "verdict": "aligned (drift_judge eval 2018, nli=entailment conf=1.0)",
+        "sha256Prefix": "c50e217a"
+      },
+      {
+        "loop": 8,
+        "file": "core/loop-8-design.md",
+        "vibeCase": "C8",
+        "title": "Loop 8 design doc (10 personas, per-vibe_case calibration, cost-lens constraint, 6-commit plan)",
+        "driftId": null,
+        "verdict": "operator override (MINIMAX-M3 nli=neutral false-positive pattern, eval 2019)",
+        "sha256Prefix": "883b3149"
       }
     ],
     "design": {
