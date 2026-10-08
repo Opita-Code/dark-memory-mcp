@@ -44,6 +44,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -206,12 +207,27 @@ func TestStatusDoc_BinaryNameExistsOnDisk(t *testing.T) {
 	rel = strings.TrimPrefix(rel, "./")
 
 	abs := filepathJoinFromToolsPkg(rel)
-	if _, err := os.Stat(abs); err != nil {
-		t.Errorf("FIELD: status table Binary row\nDOCUMENTED: %s\nMEASURED:  file not found on disk\n"+
-			"The document names a binary that does not exist. Either the binary moved or the "+
-			"claim is stale; both are correctness bugs in a status document.",
-			rel)
+	if _, err := os.Stat(abs); err == nil {
+		return // present: the documented claim holds
 	}
+
+	// The documented binary is a locally-built, deliberately untracked
+	// artifact (bin/ has 0 tracked files). On a Linux CI runner it can never
+	// exist, so its absence is NOT evidence that the document lies.
+	// Asserting unconditionally made this guard fail on every non-Windows CI
+	// run while the document was correct — a guard that cries wolf gets
+	// ignored, which is worse than no guard at all.
+	if runtime.GOOS != "windows" {
+		t.Skipf("skipping on %s: %s is a locally-built untracked binary", runtime.GOOS, rel)
+	}
+	if _, statErr := os.Stat(filepathJoinFromToolsPkg("bin")); statErr != nil {
+		t.Skip("skipping: no bin/ directory, so no deployment has happened here")
+	}
+	t.Errorf("FIELD: status table Binary row\nDOCUMENTED: %s\nMEASURED:  file not found on disk\n"+
+		"bin/ exists, so a deployment HAS happened here and the documented binary is "+
+		"genuinely missing. Either the binary moved or the claim is stale; both are "+
+		"correctness bugs in a status document.",
+		rel)
 }
 
 // filepathJoinFromToolsPkg resolves a repo-relative path from the test's

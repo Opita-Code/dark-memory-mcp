@@ -98,10 +98,12 @@ const DefaultToolGrants = "project_create," + // PROJECT (1)
 	"mindset_apply," + // MINDSET (1) — v2.7.0-alpha
 	"delegate_intent," + // DELEGATION (1) — Wave 5C (A1: handle/delegate/refuse)
 	"llm_key_add,llm_key_list,llm_key_remove,llm_provider_status," + // LLM_CONFIG (4) — v2.20.0 (spec 1188 T7: OS-keyring LLM key management + routing status)
+	"llm_provider_bind,llm_provider_probe," + // LLM_BIND (2) — v4.0.0-alpha.25 Phase 14 T-303. Was MISSING here while registered in the canonical registry, so the policy gate refused both: llm_provider_probe answered ErrCapabilityNotGranted in live use on 2026-10-08 and the cause was this omission, not operator configuration.
 	"judge,consensus,judgment_history,judge_list_personas," + // JUDGE (4) — v2.17.0 (spec 1155: persona registry)
 	"active_policy,load_constitution," + // POLICY (2)
 	"memory_state,writes,anomalies,health_ping,audit_export,audit_verify," + // OBSERVABILITY (6) — v1.3.0 (4) + alpha.20 Chunk 8.5 (2: audit_export + audit_verify, ADR-016 + ADR-018)
 	"error_list,error_get,error_summary,error_resolve," + // ERROR_OBS (4) — v2.11.0 (spec 757: Error Observatory backlog + triage)
+	"event_log,event_replay," + // EVENTS (2) — v4.0.0-alpha.23 Phase 12 T-105. Also registered but ungranted, so the gate refused both.
 	"admin_migrate,admin_schema_status,admin_vacuum," + // ADMIN (3)
 	"vlp_handle_event," + // L6-VLP (1) — DMAP v1.1
 	"embedder_setup_prompt," + // EMBEDDER (1) — v2.9.0-alpha PR-2 (consent gate, row 164 §3)
