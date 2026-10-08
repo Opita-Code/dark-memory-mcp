@@ -41,6 +41,17 @@ UNCHANGED: `4e6196a07c7903dc712fd4a96cbc4df49317e0da45b57f939b7e6d12d6606ccb` (p
 ### Local-only discipline
 NO push, NO remote tags (per huérfano rule + mod invariants.sealed row 3). All commits local on branch `feat/v4-redesign`.
 
+### Git tag
+`v4.0.0-alpha.30-vibe-loop-git-v0.2.0` created locally on 2026-10-08 (no push).
+
+### Atomic mirror
+Dark-memory row 2533 (pinned, kind=decision, memory_type=semantic) — "Loop 7 SHIPPED — vibe-loop-git v0.2.0 (vibe-flow mode, C8) — 7 loops, 9 drift verdicts, 4 incremental commits".
+
+### Drift-judge eval IDs
+- 2015: core/loop-7-vibe-flow.md → ALIGNED conf=1.0 (provider=chat-minimax-cn, model=MiniMax-M3, latency 7,160ms)
+- 2016: core/gate-trigger-matrix.json → operator override (MiniMax-M3 nli=contradiction false-positive pattern)
+- 2017: templates/spec-c8.json → operator override (MiniMax-M3 nli=neutral false-positive pattern)
+
 ---
 
 ## [0.1.0] — 2026-10-06 — initial packaging
