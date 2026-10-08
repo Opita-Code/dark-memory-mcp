@@ -24,6 +24,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -734,5 +735,108 @@ func TestChatProvider_LegacyProviderConfig_NoMaxTokensOverride(t *testing.T) {
 	_, err = p.Score(context.Background(), "p", "h")
 	if err != nil {
 		t.Fatalf("Score: %v", err)
+	}
+}
+
+// =====================================================================
+// T-201 (v4.0.0-alpha.24-pre-1): think-only reply handling.
+// MiniMax-M3, Claude-with-extended-thinking, and DeepSeek-R1 sometimes
+// emit finish_reason=stop with content == a single <think>...</think>
+// block and NO visible label. The OLD parser returned
+// ErrProviderBadResponse, surfacing to drift_judge as needs_human.
+// NEW behavior: strip the think block; if anything visible remains,
+// parse it as the label; if the reply was truly thinking-only with
+// no label at all, keep the ErrProviderBadResponse (genuinely empty).
+// =====================================================================
+
+// TestParseChatCompletionResponse_ThinkOnlyStop_VisibleLabel: the
+// reasoning model emitted a <think> block AND the label after it
+// (finish_reason=stop). The label must be parsed correctly.
+func TestParseChatCompletionResponse_ThinkOnlyStop_VisibleLabel(t *testing.T) {
+	body := []byte(`{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"<think>reasoning</think>\n\nentailment"}}]}`)
+	label, conf, err := parseChatCompletionResponse(body)
+	if err != nil {
+		t.Fatalf("expected nil err, got %v", err)
+	}
+	if label != LabelEntailment || conf != 1.0 {
+		t.Errorf("got label=%v conf=%v, want entailment/1.0", label, conf)
+	}
+}
+
+// TestParseChatCompletionResponse_ThinkOnlyStop_NoLabel: the reasoning
+// model emitted ONLY a <think> block (no visible label). finish_reason=stop
+// means the model committed, so this is ErrProviderBadResponse (NOT
+// ErrTruncatedResponse — that path is reserved for finish_reason=length).
+func TestParseChatCompletionResponse_ThinkOnlyStop_NoLabel(t *testing.T) {
+	body := []byte(`{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"<think>only reasoning, no label</think>"}}]}`)
+	_, _, err := parseChatCompletionResponse(body)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !errors.Is(err, ErrProviderBadResponse) {
+		t.Errorf("got err=%v, want ErrProviderBadResponse (NOT truncated — finish_reason=stop)", err)
+	}
+	if errors.Is(err, ErrTruncatedResponse) {
+		t.Errorf("got ErrTruncatedResponse; think-only stop must NOT route to retry path")
+	}
+}
+
+// TestParseChatCompletionResponse_AnthropicThinkOnly_WithLabel: the
+// Anthropic-via-adapter path also handles <think> blocks. stop_reason=end_turn
+// with a label after the think block must parse.
+func TestParseChatCompletionResponse_AnthropicThinkOnly_WithLabel(t *testing.T) {
+	body := []byte(`{"content":"<think>chain of thought</think>\n\ncontradiction","stop_reason":"end_turn"}`)
+	label, conf, err := parseChatCompletionResponse(body)
+	if err != nil {
+		t.Fatalf("expected nil err, got %v", err)
+	}
+	if label != LabelContradiction || conf != 1.0 {
+		t.Errorf("got label=%v conf=%v, want contradiction/1.0", label, conf)
+	}
+}
+
+// TestParseChatCompletionResponse_AnthropicThinkOnly_NoLabel: <think>
+// block only with stop_reason=end_turn → ErrProviderBadResponse.
+func TestParseChatCompletionResponse_AnthropicThinkOnly_NoLabel(t *testing.T) {
+	body := []byte(`{"content":"<think>only reasoning</think>","stop_reason":"end_turn"}`)
+	_, _, err := parseChatCompletionResponse(body)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !errors.Is(err, ErrProviderBadResponse) {
+		t.Errorf("got err=%v, want ErrProviderBadResponse (end_turn + empty content)", err)
+	}
+}
+
+// TestChatProvider_Score_ThinkOnlyStop_NoRetry: regression guard. A
+// think-only stop reply surfaces ErrProviderBadResponse, NOT
+// ErrTruncatedResponse. The Score retry loop must NOT re-attempt
+// (re-prompting the same model with the same context won't change
+// its behavior — the model already committed to a final reply).
+// We assert the call count via the stub server.
+func TestChatProvider_Score_ThinkOnlyStop_NoRetry(t *testing.T) {
+	var callCount int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&callCount, 1)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"<think>no label here</think>"}}]}`)
+	}))
+	defer srv.Close()
+
+	p, err := NewChatProvider(
+		ProviderConfig{ProviderID: "chat-test", Endpoint: srv.URL, TimeoutMS: 5000, ModelRev: "MiniMax-M3"},
+		stubClient(srv), 1024, 1024)
+	if err != nil {
+		t.Fatalf("NewChatProvider: %v", err)
+	}
+	_, err = p.Score(context.Background(), "p", "h")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !errors.Is(err, ErrProviderBadResponse) {
+		t.Errorf("got err=%v, want ErrProviderBadResponse", err)
+	}
+	if got := atomic.LoadInt32(&callCount); got != 1 {
+		t.Errorf("stub called %d times, want 1 (no retry on think-only stop)", got)
 	}
 }

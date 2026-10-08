@@ -523,30 +523,82 @@ func parseChatCompletionResponse(body []byte) (Label, float64, error) {
 		if raw == "" {
 			raw = openaiShape.Choices[0].Text
 		}
-		// T-407-c: detect reasoning-budget exhaustion BEFORE label parsing.
-		// If the model hit its length cap with no usable content, the
-		// caller needs to retry with a bigger budget.
-		if openaiShape.Choices[0].FinishReason == "length" {
-			// Strip <think> blocks to give a partial reply a chance to
-			// parse (some models emit the label AFTER truncating).
-			stripped := stripThinkBlocks(raw)
-			if stripped == "" {
-				return "", 0, fmt.Errorf("%w: content empty, finish_reason=length (thinking tokens exhausted budget)",
-					ErrTruncatedResponse)
-			}
-			// Truncated mid-label — return whatever label survived.
-			return parseCanonicalLabel(stripped)
+	// T-201 (v4.0.0-alpha.24-pre-1): think-only replies. Some 2026
+	// reasoning models (MiniMax-M3, Claude with extended-thinking,
+	// DeepSeek-R1) emit finish_reason="stop" with content == a single
+	// <think>...</think> block and NO visible label. Before this fix
+	// the parser fell through to parseCanonicalLabel(raw) which saw
+	// the thinking text and returned ErrProviderBadResponse — surfacing
+	// to drift_judge as needs_human. We now strip the think block
+	// first; if anything visible remains, parse it as a label.
+	//
+	// Critical distinction:
+	//  * finish_reason=length + think-only → ErrTruncatedResponse (retry
+	//    with 4× budget may surface the label; T-407-c behavior).
+	//  * finish_reason=stop   + think-only → ErrProviderBadResponse
+	//    (the model committed to a final reply with no label; retry
+	//    will not change behavior; T-201 semantics).
+	stripped := stripThinkBlocks(raw)
+	finishReason := openaiShape.Choices[0].FinishReason
+	// 1. Truly empty content (raw == ""). Preserve legacy behavior:
+	//    length → truncated (retry); anything else → bad response.
+	if raw == "" {
+		if finishReason == "length" {
+			return "", 0, fmt.Errorf("%w: content empty, finish_reason=length (thinking tokens exhausted budget)",
+				ErrTruncatedResponse)
 		}
-		return parseCanonicalLabel(raw)
+		return "", 0, fmt.Errorf("%w: content empty, finish_reason=%s", ErrProviderBadResponse, finishReason)
 	}
+	// 2. Raw non-empty but stripping ate everything (think-only).
+	//    T-201: length → truncated (retry may surface label with more
+	//    tokens); stop → bad response (model already committed).
+	if stripped == "" {
+		if finishReason == "length" {
+			return "", 0, fmt.Errorf("%w: content is a <think> block with no visible label (finish_reason=length)",
+				ErrTruncatedResponse)
+		}
+		return "", 0, fmt.Errorf("%w: content is a <think> block with no visible label (finish_reason=%s)",
+			ErrProviderBadResponse, finishReason)
+	}
+	// 3. Label survived (or there was no think block to begin with).
+	//    T-407-c: length with partial label is still a valid label.
+	if finishReason == "length" {
+		return parseCanonicalLabel(stripped)
+	}
+	// T-201: think-only stop was already filtered above. Any remaining
+	// content is the visible label, parse it.
+	return parseCanonicalLabel(stripped)
+}
 
-	// Anthropic-via-adapter shape: {"content": "entailment"}.
+	// Anthropic-via-adapter shape: {"content": "entailment",
+	// "stop_reason": "end_turn" | "max_tokens" | "stop_sequence"}.
+	// T-201 (v4.0.0-alpha.24-pre-1): we now read stop_reason. The
+	// "max_tokens" path mirrors OpenAI's "length" handling — retry
+	// hint. The "end_turn" / "stop_sequence" paths mean the model
+	// committed to a final reply; we should still strip <think> blocks
+	// before label parsing (Anthropic extended-thinking emits them as
+	// raw text in the content field).
 	var anthropicShape struct {
-		Content string `json:"content"`
+		Content   string `json:"content"`
+		StopReason string `json:"stop_reason"`
 	}
 	if err := json.Unmarshal(body, &anthropicShape); err == nil && anthropicShape.Content != "" {
-		return parseCanonicalLabel(anthropicShape.Content)
+	stripped := stripThinkBlocks(anthropicShape.Content)
+	if stripped == "" {
+		// Think-only Anthropic reply (e.g. extended-thinking
+		// consumed the whole content field). stop_reason tells
+		// us whether this is a budget problem (retry) or a final
+		// empty reply (bad response). T-201 mirrors the OpenAI
+		// branch's semantics.
+		if anthropicShape.StopReason == "max_tokens" {
+			return "", 0, fmt.Errorf("%w: content is <think> block only, stop_reason=max_tokens",
+				ErrTruncatedResponse)
+		}
+		return "", 0, fmt.Errorf("%w: content is <think> block only, stop_reason=%s",
+			ErrProviderBadResponse, anthropicShape.StopReason)
 	}
+	return parseCanonicalLabel(stripped)
+}
 
 	// Plain text body (some lightweight chat servers).
 	if body[0] != '{' && body[0] != '[' {
