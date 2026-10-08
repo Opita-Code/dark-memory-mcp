@@ -45,12 +45,12 @@
     "firstShipped": "2026-10-06",
     "firstTag": "v4.0.0-alpha.27",
     "currentTag": "v4.0.0-alpha.30",
-    "loopsShipped": 9,
-    "driftJudgesRun": 18,
+    "loopsShipped": 10,
+    "driftJudgesRun": 19,
     "driftVerdicts": {
-      "aligned": 15,
+      "aligned": 16,
       "needs_human": 1,
-      "firstTryAligned": 13,
+      "firstTryAligned": 14,
       "retryResolved": 2
     }
   },
@@ -273,6 +273,15 @@
         "driftId": null,
         "verdict": "aligned (drift_judge eval 2026, nli=entailment conf=1.0)",
         "sha256Prefix": "cb63104f"
+      },
+      {
+        "loop": 10,
+        "file": "internal/vibeflow/economy.go",
+        "vibeCase": "C8",
+        "title": "L10.1 token economy delta (measures actual savings vs naive baseline; grounded in BlockSizesFor; exact integer words-to-tokens 13/10; permille latency math; unclamped percentages so overspend is honest; measured 45.4% avg token saving + 60.1% avg USD saving across the 10-persona mix; 44 new tests, 256/256 total green, race clean, ALIGNED 3rd consecutive)",
+        "driftId": null,
+        "verdict": "aligned (drift_judge eval 2027, nli=entailment conf=1.0)",
+        "sha256Prefix": "6a993da6"
       },
       {
         "loop": 8,
