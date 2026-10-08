@@ -63,8 +63,8 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/agent_memory"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/delegation"
-	v4mcpt "github.com/dark-agents/dark-memory-mcp/internal/v4alpha/transport/mcp"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/judge"
+	v4mcpt "github.com/dark-agents/dark-memory-mcp/internal/v4alpha/transport/mcp"
 	"github.com/dark-agents/dark-memory-mcp/internal/vibecase"
 )
 
@@ -188,7 +188,7 @@ func registerV2(reg *Registry, orch *orchestration.Orchestrator, st store.Store)
 // harnesses.
 func registerV4Alpha(reg *Registry, backend *DelegateIntentBackend) {
 	reg.Add(&Tool{
-		Name: "delegate_intent",
+		Name:        "delegate_intent",
 		Description: "Phase 9 alpha.20 (Chunk 8.1): delegate_intent runs the v4alpha DECIDE→EXTRACT→MIND→CURATE pipeline (alpha.19 Chunk 7.1). DECIDE is deterministic (refusal markers / coordination markers / C7 / length>200). EXTRACT (NEW over alpha.18.1) invokes the LLM via the judge-delegator persona when DECIDE=delegate AND length>200 OR vibe_case=C7; validated by drift_judge (eval_type=subtask_extraction). Failures surface as needs_human with alternatives[] (the harness picks one). MIND composes the system_prompt per subtask via composeSystemPrompt. CURATE registers subagent bindings via agent_memory.Save (kind=link, tag=subagent:v1). Wire shape is v3-compatible (handler/case/plan/operator) with three additive v4alpha fields (decision/cache_hit/verdict/alternatives) — see SPEC-alpha-11-phase8.md §3.1. Gated by DARK_DELEGATION_BACKEND (default v4alpha; set DARK_DELEGATION_BACKEND=v2 to roll back to the alpha.18.1 deterministic router).",
 		InputSchema: MustJSONSchema(map[string]any{
 			"type":     "object",
@@ -318,6 +318,7 @@ func convertV4AlphaToV3Output(v4out *v4mcpt.DelegateIntentOutput, operator strin
 		CacheHit:     v4out.CacheHit,
 		Verdict:      v4out.Verdict,
 		Alternatives: convertV4AlphaAlternatives(v4out.Alternatives),
+		TaskClass:    convertV4AlphaTaskClass(v4out.TaskClass),
 	}
 	if v4out.Subtasks != nil {
 		out.Plan = make([]orchestration.DelegateSubTaskOutput, 0, len(v4out.Subtasks))
@@ -376,4 +377,37 @@ func convertV4AlphaAlternatives(in []v4mcpt.DelegateIntentAlternative) []orchest
 		out = append(out, outAlt)
 	}
 	return out
+}
+
+// convertV4AlphaTaskClass copies the L8.1a advisory from the v4alpha
+// wire shape to the v3 wire shape.
+//
+// This is the line that was missing on 2026-10-08. The inner
+// RunDelegateIntentCore computes TaskClass and attaches it to its
+// DelegateIntentOutput; the converter here did not copy it; the
+// live MCP `delegate_intent` response therefore arrived without the
+// field even though the binary contained the string. The
+// end-to-end check exposed it.
+//
+// The copy is field-by-field, matching how convertV4AlphaAlternatives
+// already handles the Alternatives duplication. The v3 and v4alpha
+// shapes are intentionally distinct types (TaskClassAdvisory exists
+// in both packages) so a future v4alpha change to the advisory
+// surfaces here as a converter test failure rather than a silent
+// schema drift.
+func convertV4AlphaTaskClass(in *v4mcpt.TaskClassAdvisory) *orchestration.TaskClassAdvisory {
+	if in == nil {
+		return nil
+	}
+	return &orchestration.TaskClassAdvisory{
+		Class:            in.Class,
+		Confidence:       in.Confidence,
+		Grade:            in.Grade,
+		TokenCount:       in.TokenCount,
+		MultiStep:        in.MultiStep,
+		HasCode:          in.HasCode,
+		RouterThreshold:  in.RouterThreshold,
+		AgreesWithRouter: in.AgreesWithRouter,
+		Caveat:           in.Caveat,
+	}
 }

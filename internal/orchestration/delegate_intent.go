@@ -98,6 +98,42 @@ type DelegateIntentOutput struct {
 	CacheHit     bool                        `json:"cache_hit,omitempty"`    // true when EXTRACT result served from cache
 	Verdict      string                      `json:"verdict,omitempty"`      // "aligned"|"drift_detected"|"needs_human"|"cached"|"errored"
 	Alternatives []DelegateIntentAlternative `json:"alternatives,omitempty"` // populated only when Verdict=needs_human
+
+	// TaskClass (Phase 21 L8.1a instrumentation) — the v3 wire's
+	// surface of the v4alpha advisory. Populated by
+	// convertV4AlphaToV3Output when the inner v4alpha pipeline ran
+	// the canonical vibeflow classifier.
+	//
+	// This is the field whose absence in the live response (caught
+	// end-to-end 2026-10-08) is the load-bearing reason for this
+	// revision. The inner pipeline computed TaskClass; the converter
+	// dropped it. Now the v3 output carries it. The Type field on
+	// the field is `*TaskClassAdvisory` (omitted when nil) so
+	// pre-L8.1a callers see no schema change.
+	TaskClass *TaskClassAdvisory `json:"task_class,omitempty"`
+}
+
+// TaskClassAdvisory is the v3 wire's surface of the L8.1a advisory.
+// The shape mirrors v4alpha/transport/mcp.TaskClassAdvisory; the
+// converter copies it field-by-field. It is defined in the stable
+// layer (orchestration) rather than the v4alpha layer so the v3
+// output struct can hold it without an import cycle.
+type TaskClassAdvisory struct {
+	Class           string  `json:"class"`
+	Confidence      float64 `json:"confidence"`
+	Grade           string  `json:"grade"`
+	TokenCount      int     `json:"token_count"`
+	MultiStep       bool    `json:"multi_step"`
+	HasCode         bool    `json:"has_code_signals"`
+	RouterThreshold int     `json:"router_threshold"`
+
+	// AgreesWithRouter is nil when the two opinions are not
+	// comparable (router decided on a marker or C7, not on length).
+	// Reporting null is honest; reporting false would fabricate a
+	// comparison the router never performed.
+	AgreesWithRouter *bool `json:"agrees_with_router,omitempty"`
+
+	Caveat string `json:"caveat"`
 }
 
 // DelegateIntent runs the DECIDE → PLAN → MIND → CURATE pipeline for
