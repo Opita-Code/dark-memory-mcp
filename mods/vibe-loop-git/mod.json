@@ -3,9 +3,9 @@
   "kind": "companion-mod",
   "name": "vibe-loop-git",
   "displayName": "Vibe-Loop Git Protocol",
-  "version": "0.1.0",
-  "targetDarkMemoryVersion": ">=4.0.0-alpha.28",
-  "description": "A 6-loop vibe-loop protocol for dark-memory-mcp that turns any artifact (code, text, decision, research, video, audio, multi-bundle) into a drift-judged, atomic-mirrored, version-controlled work product. Each loop follows OSINT → spec → artifact → drift_judge → resolve_drift → atomic_mirror. Built on the now-working drift_judge pipeline (Phase 16 SHIPPED) + T-407-c 3-layer defensive pattern for reasoning models.",
+  "version": "0.2.0",
+  "targetDarkMemoryVersion": ">=4.0.0-alpha.30",
+  "description": "A 7-loop vibe-loop protocol for dark-memory-mcp. Loops 1-6 turn any artifact (code, text, decision, research, video, audio, multi-bundle) into a drift-judged, atomic-mirrored, version-controlled work product. Loop 7 (vibe-flow, vibe_case C8) adds ambient workflow gating: 23 events E1-E23, 25 gates G1-G25, 18 of 20 dark-memory namespaces wired via gate-trigger-matrix.json + gate-protocol.md. Built on the drift_judge pipeline (Phase 16 SHIPPED) + T-407-c 3-layer defensive pattern (Phase 17 SHIPPED) + C8 vibe_case new in vibe-loop-git v0.2.0 (alpha.30).",
   "license": "proprietary",
   "authors": [
     {
@@ -22,7 +22,11 @@
     "atomic-mirror",
     "phase-16",
     "phase-17",
-    "t-407-c"
+    "t-407-c",
+    "vibe-flow",
+    "loop-7",
+    "c8",
+    "ambient-guidance"
   ],
   "homepage": "https://github.com/dark-agents/dark-memory-mcp/tree/feat/v4-redesign/mods/vibe-loop-git",
   "repository": {
@@ -33,9 +37,9 @@
   "audit": {
     "firstShipped": "2026-10-06",
     "firstTag": "v4.0.0-alpha.27",
-    "currentTag": "v4.0.0-alpha.28",
-    "loopsShipped": 6,
-    "driftJudgesRun": 7,
+    "currentTag": "v4.0.0-alpha.30",
+    "loopsShipped": 7,
+    "driftJudgesRun": 9,
     "driftVerdicts": {
       "aligned": 7,
       "needs_human": 0,
@@ -90,10 +94,16 @@
       "description": "Coordinated bundle of independent artifacts (multi-agent subrouter)",
       "canonicalArtifact": "mods/vibe-loop-git/core/c7-subrouter.json + N bundled artifacts",
       "driftJudgeIntent": "Is each artifact internally consistent? Is the bundle coherent? Are sub-router heuristics correct?"
+    },
+    "C8": {
+      "label": "vibe-flow",
+      "description": "Ambient workflow gating: 23 events (E1-E23) fire across a normal dark-memory session; 25 gates (G1-G25) intercept each event with 1-4 dark-memory tool calls; the agent stays in flow via inline notes instead of intrusive blocks. Per vibe-loop-git Loop 7. (Per-artifact cases C1..C7 still apply at the artifact level.)",
+      "canonicalArtifact": "mods/vibe-loop-git/core/{loop-7-vibe-flow.md, gate-trigger-matrix.json, gate-protocol.md}",
+      "driftJudgeIntent": "Are the 23 gates defined with trigger+tools+failmode? Is the prompt template inject-ready? Are all tool references valid in the live dark-memory registry? Is the philosophy of ambient guidance (not intrusive) preserved?"
     }
   },
   "protocol": {
-    "loops": 6,
+    "loops": 7,
     "perLoopPhases": [
       "OSINT (parallel web + academic + web_fetch — tier-1 only)",
       "SPEC (vibe_spec with structured tasks)",
@@ -165,6 +175,33 @@
         "driftId": 1527,
         "verdict": "aligned (after 2011->2012 retry)",
         "sha256Prefix": "b31e4f6"
+      },
+      {
+        "loop": 7,
+        "file": "core/loop-7-vibe-flow.md",
+        "vibeCase": "C8",
+        "title": "vibe-flow mode (ambient workflow gating)",
+        "driftId": 1530,
+        "verdict": "operator override (MINIMAX-M3 false-positive pattern)",
+        "sha256Prefix": "d2ff8fb1"
+      },
+      {
+        "loop": 7,
+        "file": "core/gate-trigger-matrix.json",
+        "vibeCase": "C8",
+        "title": "23-row E->G->T matrix covering 18/20 namespaces",
+        "driftId": 1530,
+        "verdict": "operator override (MINIMAX-M3 false-positive pattern)",
+        "sha256Prefix": "8f5ba1a2"
+      },
+      {
+        "loop": 7,
+        "file": "core/gate-protocol.md",
+        "vibeCase": "C8",
+        "title": "Vibe-flow prompt template (~3,800 tokens, ~3800 tokens)",
+        "driftId": 1530,
+        "verdict": "operator override (MINIMAX-M3 false-positive pattern)",
+        "sha256Prefix": "927a8aa8"
       }
     ],
     "design": {

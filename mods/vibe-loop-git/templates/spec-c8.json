@@ -1,0 +1,67 @@
+{
+  "$schema": "https://dark-agents.dev/schemas/vibe-spec/v0.1.json",
+  "vibe_case": "C8",
+  "label": "vibe-flow",
+  "title": "<loop-N>: <short description — Loop 7 vibe-flow mode spec>",
+  "spec": {
+    "intent": "What this C8 (vibe-flow) artifact should accomplish (1-2 sentences). C8 is the ambient workflow gating regime: spec lives at the orchestrator level, not the artifact level.",
+    "files_expected": [
+      "mods/vibe-loop-git/core/loop-7-vibe-flow.md",
+      "mods/vibe-loop-git/core/gate-trigger-matrix.json",
+      "mods/vibe-loop-git/core/gate-protocol.md"
+    ],
+    "tests_expected": [
+      "mods/vibe-loop-git/tests/e2e-c8.sh",
+      "mods/vibe-loop-git/tests/gate-coverage-check.sh"
+    ],
+    "drift_judge_intent": "Are the 23 gates defined with trigger+tools+failmode? Is the prompt template inject-ready? Are all tool references valid in the live dark-memory registry? Is the philosophy of ambient guidance (not intrusive) preserved?",
+    "backward_compat": true,
+    "tier1_sources": [],
+    "open_questions": [
+      "Should Loop 7 fire strictly on the 23 named events, or also surface ambient signals from session activity? Currently the answer is 'strictly on the named events' (per gate-trigger-matrix.json)."
+    ]
+  },
+  "tasks": [
+    {
+      "id": "L<N>.1",
+      "description": "OSINT: review existing dark-memory events namespace (event_log/event_replay) and vlp_handle_event surface; confirm event naming matches VLP-6 context.",
+      "duration_min": 15
+    },
+    {
+      "id": "L<N>.2",
+      "description": "Edit mods/vibe-loop-git/core/loop-7-vibe-flow.md: add the new gate definitions + UX walkthrough + compatibility sections.",
+      "duration_min": 30
+    },
+    {
+      "id": "L<N>.3",
+      "description": "Edit mods/vibe-loop-git/core/gate-trigger-matrix.json: add the new E->G->T row with the trigger signal + gate name + tool calls + failmode.",
+      "duration_min": 30
+    },
+    {
+      "id": "L<N>.4",
+      "description": "Edit mods/vibe-loop-git/core/gate-protocol.md: extend the system-prompt block with the new gate inline-note format.",
+      "duration_min": 20
+    },
+    {
+      "id": "L<N>.5",
+      "description": "Run tests/e2e-c8.sh + tests/gate-coverage-check.sh and verify pass.",
+      "duration_min": 5
+    },
+    {
+      "id": "L<N>.6",
+      "description": "vibe_publish artifact_ref=mods/vibe-loop-git/core/{loop-7-vibe-flow.md, gate-trigger-matrix.json, gate-protocol.md}",
+      "duration_min": 10
+    },
+    {
+      "id": "L<N>.7",
+      "description": "dark_memory_agent_memory_save row with drift verdict + file:line refs",
+      "duration_min": 5
+    }
+  ],
+  "exit_criteria": [
+    "All L<N>.x tasks completed",
+    "tests/e2e-c8.sh + tests/gate-coverage-check.sh PASS",
+    "drift_judge verdict = aligned (conf >= 0.9) OR operator override documented",
+    "atomic-mirror row saved with kind=decision, pinned"
+  ]
+}

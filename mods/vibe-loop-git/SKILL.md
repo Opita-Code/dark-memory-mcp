@@ -2,27 +2,32 @@
 name: vibe-loop-git
 description: |
   The vibe-loop protocol packaged as a dark-memory companion mod. Encodes
-  a 6-loop OSINT-first workflow that turns any artifact (code, text,
+  a 7-loop OSINT-first workflow that turns any artifact (code, text,
   decision, research, video, audio, multi-bundle) into a drift-judged,
-  atomic-mirrored, version-controlled work product. Each loop follows
+  atomic-mirrored, version-controlled work product. Loops 1-6 follow
   OSINT → spec → artifact → drift_judge → resolve_drift → atomic_mirror.
-  Built on the now-working drift_judge pipeline (Phase 16 SHIPPED in
-  dark-memory v4.0.0-alpha.27) plus the T-407-c 3-layer defensive
-  pattern (Phase 17 SHIPPED in alpha.28). LOCAL-ONLY — never git push.
+  Loop 7 (vibe-flow mode, vibe_case C8) adds ambient workflow gating:
+  23 events E1-E23 fire across a normal session; 25 named gates G1-G25
+  intercept each event with 1-4 dark-memory tool calls; the agent stays
+  in flow via inline notes (NOT intrusive blocking). Built on the
+  drift_judge pipeline (Phase 16 SHIPPED in alpha.27) plus the T-407-c
+  3-layer defensive pattern (Phase 17 SHIPPED in alpha.28). LOCAL-ONLY —
+  never git push.
 
   Triggers on keywords: vibe-loop, vibe loop, vibe-loop-git, vibe loop
-  protocol, drift-judge loop, atomic mirror loop, OSINT-first vibe loop,
-  6-loop vibe, drift_judge pipeline, resolve_drift, vibe_spec,
-  vibe_publish, vibe_case C1 C2 C3 C4 C5 C6 C7, code text decision
-  research video audio multi artifact.
+  protocol, drift-judge loop, atomic-mirror loop, OSINT-first workflow,
+  7-loop vibe, vibe-flow mode, vibe_case C1 C2 C3 C4 C5 C6 C7 C8,
+  drift_judge pipeline, resolve_drift, vibe_spec, vibe_publish, gate
+  trigger matrix, ambient workflow gating.
 license: proprietary
 metadata:
   author: dark-agent
   operator: nico
-  version: 0.1.0
-  dark-memory-mcp-version: ">=4.0.0-alpha.28"
-  loops-shipped: 6
-  drift-verdicts: 7-aligned-0-needs_human
+  version: 0.2.0
+  dark-memory-mcp-version: ">=4.0.0-alpha.30"
+  loops-shipped: 7
+  drift-verdicts: 9-aligned-0-needs_human (3 operator-overrides for MiniMax-M3 false-positive pattern)
+  loop-7-vibe-case: C8
 ---
 
 # vibe-loop-git — 6-Loop Vibe Protocol for dark-memory
@@ -53,7 +58,7 @@ on any artifact.
 | Write a 1-line bug fix | NO (overkill — use direct commit) |
 | Run a Phase-style SHIP on dark-memory itself | YES (this is what produced v0.2) |
 
-## The 6-loop protocol (in dependency order)
+## The 7-loop protocol (in dependency order)
 
 ```
 Loop 1: Context strategies per tier  (C2 — text)
@@ -68,6 +73,8 @@ Loop 5: Latency axis + cascade math  (C3 — decision)
   ⊥ parallel to Loop 4
 Loop 6: Self-evaluation meta-loop    (C3 — decision)
   ↓ needs audit rows from Loops 1-5
+Loop 7: vibe-flow mode               (C8 — ambient workflow gating)
+  ↓ needs Loops 1-6 wired; adds 23 ambient gates (E1-E23) that fire inline
 ```
 
 **Per-loop phases (6)**:
@@ -79,6 +86,14 @@ Loop 6: Self-evaluation meta-loop    (C3 — decision)
 4. **DRIFT_JUDGE** — `vibe_publish` (artifact_ref=file) emits drift verdict
 5. **RESOLVE_DRIFT** — accept (aligned) or revise (drift_detected) or stop (needs_human)
 6. **ATOMIC_MIRROR** — `dark_memory_agent_memory_save` row for cross-session recall
+
+**Loop 7 adds a 7th phase that operates orthogonally**:
+
+7. **GATE_PROMPTS** — `vibe_flow` mode injects the gate-protocol.md system-prompt
+   block at session_start. The agent recognizes 23 events from natural signals
+   and invokes the right gate's tool calls inline. Each gate fires 1-4 dark-memory
+   tool calls (e.g. agent_memory_recall, prograph_query, research_recall) and
+   surfaces a 1-line inline observation. The operator reviews via audit_export.
 
 ## The 7 vibe_cases
 
