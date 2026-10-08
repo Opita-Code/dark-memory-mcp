@@ -46,11 +46,11 @@
     "firstTag": "v4.0.0-alpha.27",
     "currentTag": "v4.0.0-alpha.30",
     "loopsShipped": 8,
-    "driftJudgesRun": 13,
+    "driftJudgesRun": 15,
     "driftVerdicts": {
-      "aligned": 11,
+      "aligned": 13,
       "needs_human": 0,
-      "firstTryAligned": 9,
+      "firstTryAligned": 11,
       "retryResolved": 2
     }
   },
@@ -237,6 +237,15 @@
         "driftId": null,
         "verdict": "aligned (drift_judge eval 2021, nli=entailment conf=1.0)",
         "sha256Prefix": "ec7c4142"
+      },
+      {
+        "loop": 8,
+        "file": "internal/vibeflow/depth.go",
+        "vibeCase": "C8",
+        "title": "L8.3 adaptive depth sizing (6 depths, base matrix + 5 modifiers, DepthDecision audit, 31 new tests, 108/108 total green)",
+        "driftId": null,
+        "verdict": "aligned (drift_judge eval 2022, nli=entailment conf=1.0)",
+        "sha256Prefix": "55902d65"
       },
       {
         "loop": 8,
