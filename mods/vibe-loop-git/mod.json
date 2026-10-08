@@ -45,12 +45,12 @@
     "firstShipped": "2026-10-06",
     "firstTag": "v4.0.0-alpha.27",
     "currentTag": "v4.0.0-alpha.30",
-    "loopsShipped": 8,
-    "driftJudgesRun": 16,
+    "loopsShipped": 9,
+    "driftJudgesRun": 17,
     "driftVerdicts": {
-      "aligned": 13,
+      "aligned": 14,
       "needs_human": 1,
-      "firstTryAligned": 11,
+      "firstTryAligned": 12,
       "retryResolved": 2
     }
   },
@@ -255,6 +255,15 @@
         "driftId": null,
         "verdict": "operator override (drift_judge eval 2024 needs_human, nli=neutral false-positive — matches pattern in rows 1372/2017/2019)",
         "sha256Prefix": "c4de9997"
+      },
+      {
+        "loop": 9,
+        "file": "internal/vibeflow/driftpolicy.go",
+        "vibeCase": "C8",
+        "title": "L9.2 drift skip policy (5 modes Skip/SelfJudge/Single/Multi/Consensus, 9-rule precedence with critical-surface override, 35 new tests, 169/169 total green, ALIGNED clean first ALIGNED since L8.1a)",
+        "driftId": null,
+        "verdict": "aligned (drift_judge eval 2025, nli=entailment conf=1.0)",
+        "sha256Prefix": "db60ef34"
       },
       {
         "loop": 8,
