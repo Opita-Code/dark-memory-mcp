@@ -45,12 +45,12 @@
     "firstShipped": "2026-10-06",
     "firstTag": "v4.0.0-alpha.27",
     "currentTag": "v4.0.0-alpha.30",
-    "loopsShipped": 12,
-    "driftJudgesRun": 21,
+    "loopsShipped": 13,
+    "driftJudgesRun": 22,
     "driftVerdicts": {
-      "aligned": 18,
+      "aligned": 19,
       "needs_human": 1,
-      "firstTryAligned": 16,
+      "firstTryAligned": 17,
       "retryResolved": 2
     }
   },
@@ -309,6 +309,15 @@
         "driftId": null,
         "verdict": "aligned (drift_judge eval 2029, nli=entailment conf=1.0)",
         "sha256Prefix": "24a05b16"
+      },
+      {
+        "loop": 13,
+        "file": "internal/vibeflow/handoff.go",
+        "vibeCase": "C8",
+        "title": "L13.1 sub-agent handoff contract (the CONTRACT, not a new mechanism — agent_memory_delegate, mindset_apply, subagent_register and internal/delegation/router.go already exist per rows 200/201/206; row 251 pinned the 5-stage thesis CURATE/MIND/ISOLATE/RECOVER/SYNTHESIZE; adds the missing piece: EVERY epistemic rule from L11/L12 must survive the delegation boundary; OPTION A per operator decision: extended L12.1 JudgeSource with Origin as a third axis instead of a parallel notion of independence; OriginUnspecified is the zero value so L12.1's 7 classifications are preserved byte-for-byte and pinned by TestL13_BackCompat; ORIGIN CAN ONLY DEGRADE INDEPENDENCE, NEVER CREATE IT, and origin diversity never rescues a shared model because two instances of one model are sampling variance not decorrelated error; HEADLINE PROPERTY headcount is not evidence — convergence grade derives from DIVERSITY never from how many delegates agreed (n=2,3,5,10,50,100 all held flat at incoming grade on one model; 2 delegates on 2 models promote modeled->measured); empty panel is not unanimity; a panel spanning several claims corroborates none and escalates to Arbitrate; Finding carries Grade+Source+Caveat and HandoffSpec.Validate rejects a sub-measured finding with no caveat; only ResolutionAbstain disputes travel so a child cannot inherit an unaudited claim as settled; GradedFindings routes through the L11.1 Claim surface; reuses L11.1 EvidenceGrade and L12.1 Basis/Resolution/Independence with no parallel vocabulary; 4 defects found while building including an INVERTED LADDER where a delegated artifact came out strictly LESS independent than a self-judged one, and a LAUNDERING BUG where ComputeConvergence treated distinct finding IDs as agreement and PROMOTED a panel reporting opposite things to measured; fixed by grouping on Finding.Claim and renaming Agrees->SameClaim since semantic agreement is an LLM judgment not a string comparison; 29 new tests, 351/351 total green, vet/fmt clean, race clean, ALIGNED 6th consecutive",
+        "driftId": null,
+        "verdict": "aligned (drift_judge eval 2030, nli=entailment conf=1.0)",
+        "sha256Prefix": "9521188f"
       }
     ],
     "design": {
