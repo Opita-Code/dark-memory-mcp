@@ -60,8 +60,15 @@ const (
 
 // Features is the structured output of feature extraction. Exposed so
 // callers can debug classification decisions (e.g. "why was this
-// classified short?") and so future L8.1b work can add new features
+// classified short?") and so future L8.x work can add new features
 // without breaking the public API.
+//
+// L8.1a fields (5): TokenCount, ShortKeywords, LongKeywords, MultiStep,
+// Imperative. Extracted from the message text alone.
+//
+// L8.1b fields (4): LangDetected, HasCodeSignals, PanicKeywords,
+// MultiArtifact. Extracted by ClassifyWithContext. Zero values
+// (false / empty) when the L8.1a ExtractFeatures is called.
 type Features struct {
 	// TokenCount is the whitespace-delimited word count. Used as a
 	// coarse proxy for message length.
@@ -85,6 +92,29 @@ type Features struct {
 	// weak signal — operators often phrase requests as questions
 	// ("can you refactor...").
 	Imperative bool
+
+	// LangDetected is the BCP-47 tag of the message's language
+	// (en, es-CO, es, pt). Empty when uncertain. Set by
+	// ClassifyWithContext. L8.1a ExtractFeatures leaves it empty.
+	LangDetected Lang
+
+	// HasCodeSignals is true if the message has code-y patterns
+	// (parens, file paths, shell commands, code blocks). Set by
+	// ClassifyWithContext. Used in scoring: contributes to
+	// long_score when ctx.Domain != code.
+	HasCodeSignals bool
+
+	// PanicKeywords is true if the message has urgent / debug
+	// language ("broken", "fix NOW", "URGENT", high uppercase
+	// ratio). Set by ClassifyWithContext. Contributes +1.5 to
+	// long_score (urgency = long task).
+	PanicKeywords bool
+
+	// MultiArtifact is true if the message references multiple
+	// files/specs ("all files", "5 files", "multiple specs",
+	// 2+ file extensions). Set by ClassifyWithContext.
+	// Contributes +1.5 to long_score.
+	MultiArtifact bool
 }
 
 // Thresholds defines the per-vibe_case scoring thresholds.

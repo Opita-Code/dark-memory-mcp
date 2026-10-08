@@ -42,7 +42,7 @@
         {"namespace": "CONTEXT", "tool": "spec_context", "args": {"spec_id": "active"}},
         {"namespace": "AGENT_MEMORY", "tool": "agent_memory_recall", "args": {"query": "<file_path> scope ADR"}},
         {"namespace": "JUDGE", "tool": "judgment_history", "args": {"target_id": "<file_path>"}},
-        {"namespace": "AGENT_MEMORY", "tool": "entities", "args": {"query": "<file_path>"}}
+        {"namespace": "AGENT_MEMORY", "tool": "agent_memory_entities", "args": {"query": "<file_path>"}}
       ],
       "failmode": "if no spec_context, surface 'unbound scope' inline; agent can edit but with warning"
     },
