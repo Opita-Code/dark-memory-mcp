@@ -57,6 +57,7 @@ package mcp
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -64,6 +65,7 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/delegation"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/event"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/judge"
+	"github.com/dark-agents/dark-memory-mcp/internal/vibecase"
 )
 
 // RunDelegateIntentCore executes the v4alpha DECIDE→EXTRACT→MIND→CURATE
@@ -327,7 +329,8 @@ func AsWireError(err error) (*WireError, bool) {
 // vibe_case input. The v3 caller maps to ToolError{Code: ErrInvalidArgument}.
 func errInvalidVibeCase(c string) error {
 	return &WireError{Code: "ErrInvalidArgument", Field: "vibe_case",
-		Message: "delegate_intent: vibe_case " + c + " not in canonical allow-list (C1..C7)"}
+		Message: fmt.Sprintf("delegate_intent: vibe_case %q not in canonical allow-list (valid: %v)",
+			c, vibecase.JSONSchemaEnum())}
 }
 
 // errTaskDescriptionTooShort returns a structured error when the

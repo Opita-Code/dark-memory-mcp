@@ -31,6 +31,7 @@ func TestAll_StableOrder(t *testing.T) {
 		vibecase.CaseAudio,
 		vibecase.CaseMultiModal,
 		vibecase.CaseMixed,
+		vibecase.CaseVibeFlow,
 	}
 	got := vibecase.All()
 	if len(got) != len(want) {
@@ -129,7 +130,7 @@ func TestParse_RejectsEmpty(t *testing.T) {
 // no silent uppercase, no silent fallback to a default, no trimming
 // of non-ASCII, no accepting of partial prefixes like "C".
 func TestParse_RejectsUnknown(t *testing.T) {
-	for _, in := range []string{"C0", "C8", "c1", "code", "CODE", "C-1", "C1.0", "ё"} {
+	for _, in := range []string{"C0", "C9", "c1", "code", "CODE", "C-1", "C1.0", "ё"} {
 		_, err := vibecase.Parse(in)
 		if !errors.Is(err, vibecase.ErrInvalidCase) {
 			t.Errorf("Parse(%q) error = %v, want ErrInvalidCase", in, err)
@@ -180,7 +181,8 @@ func TestIsValid(t *testing.T) {
 	}{
 		{"C1", true},
 		{"C7", true},
-		{"C8", false},
+		{"C8", true},
+		{"C9", false},
 		{"c1", false},
 		{"", false},
 		{"  C1  ", true}, // IsValid also trims, mirrors Parse
@@ -258,13 +260,13 @@ func TestDescription_UnknownFallback(t *testing.T) {
 }
 
 // TestCardinality protects against accidental additions / removals.
-// The taxonomy is exactly seven cases today. Adding C8 is a MINOR bump
-// and should update this test alongside `all`.
+// The taxonomy is exactly eight cases today (C1..C8). Adding C9 is a
+// MINOR bump and should update this test alongside `all`.
 func TestCardinality(t *testing.T) {
-	if got := len(vibecase.All()); got != 7 {
-		t.Errorf("len(All()) = %d, want 7 (C1..C7); adding C8 requires updating this test", got)
+	if got := len(vibecase.All()); got != 8 {
+		t.Errorf("len(All()) = %d, want 8 (C1..C8); adding C9 requires updating this test", got)
 	}
-	if got := len(vibecase.JSONSchemaEnum()); got != 7 {
-		t.Errorf("len(JSONSchemaEnum()) = %d, want 7", got)
+	if got := len(vibecase.JSONSchemaEnum()); got != 8 {
+		t.Errorf("len(JSONSchemaEnum()) = %d, want 8", got)
 	}
 }

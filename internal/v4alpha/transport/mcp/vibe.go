@@ -19,6 +19,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/vibe"
+	"github.com/dark-agents/dark-memory-mcp/internal/vibecase"
 )
 
 const (
@@ -44,7 +45,7 @@ type vibeSpecTask struct {
 }
 
 type vibeSpecInput struct {
-	VibeCase string        `json:"vibe_case" jsonschema:"required" jsonschema_description:"C1..C7 (code, text, decision, research, video, audio, multi)"`
+	VibeCase string        `json:"vibe_case" jsonschema:"required" jsonschema_description:"C1..C8 (code, text, decision, research, video, audio, multi, vibe-flow). Canonical allow-list lives in internal/vibecase."`
 	Intent   string        `json:"intent" jsonschema:"required" jsonschema_description:"One-paragraph 'what should this artifact be' hypothesis"`
 	Tasks    []vibeSpecTask `json:"tasks" jsonschema:"required" jsonschema_description:"At least one task required"`
 }
@@ -68,7 +69,7 @@ func registerVibeSpec(s *Server) {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 		if !vibe.IsValidVibeCase(in.VibeCase) {
-			return mcp.NewToolResultError(fmt.Sprintf("vibe_spec: invalid vibe_case %q (want C1..C7)", in.VibeCase)), nil
+			return mcp.NewToolResultError(fmt.Sprintf("vibe_spec: invalid vibe_case %q (canonical allow-list: %v)", in.VibeCase, vibecase.JSONSchemaEnum())), nil
 		}
 		tasks := make([]vibe.Task, 0, len(in.Tasks))
 		for _, t := range in.Tasks {

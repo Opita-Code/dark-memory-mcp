@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/judge"
+	"github.com/dark-agents/dark-memory-mcp/internal/vibecase"
 )
 
 // PersonaDelegatorID is the canonical persona id for the EXTRACT step.
@@ -69,7 +70,7 @@ func (c *Extractor) Extract(ctx context.Context, vibeCase, task string) (Extract
 		return ExtractResult{}, errors.New("delegation: empty task")
 	}
 	if !validVibeCaseForExtract(vibeCase) {
-		return ExtractResult{}, fmt.Errorf("delegation: invalid vibe_case %q (must be C1..C7)", vibeCase)
+		return ExtractResult{}, fmt.Errorf("delegation: invalid vibe_case %q (valid: %v)", vibeCase, vibecase.JSONSchemaEnum())
 	}
 
 	cacheKey := CacheKey(vibeCase, task, c.ProjectID, "inherit")
@@ -172,13 +173,10 @@ func (c *Extractor) Extract(ctx context.Context, vibeCase, task string) (Extract
 
 // ---------- Helpers ----------
 
-// validVibeCaseForExtract is the canonical C1..C7 check.
+// validVibeCaseForExtract delegates to the canonical vibecase package.
+// Adding C8 or beyond is a one-line edit to internal/vibecase/taxonomy.go.
 func validVibeCaseForExtract(c string) bool {
-	switch c {
-	case "C1", "C2", "C3", "C4", "C5", "C6", "C7":
-		return true
-	}
-	return false
+	return vibecase.IsValid(c)
 }
 
 // needsHumanFor builds a needs_human ExtractResult with the failure mode's

@@ -4,6 +4,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/dark-agents/dark-memory-mcp/internal/vibecase"
 )
 
 // validSpec returns a minimal 3-task linear spec that passes Validate.
@@ -11,7 +13,7 @@ import (
 // and breaks one invariant to assert the corresponding sentinel error.
 func validSpec() *Spec {
 	return &Spec{
-		VibeCase: CaseC1,
+		VibeCase: string(vibecase.CaseCode),
 		Intent:   "ship v4-alpha vibe-loop",
 		Tasks: []Task{
 			{ID: "t1", Description: "design"},
@@ -32,7 +34,7 @@ func TestExample_Spec_ValidDiamondGraphAccepted(t *testing.T) {
 	// Diamond: t1 -> {t2, t3} -> t4. Tests cycle detection does
 	// not false-positive on DAGs with shared ancestors.
 	s := &Spec{
-		VibeCase: CaseC2,
+		VibeCase: string(vibecase.CaseText),
 		Intent:   "diamond",
 		Tasks: []Task{
 			{ID: "t1", Description: "root"},
@@ -138,7 +140,7 @@ func TestExample_Spec_RejectsSelfDep(t *testing.T) {
 
 func TestExample_Spec_RejectsCycle(t *testing.T) {
 	s := &Spec{
-		VibeCase: CaseC1,
+		VibeCase: string(vibecase.CaseCode),
 		Intent:   "cycle",
 		Tasks: []Task{
 			{ID: "a", Description: "first", DependsOn: []string{"b"}},
@@ -154,7 +156,7 @@ func TestExample_Spec_RejectsCycle(t *testing.T) {
 func TestExample_Spec_RejectsLongerCycle(t *testing.T) {
 	// Three-node cycle: a -> b -> c -> a.
 	s := &Spec{
-		VibeCase: CaseC1,
+		VibeCase: string(vibecase.CaseCode),
 		Intent:   "three-cycle",
 		Tasks: []Task{
 			{ID: "a", Description: "alpha", DependsOn: []string{"c"}},
@@ -172,7 +174,7 @@ func TestExample_Spec_AllowsNoDependsOn(t *testing.T) {
 	// Tasks with no DependsOn should validate fine (independent
 	// tasks are a valid DAG).
 	s := &Spec{
-		VibeCase: CaseC3,
+		VibeCase: string(vibecase.CaseImage),
 		Intent:   "no-deps",
 		Tasks: []Task{
 			{ID: "t1", Description: "first"},
@@ -186,8 +188,8 @@ func TestExample_Spec_AllowsNoDependsOn(t *testing.T) {
 }
 
 func TestExample_Spec_AcceptsAllCanonicalCases(t *testing.T) {
-	// Each canonical C1..C7 must validate when intent+tasks are valid.
-	for _, c := range []string{CaseC1, CaseC2, CaseC3, CaseC4, CaseC5, CaseC6, CaseC7} {
+	// Each canonical C1..C8 must validate when intent+tasks are valid.
+	for _, c := range []string{string(vibecase.CaseCode), string(vibecase.CaseText), string(vibecase.CaseImage), string(vibecase.CaseVideo), string(vibecase.CaseAudio), string(vibecase.CaseMultiModal), string(vibecase.CaseMixed), string(vibecase.CaseVibeFlow)} {
 		s := validSpec()
 		s.VibeCase = c
 		if err := s.Validate(); err != nil {
@@ -197,7 +199,7 @@ func TestExample_Spec_AcceptsAllCanonicalCases(t *testing.T) {
 }
 
 func TestExample_IsValidVibeCase_AcceptsCanonical(t *testing.T) {
-	for _, c := range []string{CaseC1, CaseC2, CaseC3, CaseC4, CaseC5, CaseC6, CaseC7} {
+	for _, c := range []string{string(vibecase.CaseCode), string(vibecase.CaseText), string(vibecase.CaseImage), string(vibecase.CaseVideo), string(vibecase.CaseAudio), string(vibecase.CaseMultiModal), string(vibecase.CaseMixed), string(vibecase.CaseVibeFlow)} {
 		if !IsValidVibeCase(c) {
 			t.Fatalf("canonical %s should be valid", c)
 		}
@@ -205,7 +207,7 @@ func TestExample_IsValidVibeCase_AcceptsCanonical(t *testing.T) {
 }
 
 func TestExample_IsValidVibeCase_RejectsUnknown(t *testing.T) {
-	for _, c := range []string{"", "C0", "C8", "c1", "X", "code"} {
+	for _, c := range []string{"", "C0", "C9", "c1", "X", "code"} {
 		if IsValidVibeCase(c) {
 			t.Fatalf("non-canonical %q should be rejected", c)
 		}

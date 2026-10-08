@@ -55,23 +55,25 @@ import (
 
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/agent_memory"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/judge"
+	"github.com/dark-agents/dark-memory-mcp/internal/vibecase"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
 const mindsetApplyToolName = "dark_memory_mindset_apply"
 
 // validVibeCases is the closed allow-list for the vibe_case field.
-// Mirrors the dark-memory-mcp vibe spec enumeration (C1..C7 per
-// ADR-007 §3 / spec.go:14-16). Any other value is rejected.
-var validVibeCases = map[string]bool{
-	"C1": true, // code
-	"C2": true, // text
-	"C3": true, // decision (Phase 6 alpha.18.1 reconciliation)
-	"C4": true, // research (Phase 6 alpha.18.1 reconciliation)
-	"C5": true, // video
-	"C6": true, // audio
-	"C7": true, // multi
-}
+// Mirrors the dark-memory-mcp vibe spec enumeration (C1..Cn per
+// the vibecase package — see internal/vibecase/taxonomy.go for the
+// canonical source of truth). Adding C8 or beyond is a one-line
+// edit to that package; this map is derived at init() so it cannot
+// fall out of sync.
+var validVibeCases = func() map[string]bool {
+	out := map[string]bool{}
+	for _, c := range vibecase.All() {
+		out[string(c)] = true
+	}
+	return out
+}()
 
 // defaultPersonaForVibeCase maps each canonical vibe_case to its
 // default persona_id (per Phase 6 alpha.18.1 mapping).
@@ -129,7 +131,8 @@ func (s *Server) handleMindsetApply(ctx context.Context, req mcp.CallToolRequest
 	}
 	if !validVibeCases[in.VibeCase] {
 		return mcp.NewToolResultError(fmt.Sprintf(
-			"mindset_apply: vibe_case %q not in canonical allow-list (C1..C7)", in.VibeCase)), nil
+			"mindset_apply: vibe_case %q not in canonical allow-list (valid: %v)",
+			in.VibeCase, vibecase.JSONSchemaEnum())), nil
 	}
 	if len(strings.TrimSpace(in.TaskDescription)) < 10 {
 		return mcp.NewToolResultError("mindset_apply: task_description must be ≥10 chars"), nil

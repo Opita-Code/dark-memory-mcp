@@ -17,6 +17,12 @@
 //	                {code, text, image, video, audio} in ONE output.
 //	C7 mixed      — a coordinated bundle of independent artifacts
 //	                (e.g. a campaign = image + text + landing-page-code).
+//	C8 vibe-flow  — ambient workflow gating: a coordinated bundle of
+//	                workflow gates (E1-E23) that keep the agent in flow
+//	                via context awareness across all 7 canonical cases.
+//	                (Per vibe-loop-git Loop 7. Loop 7 is purely an
+//	                ambient-gate workflow regime; canonical artifact cases
+//	                C1..C7 still apply at the per-artifact level.)
 //
 // # Why a separate package
 //
@@ -62,6 +68,7 @@ const (
 	CaseAudio      Case = "C5" // voice / music / SFX (EU AI Act disclosure)
 	CaseMultiModal Case = "C6" // composite single-output artifact
 	CaseMixed      Case = "C7" // coordinated bundle of independent artifacts
+	CaseVibeFlow   Case = "C8" // ambient workflow gating (vibe-loop-git Loop 7)
 )
 
 // all is the canonical ordered slice. `All()` returns a defensive
@@ -74,6 +81,7 @@ var all = [...]Case{
 	CaseAudio,
 	CaseMultiModal,
 	CaseMixed,
+	CaseVibeFlow,
 }
 
 // descriptions maps each canonical case to a one-line human
@@ -87,6 +95,7 @@ var descriptions = map[Case]string{
 	CaseAudio:      "audio — voice, music, sound effects, synthetic audio (EU AI Act disclosure required).",
 	CaseMultiModal: "multi-modal — composite artifact spanning ≥2 of {code, text, image, video, audio} in one output.",
 	CaseMixed:      "mixed — coordinated bundle of independent artifacts (e.g. campaign = image + text + landing-page-code).",
+	CaseVibeFlow:   "vibe-flow — ambient workflow gating: the 23 gates (E1-E23) keep the agent in flow via context awareness (per vibe-loop-git Loop 7).",
 }
 
 // ErrInvalidCase is returned by Parse when the input is not a canonical

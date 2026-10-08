@@ -7,6 +7,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/store"
+	"github.com/dark-agents/dark-memory-mcp/internal/vibecase"
 )
 
 // testHelper is the minimal subset of *testing.T + *rapid.T that
@@ -88,7 +89,7 @@ func applyTestProjectColumns(ctx context.Context, db *sql.DB) error {
 func insertFakeSpec(t testHelper, db *sql.DB) int64 {
 	t.Helper()
 	spec := &Spec{
-		VibeCase: CaseC1,
+		VibeCase: string(vibecase.CaseCode),
 		Intent:   "test fixture",
 		Tasks:    []Task{{ID: "t1", Description: "fixture task"}},
 	}

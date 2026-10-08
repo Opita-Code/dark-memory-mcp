@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/dark-agents/dark-memory-mcp/internal/vibecase"
 	"pgregory.net/rapid"
 )
 
@@ -29,7 +30,7 @@ func validLinearChain(n int) (*Spec, []string) {
 		tasks[i] = t
 	}
 	return &Spec{
-		VibeCase: CaseC1,
+		VibeCase: string(vibecase.CaseCode),
 		Intent:   "linear",
 		Tasks:    tasks,
 	}, ids
@@ -63,7 +64,7 @@ func TestProperty_Spec_AnyDiamondGraphAccepted(t *testing.T) {
 	rapid.Check(t, func(t *rapid.T) {
 		branching := rapid.IntRange(2, 5).Draw(t, "branching")
 		s := &Spec{
-			VibeCase: CaseC1,
+			VibeCase: string(vibecase.CaseCode),
 			Intent:   "diamond",
 			Tasks: []Task{
 				{ID: "root", Description: "r"},
@@ -150,7 +151,7 @@ func TestProperty_Spec_DuplicateIDAlwaysDetected(t *testing.T) {
 // TestProperty_Spec_AllCanonicalCasesAccepted — universal claim:
 // every canonical vibe_case (C1..C7) accepts any valid spec.
 func TestProperty_Spec_AllCanonicalCasesAccepted(t *testing.T) {
-	cases := []string{CaseC1, CaseC2, CaseC3, CaseC4, CaseC5, CaseC6, CaseC7}
+	cases := []string{string(vibecase.CaseCode), string(vibecase.CaseText), string(vibecase.CaseImage), string(vibecase.CaseVideo), string(vibecase.CaseAudio), string(vibecase.CaseMultiModal), string(vibecase.CaseMixed)}
 	rapid.Check(t, func(t *rapid.T) {
 		c := rapid.SampledFrom(cases).Draw(t, "vibe_case")
 		s, _ := validLinearChain(rapid.IntRange(1, 5).Draw(t, "n"))
@@ -165,7 +166,7 @@ func TestProperty_Spec_AllCanonicalCasesAccepted(t *testing.T) {
 // any non-canonical vibe_case (drawn from a tight rejection alphabet)
 // is always caught by ErrUnknownVibeCase.
 func TestProperty_Spec_UnknownVibeCaseAlwaysRejected(t *testing.T) {
-	rejections := []string{"", "C0", "C8", "C9", "c1", "code", "X", "?"}
+	rejections := []string{"", "C0", "C9", "C10", "c1", "code", "X", "?"}
 	rapid.Check(t, func(t *rapid.T) {
 		c := rapid.SampledFrom(rejections).Draw(t, "bad_case")
 		s, _ := validLinearChain(3)

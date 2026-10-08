@@ -9,30 +9,21 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/dark-agents/dark-memory-mcp/internal/vibecase"
 )
 
-// Canonical VibeCase values. C1=code, C2=text, C3=decision, C4=research,
-// C5=video, C6=audio, C7=multi. Future versions may add more; callers
-// must validate via IsValidVibeCase.
-const (
-	CaseC1 = "C1"
-	CaseC2 = "C2"
-	CaseC3 = "C3"
-	CaseC4 = "C4"
-	CaseC5 = "C5"
-	CaseC6 = "C6"
-	CaseC7 = "C7"
-)
+// Canonical VibeCase values are sourced from the vibecase package
+// (single source of truth per taxonomy.go §0). This file does NOT
+// re-declare the constants — adding C8 means editing vibecase/taxonomy.go
+// only. See Spec.Validate's IsValidVibeCase for the runtime check.
 
-// IsValidVibeCase reports whether c is one of the canonical C1..C7
-// values. Used by Validate and by downstream consumers that need to
-// dispatch on case without a default branch.
+// IsValidVibeCase reports whether c is a canonical vibe_case identifier
+// (per the vibecase package — C1..Cn where n grows with new cases).
+// Used by Validate and by downstream consumers that need to dispatch
+// on case without a default branch.
 func IsValidVibeCase(c string) bool {
-	switch c {
-	case CaseC1, CaseC2, CaseC3, CaseC4, CaseC5, CaseC6, CaseC7:
-		return true
-	}
-	return false
+	return vibecase.IsValid(c)
 }
 
 // Task is one node in the spec's task graph.
