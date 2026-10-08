@@ -46,11 +46,11 @@
     "firstTag": "v4.0.0-alpha.27",
     "currentTag": "v4.0.0-alpha.30",
     "loopsShipped": 9,
-    "driftJudgesRun": 17,
+    "driftJudgesRun": 18,
     "driftVerdicts": {
-      "aligned": 14,
+      "aligned": 15,
       "needs_human": 1,
-      "firstTryAligned": 12,
+      "firstTryAligned": 13,
       "retryResolved": 2
     }
   },
@@ -264,6 +264,15 @@
         "driftId": null,
         "verdict": "aligned (drift_judge eval 2025, nli=entailment conf=1.0)",
         "sha256Prefix": "db60ef34"
+      },
+      {
+        "loop": 9,
+        "file": "internal/vibeflow/cost.go",
+        "vibeCase": "C8",
+        "title": "L9.3 cost transparency (human-auditable: ModelPricing with IsEstimate+Source, ComputeCallCost pure math, DefaultPricingTable 6 verified + 2 placeholders, CostSession thread-safe with full breakdown aggregations, projection capped 10x, JSON export, 43 new tests including race detector, 212/212 total green, ALIGNED 2nd consecutive)",
+        "driftId": null,
+        "verdict": "aligned (drift_judge eval 2026, nli=entailment conf=1.0)",
+        "sha256Prefix": "cb63104f"
       },
       {
         "loop": 8,
