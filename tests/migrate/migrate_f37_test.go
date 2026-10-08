@@ -179,7 +179,11 @@ func TestMigrate_RealDriverSQLite_BrandNewDB_F37(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SchemaVersion: %v", err)
 	}
-	const wantSchemaVersion = 31 // v31 (alpha.20 Chunk 8.7): bitemporal_lite (transaction_time + valid_time)
+	// Read the expectation from the migration slice instead of hardcoding a
+	// number. This literal was 31 and CI caught it the moment the schema
+	// reached 32; a literal is a second source of truth that can only ever
+	// be right on the day it is written.
+	wantSchemaVersion := sqlite.CurrentVersion()
 	if v != wantSchemaVersion {
 		t.Fatalf("expected schema_version=%d after all migrations applied, got %d", wantSchemaVersion, v)
 	}

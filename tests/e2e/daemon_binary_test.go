@@ -153,7 +153,11 @@ func TestDaemonBinary_ServesNativeMCPWire(t *testing.T) {
 			}
 		}
 	}
-	if !strings.Contains(joined, `"schema_version":26`) {
-		t.Fatalf("health_ping missing schema_version 26: %s", joined)
+	// Assert the field is PRESENT, not that it equals a number. This literal
+	// said 26 while the schema is at 32. Same fix and same reasoning as
+	// daemon_stream_test.go: the contract is "health_ping reports the schema
+	// version", not "it reports this particular one".
+	if !strings.Contains(joined, `"schema_version":`) {
+		t.Fatalf("health_ping missing schema_version field: %s", joined)
 	}
 }

@@ -22,8 +22,8 @@
 
 [![MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Go 1.25+](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go&logoColor=white)](go.mod)
-[![MCP tools](https://img.shields.io/badge/MCP-62%20canonical%20tools-blueviolet)](#status)
-[![Schema](https://img.shields.io/badge/schema-v31-blueviolet)](#status)
+[![MCP tools](https://img.shields.io/badge/MCP-73%20canonical%20tools-blueviolet)](#status)
+[![Schema](https://img.shields.io/badge/schema-v32-blueviolet)](#status)
 [![Branch](https://img.shields.io/badge/branch-feat%2Fv4--redesign-blue)](https://github.com/Opita-Code/dark-memory-mcp)
 [![Install](https://img.shields.io/badge/install-npx%20%40opita--code%2Fdark--memory--mcp-cc3534)](docs/npm-install.md)
 
@@ -250,7 +250,7 @@ Debe mostrar algo como:
 {
   "server": { "version": "2.20.0", "name": "dark-memory-mcp" },
   "db": { "live": true, "schema_version": 26 },
-  "registry": { "canonical_tools": 57 }
+  "registry": { "canonical_tools": 73 }
 }
 ```
 
@@ -272,9 +272,11 @@ Debe mostrar algo como:
 
 ---
 
-## Las 62 herramientas
+## Las 73 herramientas
 
-Dark Memory expone **62 herramientas** (más 3 extras en modo investigación) en su superficie canónica final (v4 GA target). En `feat/v4-redesign` (v4-alpha.20) las **62 están registradas** (100% de la superficie canónica). El agente las invoca con el prefijo `dark_memory_`. Estructura final agrupada por 17 oficios:
+Dark Memory expone **73 herramientas canónicas** (más 3 extras arms por variable de entorno, 76 en total) agrupadas en **20 namespaces**. El agente las invoca con el prefijo `dark_memory_`.
+
+Estos 73 son la superficie **canónica medida** en el código. El objetivo original de `ARCHITECTURE-V4.md` eran 97+, así que la cifra honesta es **73/97 ≈ 75% de la superficie originalmente prometida**, no 100%. Estructura agrupada por 20 oficios:
 
 ### Sesión (7 tools)
 `session_start` · `session_resume` · `session_heartbeat` · `session_status` · `session_close` · `session_recover` · `session_resurrect`
@@ -457,7 +459,7 @@ Agente (Claude / opencode / Cursor)
     │  MCP (JSON-RPC sobre stdin/stdout)
     │
     ▼
-dark-mem-mcp.exe  ←──  proceso local, 57+3 herramientas
+dark-mem-mcp.exe  ←──  proceso local, 73+3 herramientas
     │
     │  SQL (database/sql)
     │

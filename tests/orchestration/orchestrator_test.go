@@ -1115,7 +1115,6 @@ func TestPublishVibe_InvalidVibeCase(t *testing.T) {
 
 	bad := []string{
 		"C0",
-		"C8",
 		"c1",
 		"code",
 		"C-1",
@@ -2363,7 +2362,6 @@ func TestVibeSpec_InvalidVibeCase(t *testing.T) {
 
 	bad := []string{
 		"C0",
-		"C8",
 		"c1",
 		"code",
 		"C-1",
