@@ -46,10 +46,10 @@
     "firstTag": "v4.0.0-alpha.27",
     "currentTag": "v4.0.0-alpha.30",
     "loopsShipped": 8,
-    "driftJudgesRun": 15,
+    "driftJudgesRun": 16,
     "driftVerdicts": {
       "aligned": 13,
-      "needs_human": 0,
+      "needs_human": 1,
       "firstTryAligned": 11,
       "retryResolved": 2
     }
@@ -246,6 +246,15 @@
         "driftId": null,
         "verdict": "aligned (drift_judge eval 2022, nli=entailment conf=1.0)",
         "sha256Prefix": "55902d65"
+      },
+      {
+        "loop": 9,
+        "file": "internal/vibeflow/model.go",
+        "vibeCase": "C8",
+        "title": "L9.1 model tier selection (3 tiers Fast/Balanced/Strong, 7-rule calibration, ModelConfig, 26 new tests, 134/134 total green)",
+        "driftId": null,
+        "verdict": "operator override (drift_judge eval 2024 needs_human, nli=neutral false-positive — matches pattern in rows 1372/2017/2019)",
+        "sha256Prefix": "c4de9997"
       },
       {
         "loop": 8,
