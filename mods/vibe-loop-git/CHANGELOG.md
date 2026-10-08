@@ -3,6 +3,92 @@
 All notable changes to **vibe-loop-git** are documented in this file.
 Format: [version] — date — summary. Local tags only (no push).
 
+## [0.4.4] — 2026-10-08 — two fixes the 0.4.3 entry did not contain, plus documentation truth
+
+0.4.3 recorded L8.1a as instrumented and live. It was not live. This
+entry records the two commits that shipped after it.
+
+### Fixed
+
+- **`efa6e59` — `fix(delegation)`: L8.1a advisory dropped at the
+  v4alpha→v3 converter.** `RunDelegateIntentCore` computed `TaskClass`
+  and attached it to the v4alpha output; `convertV4AlphaToV3Output`
+  then dropped it. Every existing L8.1a test called the inner function
+  directly and never crossed the converter, the binary contained the
+  `task_class` string, and the deploy note claimed "live in the
+  process". Only the end-to-end `delegate_intent` call exposed it.
+  Fixed: `TaskClassAdvisory` is defined in the stable layer
+  (`internal/orchestration`) so the v3 struct can hold it without an
+  import cycle, and `convertV4AlphaTaskClass` copies field-by-field
+  following the existing `convertV4AlphaAlternatives` convention.
+  Added the boundary test that should have existed: build a v4alpha
+  output with `TaskClass`, run the converter, assert the v3 output
+  carries it. Calibrated by deliberate break — deleting the single
+  converter line kills 2 of 3 assertions with messages that name the
+  regression.
+- **`2a2c36d` — `fix(store)`: option C, redact NLI tokens on read paths
+  with a sealed raw accessor.** Resolves a contract that had been
+  inverted once and left three of its own tests failing. T-405 found
+  that store-level redaction broke `drift_judge` (empty bearer → 401 →
+  `needs_human`), inverted the store to return raw, and never updated
+  the three `internal/tools` tests that asserted the original contract.
+  This resolves it without picking a side: the store **redacts** on
+  `GetProject`/`ListProjects`, and `GetProjectRaw` is a **sealed**
+  accessor for the only four call sites that must authenticate —
+  `EnsureNLIRouter`, `ensureLLMJudge`, `llm_provider_bind`,
+  `llm_provider_probe`. The fourth is the dangerous one: `provider_bind`
+  merges partially against the config it loads, so a redacted read
+  would **silently wipe the stored token**. Both halves of the contract
+  are guarded, and the raw half is calibrated by deliberate break —
+  making `GetProjectRaw` redact fails only
+  `TestGetProjectRaw_RetainsAuthToken` with "drift_judge would 401",
+  while both redaction guards keep passing.
+  Two false claims in comments were corrected rather than left next to
+  the new code (a `project_list` tool that never existed; a "Store no
+  longer calls Redacted()" note that had become false).
+
+### Documentation
+
+- **`docs/v4-status.md` reconciled with measured reality** (spec 1895,
+  vibe-loop `alpha-21-docs-truth`). The status table said `alpha.17`
+  while the file's own banner said `alpha.30`; it named a binary
+  (`dark-memory-v4`, 19.66 MB) that does not exist on disk and a schema
+  version string (`v4alpha/2026-09-30/004`) that the live database
+  stores as the integer `32`; §1 claimed "57 tools" one line after its
+  own header said 73. Measured: **73 canonical tools, 20 namespaces**
+  (verified against `tools.NamespaceGroups()`), schema `32`.
+  Phase 20 and Phase 21 were absent from the document entirely; both
+  are now recorded, including the load-bearing fact that Phase 20
+  closed with **zero production callers**.
+- **`mod.json`**: `driftJudgesRun` 23 → 24, `needs_human` 1 → 2 (the
+  post-restart verification produced drift 1534); L8.1a re-described
+  as *wired as advisory* now that `efa6e59` carries it across the
+  boundary; the Postgres debt corrected from "4 methods" to the
+  **measured 58** — all in `internal/store/postgres`, none in sqlite,
+  therefore dormant while production runs SQLite.
+
+### Added
+
+- **`internal/tools/v4_status_consistency_test.go`** — the anti-drift
+  mechanism. It measures the live registry and schema version and
+  asserts `docs/v4-status.md` reports the same values, failing with the
+  field, the documented value and the measured value. Added because a
+  cleanup without a mechanism decays within two phases, as this one
+  just demonstrably did: nothing compared a doc claim to the real
+  system, so the contradiction survived.
+
+### Known, not fixed here
+
+- **G4 (release identity) remains open.** `scripts/inject-version.sh:65`
+  cannot parse this project's tag format — verified: both
+  `4.0.0-alpha.30-vibe-loop-git-v0.4.1-4-g2a2c36d-dirty` and the
+  simplified `4.0.0-alpha30-4-g2a2c36d-dirty` return NO MATCH. Every
+  release stamp falls through to dev/unknown, so `IsDev` is always
+  true and drift warnings fire on every deploy.
+- **`TestRecallAtTime_OrderingNewestFirst` is flaky** — failed 1 of 3
+  full-suite runs under parallel load while passing in isolation, in
+  code untouched by either commit.
+
 ## [0.4.3] — 2026-10-08 — L8.1a instrumented as ADVISORY, and why it is not wired into DECIDE
 
 Second Phase 21 primitive. This one is deliberately **not**

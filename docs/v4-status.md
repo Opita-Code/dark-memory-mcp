@@ -1,5 +1,36 @@
 # v4 Status — current state of the redesign
 
+> **READ THIS FIRST (2026-10-08).** The banners below are newest-first.
+> The newest is Phase 21 (OPEN); the phase banners stop at Phase 19
+> because Phase 20 and 21 were previously **missing from this document
+> entirely** — a documentation gap found and closed on 2026-10-08
+> (spec 1895). If you are deciding anything from this file, use the
+> status table in the "Field | Value" block below, which is now
+> test-asserted against the live registry (§1.17).
+
+> **Phase 21 OPEN (2026-10-08)**. **See §1.16.** The honesty layer's
+> wiring phase. **2 of 9 Phase 20 primitives are actually wired into
+> production**: L11.2 (`vibe_publish` now returns `confidence_grade` +
+> `confidence_caveat` beside `confidence`) and L8.1a (`delegate_intent`
+> publishes `task_class` as an **advisory** — the canonical vibeflow
+> classifier runs and reports but does **NOT** influence `Decision`).
+> The remaining 7 change behaviour by design and therefore require
+> instrument → measure → decide → flip, **not** wiring. Two were
+> rejected outright: `ComputeVerdict` (CostSummary has zero producers)
+> and `ComputeConvergence` at `delegate_intent` (no finding collector
+> exists). **Cross-version lockstep hash pin UNCHANGED.**
+
+> **Phase 20 CLOSED (2026-10-08, operator green light)**. **See §1.15.8.**
+> Loops 8-13 shipped the honesty layer: <5min mitigation, model-tier and
+> cost transparency, measured token economy, operator-visible epistemic
+> labeling (Kadavath calibration), G19 drift arbitration (Panickssery
+> 2024), and the sub-agent handoff contract. 9 artifacts, 351/351 tests,
+> 22 drift judges, 6 consecutive ALIGNED.
+> **THE LOAD-BEARING FACT: at closeout, Loops 8-13 had ZERO production
+> callers.** A verified library, not a shipped feature. Phase 21 exists
+> to close that gap, and is 2/9 in. **Cross-version lockstep hash pin
+> UNCHANGED.**
+
 > **Phase 19 Loop 9 SHIPPED (2026-10-07, local tag `v4.0.0-alpha.30-pre-1`)**.
 > See §1.15.7 below. **Measurement-only baseline. NO optimization applied.
 > 96.9 ms median cold-start (N=5). 580 ms cold-DB open, 1.87 ms warm-DB
@@ -99,18 +130,41 @@
 | Field | Value |
 |---|---|
 | Branch | `feat/v4-redesign` (from `v2.20.0`, NOT from `v3.0-void`) |
-| Last reviewed | 2026-09-30 |
-| Status | **alpha.17** — pre-release, local-only, contributors only |
-| Version constant | `v4alpha.17-dev` (resolved via `ldflags` → `debug.ReadBuildInfo` → `"dev"`) |
-| Schema version | `v4alpha/2026-09-30/004` (stamped in `schema_migrations`); audit_log gains `prev_hash`, `row_hash` (alpha.15); sdd_evaluations gains `confidence_calibrated`, `calibration_ci_low`, `calibration_ci_high`, `calibration_method` (alpha.16); 5 tables gain `project_id` (alpha.17) — agent_memory, audit_log, sdd_evaluations, vibe_specs, vibe_artifacts |
-| Binary | `dark-memory-v4` (19.66 MB Windows) |
+| Last reviewed | **2026-10-08** |
+| Status | **alpha.30** — pre-release, local-only, contributors only |
+| Version constant | Resolved at build time, not a checked-in constant. `internal/version/version.go:34` holds an empty `buildVersion`, injected via `-ldflags "-X .../internal/version.buildVersion=<v>"`; falls back to `devVersion = "dev"` (`internal/version/version.go:39`), which sets `IsDev=true`. Current deployed stamp: `v4.0.0-alpha.30-vibe-loop-git-v0.4.1-4-g2a2c36d-dirty`. **Known gap (G4):** `scripts/inject-version.sh:65` cannot parse this tag format — see §1.16. |
+| Schema version | **32**, stored as an integer in `schema_migrations.version` (verified live against `dark.db` on 2026-10-08). Historical: audit_log gains `prev_hash`, `row_hash` (alpha.15); sdd_evaluations gains the 4 calibration columns (alpha.16); 5 tables gain `project_id` (alpha.17). The earlier `v4alpha/2026-09-30/004` string format no longer exists. |
+| Binary | **`bin/dark-mem-mcp.exe`** (32,854,528 bytes / 31.33 MB Windows, 2026-10-08). Note: the previously documented `dark-memory-v4` (19.66 MB) is **not a file on disk** — that claim was stale from alpha.17. |
 | Local-only policy | YES — no `git push`/`fetch`/`pull`, no remote tags/releases |
 
 ---
 ## 1. Tools inventory (73 of 97+, 20 namespaces, schema v32)
 
-The canonical surface is 57 tools (see `ARCHITECTURE-V4.md §6.3
-tool-count target`). v4-alpha.17 registers **46 of those**.
+**Measured, not declared** (2026-10-08, verified by an in-package probe
+over `tools.NamespaceGroups()` and `tools.NamespaceCount()`):
+
+- **73 canonical tools** across **20 namespaces**
+- Plus **3 env-gated armed extras** (`DARK_REDTEAM=armed` red-team,
+  federation under `DARK_FEDERATION_PEER_DSN`, and one more) → **76 tools
+  live** when armed. Both numbers are real; 73 is the canonical registry,
+  76 is the maximum reachable surface. Say which one you mean.
+- `97+` is the **original aspirational target** from
+  `ARCHITECTURE-V4.md §6.3`, not a measurement. The honest ratio is
+  **73/97 ≈ 75%** of the originally-promised surface.
+
+The `~20` remaining tools are tracked as the tail of the 97+ target, not
+as a phase commitment. Per-namespace counts as measured:
+ADMIN 3 · AGENT_BOOTSTRAP 3 · AGENT_MEMORY 13 · CONTEXT 4 · DELEGATION 1 ·
+EMBEDDER 1 · ERROR_OBS 4 · EVENTS 2 · JUDGE 4 · JUDGE_UTIL 7 · L6-VLP 1 ·
+LLM_BIND 2 · LLM_CONFIG 4 · MINDSET 1 · OBSERVABILITY 6 · POLICY 2 ·
+PROJECT 1 · RESEARCH 3 · SESSION 7 · VIBE 4.
+
+> **Historical note:** earlier revisions of this section claimed "57
+> tools" and "alpha.17 registers 46 of those" while the section header
+> above already said 73 — the section contradicted itself. Both stale
+> numbers were removed on 2026-10-08. A test now asserts this section
+> against the live registry (§1.17), because a doc claim that no test
+> checks is exactly how that contradiction survived.
 
 ### 1.1 session_start Loadout (PRE-1 C3, alpha.13)
 
@@ -2446,6 +2500,98 @@ then OI-1..OI-3 BLOCKING operator validation from Loop 6 carry-over.
 | ✅ Stable (won't change) | Tool wire names (73 canonical), agent_memory schema, FTS5 ordering (INV-17), worker pool size=1, store/WithTx contract (INV-16), `sdd_evaluations` schema (22 cols; +4 for calibration in alpha.16), **events table schema v32 (27 cols, 3 indexes, polymorphic)**, judge MCP tool wire shapes (4 base + 7 util), persona registry ids (16 total, 8 v4alpha), `BootstrapCI` deterministic seed=42, **EVENTS namespace tools (event_log + event_replay) wire shapes**, **HMAC chain continuous across events + write_audit (ADR-016 + ADR-018)**, **LLM_BIND namespace tools (llm_provider_bind + llm_provider_probe) wire shapes**, **drift_judge 9-step pipeline (LLMJudge primary, NLI fallback)**, **provider_id prefix routing: judge-* → LLMJudge, chat-* → NLI ChatProvider**, **`vibe-loop-git v0.1.0` companion mod (6 loops + 1 design + 4 adapters + 7 templates + 9 tests, all SHIPPED) at `mods/vibe-loop-git/`**, **T-407-c 3-layer defensive pattern (per-model defaults table + operator override + finish_reason="length" retry-on-length) for `ChatProvider`** |
 | ⚠️ Likely to evolve | Package names (still aspirational vs actual drift), Pipeline API (LLM judge swap), Constitution (still hardcoded), persona override mechanism (spec 1155 v14 inheritance), progress emitter phases (3 → N as new pipeline stages emerge) |
 | ❌ Not implemented | security/* (INV-11..15), mutable Workflow, red-team mods, federated research, L6-VLP, admin (vacuum only), EmbedderRefresh wire (no embedder code), semantic CacheInvalidation wire (no semantic cache trigger) |
+
+### 1.15.8 Phase 20 — the honesty layer, CLOSED (2026-10-08)
+
+Per `mods/vibe-loop-git/mod.json` → `audit.phase20`, and the closeout
+balance in `mods/vibe-loop-git/core/phase-20-closeout.md`:
+
+- Loops 8-13 shipped: 9 artifacts, **351/351 tests**, 22 drift judges,
+  **6 consecutive ALIGNED** (evals 2025-2030).
+- Delivered: L8.1a/b heuristic classifier + persona-tier detection,
+  L8.2 lazy activation state machine, L8.3 adaptive depth,
+  L9.1 model tiers, L9.2 drift-skip policy, L9.3 cost transparency,
+  L10.1 token economy, L11.1 epistemic labeling (Kadavath),
+  L12.1 G19 arbitration (Panickssery 2024), L13.1 handoff contract.
+- **`internal/vibeflow/` totals 11,771 lines.**
+
+**The fact that matters more than the loop count: at closeout every
+Phase 20 symbol had ZERO production callers.** This was a verified
+library, not a shipped feature. Phase 21 is the work of actually
+wiring it.
+
+**Open debt declared at closeout** (all still open on 2026-10-08):
+
+| Debt | Status |
+|---|---|
+| `gofmt` on 14 pre-existing `vibeflow` files (694 lines) | cosmetic, untouched |
+| `StateDelegating` absent from `internal/vlp` | open |
+| Postgres subagent methods returning `notImpl` | open — **and larger than recorded: mod.json says 4, measurement says 58** (see below) |
+| `Strong`/`MiniMax` model pricing still a placeholder | open, by design (it is a *modeled* estimate) |
+
+### 1.16 Phase 21 — OPEN (2026-10-08): wiring the library, 2 of 9
+
+Discipline for this phase, stated because it is the whole point:
+**instrument → measure → decide → flip.** Not "wire everything".
+
+| Primitive | State | Evidence |
+|---|---|---|
+| **L11.2** confidence grading on `vibe_publish` | ✅ **WIRED** | live call returns `confidence_grade: "measured"` + `confidence_caveat` |
+| **L8.1a** `task_class` on `delegate_intent` | ✅ **WIRED (advisory)** | live call returns all 9 fields; does **NOT** influence `Decision` |
+| 7 remaining | ⬜ not wired | all change behaviour by design |
+| `ComputeVerdict` | ❌ rejected | `CostSummary` has zero producers |
+| `ComputeConvergence` at `delegate_intent` | ❌ rejected | no finding collector exists |
+
+**Why L8.1a is advisory and not routed.** Promoting the classifier to
+be the router would change *who gets delegated*, and therefore change
+spend. That is a product decision, not a refactor.
+
+**Two bugs found and fixed on 2026-10-08 in this phase** — both are
+why this section exists rather than a one-line "wired":
+
+1. **The converter gap (commit `efa6e59`).** L8.1a was committed,
+   deployed and recorded as "live in the process" while
+   `convertV4AlphaToV3Output` **dropped** `TaskClass` before it reached
+   the harness. Every test called `RunDelegateIntentCore` directly and
+   never crossed the converter; the binary contained the string; the
+   deploy note was wrong. Only the end-to-end call found it. Fixed, plus
+   a boundary test calibrated by deliberate break.
+2. **Store redaction (commit `2a2c36d`, operator "option C").** The
+   store now redacts `NLIConfig` auth tokens on `GetProject` and
+   `ListProjects`, with a **sealed** `GetProjectRaw` accessor for the
+   only four call sites that must authenticate
+   (`EnsureNLIRouter`, `ensureLLMJudge`, `llm_provider_bind`,
+   `llm_provider_probe`). Naive store-level redaction would have
+   **silently wiped the stored token**, because `llm_provider_bind`
+   merges partially against the config it loads.
+
+**G4 — release identity, OPEN.** `scripts/inject-version.sh:65`
+cannot parse this project's own tag format. Verified 2026-10-08:
+
+```
+4.0.0-alpha.30-vibe-loop-git-v0.4.1-4-g2a2c36d-dirty  → NO MATCH
+4.0.0-alpha30-4-g2a2c36d-dirty                          → NO MATCH
+```
+
+The pre-release group is `(alpha|beta|rc\.[0-9]+)` — it rejects
+`alpha.30` (dot) and cannot tolerate the mod-tag suffix. Every release
+stamp therefore falls through to dev/unknown, `IsDev` is always true,
+and drift warnings fire on every deploy. Deploys currently inject the
+stamp manually via `-ldflags`. **Fixing this is what unblocks a clean
+release identity.**
+
+### 1.17 Documentation-truth test (added 2026-10-08)
+
+This document previously contradicted itself (§1 said 73 tools and 57
+tools in consecutive lines) and lagged reality by two phases, and
+**nothing failed** — because no test ever compared a doc claim to the
+live system. `internal/tools/v4_status_consistency_test.go` now
+measures the registry (`NamespaceCount()`, the summed tool count) and
+the schema version, and asserts this document reports the same values.
+
+It is calibrated by deliberate break: perturbing the number in this
+document makes the test fail with the field, the documented value and
+the measured value. A test that has only ever passed is decoration.
 
 ## 6.5. SOTA-doc workstream (2026-09-28, 6 of 7 chunks shipped)
 
