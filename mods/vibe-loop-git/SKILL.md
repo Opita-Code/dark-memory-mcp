@@ -2,35 +2,44 @@
 name: vibe-loop-git
 description: |
   The vibe-loop protocol packaged as a dark-memory companion mod. Encodes
-  a 7-loop OSINT-first workflow that turns any artifact (code, text,
+  a 13-loop OSINT-first workflow that turns any artifact (code, text,
   decision, research, video, audio, multi-bundle) into a drift-judged,
   atomic-mirrored, version-controlled work product. Loops 1-6 follow
   OSINT → spec → artifact → drift_judge → resolve_drift → atomic_mirror.
   Loop 7 (vibe-flow mode, vibe_case C8) adds ambient workflow gating:
   23 events E1-E23 fire across a normal session; 25 named gates G1-G25
   intercept each event with 1-4 dark-memory tool calls; the agent stays
-  in flow via inline notes (NOT intrusive blocking). Built on the
-  drift_judge pipeline (Phase 16 SHIPPED in alpha.27) plus the T-407-c
-  3-layer defensive pattern (Phase 17 SHIPPED in alpha.28). LOCAL-ONLY —
-  never git push.
+  in flow via inline notes (NOT intrusive blocking). Loops 8-13 (Phase 20,
+  SHIPPED 2026-10-08) add the honesty layer: <5min mitigation, model-tier
+  + cost transparency, a measured token economy, operator-visible
+  epistemic labeling, G19 drift arbitration, and the sub-agent handoff
+  contract. Built on the drift_judge pipeline (Phase 16 SHIPPED in
+  alpha.27) plus the T-407-c 3-layer defensive pattern (Phase 17 SHIPPED
+  in alpha.28). LOCAL-ONLY — never git push.
+
+  IMPORTANT: Loops 8-13 are a verified library with NO production
+  callers yet. See core/phase-20-closeout.md §1 before assuming any
+  runtime effect.
 
   Triggers on keywords: vibe-loop, vibe loop, vibe-loop-git, vibe loop
   protocol, drift-judge loop, atomic-mirror loop, OSINT-first workflow,
-  7-loop vibe, vibe-flow mode, vibe_case C1 C2 C3 C4 C5 C6 C7 C8,
+  13-loop vibe, vibe-flow mode, vibe_case C1 C2 C3 C4 C5 C6 C7 C8,
   drift_judge pipeline, resolve_drift, vibe_spec, vibe_publish, gate
-  trigger matrix, ambient workflow gating.
+  trigger matrix, ambient workflow gating, evidence grade, epistemic
+  labeling, arbitration, sub-agent handoff.
 license: proprietary
 metadata:
   author: dark-agent
   operator: nico
-  version: 0.2.0
+  version: 0.4.0
   dark-memory-mcp-version: ">=4.0.0-alpha.30"
-  loops-shipped: 7
-  drift-verdicts: 9-aligned-0-needs_human (3 operator-overrides for MiniMax-M3 false-positive pattern)
+  loops-shipped: 13
+  phase-20: CLOSED 2026-10-08 (6 loops, 9 artifacts, 351 tests, 22 drift judges, 6 consecutive ALIGNED). Library layer only — zero production callers. See core/phase-20-closeout.md.
+  drift-verdicts: 19-aligned-1-needs_human (2 operator-overrides for MiniMax-M3 false-positive pattern)
   loop-7-vibe-case: C8
 ---
 
-# vibe-loop-git — 6-Loop Vibe Protocol for dark-memory
+# vibe-loop-git — 13-Loop Vibe Protocol for dark-memory
 
 ## What this mod is
 
@@ -58,7 +67,7 @@ on any artifact.
 | Write a 1-line bug fix | NO (overkill — use direct commit) |
 | Run a Phase-style SHIP on dark-memory itself | YES (this is what produced v0.2) |
 
-## The 7-loop protocol (in dependency order)
+## The 13-loop protocol (in dependency order)
 
 ```
 Loop 1: Context strategies per tier  (C2 — text)
@@ -75,7 +84,28 @@ Loop 6: Self-evaluation meta-loop    (C3 — decision)
   ↓ needs audit rows from Loops 1-5
 Loop 7: vibe-flow mode               (C8 — ambient workflow gating)
   ↓ needs Loops 1-6 wired; adds 23 ambient gates (E1-E23) that fire inline
+
+── Phase 20: the honesty layer (SHIPPED 2026-10-08) ──
+
+Loop 8: <5min mitigation            (C8 — Horvitz anytime algorithms)
+  ↓ classifier + context + mode + adaptive depth
+Loop 9: model tier + cost           (C8 — cheapest tier that fits)
+  ↓ cost transparency; placeholder pricing never reported as fact
+Loop 10: token economy              (C8 — measured savings vs baseline)
+  ↓ unclamped percentages so overspend stays visible
+Loop 11: operator visibility        (C8 — Kadavath calibration)
+  ↓ every number carries an EvidenceGrade; confidence goes DOWN only
+Loop 12: G19 epistemic arbitration  (C8 — Panickssery 2024)
+  ↓ only INDEPENDENT evidence may dispute a verdict
+Loop 13: sub-agent handoff          (C8 — delegation contract)
+  ↓ headcount is not evidence; only unresolved disputes travel
 ```
+
+**Phase 20 is a verified library with zero production callers.** The
+primitives exist, are tested (351/351) and drift-judged (22 evals, 6
+consecutive ALIGNED), but nothing in the running MCP invokes them yet,
+and `bin/dark-mem-mcp.exe` predates all of it. Read
+`core/phase-20-closeout.md` §1 before assuming a runtime effect.
 
 **Per-loop phases (6)**:
 

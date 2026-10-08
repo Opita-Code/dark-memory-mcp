@@ -3,6 +3,54 @@
 All notable changes to **vibe-loop-git** are documented in this file.
 Format: [version] — date — summary. Local tags only (no push).
 
+## [0.4.0] — 2026-10-08 — Phase 20 CLOSED (Loops 8-13, the honesty layer)
+
+Six loops shipped in one phase, unified by a single idea: *a system that
+reports on itself must be able to say how much its own report is worth.*
+Full balance and honest limitations in `core/phase-20-closeout.md`.
+
+### Added
+- **Loop 8 — <5min mitigation** (operator-validated, row 2534): `Classify` (deterministic task-length predictor, zero LLM calls, per-vibe_case calibration), `Context`, `Mode`, `ComputeDepth`. Horvitz 1990 anytime algorithms.
+- **Loop 9 — model tier + cost**: `SelectModelTier`, `ComputeDriftPolicy`, `CostSummary`. Placeholder pricing (`IsEstimate=true`) is never reported as fact.
+- **Loop 10 — token economy**: `ComputeEconomyDelta`, `BuildEconomyReport`. Modeled 45.4% avg token saving / 60.1% avg USD saving across the 10-persona mix; unclamped percentages so overspend stays visible.
+- **Loop 11 — operator visibility**: `EvidenceGrade`, `Claim`, `ComputeVerdict`. Kadavath et al. 2022 (arXiv:2207.05221) calibration; the verdict's grade is the weakest of its inputs; confidence propagates DOWNWARD only; zero recorded calls yields `insufficient-data`, never "helping".
+- **Loop 12 — G19 epistemic arbitration**: `ClassifyIndependence`, `Arbitrate`, `ArbitrateByOperator`. Panickssery/Bowman/Feng 2024 (arXiv:2404.13076). Fixes the real G19 defect: it re-ran `judge(grounding_check)` on the SAME provider/model and presented repetition as verification. Rule: a verdict is only disputed by INDEPENDENT evidence; correlated re-judging is idempotent.
+- **Loop 13 — sub-agent handoff contract**: `Origin`, `HandoffSpec`, `ComputeConvergence`. Row 251's 5-stage delegation thesis (CURATE/MIND/ISOLATE/RECOVER/SYNTHESIZE). Headcount is not evidence — convergence grade derives from diversity, never from how many delegates agreed.
+- **`core/phase-20-closeout.md`** (NEW): the phase balance, including the load-bearing limitation that Phase 20 has **zero production callers** and the canonical binary predates the work.
+
+### Changed
+- **`mod.json`**: version 0.3.0 → 0.4.0, `protocol.loops` 8 → 13, description rewritten, `audit.phase20` closeout record added.
+- **`SKILL.md`**: 7-loop → 13-loop protocol, `loops-shipped` 7 → 13, metadata version 0.2.0 → 0.4.0, Phase 20 loops added to the dependency graph. **This file had not been updated for six shipped loops — a violation of the operator's hard rule on synchronizing documentation (row 1330), now corrected.**
+- **`internal/vibeflow/arbitration.go`**: `JudgeSource` gained the `Origin` third axis (operator decision: extend rather than run a parallel notion of independence). L12.1's two-axis behavior is preserved and pinned by `TestL13_BackCompat`.
+- **`mod.json` `audit`**: `driftJudgesRun` 21 → 22, `driftVerdicts.aligned` 18 → 19, `firstTryAligned` 16 → 17, artifacts 20 → 21.
+
+### Known limitations at closeout
+- **NOT WIRED** — zero production callers for any Loops 8-13 symbol; `bin/dark-mem-mcp.exe` (Oct 7) predates all Phase 20 code. The safety machinery is verified; the optimization is not switched on.
+- **No operator has felt any of this.** The §Loop-10 figures are modeled projections, not observations of a running system.
+- **gofmt debt**: 14 pre-existing `internal/vibeflow` files (694 diff lines, Go 1.19 comment reformatting from Loops 8-10). Deliberately excluded from every loop commit. Now the oldest open item in the package.
+- `StateDelegating` absent from `internal/vlp/`; 4 Postgres subagent methods return `notImpl`; Strong/MiniMax pricing is still a placeholder.
+
+### Audit
+351/351 tests PASS, `go vet` clean, Phase 20 files gofmt-clean, race detector clean.
+drift_judges: 22 run, 19 ALIGNED, 1 needs_human, 17 first-try, 6 consecutive ALIGNED (evals 2025→2030).
+Phase 20 closeout verdict: **eval 2031**.
+
+## [0.3.0] — 2026-10-08 — Loops 8-12 code (CHANGELOG entry written retroactively)
+
+Version 0.3.0 was bumped in `mod.json` at the start of Phase 20 but its
+CHANGELOG entry was never written, leaving this file's newest entry at
+0.2.0 for six shipped loops. Recorded here for honesty rather than
+silently folded into 0.4.0.
+
+### Added
+- Nine `internal/vibeflow` artifacts across Loops 8-12 (classifier, context, mode, depth, model tier, drift policy, cost transparency, token economy, operator visibility, epistemic arbitration). Each shipped as its own drift-judged commit; see `mod.json` `core.artifacts` for the full list with verdicts.
+
+### Changed
+- `mod.json`: `audit.loopsShipped` 7 → 12, `audit.driftJudgesRun` 9 → 21, artifacts 7 → 20.
+
+### Known limitations
+- The version 0.2.0 → 0.3.0 documentation gap described above.
+
 ## [0.2.0] — 2026-10-08 — Loop 7 vibe-flow SHIPPED
 
 ### Added
