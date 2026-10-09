@@ -25,6 +25,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -80,9 +81,22 @@ func gitBaseTag(t *testing.T) string {
 }
 
 // TestDocs_SurfaceNumbersMatchRuntime is the drift guard: every
-// surface claim in README.md must match the live sources of truth.
+// surface claim must match the live sources of truth.
+//
+// The catalog moved to docs/tools.md on 2026-10-09, so the guard
+// follows it there rather than keeping a second copy alive in the
+// README. That split is deliberate: the README's job is to get a
+// stranger to an install, and an 84-line catalog above the fold was
+// serving as evidence rather than as persuasion. Each claim is still
+// checked, in the file that now makes it.
+//
+// Moving a guard's target is exactly where protection disappears
+// silently, so the mapping is asserted rather than assumed: if
+// docs/tools.md ever goes missing, readRepoFile fails loudly instead
+// of this guard passing vacuously on an empty string.
 func TestDocs_SurfaceNumbersMatchRuntime(t *testing.T) {
 	readme := readRepoFile(t, "README.md")
+	catalog := readRepoFile(t, "docs/tools.md")
 
 	wantTools := len(tools.CanonicalOrder())
 	wantSchema := sqlite.CurrentVersion()
@@ -90,17 +104,19 @@ func TestDocs_SurfaceNumbersMatchRuntime(t *testing.T) {
 
 	checks := []struct {
 		label string
+		hay   string
+		file  string
 		want  string
 	}{
-		{"MCP tools badge", fmt.Sprintf("MCP-%d%%20canonical%%20tools", wantTools)},
-		{"Las N herramientas header", fmt.Sprintf("## Las %d herramientas", wantTools)},
-		{"N oficios", fmt.Sprintf("%d oficios", wantNamespaces)},
-		{"schema badge", fmt.Sprintf("schema-v%d", wantSchema)},
+		{"MCP tools badge", readme, "README.md", fmt.Sprintf("MCP-%d%%20canonical%%20tools", wantTools)},
+		{"schema badge", readme, "README.md", fmt.Sprintf("schema-v%d", wantSchema)},
+		{"Las N herramientas header", catalog, "docs/tools.md", fmt.Sprintf("Las %d herramientas", wantTools)},
+		{"N oficios", catalog, "docs/tools.md", fmt.Sprintf("%d oficios", wantNamespaces)},
 	}
 	for _, c := range checks {
-		if !strings.Contains(readme, c.want) {
-			t.Errorf("README.md missing %q (%s) — docs drifted from the runtime source of truth (want tools=%d, schema=%d, namespaces=%d)",
-				c.want, c.label, wantTools, wantSchema, wantNamespaces)
+		if !strings.Contains(c.hay, c.want) {
+			t.Errorf("%s missing %q (%s) — docs drifted from the runtime source of truth (want tools=%d, schema=%d, namespaces=%d)",
+				c.file, c.want, c.label, wantTools, wantSchema, wantNamespaces)
 		}
 	}
 }
@@ -144,29 +160,94 @@ func TestDocs_ReleaseMetadataMatchesGitTag(t *testing.T) {
 	}
 }
 
-// TestDocs_NamespaceTableCountsDerivable asserts the README's
-// per-namespace "N tools" headers (if any) match the derived counts.
-// README rows use the format `### NAME (N tools, ...)`; only the
-// count is checked, so renames of sections don't break the test.
+// TestDocs_NamespaceTableCountsDerivable asserts the per-namespace
+// "N tools" headings in docs/tools.md match the derived counts.
+//
+// This used to read the README and it passed vacuously: it looked for
+// headings named `### AGENT_MEMORY`, while the document actually
+// writes them in Spanish (`### Cuaderno del agente (10 tools, ...)`).
+// The loop found nothing, matched nothing, and reported success. A
+// guard that checks for a spelling the document never used is a guard
+// that protects nothing while looking like it does.
+//
+// It now walks the document's own headings, matches each one to a
+// namespace by looking for that namespace's tool names in the lines
+// beneath it, and compares the claimed count to the live count. The
+// checked>0 assertion at the end is what makes this trustworthy: a
+// guard that has silently stopped matching anything reports itself.
 func TestDocs_NamespaceTableCountsDerivable(t *testing.T) {
-	readme := readRepoFile(t, "README.md")
-	nsCounts := tools.NamespaceCounts()
-	for _, ns := range tools.NamespaceGroups() {
-		want := fmt.Sprintf("(%d tools", nsCounts[ns.Name])
-		if strings.Contains(readme, "### "+ns.Name) && !strings.Contains(readme, "### "+ns.Name+" ("+want[1:]) {
-			// The section exists but the count may be phrased differently;
-			// only fail on an explicit wrong count, not on missing section.
+	catalog := readRepoFile(t, "docs/tools.md")
+	groups := tools.NamespaceGroups()
+
+	lines := strings.Split(catalog, "\n")
+	checked := 0
+	for i, line := range lines {
+		if !strings.HasPrefix(line, "### ") {
 			continue
 		}
-	}
-	// Explicit check for the two most drift-prone namespaces.
-	for _, ns := range []string{"AGENT_MEMORY", "ERROR_OBS"} {
-		want := fmt.Sprintf("%d tools", nsCounts[ns])
-		// grep the README lines mentioning the namespace in a heading.
-		for _, line := range strings.Split(readme, "\n") {
-			if strings.Contains(line, "### "+ns) && strings.Contains(line, "tools") && !strings.Contains(line, want) {
-				t.Errorf("README heading %q does not contain the derived count %q", strings.TrimSpace(line), want)
+		open := strings.Index(line, "(")
+		if open < 0 || !strings.Contains(line[open:], "tools") {
+			continue
+		}
+		rest := line[open+1:]
+		end := strings.IndexAny(rest, " ,")
+		if end < 0 {
+			continue
+		}
+		claimed, err := strconv.Atoi(strings.TrimSpace(rest[:end]))
+		if err != nil {
+			continue
+		}
+		heading := strings.TrimSpace(strings.TrimPrefix(line, "### "))
+
+		// The tool names sit in the next few lines; that is the
+		// reliable link between a prose heading and a namespace.
+		var window strings.Builder
+		for j := i + 1; j < len(lines) && j <= i+4; j++ {
+			if strings.HasPrefix(lines[j], "### ") {
+				break
 			}
+			window.WriteString(lines[j])
+			window.WriteString("\n")
+		}
+
+		// Compare WHOLE tokens, not substrings. The document writes
+		// wired names ("agent_memory_recall") while the registry holds
+		// bare ones ("recall"), so a substring match makes the
+		// AGENT_MEMORY heading also "contain" CONTEXT's recall tool
+		// and the guard reports a wrong namespace. That bug fired on
+		// the first run and named the wrong namespace four times.
+		tokens := map[string]bool{}
+		for _, tok := range strings.FieldsFunc(window.String(), func(r rune) bool {
+			return !(r == '_' || r == '-' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9'))
+		}) {
+			tokens[tok] = true
+		}
+
+		for _, g := range groups {
+			matched := false
+			for _, tool := range g.Tools {
+				if tokens[tool] || tokens["dark_memory_"+tool] {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+			if claimed != len(g.Tools) {
+				t.Errorf("docs/tools.md heading %q claims %d tools, namespace %s actually has %d",
+					heading, claimed, g.Name, len(g.Tools))
+			}
+			checked++
+			break
 		}
 	}
+	if checked == 0 {
+		t.Errorf("no namespace heading in docs/tools.md could be checked (checked=%d) — "+
+			"the guard is verifying nothing. Either the document changed shape or this "+
+			"test has gone stale, and a silently-useless drift guard is worse than none "+
+			"because it is trusted", checked)
+	}
+	t.Logf("verified %d namespace tool counts against the live registry", checked)
 }
