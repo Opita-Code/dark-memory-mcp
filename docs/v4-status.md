@@ -201,6 +201,19 @@ Per `docs/specs/SPEC-alpha-11-phase2.md` (Option B, 2026-09-29):
 - **1 new MCP tool**: `dark_memory_audit_verify(start_id?, end_id?)`
   → `{verified, broken_at, count, start_id, end_id, elapsed_ms}`.
   Read-only; walks the chain; detects modification, deletion, forgery.
+
+  > **CORRECTED 2026-10-09 by ADR-020.** The sentence above describes
+  > `v4alpha/audit`, whose `audit_log` table **does not exist in any
+  > database on the measured system** — 4,199 LoC of tested SHA-256
+  > chaining and Ed25519 signing protecting a table that was never
+  > created. The tool the operator actually calls is the ADR-018
+  > `dark_memory_audit_verify` over `write_audit`, and it does **not**
+  > detect deletion or pre-export modification: the chain is minted at
+  > export time from whatever rows are present, so nothing binds it to an
+  > earlier state of the database. It detects tampering of the exported
+  > stream. Proven executably in `internal/audit/gap_test.go`, which
+  > characterises the gap and will fail loudly if it is ever fixed.
+  > Read ADR-020 before relying on this section.
 - **1 new migration helper**: `audit.ApplyChainColumns(ctx, db)` —
   idempotent `ALTER TABLE ADD COLUMN × 2` for legacy DBs.
 - **Tool count**: 41 → 42.
@@ -1269,40 +1282,82 @@ The 8 AutoEmitter helpers + the EventWriter + the 2 observer tools
 
 ## 2. Actual package layout (`internal/v4alpha/`)
 
-`ARCHITECTURE-V4.md §5 (original)` describes the aspirational layout:
-`core/`, `vibe/`, `security/`, `adapters/`, `governance/`,
-`constitutions/`, `transport/`, `tools/`, `installer/`,
-`extensions/`.
+### 2.1 The boundary, measured
 
-**The actual layout** (2026-09-27):
+<!-- boundary:begin — asserted by TestStatusDoc_BoundaryClaimsMatchBinary.
+     Measured with `go list -deps` from INSIDE cmd/dark-mem-mcp, which has
+     its own go.mod. A parent-module `go list` cannot resolve it and
+     reports nothing, which is how this section went stale for releases. -->
 
-```
-internal/v4alpha/
-├── agent_memory/    # Save, Get, List, Recall, Archive, Update + FTS5
-├── audit/           # write_audit schema + Writer + WriteExec + ListFilters
-├── judge/           # Verdict + Pipeline + LLMJudge + Consensus + EdgeCases + PersonaContent + sdd_evaluations Store
-                    # (modernc.org/sqlite v1.53.0 — pure-Go, no cgo; see https://pkg.go.dev/modernc.org/sqlite)
-├── manifest/        # cap_store + cap_token + manifest (RBAC layer)
-├── research/        # (placeholder — no tools yet, BUG-9)
-├── session/         # Store (open/read/heartbeat/close) + property tests
-├── store/           # OpenSQLite, WithTx, store_test (INV-16)
-├── transport/
-│   └── mcp/         # mcp-go wrapper: server.go + 8 tool files
-└── vibe/            # Spec/Artifact/Drift stores + Pipeline
-```
+- **58** internal packages reachable from the shipped binary
+- **12 of 14** `internal/v4alpha/` packages reachable
 
-### What is NOT yet built (deferred)
+Dead — unreachable from `cmd/dark-mem-mcp`, owned and verdicted:
 
-| Aspirational | Status | When |
+| Package | LoC (2026-10-09) | Verdict |
 |---|---|---|
-| `core/` (pure types) | Inline in `vibe/` and `agent_memory/` for now | alpha.2 — extract when 3rd package needs the same type |
-| `security/` (redact, ssrf, pii, injection, capability) | NOT STARTED | alpha.3 — INV-11..INV-15 land as `internal/v4alpha/security/` |
-| `adapters/` (LLM, credentials, embedding, update) | NOT STARTED | alpha.3 — when first LLM client lands |
-| `governance/` | Inline in `vibe/` + `judge/` | alpha.2 |
-| `constitutions/` | Hardcoded in `transport/mcp/policy.go` | BUG-9 — `policy_registry` table |
-| `tools/` (manifest-based auto-discovery) | `transport/mcp/*` files | M3 aspirational; deferred past alpha.2 |
-| `installer/` | Lives in `npm/wrapper/` (legacy v2) | Carry over; not v4-specific |
-| `extensions/` | NOT STARTED | alpha.3+ — community pack loader |
+| `v4alpha/manifest` | 3,422 | **Keep, not wired.** This is INV-11 (capability token, RBAC cap_store + cap_token). It is unstarted by design, not abandoned. Wired when transport auth lands. |
+| `v4alpha/recall` | 4,906 | **Shadowed.** `internal/recall/` (5,618 LoC) is the production implementation and is reachable. This directory holds the C1–C7 vibe-case strategies and is never called. Candidate for deletion or port; needs a functional check of whether the shipped binary actually serves vibe-case recall before either verdict. |
+
+Not listed because it is not a package: `v4alpha/transport/` holds no
+`.go` files of its own. It is a container directory; `v4alpha/transport/mcp`
+(26 files) is the real package and is reachable.
+
+<!-- boundary:end -->
+
+### 2.2 What ships, and why the old layout is gone
+
+`ARCHITECTURE-V4.md §5` describes the aspirational layout: `core/`,
+`vibe/`, `security/`, `adapters/`, `governance/`, `constitutions/`,
+`transport/`, `tools/`, `installer/`, `extensions/`.
+
+**It was never built, and the tracking table that said so was itself
+stale.** The rows below previously read `NOT STARTED` / `alpha.2` /
+`alpha.3` while the product sat at alpha.31. Corrected against the code:
+
+| Aspirational | Actual | Status |
+|---|---|---|
+| `core/` (pure types) | never extracted | Abandoned. Types stayed inline in `vibe/` and `agent_memory/`. The "extract on 3rd use" rule never triggered. |
+| `security/` | `internal/artifact/ssrf.go` + `v4alpha/security/` | **SHIPPED.** SSRF guard is CWE-918 with DNS resolution and private-IP blocking. Was marked NOT STARTED. |
+| `adapters/` | `internal/embedder/` (4,176 LoC, 5 adapters) | **SHIPPED.** Was marked NOT STARTED. |
+| `constitutions/` | `internal/constitution/` (500 LoC) | **SHIPPED.** Was marked "hardcoded in transport/mcp/policy.go". |
+| `governance/` | inline in `vibe/` + `judge/` | Abandoned, same as `core/`. |
+| `tools/` | `internal/tools/` + `internal/orchestration/` | Shipped under different names, as the v3-lineage packages. |
+| `installer/` | `npm/wrapper/` | Shipped, not v4-specific. |
+| `extensions/` | `internal/mods/` (553 LoC) | **SHIPPED.** Mod loader + sanitization exist. Was marked NOT STARTED. |
+
+**`v4alpha/` is a temporary namespace that outlived its temporary
+status.** 12 of its 14 packages are in the released binary. The prefix
+now misdescribes them: they are production code carrying a scaffolding
+name. Dissolving it is deliberately NOT this loop's job — it is a
+mechanical move with import-path fallout, and it deserves its own spec
+with its own verification.
+
+### 2.3 Two audit implementations, one process
+
+`internal/audit/` (1,542 LoC) and `internal/v4alpha/audit/` (4,199 LoC)
+are **both reachable from the shipped binary**. All `audit_log` writers
+resolve into `v4alpha/*`.
+
+**Resolved by [ADR-020](decisions/ADR-020-audit-authority.md) (2026-10-09).**
+`write_audit` is the authoritative trail under INV-1: it holds all 28,775
+real writes, the store emits it in the same transaction as the data write,
+and `RegisterAudit` (`internal/tools/audit.go:49`) is the only registrar of
+the two audit tools in the canonical registry. `internal/v4alpha/audit/` is
+**unwired**: its `audit_log` table exists in no database on the measured
+system, so its SHA-256 chain and its Ed25519 signatures (ADR-017) protect
+nothing.
+
+The residual risk, which was not written down anywhere until now: the
+`write_audit` chain is minted at export time, so it has **no tamper-evidence
+against an attacker who can write to `dark.db`**. It detects tampering of the
+exported stream, not of the database. Proven in `internal/audit/gap_test.go`.
+
+> A related lesson, recorded because it generalises: the Loop 22 reachability
+> guard reports `v4alpha/audit` as reachable, and it is — it is linked into
+> the binary. Reachability is not execution. A package can be compiled,
+> tested, and documented as delivered while never being called, and every
+> static signal will call it alive. Only the database disagreed.
 
 ---
 
