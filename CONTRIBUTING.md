@@ -12,8 +12,8 @@
 | Audience | contributor, maintainer, security auditor |
 | Level | advanced |
 | Status | review (pending constitution-maintainers approval) |
-| Version | v4.0.0-alpha.1 |
-| Last reviewed | 2026-09-24 |
+| Version | v4.0.0-alpha.31 |
+| Last reviewed | 2026-10-09 |
 | Branch | `feat/v4-redesign` |
 | Companion | [ARCHITECTURE-V4.md](./ARCHITECTURE-V4.md) |
 
@@ -30,7 +30,8 @@
 7. [Adding a mod pack](#7-adding-a-mod-pack)
 8. [Modifying the workflow](#8-modifying-the-workflow)
 9. [Security disclosures](#9-security-disclosures)
-10. [Style guide](#10-style-guide)
+10. [Keeping published claims honest](#10-keeping-published-claims-honest)
+11. [Style guide](#11-style-guide)
 
 ---
 
@@ -582,7 +583,74 @@ terms.
 
 ---
 
-## 10. Style guide
+## 10. Keeping published claims honest
+
+> This section is the only one here that is not about writing code. It
+> is here because of what happened five times in one week.
+
+### The rule
+
+> **Any value computed in one layer and published in another must have
+> a test that crosses that boundary. Any number quoted in a document
+> must be measured, not remembered.**
+
+That is the whole rule. The rest of this section is why it exists.
+
+### Why, concretely
+
+Every one of these shipped with a green build:
+
+| Incident | Runtime said | Published said | Caught by |
+|---|---|---|---|
+| `efa6e59` | `TaskClass` computed | dropped at the v4→v3 converter | nothing |
+| `b94b5a3` | 73 tools registered | gate refused 4 of them | nothing |
+| README | 73 tools | "Las 62 herramientas" in the index | nothing |
+| GitHub About | 73 tools | 29 tools | nothing |
+| `1c33a7b8` | one author | `Co-Authored-By: Claude Opus 4.8` | nothing |
+
+In each case the runtime was correct and something *downstream* was
+wrong or false. Testing the runtime cannot see this, because the
+runtime is not where the defect is. The defect is in the gap.
+
+### What that means when you write a PR
+
+- **Do not copy a number from a previous document.** Run the thing and
+  read the output. The tool count that was 62 became 73 because three
+  namespaces were added and nobody recounted.
+- **If you change a number that appears in more than one place, grep
+  for it.** `grep -rn "73"` finds the README, the About text, the
+  badge, and this document. They drift independently.
+- **If you add a guard, break something on purpose to confirm it
+  fails.** A test that has only ever passed is indistinguishable from a
+  test that asserts nothing. The first version of
+  `TestStatusDoc_StaleAlphaClaimsAbsent` compared the status table
+  against itself — a tautology that stayed green through a wrong
+  document. It was only found by deliberately perturbing the document.
+
+### The guards that exist today
+
+| Guard | Crosses |
+|---|---|
+| `internal/tools/v4_status_consistency_test.go` | `docs/v4-status.md` ↔ live registry, schema, disk |
+| `internal/tools/release_identity_test.go` | README ↔ status doc; `mod.json` ↔ CHANGELOG; commit trailers ↔ allowlist |
+| `tests/docs/readme_consistency_test.go` | README surface numbers ↔ runtime |
+| `tests/wire/tool_gate_contract_test.go` | declared tools ↔ granted tools |
+| `.github/workflows/precheck-version.yml` | the 8 stamped package files ↔ the git tag |
+
+If you publish a claim and no row above covers it, that is a gap you
+are about to create. Close it, or note why not.
+
+> **One caveat worth knowing**: `TestGitHistory_NoForeignCoAuthorTrailers`
+> reads git history, and CI checks out with the default `fetch-depth: 1`.
+> In CI it therefore sees only the tip commit and logs a note saying so.
+> Run the suite in a full checkout for a complete scan. It was calibrated
+> against a real false trailer, and it deliberately does **not** cover
+> the npm publish path — that one is a credentials boundary, not a
+> source boundary.
+
+---
+
+## 11. Style guide
 
 ### 10.1 Go style
 
