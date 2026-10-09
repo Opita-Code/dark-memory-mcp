@@ -53,3 +53,9 @@ _trash-*/
 *.fail
 internal/v4alpha/vibe/testdata/
 
+# Harness local config. Ignored because it carries a hardcoded
+# MINIMAX_API_KEY, bypassing DARK-MEM-017. Never commit it; use
+# opencode.example.jsonc as the credential-free starting point.
+opencode.jsonc
+
+

@@ -1,7 +1,39 @@
 # Changelog
 
 All notable changes to **vibe-loop-git** are documented in this file.
-Format: [version] — date — summary. Local tags only (no push).
+Format: [version] — date — summary.
+
+## [0.4.5] — 2026-10-09 — public MIT release, LOCAL ONLY retired, G4 closed
+
+The mod manifest declared 0.4.5 while this file stopped at 0.4.4. This
+entry reconciles them, and records the three decisions that produced
+the first public release.
+
+### Changed
+
+- **License MIT** (`mods/vibe-loop-git/mod.json`): the mod is now
+  distributable. It carried no license field, which meant it was
+  not legally reusable despite being public.
+- **LOCAL ONLY retired.** The no-push policy is gone from
+  `CONSTITUTION-V4.md` and `.github/workflows/ci.yml`. Commits are
+  local only no longer; releases are tagged and published.
+- **G4 closed** (`b94b5a3`): `scripts/inject-version.sh` parses
+  dotted pre-release versions (`alpha.31`) and mod-tag suffixes
+  instead of falling through to `dev/unknown`. Guarded by
+  `internal/tools/g4_version_regex_test.go`, calibrated by
+  deliberate break. The root cause analysis is retained in
+  `docs/v4-status.md` §1.16.
+
+### Fixed
+
+- **`DefaultToolGrants` omitted `LLM_BIND` and `EVENTS`**
+  (`internal/recall/assemble.go`). The capability gate silently
+  refused four canonical tools in live use:
+  `llm_provider_bind`, `llm_provider_probe`, `event_log`,
+  `event_replay`. Surfaced as `ErrCapabilityNotGranted` on
+  `llm_provider_probe`, which reads like operator configuration
+  rather than a code defect. Guarded by
+  `tests/wire/tool_gate_contract_test.go`.
 
 ## [0.4.4] — 2026-10-08 — two fixes the 0.4.3 entry did not contain, plus documentation truth
 
