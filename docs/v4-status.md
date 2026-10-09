@@ -130,9 +130,9 @@
 | Field | Value |
 |---|---|
 | Branch | `feat/v4-redesign` (from `v2.20.0`, NOT from `v3.0-void`) |
-| Last reviewed | **2026-10-08** |
-| Status | **alpha.30** — pre-release. Published to a public repo, but no external consumers yet and never validated outside the author's machine. |
-| Version constant | Resolved at build time, not a checked-in constant. `internal/version/version.go:34` holds an empty `buildVersion`, injected via `-ldflags "-X .../internal/version.buildVersion=<v>"`; falls back to `devVersion = "dev"` (`internal/version/version.go:39`), which sets `IsDev=true`. Current deployed stamp: `v4.0.0-alpha.30-vibe-loop-git-v0.4.1-4-g2a2c36d-dirty`. **Known gap (G4):** `scripts/inject-version.sh:65` cannot parse this tag format — see §1.16. |
+| Last reviewed | **2026-10-09** |
+| Status | **alpha.31** — pre-release. Published to a public repo (MIT). No external consumers yet; the operator reports running this build in daily use since 2026-10-08, so the tag is the first release the maintainer treats as stable. `publish-npm` and `publish-mcp-registry` failed on this tag, so it was never distributed to npm or the MCP Registry. |
+| Version constant | Resolved at build time, not a checked-in constant. `internal/version/version.go:34` holds an empty `buildVersion`, injected via `-ldflags "-X .../internal/version.buildVersion=<v>"`; falls back to `devVersion = "dev"` (`internal/version/version.go:39`), which sets `IsDev=true`. **G4 is CLOSED** (2026-10-08, commit `b94b5a3`): `scripts/inject-version.sh` now parses dotted pre-release versions and mod-tag suffixes, guarded by `internal/tools/g4_version_regex_test.go`. The historical analysis of the old failing stamp remains in §1.16. |
 | Schema version | **32**, stored as an integer in `schema_migrations.version` (verified live against `dark.db` on 2026-10-08). Historical: audit_log gains `prev_hash`, `row_hash` (alpha.15); sdd_evaluations gains the 4 calibration columns (alpha.16); 5 tables gain `project_id` (alpha.17). The earlier `v4alpha/2026-09-30/004` string format no longer exists. |
 | Binary | **`bin/dark-mem-mcp.exe`** (32,854,528 bytes / 31.33 MB Windows, 2026-10-08). Note: the previously documented `dark-memory-v4` (19.66 MB) is **not a file on disk** — that claim was stale from alpha.17. |
 | Local-only policy | YES — no `git push`/`fetch`/`pull`, no remote tags/releases |

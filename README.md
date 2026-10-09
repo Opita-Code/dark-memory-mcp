@@ -27,7 +27,7 @@
 [![Branch](https://img.shields.io/badge/branch-feat%2Fv4--redesign-blue)](https://github.com/Opita-Code/dark-memory-mcp)
 [![Install](https://img.shields.io/badge/install-npx%20%40opita--code%2Fdark--memory--mcp-cc3534)](docs/npm-install.md)
 
-> ## STATUS: v4-alpha.30, Phase 21 open (measured 2026-10-08)
+> ## STATUS: v4-alpha.31, Phase 21 open (measured 2026-10-09)
 >
 > Every number below is **measured from the running code**, not
 > remembered. `internal/tools/v4_status_consistency_test.go` fails the
@@ -71,9 +71,110 @@
 
 ---
 
-[¿Qué es esto?](#qué-es-esto) · [El problema que resuelve](#el-problema-que-resuelve) · [El vibe-loop](#el-vibe-loop-un-paradigma-nuevo) · [Conceptos clave](#conceptos-clave) · [Quickstart](#quickstart) · [Las 62 herramientas](#las-62-herramientas) · [Camino de aprendizaje](#camino-de-aprendizaje) · [Resolver problemas](#resolver-problemas) · [Contribuir](#contribuir)
+[Para quién es](#para-quién-es-esto--who-this-is-for) · [¿Qué es esto?](#qué-es-esto) · [El problema que resuelve](#el-problema-que-resuelve) · [El vibe-loop](#el-vibe-loop-un-paradigma-nuevo) · [Conceptos clave](#conceptos-clave) · [Quickstart](#quickstart) · [Las 73 herramientas](#las-73-herramientas) · [Camino de aprendizaje](#camino-de-aprendizaje) · [Resolver problemas](#resolver-problemas) · [Contribuir](#contribuir)
 
 </div>
+
+---
+
+## Para quién es esto · Who this is for
+
+Cuatro maneras de llegar. Si la tuya ya está resuelta, sáltate las otras: están
+acá porque alguien llega por cada una.
+
+| Llegas como | Lo que de verdad quieres saber | Empieza por |
+|---|---|---|
+| **Vibe-coder** | ¿Funciona ya o me van a vender humo? | [Quickstart](#quickstart) |
+| **Colega o equipo** | ¿Qué funciona y qué está a medias? No me vendas el roadmap. | [Hechos medidos](#hechos-medidos--measured-facts) |
+| **LLM o agente** | Hechos literales, sin interpretación. | [Measured facts](#hechos-medidos--measured-facts) |
+| **Usuario de vibe-cases** | ¿Qué caso le pongo a mi artefacto? | [Vibe-cases](#vibe-cases--c1-a-c8) |
+
+### Hechos medidos · Measured facts
+
+Cada número de esta lista sale del código que corre, no de la memoria. Si uno no
+cuadra con el servidor, el equivocado es el de acá, y hay un test que lo
+detecta: `internal/tools/v4_status_consistency_test.go`.
+
+- **73** herramientas canónicas · **20** namespaces · **3** extras armados por variable de entorno (76 máximo)
+- **Schema 32**, entero en `schema_migrations.version`
+- **73/97 ≈ 75%** de la superficie que `ARCHITECTURE-V4.md` prometió originalmente — no 100%
+- **Phase 20: 0 callers de producción.** Una biblioteca verificada, no una feature entregada
+- **Phase 21: 2 de 9** primitivas cableadas (L11.2 y L8.1a); las otras 7 cambian comportamiento y necesitan instrument → measure → decide → flip
+- **58 métodos de Postgres** devuelven `notImpl` (0 en SQLite). Ese path no se ha probado en anger
+- **MIT** · proceso local · sin telemetría · sin costo
+- `publish-npm` y `publish-mcp-registry` **fallaron** en `v4.0.0-alpha.31`: ese tag nunca llegó a npm ni al MCP Registry
+
+<details>
+<summary><b>English — measured facts</b> (literal form, for agents and parsers)</summary>
+
+- **73** canonical tools · **20** namespaces · **3** env-gated armed extras (76 max)
+- **Schema 32**, integer in `schema_migrations.version`
+- **73/97 ≈ 75%** of the surface `ARCHITECTURE-V4.md` originally promised — not 100%
+- **Phase 20: 0 production callers.** A verified library, not a shipped feature
+- **Phase 21: 2 of 9** primitives wired (L11.2 and L8.1a); the other 7 change behaviour and need instrument → measure → decide → flip
+- **58 Postgres methods return `notImpl`** (0 in SQLite). That path is untested in anger
+- **MIT** · local process · no telemetry · no cost
+- `publish-npm` and `publish-mcp-registry` **failed** on `v4.0.0-alpha.31`: that tag never reached npm or the MCP Registry
+- Delivery model: a `vibe_spec` is a promise, a `vibe_publish` is a delivery, and `drift_judge` compares the two. Verdicts are exactly `aligned`, `drift_detected`, `needs_human`
+
+</details>
+
+### Vibe-cases · C1 a C8
+
+Cada entrega va bajo un caso, y el caso decide la rúbrica con la que el juez la
+evalúa. Fuente: `internal/vibecase/taxonomy.go:64`.
+
+| Caso | Tipo | Cubre |
+|---|---|---|
+| **C1** | `code` | Artefactos de código fuente: funciones, módulos, servicios |
+| **C2** | `text` | Prosa, documentación, contenido narrativo |
+| **C3** | `image` | Imágenes fijas, ilustración, arte generado |
+| **C4** | `video` | Imagen en movimiento, animación, video sintético — *divulgación EU AI Act* |
+| **C5** | `audio` | Voz, música, efectos de sonido, audio sintético — *divulgación EU AI Act* |
+| **C6** | `multi-modal` | Artefacto compuesto de una sola salida, ≥2 modalidades |
+| **C7** | `mixed` | Paquete coordinado de artefactos independientes |
+| **C8** | `vibe-flow` | Gating de flujo ambiental (vibe-loop-git Loop 7) |
+
+`C1`–`C7` son los que acepta el juez. `C8` es gating de flujo, no evaluación de artefacto.
+
+<details>
+<summary><b>English — vibe-cases</b></summary>
+
+| Case | Type | Covers |
+|---|---|---|
+| **C1** | `code` | Source-code artifacts: functions, modules, services |
+| **C2** | `text` | Prose, documentation, narrative content |
+| **C3** | `image` | Still images, illustration, generated art |
+| **C4** | `video` | Motion pictures, animation, synthetic video — *EU AI Act disclosure* |
+| **C5** | `audio` | Voice, music, sound effects, synthetic audio — *EU AI Act disclosure* |
+| **C6** | `multi-modal` | Composite single-output artifact spanning ≥2 modalities |
+| **C7** | `mixed` | Coordinated bundle of independent artifacts |
+| **C8** | `vibe-flow` | Ambient workflow gating (vibe-loop-git Loop 7) |
+
+C1-C7 are the cases the judge accepts. C8 is for workflow gating, not artifact evaluation.
+
+</details>
+
+### Los cuatro perfiles
+
+**Vibe-coder.** No te interesa la teoría y está bien. Copia el bloque `npx` del
+[Quickstart](#quickstart), dile a tu agente `dark_memory_health_ping`, y si te
+responde ya tienes memoria entre sesiones. Eso es el 90% del valor y son dos minutos.
+
+**Colega o equipo.** Si te van a preguntar por qué se metió esto, no mandes a
+leer el roadmap — manda a leer los [hechos medidos](#hechos-medidos--measured-facts).
+Ahí está qué funciona, qué no, y qué quedó a medias. La respuesta corta: es una
+biblioteca verificada con el cableado empezado, no un producto.
+
+**LLM o agente.** No traduzcas esta página. Los [hechos medidos](#hechos-medidos--measured-facts)
+en inglés y la [tabla de vibe-cases](#vibe-cases--c1-a-c8) están escritas para que
+las tomes literales. Si algo de acá contradice tu traducción de la versión en
+español, **gana el inglés** y eso es un bug de esta página, no tuyo.
+
+**Usuario de vibe-cases.** No necesitas las 73 herramientas. El flujo útil es
+`vibe_spec` para prometer, `vibe_publish` para entregar, `pipeline_status` para
+ver el veredicto y `resolve_drift` para aceptar o rechazar. El [camino de
+aprendizaje](#camino-de-aprendizaje) te lleva de cero a ese flujo en tres niveles.
 
 ---
 
@@ -248,11 +349,19 @@ Debe mostrar algo como:
 
 ```json
 {
-  "server": { "version": "2.20.0", "name": "dark-memory-mcp" },
-  "db": { "live": true, "schema_version": 26 },
+  "server": { "version": "4.0.0-alpha.31", "name": "dark-memory-mcp" },
+  "db": { "live": true, "schema_version": 32 },
   "registry": { "canonical_tools": 73 }
 }
 ```
+
+Dos avisos sobre ese bloque, porque son las dos cosas que más confunden a un principiante:
+
+- `server.version` refleja el **stamp de build**. Si compilaste sin `-ldflags`, te va a
+  decir `dev` en vez de una versión — y eso no es un error, es G4 funcionando: la versión
+  se inyecta en build, nunca se escribe a mano en el código.
+- `schema_version` es un **entero**, no un string tipo `v4alpha/2026-09-27/001`. Ese
+  formato era el viejo y ya no existe. Si ves el string, estás corriendo un binario viejo.
 
 ### Primeros pasos
 
@@ -467,13 +576,15 @@ dark-mem-mcp.exe  ←──  proceso local, 73+3 herramientas
 SQLite (archivo .db en tu disco)  ←── o Postgres si configuras DARK_DRIVER=postgres
 ```
 
-- **Versión actual (v4-alpha.1):** `v4alpha.1-dev` (binary `dark-memory-v4`)
-- **Versión actual (v2.20.0 production):** v2.20.0 (binary `dark-mem-mcp`)
-- **Schema DB (v4-alpha.1):** `v4alpha/2026-09-27/001` (8 tables: audit_log, agent_memory, agent_memory_fts, schema_migrations, sessions, capabilities, manifest, vibe_{specs,artifacts,drifts})
-- **Schema DB (v2.20.0):** v26 (error_events, vibe-loop state, agent_memory con BM25)
+- **Versión actual:** `v4.0.0-alpha.31` (binario `bin/dark-mem-mcp.exe`, 31.33 MB en Windows)
+- **Schema DB:** **32**, entero en `schema_migrations.version`. **66 tablas** en la instancia viva, contando las sombras de FTS5 (`*_fts_*`) y las internas de research
 - **Dependencias externas:** ninguna en runtime. Solo Go stdlib + SQLite embebido.
-- **Tests (v4-alpha.1):** 37 PASS, 0 FAIL across 8 packages.
-- **Tests (v2.20.0):** 29 suites de integración + 27 paquetes con test.
+- **Tests:** la authoritative count vive en CI, no acá. Corrélo con `go test ./internal/... ./tests/...` y leé el número de la salida, porque un número copiado en el README es exactamente lo que este bloque dejó de hacer.
+
+> Anotación histórica: la documentación anterior listaba dos versiones "actuales" a la vez
+> (`v4alpha.1-dev` con un binario `dark-memory-v4`, y `v2.20.0`) y un schema con formato string
+> `v4alpha/2026-09-27/001`. **Ninguna de las dos es correcta hoy**: el formato string ya no
+> existe —el schema se numera— y el binario `dark-memory-v4` no está en disco.
 
 ---
 
