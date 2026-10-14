@@ -17,6 +17,20 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/vlp"
 )
 
+// OAuthRegistrar, when non-nil, registers the OAUTH namespace tools
+// (judge_options, oauth_connect, oauth_status, oauth_disconnect)
+// into the registry. Set by the cmd sub-module boot
+// (cmd/dark-mem-mcp/legacy_main.go) before RegisterAllWithDeps,
+// because the parent module cannot import the cmd sub-module where
+// the OAuth router lives (Go layering: parent → child only).
+// The closure captures the boot-time OAuth router; RegisterAllWithDeps
+// invokes it in canonical position (right after VIBE). Nil-safe:
+// when nil (unit tests, alternate binaries), registration is skipped
+// and the completeness check at the end of RegisterAllWithDeps fails
+// loudly — serving 74 tools while advertising 78 would be a silent
+// lie (R14), so fail-closed at boot is the correct behavior.
+var OAuthRegistrar func(*Registry)
+
 // RegisterAll wires all canonical dark_memory_* tools into the
 // registry, in the canonical order (spec 164, bridge.4 + spec 193
 // Layer 6). Safe to call once per Registry; subsequent calls are
@@ -95,6 +109,20 @@ func RegisterAllWithDeps(reg *Registry, orch *orchestration.Orchestrator, st sto
 	RegisterAgentBootstrap(reg)
 	// VIBE (4)
 	RegisterVibe(reg, orch, st)
+	// OAUTH (4) — Phase 23 Sesión 6 (Tier 0 self-auth) + Sesión 8
+	// binary-activation fix (2026-10-14). The OAuth tools live in
+	// the cmd sub-module (cmd/dark-mem-mcp/internal/oauth) which
+	// the parent module cannot import (Go layering: parent → child
+	// only). The cmd boot supplies a registrar closure via the
+	// OAuthRegistrar hook before calling RegisterAllWithDeps; it
+	// runs here, in canonical position, before the completeness
+	// check at the end of this function. Without the hook (tests,
+	// alternate binaries), the check fails loudly at boot instead
+	// of serving a registry that silently lacks judge_options —
+	// that fail-closed behavior is intentional (R12 spirit).
+	if OAuthRegistrar != nil {
+		OAuthRegistrar(reg)
+	}
 	// CONTEXT (4) — read-only, no orchestrator needed (orchestrator
 	// only used for write paths). 5A.ii.b.2.c adds `recall` (29th tool).
 	RegisterContext(reg, nil, st)

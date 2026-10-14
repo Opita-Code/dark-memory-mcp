@@ -30,6 +30,7 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/errorobs"
 	"github.com/dark-agents/dark-memory-mcp/internal/federation"
 	"github.com/dark-agents/dark-memory-mcp/internal/orchestration"
+	"github.com/dark-agents/dark-memory-mcp/internal/policy"
 	"github.com/dark-agents/dark-memory-mcp/internal/server"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 	"github.com/dark-agents/dark-memory-mcp/internal/tools"
@@ -184,42 +185,52 @@ func legacyMain() {
 		embedderKind,
 		bootState.Store.Embedder().Dim(),
 		os.Getenv("DARK_MEMORY_EMBEDDER"))
-	frameSrc, err := tools.RegisterAllWithDeps(srv.Registry(), bootState.Orchestrator, bootState.Store, safetyFP, v4DelegateBackend)
+	frameSrc, err := func() (policy.FrameSource, error) {
+		// Phase 23 (Sesión 6) + binary-activation fix (2026-10-14):
+		// OAuth self-auth foundation. Users authenticate with their
+		// own Google/HuggingFace account via OAuth 2.0 + PKCE so the
+		// operator never has to provision shared keys. Tokens are
+		// persisted to the OS keyring; env-var fallback for headless
+		// deployments.
+		//
+		// ORDER MATTERS: the router must exist BEFORE
+		// RegisterAllWithDeps, because the parent module's
+		// completeness check requires all 4 OAUTH tools to be
+		// registered by the time RegisterAllWithDeps returns.
+		// tools.OAuthRegistrar is the layering-safe bridge (parent
+		// cannot import cmd): the closure below captures the router
+		// and runs inside RegisterAllWithDeps in canonical position.
+		// (Pre-fix, RegisterOAuth ran AFTER RegisterAllWithDeps and
+		// the boot died with: missing tool "judge_options"
+		// (canonical order violation). First boot-test caught it.)
+		oauthPort := oauth.DefaultCallbackPort
+		if p := os.Getenv("DARK_OAUTH_CALLBACK_PORT"); p != "" {
+			if v, err := strconv.Atoi(p); err == nil && v > 0 {
+				oauthPort = v
+			}
+		}
+		oauthKs, err := oauth.OpenKeystore(oauth.KeyringConfig{Service: "dark-memory-mcp/oauth"})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "dark-mem-mcp: oauth keystore open failed (continuing with env-var fallback): %v\n", err)
+		}
+		oauthRouter := oauth.NewRouter(oauthKs, oauthPort)
+		tools.OAuthRegistrar = func(reg *tools.Registry) {
+			oauth.RegisterOAuth(reg, oauthRouter)
+		}
+		// Phase 23 Tier 1 (Sesión 7, spec_id 1992): wire the OAuth
+		// resolver into the orchestrator so projects without
+		// NLIConfig get a working defaultDriftJudgeProvider. The
+		// adapter satisfies internal/orchestration.OAuthTokenResolver
+		// via Go's structural typing — no import cycle because the
+		// interface lives in the parent module.
+		bootState.Orchestrator.WithOAuthResolver(oauth.NewRouterAdapter(oauthRouter))
+		fmt.Fprintf(os.Stderr, "dark-mem-mcp: OAuth self-auth wired (callback_port=%d, keystore=%v, default_judge=oauth-backed)\n", oauthPort, oauthKs != nil)
+		return tools.RegisterAllWithDeps(srv.Registry(), bootState.Orchestrator, bootState.Store, safetyFP, v4DelegateBackend)
+	}()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "dark-mem-mcp: tools.RegisterAll failed: %v\n", err)
 		os.Exit(1)
 	}
-
-	// Phase 23 (Sesión 6): OAuth self-auth foundation. Users
-	// authenticate with their own Google/HuggingFace account via
-	// OAuth 2.0 + PKCE so the operator never has to provision shared
-	// keys. Tokens are persisted to the OS keyring; env-var fallback
-	// for headless deployments. 4 new canonical tools added
-	// (judge_options, oauth_connect, oauth_status, oauth_disconnect).
-	oauthPort := oauth.DefaultCallbackPort
-	if p := os.Getenv("DARK_OAUTH_CALLBACK_PORT"); p != "" {
-		if v, err := strconv.Atoi(p); err == nil && v > 0 {
-			oauthPort = v
-		}
-	}
-	oauthKs, err := oauth.OpenKeystore(oauth.KeyringConfig{Service: "dark-memory-mcp/oauth"})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "dark-mem-mcp: oauth keystore open failed (continuing with env-var fallback): %v\n", err)
-	}
-	oauthRouter := oauth.NewRouter(oauthKs, oauthPort)
-	oauth.RegisterOAuth(srv.Registry(), oauthRouter)
-	// Phase 23 Tier 1 (Sesión 7, 2026-10-14, spec_id 1992): wire
-	// the OAuth resolver into the orchestrator so projects
-	// without NLIConfig get a working defaultDriftJudgeProvider.
-	// The adapter satisfies internal/orchestration.OAuthTokenResolver
-	// via Go's structural typing — no import cycle because the
-	// interface lives in the parent module. Construction is
-	// infallible (NewRouterAdapter never returns nil); if it did,
-	// defaultDriftJudgeProvider's nil-resolver path preserves the
-	// pre-OAuth behavior (Error Observatory ID 526 keeps firing
-	// correctly).
-	bootState.Orchestrator.WithOAuthResolver(oauth.NewRouterAdapter(oauthRouter))
-	fmt.Fprintf(os.Stderr, "dark-mem-mcp: OAuth self-auth wired (callback_port=%d, keystore=%v, default_judge=oauth-backed)\n", oauthPort, oauthKs != nil)
 
 	activeSessionResolver := server.NewStoreBackedActiveSessionResolver(
 		server.StoreBackedLookup(bootState.Store),
