@@ -80,7 +80,7 @@ var smokeSkipTools = map[string]bool{
 	"agent_memory_get": true, "agent_memory_update": true, "agent_memory_archive": true,
 	"agent_memory_delegate": true, "agent_memory_entities": true,
 	"subagent_register": true, "subagent_unregister": true,
-	"pipeline_status": true, "resolve_drift": true,
+	"pipeline_status": true, "resolve_drift": true, "vibe_compile": true,
 	"artifact_context": true, "spec_context": true, "session_context": true,
 	"judgment_history": true,
 	"load_constitution": true, "writes": true, "anomalies": true,

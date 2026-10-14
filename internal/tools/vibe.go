@@ -50,6 +50,14 @@ var vibeSpecTaskSchema = map[string]any{
 
 // RegisterVibe wires the 4 VIBE tools into the registry.
 func RegisterVibe(reg *Registry, orch *orchestration.Orchestrator, st store.Store) {
+	// vibe_compile (Phase 22 alpha.32 B2 Sesión 5): compiles a persisted
+	// vibe_spec into an executable bash script with operator-approval
+	// gates between the 6 protocol phases. Stored separately in
+	// vibe_compile.go for readability — RegisterVibeCompile just needs
+	// the registry + store. NOT counted in the canonical "VIBE (4)" yet
+	// until 22.B ships; will be promoted to "VIBE (5)" in the docs at
+	// the same commit that flips the canonicalNamespaces entry.
+	RegisterVibeCompile(reg, st)
 	// vibe_publish — wraps O7 PublishVibe meta-orchestrator.
 	//
 	// Schema correctness note (F33 — see CHANGELOG v1.2.0): the

@@ -230,7 +230,7 @@ type NamespaceGroup struct {
 //		SESSION          (7)  - start, resume, status, close, heartbeat, recover, resurrect (v2.13.0: +3 lifecycle)
 //		RESEARCH         (3)  - topic, recall, resume_thread
 //		AGENT_BOOTSTRAP  (3)  - bootstrap, recommend_companions, detect_environment (v2.6.0)
-//		VIBE             (4)  - publish, spec, pipeline_status, resolve_drift
+//		VIBE             (5)  - publish, spec, pipeline_status, resolve_drift, compile (Phase 22 alpha.32 B2 Sesión 5)
 //		CONTEXT          (4)  - artifact_context, spec_context, session_context, recall
 //		AGENT_MEMORY     (13) - save, list, recall, get, update, archive, delegate, entities, subagent_register, subagent_unregister, prograph_query, mark_superseded, recall_bitemporal (v2.1.0 + v2.3.0 + v2.9.3 + v4.0.0-alpha.20 Chunks 8.4 + 8.7)
 //		MINDSET          (1)  - mindset_apply                        (v2.7.0-alpha, procedural + judge-validated)
@@ -294,7 +294,7 @@ var canonicalNamespaces = []NamespaceGroup{
 	},
 	{
 		Name:  "VIBE",
-		Tools: []string{"vibe_publish", "vibe_spec", "pipeline_status", "resolve_drift"},
+		Tools: []string{"vibe_publish", "vibe_spec", "pipeline_status", "resolve_drift", "vibe_compile"},
 	},
 	{
 		// v2.0.0 (5A.ii.b.2.c): `recall` added.

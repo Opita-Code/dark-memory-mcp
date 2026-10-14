@@ -92,7 +92,7 @@ const DefaultToolGrants = "project_create," + // PROJECT (1)
 	"session_start,session_resume,session_status,session_close,session_heartbeat,session_recover,session_resurrect," + // SESSION (7)
 	"research_topic,research_recall,research_resume_thread," + // RESEARCH (3)
 	"agent_bootstrap,agent_recommend_companions,agent_detect_environment," + // AGENT_BOOTSTRAP (3) — v2.6.0
-	"vibe_publish,vibe_spec,pipeline_status,resolve_drift," + // VIBE (4)
+	"vibe_publish,vibe_spec,pipeline_status,resolve_drift,vibe_compile," + // VIBE (5) — Phase 22 alpha.32 B2 Sesión 5: vibe_compile ships in @root
 	"artifact_context,spec_context,session_context,recall," + // CONTEXT (4)
 	"agent_memory_save,agent_memory_list,agent_memory_recall,agent_memory_get,agent_memory_update,agent_memory_archive,agent_memory_delegate,agent_memory_entities,subagent_register,subagent_unregister,prograph_query,mark_superseded,recall_bitemporal," + // AGENT_MEMORY (13) — v2.1.0 (5) + v2.3.0 (1: recall) + v2.8.0-alpha C2 (2: subagent register/unregister) + v2.9.0-alpha PR-3 (1: entities) + v2.9.3 (1: delegate) + v4.0.0-alpha.20 Chunk 8.4 (1: prograph_query) + Chunk 8.7 (2: mark_superseded + recall_bitemporal)
 	"mindset_apply," + // MINDSET (1) — v2.7.0-alpha
