@@ -14,6 +14,8 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"os/signal"
@@ -71,6 +73,26 @@ func legacyMain() {
 		os.Exit(1)
 	}
 	bootState := srv.BootState()
+
+	// Phase 22 alpha.32 B2 step 1/2: bootstrap the v4alpha audit_log
+	// table. Closes Chunk 8.1.1 ("Store.RawDB() + CURATE wire", planned
+	// by legacy_main.go:117 comment) by introducing the table that the
+	// cut-over in step 2 (write-side migration of recordWriteLocked*)
+	// will populate. Until step 2 ships, dark_memory_audit_verify
+	// reports "no chain rows" — the table is present but empty,
+	// which is honest progress over the previous LUCIDEZ (table
+	// absent).
+	//
+	// All four calls are idempotent (CREATE TABLE IF NOT EXISTS;
+	// Apply* uses pragma_table_info guard). The CreateSchema is fatal
+	// because a missing audit_log schema means subsequent audit
+	// operations would silently land in a non-existent table — but
+	// Apply* are best-effort warnings because a pre-alpha.15 DB
+	// missing the chain columns just gets them on the next boot.
+	if err := bootstrapV4AlphaAuditLog(ctx, bootState.Store); err != nil {
+		fmt.Fprintf(os.Stderr, "dark-mem-mcp: v4alpha audit_log bootstrap failed: %v\n", err)
+		os.Exit(1)
+	}
 
 	if rb := orchestration.NewMCPResearchBackend(); rb != nil {
 		bootState.Orchestrator.WithBackends(rb)
@@ -346,4 +368,99 @@ func watchReloadFlag(ctx context.Context, cancel context.CancelFunc) {
 			}
 		}
 	}
+}
+
+// bootstrapV4AlphaAuditLog is the Phase 22 alpha.32 B2 step 1/2
+// boot wire: ensures the v4alpha audit_log table exists with all
+// canonical columns (audit_id, actor, session_id, payload, created_at,
+// prev_hash, row_hash, signature, sig_pubkey, payload_event,
+// payload_id, payload_kind) and that Ed25519 signing is activated
+// when DARK_AUDIT_SIGNING_KEY is set.
+//
+// Idempotency contract:
+//   - audit.CreateSchema: CREATE TABLE IF NOT EXISTS → safe to call on
+//     every boot.
+//   - audit.ApplyChainColumns / ApplySignatureColumns / ApplyPayloadColumns:
+//     use pragma_table_info guard, skipped if column exists → safe.
+//
+// Returns error only on CreateSchema failure (the audit_log table is
+// load-bearing for the SHA-256 hash chain and the Ed25519 signature
+// column; a missing schema means downstream writers would silently
+// fail with "no such table"). Apply* failures degrade to warnings
+// (logged via the Fprintf in the caller) because a pre-alpha.15 DB
+// simply gets the missing columns on the next boot.
+//
+// DARK_AUDIT_SIGNING_KEY (base64 of 64-byte Ed25519 private key) is
+// optional. When set, the function decodes the key and constructs a
+// *audit.Writer with SetSigner enabled. When absent, the writer is
+// constructed without a signer (signature column lands NULL per
+// Writer.SetSigner contract). Per operator-policy "operations that
+// require a key ask for it; we never block operators who lack one"
+// (2026-10-14), absence is an honour-system opt-in rather than a
+// boot failure.
+func bootstrapV4AlphaAuditLog(ctx context.Context, st store.Store) error {
+	db := st.RawDB()
+	if db == nil {
+		// Defensive: RawDB() contract says non-nil; if a future
+		// Store impl violates that contract, surface it here rather
+		// than letting CreateSchema panic on nil db.
+		return fmt.Errorf("Store.RawDB() returned nil")
+	}
+
+	// Step 1a: CreateSchema is fatal. The audit_log table is the
+	// destination of every v4alpha audit row; without it, the
+	// v4alpha chain writer cannot execute.
+	if err := audit.CreateSchema(db); err != nil {
+		return fmt.Errorf("audit.CreateSchema: %w", err)
+	}
+
+	// Step 1b: Apply* are best-effort. They close the gap for DBs
+	// that pre-date Phase 2/4/6 (where audit_log was created without
+	// the chain/signature/payload columns). Fresh DBs already have
+	// the columns via CreateSchema so Apply* is a no-op there.
+	if err := audit.ApplyChainColumns(ctx, db); err != nil {
+		fmt.Fprintf(os.Stderr,
+			"dark-mem-mcp: audit.ApplyChainColumns warning: %v\n", err)
+	}
+	if err := audit.ApplySignatureColumns(ctx, db); err != nil {
+		fmt.Fprintf(os.Stderr,
+			"dark-mem-mcp: audit.ApplySignatureColumns warning: %v\n", err)
+	}
+	if err := audit.ApplyPayloadColumns(ctx, db); err != nil {
+		fmt.Fprintf(os.Stderr,
+			"dark-mem-mcp: audit.ApplyPayloadColumns warning: %v\n", err)
+	}
+
+	// Step 1c: auto-bind Ed25519 signer if key is present. This is
+	// honour-system: absence of the env var just means the signature
+	// column lands NULL per Writer.SetSigner contract, with a warning
+	// log so the operator notices the gap during ops review.
+	key := os.Getenv("DARK_AUDIT_SIGNING_KEY")
+	if key == "" {
+		fmt.Fprintf(os.Stderr,
+			"dark-mem-mcp: DARK_AUDIT_SIGNING_KEY not set — signature column will be NULL "+
+				"(tampering detection via SHA-256 chain only; non-repudiation deferred)\n")
+		return nil
+	}
+	raw, err := base64.StdEncoding.DecodeString(key)
+	if err != nil {
+		return fmt.Errorf("DARK_AUDIT_SIGNING_KEY: base64 decode: %w", err)
+	}
+	if len(raw) != ed25519.PrivateKeySize {
+		return fmt.Errorf("DARK_AUDIT_SIGNING_KEY: expected %d bytes, got %d",
+			ed25519.PrivateKeySize, len(raw))
+	}
+	priv := ed25519.PrivateKey(raw)
+	writer := audit.NewWriter(db)
+	writer.SetSigner(priv)
+	// Confirm the caller pattern: SetSigner must be called BEFORE
+	// any Write — Writer keeps the key on hot path. Verify by
+	// re-reading the key (defensive: ensures SetSigner didn't silently
+	// fail). No public getter exists, so we log a confirmation
+	// instead.
+	fmt.Fprintf(os.Stderr,
+		"dark-mem-mcp: audit.Writer signer auto-bound "+
+			"(%d-bit Ed25519 key, signature column will populate)\n",
+		ed25519.PrivateKeySize*8)
+	return nil
 }

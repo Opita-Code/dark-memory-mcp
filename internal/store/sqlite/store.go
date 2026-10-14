@@ -448,6 +448,12 @@ func (s *Store) Close() error {
 func (s *Store) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
 func (s *Store) DriverName() string             { return string(store.DriverSQLite) }
 
+// RawDB exposes the underlying *sql.DB so the boot path can construct
+// v4alpha subsystems (e.g., v4alpha/audit.Writer for Phase 22 alpha.32
+// B2 cut-over). See store.Store.RawDB for the interface contract —
+// the returned handle MUST NOT be closed by the caller.
+func (s *Store) RawDB() *sql.DB { return s.db }
+
 // ----- migrations -----
 
 func (s *Store) Migrate(ctx context.Context) error {

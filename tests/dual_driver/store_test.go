@@ -1218,6 +1218,31 @@ func runContract(t *testing.T, ctx context.Context, s store.Store, label string)
 				label, gotMiss)
 		}
 	})
+
+	// --- Phase 22 alpha.32 B2 — Store.RawDB() ---
+	// The interface historically hid *sql.DB (legacy_main.go:112
+	// "deliberately hides *sql.DB"); Chunk 8.1.1 (or a later
+	// alpha.20 chunk, per legacy_main.go:117 comment) was the planned
+	// escape hatch, first implemented in Phase 22 alpha.32 to enable
+	// the audit.CreateSchema + audit.Writer wire in legacy_main.go.
+	// Contract: RawDB() returns non-nil for both SQLite (returns the
+	// existing s.db) and Postgres (parallels a *sql.DB via
+	// sql.Open("pgx", dsn)). Postgres override documented in
+	// internal/store/postgres/store.go.
+	t.Run(fmt.Sprintf("%s/RawDB_returns_non_nil", label), func(t *testing.T) {
+		rawDB := s.RawDB()
+		if rawDB == nil {
+			t.Errorf("%s: Store.RawDB() returned nil; expected non-nil *sql.DB", label)
+		}
+		// Round-trip sanity: Ping the returned handle (forces
+		// connection setup lazy). For Postgres, this exercises the
+		// parallel-pool bridge.
+		pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		if err := rawDB.PingContext(pingCtx); err != nil {
+			t.Errorf("%s: Store.RawDB().Ping failed: %v", label, err)
+		}
+	})
 }
 
 // TestSQLiteConstitutionWatchdogMigration exercises the Wave INFRA-003 v2

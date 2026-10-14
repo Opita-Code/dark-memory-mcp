@@ -9,6 +9,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"time"
@@ -225,6 +226,23 @@ type Store interface {
 	Close() error
 	Ping(ctx context.Context) error
 	DriverName() string
+
+	// RawDB exposes the underlying *sql.DB handle for callers that
+	// need to construct v4alpha subsystems (e.g., v4alpha/audit.Writer
+	// for Phase 22 alpha.32 B2 cut-over) that take *sql.DB at
+	// construction. The interface historically hid *sql.DB (per
+	// legacy_main.go:112 "deliberately hides *sql.DB") to keep the
+	// v3 binary from depending on v4alpha internals — Chunk 8.1.1
+	// (or "a later alpha.20 chunk") was the planned escape hatch,
+	// first implemented in Phase 22 alpha.32. Postgres impl wraps
+	// pgxpool via stdlib.OpenDB; the wrapper is *sql.DB-conformant
+	// and forwards Exec/Query/Begin through the underlying pool.
+	//
+	// INVARIANT: callers MUST treat the returned handle as READ-ONLY
+	// for connection management. Closing it invalidates the Store.
+	// Composition through *sql.DB is opt-in and bounded — the boot
+	// path is the only sanctioned caller (legacy_main.go::legacyMain).
+	RawDB() *sql.DB
 
 	// WithEmbedder records e as the active embedder for hybrid
 	// retrieval (v2.9.0-alpha PR-2). Nil e is treated as

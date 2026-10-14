@@ -67,6 +67,7 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 	"github.com/dark-agents/dark-memory-mcp/internal/vibeflow"
 	"github.com/jackc/pgx/v5"
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -327,6 +328,12 @@ type Store struct {
 	pool   *pgxpool.Pool
 	cfg    store.Config
 	canary *safety.Holder
+
+	// rawDB lazily wraps pgxpool as *sql.DB so the boot path can
+	// construct v4alpha subsystems (e.g., v4alpha/audit.Writer) that
+	// require the database/sql interface. nil until first RawDB call;
+	// set once and reused.
+	rawDB *sql.DB
 
 	// activeProject (INV-7): every read/write is tagged with this
 	// project_id; the migration v7 RLS policies enforce the filter at
@@ -1053,6 +1060,42 @@ func (s *Store) Close() error {
 }
 func (s *Store) Ping(ctx context.Context) error { return s.pool.Ping(ctx) }
 func (s *Store) DriverName() string             { return string(store.DriverPostgres) }
+
+// RawDB exposes a *sql.DB so the boot path can construct v4alpha
+// subsystems (e.g., v4alpha/audit.Writer for Phase 22 alpha.32 B2
+// cut-over) that take *sql.DB at construction. The interface historically
+// hid *sql.DB to keep the v3 binary from depending on v4alpha internals
+// (legacy_main.go:112 "deliberately hides *sql.DB"). Chunk 8.1.1 (or
+// "a later alpha.20 chunk") was the planned escape hatch; first
+// implemented in Phase 22 alpha.32.
+//
+// IMPLEMENTATION NOTE: pgx/v5/stdlib does NOT expose a wrapper for an
+// existing *pgxpool.Pool (stdlib.OpenDB takes *pgx.ConnConfig, not a
+// pool). The cleanest path that conforms to the *sql.DB shape is
+// `sql.Open("pgx", dsn)` — the "pgx" driver is registered by an init()
+// in pgx/v5/stdlib when that package is blank-imported. This yields a
+// *sql.DB with an independent connection lifecycle (separate pool, same
+// DSN). For audit-only traffic the overhead is negligible. Future
+// optimization: pgx upstream may add a pool-to-sql.DB bridge — when it
+// does, swap the cache assignment below for the bridge.
+func (s *Store) RawDB() *sql.DB {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.rawDB == nil {
+		db, err := sql.Open("pgx", s.cfg.DSN)
+		if err != nil {
+			// sql.Open does not actually connect (lazy) so err is
+			// only returned for malformed driver names. Treat as
+			// configuration error and surface through zero-value
+			// handle — caller will hit a connection error on first
+			// use, which is more diagnosable than nil-from-here.
+			s.rawDB = nil
+		} else {
+			s.rawDB = db
+		}
+	}
+	return s.rawDB
+}
 
 // ----- migrations -----
 
