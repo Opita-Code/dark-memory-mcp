@@ -3,11 +3,12 @@
 // without an extra require block here).
 module github.com/dark-agents/dark-memory-mcp/cmd/dark-mem-mcp
 
-go 1.25.5
+go 1.26.0
 
 require github.com/dark-agents/dark-memory-mcp v0.0.0
 
 require (
+	cloud.google.com/go/compute/metadata v0.3.0 // indirect
 	github.com/99designs/go-keychain v0.0.0-20191008050251-8e49817e8af4 // indirect
 	github.com/99designs/keyring v1.2.2 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
@@ -32,6 +33,7 @@ require (
 	github.com/spf13/cast v1.7.1 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	golang.org/x/crypto v0.27.0 // indirect
+	golang.org/x/oauth2 v0.37.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.44.0 // indirect
 	golang.org/x/term v0.24.0 // indirect

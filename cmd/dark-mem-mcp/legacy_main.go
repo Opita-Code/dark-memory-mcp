@@ -20,9 +20,11 @@ import (
 	"os"
 	"os/signal"
 	"runtime/debug"
+	"strconv"
 	"syscall"
 	"time"
 
+	"github.com/dark-agents/dark-memory-mcp/cmd/dark-mem-mcp/internal/oauth"
 	"github.com/dark-agents/dark-memory-mcp/internal/drift"
 	"github.com/dark-agents/dark-memory-mcp/internal/embedder"
 	"github.com/dark-agents/dark-memory-mcp/internal/errorobs"
@@ -187,6 +189,26 @@ func legacyMain() {
 		fmt.Fprintf(os.Stderr, "dark-mem-mcp: tools.RegisterAll failed: %v\n", err)
 		os.Exit(1)
 	}
+
+	// Phase 23 (Sesión 6): OAuth self-auth foundation. Users
+	// authenticate with their own Google/HuggingFace account via
+	// OAuth 2.0 + PKCE so the operator never has to provision shared
+	// keys. Tokens are persisted to the OS keyring; env-var fallback
+	// for headless deployments. 4 new canonical tools added
+	// (judge_options, oauth_connect, oauth_status, oauth_disconnect).
+	oauthPort := oauth.DefaultCallbackPort
+	if p := os.Getenv("DARK_OAUTH_CALLBACK_PORT"); p != "" {
+		if v, err := strconv.Atoi(p); err == nil && v > 0 {
+			oauthPort = v
+		}
+	}
+	oauthKs, err := oauth.OpenKeystore(oauth.KeyringConfig{Service: "dark-memory-mcp/oauth"})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "dark-mem-mcp: oauth keystore open failed (continuing with env-var fallback): %v\n", err)
+	}
+	oauthRouter := oauth.NewRouter(oauthKs, oauthPort)
+	oauth.RegisterOAuth(srv.Registry(), oauthRouter)
+	fmt.Fprintf(os.Stderr, "dark-mem-mcp: OAuth self-auth wired (callback_port=%d, keystore=%v)\n", oauthPort, oauthKs != nil)
 
 	activeSessionResolver := server.NewStoreBackedActiveSessionResolver(
 		server.StoreBackedLookup(bootState.Store),

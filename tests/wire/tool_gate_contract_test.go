@@ -63,6 +63,7 @@ var smokeToolArgs = map[string]map[string]any{
 	"judge_list_personas":  {},
 	"admin_schema_status":  {},
 	"embedder_setup_prompt": {},
+	"judge_options":        {}, // Phase 23 — OAuth discovery, no args required
 }
 
 // smokeSkipTools: statically covered (registry + grant + wire presence)
@@ -71,6 +72,8 @@ var smokeSkipTools = map[string]bool{
 	"judge": true, "consensus": true, "mindset_apply": true, "delegate_intent": true,
 	"research_topic": true, "research_resume_thread": true, "vibe_publish": true,
 	"admin_vacuum": true, "vlp_handle_event": true,
+	// OAuth tools: smoke-skipped (require real OAuth flow); covered statically + dedicated unit tests.
+	"oauth_connect": true, "oauth_status": true, "oauth_disconnect": true,
 	// session lifecycle: smoke-calling close/resurrect/recover with
 	// bogus ids churns the active session or scans the store.
 	"session_close": true, "session_resume": true, "session_heartbeat": true,
