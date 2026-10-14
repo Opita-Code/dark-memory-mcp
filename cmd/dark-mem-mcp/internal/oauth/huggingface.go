@@ -37,11 +37,14 @@ import (
 	"time"
 )
 
-const (
-	hfAuthURL    = "https://huggingface.co/oauth/authorize"
-	hfTokenURL   = "https://huggingface.co/oauth/token"
-	hfDeviceURL  = "https://huggingface.co/oauth/device/code"
-	hfDeviceTokURL = "https://huggingface.co/oauth/device/token"
+// All four endpoints are vars (not const) so tests can swap them
+// for httptest-backed mocks. Production code never reassigns them;
+// tests overwrite them within t.Cleanup-restored scopes.
+var (
+	hfAuthURL       = "https://huggingface.co/oauth/authorize"
+	hfTokenURL      = "https://huggingface.co/oauth/token"
+	hfDeviceURL     = "https://huggingface.co/oauth/device/code"
+	hfDeviceTokURL  = "https://huggingface.co/oauth/device/token"
 )
 
 // HuggingFaceProvider implements OAuth + Device Code Flow for HF Hub.

@@ -208,7 +208,18 @@ func legacyMain() {
 	}
 	oauthRouter := oauth.NewRouter(oauthKs, oauthPort)
 	oauth.RegisterOAuth(srv.Registry(), oauthRouter)
-	fmt.Fprintf(os.Stderr, "dark-mem-mcp: OAuth self-auth wired (callback_port=%d, keystore=%v)\n", oauthPort, oauthKs != nil)
+	// Phase 23 Tier 1 (Sesión 7, 2026-10-14, spec_id 1992): wire
+	// the OAuth resolver into the orchestrator so projects
+	// without NLIConfig get a working defaultDriftJudgeProvider.
+	// The adapter satisfies internal/orchestration.OAuthTokenResolver
+	// via Go's structural typing — no import cycle because the
+	// interface lives in the parent module. Construction is
+	// infallible (NewRouterAdapter never returns nil); if it did,
+	// defaultDriftJudgeProvider's nil-resolver path preserves the
+	// pre-OAuth behavior (Error Observatory ID 526 keeps firing
+	// correctly).
+	bootState.Orchestrator.WithOAuthResolver(oauth.NewRouterAdapter(oauthRouter))
+	fmt.Fprintf(os.Stderr, "dark-mem-mcp: OAuth self-auth wired (callback_port=%d, keystore=%v, default_judge=oauth-backed)\n", oauthPort, oauthKs != nil)
 
 	activeSessionResolver := server.NewStoreBackedActiveSessionResolver(
 		server.StoreBackedLookup(bootState.Store),

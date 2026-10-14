@@ -87,6 +87,22 @@ type Orchestrator struct {
 	nliProvider   nli.Provider
 	nliHTTPClient nli.HFInferenceClient // injectable for tests
 
+	// Phase 23 Tier 1 (Sesión 7, 2026-10-14, spec_id 1992): the
+	// OAuth-backed tier of defaultDriftJudgeProvider. When set,
+	// projects without a Project.NLIConfig get a working judge
+	// path that delegates to the user's own Google or
+	// HuggingFace account (tokens persisted in the OS keyring
+	// via the cmd sub-module's oauth package). nil preserves the
+	// legacy stub behavior so deployments pre-OAuth stay
+	// unaffected.
+	//
+	// The interface lives in this package; the concrete
+	// implementation (RouterAdapter) lives in
+	// cmd/dark-mem-mcp/internal/oauth and is supplied by
+	// legacy_main.go at boot. Go's structural typing makes the
+	// adapter satisfy the interface without an import cycle.
+	OAuthResolver OAuthTokenResolver
+
 	// Phase 14 T-302: LLMJudge (internal/v4alpha/judge/v4judge) is
 	// the primary drift verdict source. When bound, DriftJudge tries
 	// it FIRST; on ErrNoLLMBound / ErrProviderUnavailable /
@@ -270,6 +286,33 @@ func (o *Orchestrator) WithNLIRouter(p nli.Provider) *Orchestrator {
 // NLIConfig JSON column. Tests inject via this setter.
 func (o *Orchestrator) WithLLMJudge(j *v4judge.LLMJudge) *Orchestrator {
 	o.llmJudge = j
+	return o
+}
+
+// WithOAuthResolver attaches an OAuthTokenResolver to the
+// orchestrator. Used by Phase 23 Tier 1 (Sesión 7, 2026-10-14,
+// spec_id 1992): when the active project has no NLIConfig,
+// defaultDriftJudgeProvider uses this resolver to obtain tokens
+// for the user's own Google or HuggingFace account.
+//
+// Nil-safe: when nil, defaultDriftJudgeProvider returns
+// errMissingField with the original message (preserving
+// backward compatibility for Error Observatory ID 526 and
+// pre-OAuth deployments). When non-nil, projects without
+// NLIConfig get a judge path that delegates to user-provisioned
+// OAuth tokens.
+//
+// Production wiring is cmd/dark-mem-mcp/legacy_main.go at boot
+// via oauth.NewRouterAdapter(oauthRouter). Tests inject a stub
+// resolver to exercise the iteration logic without touching the
+// OS keyring.
+//
+// This setter is idempotent — calling it multiple times with the
+// same resolver (or different resolvers across boot retries) is
+// safe. The field is read-only after the first successful drift
+// pipeline step.
+func (o *Orchestrator) WithOAuthResolver(r OAuthTokenResolver) *Orchestrator {
+	o.OAuthResolver = r
 	return o
 }
 
@@ -470,21 +513,88 @@ func (o *Orchestrator) materializeForPublish(ctx context.Context, text, sourceTa
 
 // defaultDriftJudgeProvider builds the fallback NLI Provider used
 // when the project has no NLIConfig (or NLIConfig.Enabled=false).
-// Returns a DeBERTa-only chain with package defaults. The HF API
-// endpoint is read from HUGGINGFACE_TOKEN env var (the operator
-// must supply it for the chain to work).
 //
-// Returns ErrNoLLMAvailable (wrapped) when no token is set — the
-// drift_judge will surface this as verdict=needs_human per the
-// DriftJudge contract.
+// Resolution order (Phase 23 Tier 1, Sesión 7, 2026-10-14,
+// spec_id 1992):
+//
+//  1. If OAuthResolver is nil (legacy deployments before Sesión 7,
+//     or operators who opt out of self-auth), return errMissingField
+//     with the original "no project NLI override registered"
+//     message. This preserves backward compatibility for Error
+//     Observatory ID 526 and any operator who configured
+//     shared-key providers via env vars before OAuth shipped.
+//
+//  2. If OAuthResolver is non-nil, iterate orderedOAuthProviders
+//     (Google first, then HuggingFace). For each provider:
+//
+//		a. Construct an OAuthNLIProvider wrapper.
+//		b. Probe the resolver for a live connection
+//		   (LoadActiveToken). On ErrNoConnection the user has not
+//		   authenticated with this provider — skip to the next.
+//		c. On success, return the wrapper. The first connected
+//		   provider wins (Google is preferred for chat-style
+//		   latency; HuggingFace is the higher-precision fallback).
+//		d. On ErrConnectionExpired, surface an actionable hint to
+//		   the operator via errMissingField — the user must
+//		   reconnect via dark_memory_oauth_connect. This is sticky:
+//		   we don't fall through because the user has not given
+//		   consent to a different provider, and silently switching
+//		   would surprise them.
+//
+//  3. If every provider returned ErrNoConnection (user has not
+//     connected any of them), return errMissingField with an
+//     actionable message pointing the operator at
+//     dark_memory_oauth_connect and docs/oauth-flow.md.
+//
+// The returned nli.Provider is safe for concurrent use; the inner
+// provider is built lazily on first Score() call (not here) so a
+// transient keystore hiccup at boot does not break judgment.
 func (o *Orchestrator) defaultDriftJudgeProvider(ctx context.Context) (nli.Provider, error) {
-	// The default is DeBERTa-v3-large-mnli via the public HF Inference
-	// endpoint. AuthToken is read from the operator's env (HUGGINGFACE_TOKEN
-	// or the canonical alias).
-	// T08 default: no endpoint, no auth token means ErrNoLLMAvailable
-	// which surfaces as verdict=needs_human. The operator can configure
-	// Project.NLIConfig.Primary with a real endpoint to go live.
-	return nil, errMissingField("project.nli_config — no project NLI override registered; configure Project.NLIConfig.Primary.Endpoint + AuthToken")
+	if o.OAuthResolver == nil {
+		// Pre-OAuth deployments. Preserves the original error so
+		// Error Observatory ID 526 keeps firing for projects that
+		// had no NLIConfig before Sesión 7.
+		return nil, errMissingField("project.nli_config — no project NLI override registered; configure Project.NLIConfig.Primary.Endpoint + AuthToken, or wire OAuth via WithOAuthResolver at boot")
+	}
+
+	var lastErr error
+	for _, name := range orderedOAuthProviders {
+		wrapper, err := NewOAuthNLIProvider(o.OAuthResolver, name, nil)
+		if err != nil {
+			// Construction error (unknown provider, nil
+			// resolver). Skip this entry; record the error so
+			// the "all providers exhausted" message can surface
+			// it for debugging.
+			lastErr = err
+			continue
+		}
+		if _, _, _, err := o.OAuthResolver.LoadActiveToken(ctx, name); err != nil {
+			switch {
+			case errors.Is(err, ErrNoConnection):
+				// This provider has no user. Fall through to
+				// the next one (which is the design — user
+				// might have connected only HuggingFace).
+				continue
+			case errors.Is(err, ErrConnectionExpired):
+				// This provider has a connection but the token
+				// expired and there's no refresh_token. The
+				// user must reconnect. Do NOT fall through to a
+				// different provider — that would be a silent
+				// surprise (the user expects THEIR provider to
+				// answer).
+				return nil, errMissingField(fmt.Sprintf("oauth.%s — connection expired; reconnect via dark_memory_oauth_connect (or via docs/oauth-flow.md)", name))
+			}
+			// Other resolver error (transport blip, keystore
+			// I/O). Record and try the next provider.
+			lastErr = err
+			continue
+		}
+		return wrapper, nil
+	}
+	if lastErr != nil {
+		return nil, errMissingField(fmt.Sprintf("oauth.resolver — no judge provider available, last error: %v; use dark_memory_oauth_connect to authenticate", lastErr))
+	}
+	return nil, errMissingField("oauth.resolver — no judge provider configured. Use dark_memory_oauth_connect to authenticate with Google Gemini or HuggingFace Hub. See docs/oauth-flow.md for setup.")
 }
 
 // ensureLLMSelector lazily returns the LLM selector.

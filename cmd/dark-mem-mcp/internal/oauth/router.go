@@ -11,7 +11,15 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/dark-agents/dark-memory-mcp/internal/orchestration"
 )
+
+// orchestrationErr is a short alias to keep the imports section
+// readable. We import internal/orchestration for the sealed error
+// sentinels (ErrNoConnection, ErrConnectionExpired) that the
+// parent module's OAuthTokenResolver interface contract returns
+// from LoadActiveToken. See internal/orchestration/oauth_resolver.go.
 
 // Router is the central OAuth coordinator.
 type Router struct {
@@ -273,4 +281,121 @@ func providerInfo(p Provider, status ConnectionStatus) ProviderInfo {
 		}
 	}
 	return ProviderInfo{Provider: p, Status: status}
+}
+
+// displayNameFor returns the human-friendly provider name from
+// providerInfo. Used by RouterAdapter.ProviderDisplayName to
+// satisfy the parent module's OAuthTokenResolver interface.
+func displayNameFor(p Provider) string {
+	return providerInfo(p, StatusDisconnected).DisplayName
+}
+
+// endpointForModel returns the base endpoint + canonical model id
+// for the provider, looked up from providerInfo. Used by
+// RouterAdapter.LoadActiveToken so the caller (Judge pipeline)
+// knows where to direct HTTP calls and which model to populate
+// in the request payload.
+func endpointForModel(p Provider) (endpoint, model string) {
+	info := providerInfo(p, StatusConnected)
+	return info.Endpoint, info.Model
+}
+
+// LoadActiveToken returns a fresh, non-expired access_token for
+// the given provider along with the endpoint + model the caller
+// should target. The accessor transparently refreshes expired
+// tokens when a refresh_token is available, persisting the new
+// TokenSet via the keystore before returning.
+//
+// This is the Tier 1 self-auth load-bearing primitive: every
+// drift_judge call into the OAuth path goes through here. It is
+// invoked by RouterAdapter.LoadActiveToken (the implementation
+// of the parent module's OAuthTokenResolver interface) which
+// sits in front of OAuthNLIProvider.Score.
+//
+// Errors (sealed):
+//   - ErrNoConnection: no token persisted. The user has not
+//     connected yet (or disconnected recently). Callers
+//     typically skip the provider.
+//   - ErrConnectionExpired: token persisted but past its
+//     expiry and no refresh_token is available. The user MUST
+//     reconnect. Surfaced to the operator as an actionable
+//     error — never silently retried.
+//   - Other: transport, keystore, or refresh-endpoint failure;
+//     wrapped with context.
+//
+// Endpoint semantics:
+//   - google       -> https://generativelanguage.googleapis.com/v1beta
+//   - huggingface  -> https://api-inference.huggingface.co
+//
+// These are the BASE endpoints. Callers (OAuthNLIProvider) append
+// the per-protocol path (/openai/chat/completions for Gemini,
+// /models/<model> for HF DeBERTa).
+func (r *Router) LoadActiveToken(ctx context.Context, p Provider) (accessToken, endpoint, model string, err error) {
+	ts, found, err := r.keystore.LoadToken(p)
+	if err != nil {
+		return "", "", "", fmt.Errorf("oauth: load token from keystore: %w", err)
+	}
+	if !found {
+		return "", "", "", orchestration.ErrNoConnection
+	}
+	if ts.IsExpired() {
+		// Try a refresh before giving up. This is the only path
+		// that keeps long-lived deployments working without user
+		// intervention: Google rotates access_tokens every ~1h,
+		// and HF rotates them similarly. Without auto-refresh,
+		// every judgment would need a manual reconnect every hour.
+		if !ts.CanRefresh() {
+			return "", "", "", orchestration.ErrConnectionExpired
+		}
+		refreshed, refreshErr := r.refresh(ctx, p, ts)
+		if refreshErr != nil {
+			// Refresh failed (revoked refresh_token, network blip,
+			// provider outage). Surface the failure with context
+			// so the operator knows the user must reconnect.
+			return "", "", "", fmt.Errorf("oauth: refresh token for %s: %w", p, refreshErr)
+		}
+		ts = refreshed
+		// Persist the refreshed token so subsequent calls don't
+		// hit the provider again. Best-effort; if the keystore
+		// write fails we still return the new token (caller can
+		// use it once; next call will refresh again).
+		if saveErr := r.keystore.SaveToken(p, ts); saveErr != nil {
+			return ts.AccessToken, "", "", fmt.Errorf("oauth: persist refreshed token: %w", saveErr)
+		}
+	}
+	endpoint, model = endpointForModel(p)
+	return ts.AccessToken, endpoint, model, nil
+}
+
+// refresh dispatches the refresh call to the per-provider
+// implementation. Returns the new TokenSet (with refreshed
+// access_token + possibly rotated refresh_token). On error the
+// TokenSet is zero-valued and the err explains why.
+//
+// We pass the original scopes (preserved from the keystore) so
+// the refreshed token requests exactly what the user originally
+// approved. Adding scopes would silently require re-consent on
+// the provider's side.
+func (r *Router) refresh(ctx context.Context, p Provider, ts TokenSet) (TokenSet, error) {
+	scopes := ts.Scopes
+	if len(scopes) == 0 {
+		// Fallback to defaults if scopes were lost (older
+		// keystore entries without the field).
+		switch p {
+		case ProviderGoogle:
+			scopes = DefaultGoogleScopes()
+		case ProviderHuggingFace:
+			scopes = DefaultHuggingFaceScopes()
+		}
+	}
+	switch p {
+	case ProviderGoogle:
+		g := NewGoogleProvider("")
+		return g.Refresh(ctx, ts.RefreshToken, scopes)
+	case ProviderHuggingFace:
+		hf := NewHuggingFaceProvider("")
+		return hf.Refresh(ctx, ts.RefreshToken, scopes)
+	default:
+		return TokenSet{}, fmt.Errorf("oauth: refresh unsupported for provider %q", p)
+	}
 }
