@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: CC-BY-NC-4.0 -->
+<!-- Copyright (c) 2026 Opita Code / Juan Nicolas Urrutia Salcedo -->
+<!-- Licensed under CC-BY-NC-4.0. See ./LICENSE for full terms. -->
 # SPEC-vibe-loop-git-v0.2-loop-1 — Context Engineering Strategies
 
 **Status**: Loop 1 OSINT + spec + artifact (provisional)

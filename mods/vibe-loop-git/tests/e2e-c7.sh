@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: CC-BY-NC-4.0
+# Copyright (c) 2026 Opita Code / Juan Nicolas Urrutia Salcedo
+# Licensed under CC-BY-NC-4.0. See ./LICENSE for full terms.
 #!/usr/bin/env bash
 # e2e test for C7 (multi) — verifies sub-router + coherence + parallel
 set -e

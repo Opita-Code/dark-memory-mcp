@@ -1,4 +1,5 @@
 {
+  "license": "CC-BY-NC-4.0",
   "$schema": "https://opitacode.com/schemas/c7-subrouter-v0.2.json",
   "version": "0.2.0",
   "loop": 3,

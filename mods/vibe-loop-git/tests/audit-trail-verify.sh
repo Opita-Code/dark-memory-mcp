@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: CC-BY-NC-4.0
+# Copyright (c) 2026 Opita Code / Juan Nicolas Urrutia Salcedo
+# Licensed under CC-BY-NC-4.0. See ./LICENSE for full terms.
 #!/usr/bin/env bash
 # vibe-loop-git audit-trail verifier
 # Asserts LOCAL-ONLY discipline: no remote tags, no git push traces.

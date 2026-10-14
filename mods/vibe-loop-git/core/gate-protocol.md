@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: CC-BY-NC-4.0 -->
+<!-- Copyright (c) 2026 Opita Code / Juan Nicolas Urrutia Salcedo -->
+<!-- Licensed under CC-BY-NC-4.0. See ./LICENSE for full terms. -->
 # Vibe-Flow Prompt Template (injected at session_start by opencode adapter)
 
 **Status**: Loop 7 artifact #2 of 4 (alpha.30-vibe-loop-git-v0.2.0-pre2)

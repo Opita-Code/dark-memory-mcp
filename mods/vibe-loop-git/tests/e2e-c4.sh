@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: CC-BY-NC-4.0
+# Copyright (c) 2026 Opita Code / Juan Nicolas Urrutia Salcedo
+# Licensed under CC-BY-NC-4.0. See ./LICENSE for full terms.
 #!/usr/bin/env bash
 # e2e test for C4 (research) — verifies tier-1 + corrections discipline
 set -e

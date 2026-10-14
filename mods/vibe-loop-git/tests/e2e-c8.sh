@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: CC-BY-NC-4.0
+# Copyright (c) 2026 Opita Code / Juan Nicolas Urrutia Salcedo
+# Licensed under CC-BY-NC-4.0. See ./LICENSE for full terms.
 #!/usr/bin/env bash
 # tests/e2e-c8.sh — E2E smoke for vibe-loop-git Loop 7 (vibe-flow mode, C8).
 #

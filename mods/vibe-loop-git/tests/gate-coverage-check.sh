@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: CC-BY-NC-4.0
+# Copyright (c) 2026 Opita Code / Juan Nicolas Urrutia Salcedo
+# Licensed under CC-BY-NC-4.0. See ./LICENSE for full terms.
 #!/usr/bin/env bash
 # tests/gate-coverage-check.sh — verifies that every tool name in the gate-trigger-matrix.json
 # actually exists in the dark-memory-mcp registry at the current version.

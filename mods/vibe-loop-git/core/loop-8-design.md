@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: CC-BY-NC-4.0 -->
+<!-- Copyright (c) 2026 Opita Code / Juan Nicolas Urrutia Salcedo -->
+<!-- Licensed under CC-BY-NC-4.0. See ./LICENSE for full terms. -->
 # Loop 8 Design — <5min Mitigation
 
 **Status**: DRAFT (2026-10-08, opita-ai, session=sess-abf1c398ce86a16b)

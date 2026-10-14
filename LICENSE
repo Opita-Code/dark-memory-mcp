@@ -19,3 +19,24 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+--------------------------------------------------------------------
+
+DUAL-LICENSING NOTICE (added 2026-10-14, atomic mirror pending):
+
+This repository contains code under multiple licenses:
+
+  1. The PARENT REPOSITORY (everything outside `mods/`, and other
+     `mods/` subdirectories unless they declare otherwise) is licensed
+     under the MIT License (terms above).
+
+  2. `mods/vibe-loop-git/` is licensed under the Creative Commons
+     Attribution-NonCommercial 4.0 International License (CC BY-NC 4.0).
+     See `mods/vibe-loop-git/LICENSE` for full terms. This dual-licensing
+     coexistence was introduced by operator decision on 2026-10-14.
+
+  3. Other subdirectories may carry their own LICENSE files; if present,
+     those files govern.
+
+For the high-level overview of licensing across the repository, see
+[`NOTICE.md`](./NOTICE.md) at the repo root.

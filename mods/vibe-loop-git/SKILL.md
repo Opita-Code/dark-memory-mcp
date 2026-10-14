@@ -1,5 +1,10 @@
+<!-- SPDX-License-Identifier: CC-BY-NC-4.0 -->
+<!-- Copyright © 2026 Opita Code / Juan Nicolás Urrutia Salcedo -->
+<!-- Licensed under CC-BY-NC-4.0. See ./LICENSE for full terms. -->
+
 ---
 name: vibe-loop-git
+license: CC-BY-NC-4.0
 description: |
   The vibe-loop protocol packaged as a dark-memory companion mod. Encodes
   a 13-loop OSINT-first workflow that turns any artifact (code, text,
