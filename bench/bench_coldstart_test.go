@@ -65,9 +65,8 @@ func binPath(b *testing.B) string {
 // dark-mem-mcp binary, from process exec until the binary's first
 // stdout line. This includes:
 //   - Go runtime startup (~50-200ms on Windows)
-//   - dark-mem-mcp-supervisor.exe parent fork (if applicable)
-//   - dark-mem-mcp.exe child boot (server.New → Boot)
-//   - All 15 boot phases from legacy_main.go:48 to :230
+//   - dark-mem-mcp.exe boot (server.New → Boot)
+//   - All 16 boot phases from legacy_main.go:48 to :230
 //
 // It does NOT measure MCP handshake latency (that's
 // BenchmarkMCPInitialize) or first-tool-call latency (that's

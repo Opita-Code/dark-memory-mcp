@@ -4,12 +4,16 @@
 > `feat/v4-redesign` (or any branch) who needs to swap
 > `bin/dark-mem-mcp.exe` mid-session without `taskkill /IM opencode.exe`.
 >
-> **Status (alpha.21, 2026-10-02)**: procedure VERIFIED via the
-> Phase 10 B-rev1 deploy test. The previous v3-binary-only
-> procedure required an opencode restart every time. The
-> `watchReloadFlag` handler (added in Chunk 10.1) makes the
-> file-flag trigger work, and the harness's single-respawn
-> fallback is now sufficient for normal deploys.
+> **Status (alpha.32, 2026-10-14)**: procedure v2-compliant.
+> opencode v2.0+ (current local default v2.0.28) auto-respawns
+> MCP servers natively — the supervisor wrapper from Chunk 10.2
+> (Phase 10 alpha.21, 2026-10-03) was RETIRED on 2026-10-14 per
+> Phase 22 alpha.32 B2 architectural cleanup (row 2703 SOTA,
+> row 2394 superseded). The `watchReloadFlag` handler is still
+> functional and useful, but the supervisor wrapper that
+> mediated respawn is no longer required. See §6.5 (retired)
+> and §8 (retired LUCIDEZ) for the historical opencode v1
+> context.
 
 ## 0. Five-minute overview
 
@@ -32,24 +36,28 @@ operator, depending on the call).
 
 ## 1. The harness constraint (READ THIS FIRST)
 
-The opencode harness's behavior on MCP `local` death, as
-empirically observed in the Phase 10 deploy test (2026-10-02):
+The harness behavior on MCP `local` death, as observed in the
+deploy tests (2026-10-02 — 2026-10-14):
 
-| Death scenario | Harness behavior |
-|---|---|
-| First death | Respawn 1x. New PID. |
-| Respawn fails (PID stuck in 70KB RAM, no DB load) | Harness marks the MCP as "dead" and **DOES NOT retry**. |
-| Operator closes and reopens opencode window | Full re-init. Harness re-reads `opencode.jsonc` and respawns all enabled MCPs. |
+| Harness version | Death scenario | Harness behavior |
+|---|---|---|
+| opencode v1.x | First death | Respawn 1x. New PID. |
+| opencode v1.x | Respawn fails | Harness marks MCP as "dead", **DOES NOT retry**. *(Motivated the supervisor wrapper, retired 2026-10-14 per row 2703.)* |
+| **opencode v2.0+** *(local default)* | First death | **Auto respawn indefinitely.** No supervisor needed. |
+| opencode v2.0+ | Operator closes/reopens window | Full re-init. Harness re-reads `opencode.jsonc` and respawns all enabled MCPs. |
 
-**Implication**: if the first respawn fails, you MUST restart
-opencode to recover. The `watchReloadFlag` handler in Chunk 10.1
-is designed to make the first respawn succeed (the new binary is
-at the canonical path, well-formed, and starts cleanly).
+**Implication (opencode v2+)**: the `watchReloadFlag` handler in
+Chunk 10.1 still works (the binary detects the flag, closes stdin,
+exits gracefully) but on **v2 the harness handles respawn
+natively** — no supervisor wrapper required. The supervision
+remains the harness's responsibility.
 
-`dark-copilot` has a different respawn policy
-(`auto_relaunch_on_browser_death`) — it retries indefinitely.
-`dark-memory` does NOT have that flag. The deploy procedure
-below assumes a successful first respawn.
+The deploy procedure below assumes opencode v2+. If you must
+target v1, see §6.5 (retired) for the supervisor pattern.
+
+`dark-copilot` has its own respawn policy
+(`auto_relaunch_on_browser_death`) — it retries indefinitely on
+all harness versions. `dark-memory` does not need that flag on v2.
 
 ## 2. The 6-step deploy procedure
 
@@ -187,82 +195,22 @@ production), the next iteration (alpha.22+) can implement
 Windows-compatible in-place re-exec via `os.StartProcess` +
 explicit handle inheritance. Out of scope for Chunk 10.1.
 
-### 6.5 The supervisor wrapper (Chunk 10.2) — solves the harness respawn limit
+### 6.5 RETIRED (2026-10-14) — The supervisor wrapper (Chunk 10.2)
 
-The Phase 10 deploy test (2026-10-03, fresh state, no orphans)
-proved the in-binary watcher works but the harness still does
-NOT respawn reliably:
+> **Status**: RETIRED. The supervisor `cmd/dark-mem-mcp-supervisor/`
+> has been removed from the repo (commit pending in Phase 22
+> alpha.32 B2). The wrapper was a workaround for opencode v1.x
+> which gave up after one failed respawn. opencode v2.0+
+> (current local default: v2.0.28) auto-respawns MCP servers
+> natively — no wrapper needed. See dark-memory row 2703 for
+> the SOTA research; row 2394 was the supervisor decision now
+> marked superseded.
 
-```
-fresh PID 7412 (post-fix binary)
-  → touch bin/dark-mem-mcp.exe.reload
-  → watcher fires within 2s, closes stdin
-  → binary exits gracefully (boot.Shutdown defer runs)
-  → harness sees broken pipe
-  → harness's first respawn attempt: FAILS (no clear reason,
-    possibly a race during the brief MCP re-init)
-  → harness marks dark-memory as "dead" for the session
-  → 60s of waiting: 0 new processes, dark-memory tools gone
-```
-
-The opencode harness has no `auto_relaunch_on_browser_death`
-flag (unlike dark-copilot). After the first failed respawn, it
-gives up entirely. This is a harness constraint, not a binary
-bug.
-
-**Solution: a supervisor wrapper process.**
-
-`bin/dark-mem-mcp-supervisor.exe` is a tiny Go program (~3MB)
-that:
-
-1. The harness spawns the wrapper (per `opencode.jsonc` —
-   `command: [.../dark-mem-mcp-supervisor.exe]`).
-2. The wrapper spawns `bin/dark-mem-mcp.exe` as a child with
-   stdio inherited from the wrapper. Go's `os/exec` does this
-   automatically on Windows when `cmd.Stdin/Stdout/Stderr` are
-   set to the parent's.
-3. The harness's stdio pipes connect to the wrapper, which
-   proxies them to the child. MCP `initialize` and `tools/list`
-   work because the proxy is transparent.
-4. When the child exits (e.g., deploy triggered via file-flag
-   watcher), the wrapper detects the exit, logs to stderr,
-   sleeps 1s, and respawns the child with the SAME stdio
-   handles (the wrapper's, which the harness owns).
-5. The harness never sees the child's death — only the
-   wrapper's stable presence. MCP tool calls during the
-   1s backoff + ~3s boot window fail with "EOF" or similar;
-   the LLM operator retries automatically.
-
-**Update `~/.config/opencode/opencode.jsonc`** (already
-applied in this repo, see commit history):
-
-```diff
-"dark-memory": {
-  "type": "local",
-  "command": [
--    "C:/Users/Nico/Documents/dark-memory-mcp/bin/dark-mem-mcp.exe"
-+    "C:/Users/Nico/Documents/dark-memory-mcp/bin/dark-mem-mcp-supervisor.exe"
-  ],
-  ...
-}
-```
-
-**Deployment procedure is unchanged** — the operator still
-touches `bin/dark-mem-mcp.exe.reload`. The watcher in the
-binary fires, closes stdin, exits. The supervisor detects
-the exit and respawns. The harness sees a brief pause (~5s)
-but no death event.
-
-**Trade-off vs. the watcher-only approach**: the supervisor
-adds one level of indirection. The MCP handshake proxies
-through the wrapper. Negligible latency overhead (~10µs per
-stdio syscall). Operationally transparent.
-
-**Bootstrap paradox resolved**: the supervisor doesn't have
-the chicken-and-egg problem that the watcher fix had.
-Operators install the supervisor ONCE (one opencode restart)
-and never need to restart opencode again for binary deploys.
-Subsequent deploys are touch + wait + verify.
+This section is preserved verbatim for the historical record so
+deploy-test write-ups from Phase 10 remain traceable. The
+**current** deploy procedure (v2+) is described in §0–§2 and
+§7. Operators on opencode v1 should upgrade to v2 — the
+supervisor pattern is not restored.
 
 ## 7. Cross-references
 
@@ -274,8 +222,16 @@ Subsequent deploys are touch + wait + verify.
 - `CHANGELOG.md [4.0.0-alpha.21]` — release entry
 - dark-memory row 2378 (Phase 9 alpha.20.1 SUMMARY)
 - dark-memory row 2381+ (Phase 10 Chunk 10.1 deploy procedure atomic mirror — pending)
+- dark-memory row 2394 (Phase 10 Chunk 10.2 supervisor decision — **superseded** by row 2703)
+- dark-memory row 2700 (Phase 22 alpha.32 B2 Sesión 1 SUMMARY — Store.RawDB + audit_log bootstrap)
+- dark-memory row 2703 (Phase 22 alpha.32 B2 Sesión 2 SOTA — opencode v2 + supervisor retirement)
 
-## 8. LUCIDEZ honest disclosure (deploy tests 2026-10-02 + 2026-10-03)
+## 8. RETIRED (2026-10-14) — LUCIDEZ honest disclosure (deploy tests 2026-10-02 + 2026-10-03)
+
+> Both lessons below were specific to opencode v1.x and shaped
+> the supervisor wrapper. opencode v2.0+ auto-respawns MCP
+> servers natively — fixed upstream. See §6.5 retired notice,
+> row 2703 SOTA, row 2394 superseded decision.
 
 ### 8.1 First test (2026-10-02): harness gives up after 1 failed respawn
 

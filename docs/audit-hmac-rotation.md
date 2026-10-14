@@ -101,15 +101,19 @@ Management Cheat Sheet**:
 
 ## Operational constraint: opencode restart required for env changes
 
-The supervisor (`cmd/dark-mem-mcp-supervisor/main.go:109`) inherits
-env from its parent (the harness). The harness sets env only at
-opencode startup. Therefore:
+The harness sets env (DARK_AUDIT_HMAC_KEY, DARK_AUDIT_SIGNING_KEY,
+DARK_DB, etc.) only at opencode startup. Therefore:
 
-- Updating `DARK_AUDIT_HMAC_KEY` in `opencode.jsonc` requires a
-  **full opencode restart** to take effect (NOT a deploy procedure
-  touch+reload — that only cycles the binary, not the env).
+- Updating `DARK_AUDIT_HMAC_KEY` (or any env var) in `opencode.jsonc`
+  requires a **full opencode restart** to take effect (NOT a deploy
+  procedure touch+reload — that only cycles the binary, not the env).
 - The deploy procedure (touch `bin/dark-mem-mcp.exe.reload`) is for
   binary code changes only.
+- **Phase 22 alpha.32 update**: with the supervisor wrapper retired
+  (chunk 10.2 superseded per row 2703), the harness now talks to
+  `dark-mem-mcp.exe` directly. The env inheritance story is unchanged
+  (the harness still sets env at startup) but the IPC layer is one
+  hop fewer.
 
 ## Verification procedure (post-rotation)
 
