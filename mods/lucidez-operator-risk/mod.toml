@@ -16,12 +16,11 @@ constitution_compatibility = ["dark-agents/dark-mem"]
 # El enforcement vive en código (R12 pre-flight, R13 mensajes), no aquí.
 
 [knowledge]
-# Punteros, no contenido (diseño índice + fetch-on-trigger):
-data_sources = [
-  "docs/specs/SPEC-lucidez-rrules.md",
-  "docs/operator-risk-register.md",
-  "docs/specs/SPEC-TEMPLATE.md#9",
-]
+# Intencionalmente vacío: los punteros (SPEC + register) viven en
+# directives/op-risk-index.md, que es lo que el agente lee. Duplicarlos
+# aquí obligaría al loader a resolverlos como archivos dentro del mod
+# (data_sources son paths relativos a mod dir) y rompería el load.
+# Diseño índice + fetch-on-trigger: el índice referencia, no contiene.
 
 [directives]
 prompt_fragments = ["directives/op-risk-index.md"]
