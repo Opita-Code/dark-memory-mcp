@@ -1,0 +1,39 @@
+[meta]
+id = "user/lucidez-operator-risk"
+name = "LUCIDEZ Operator Risk Framework"
+version = "1.0.0"
+author = "nico"
+license = "MIT"
+description = "LUCIDEZ v1.1 R11-R17 como policy: índice siempre-activo (~350 tokens) + contenido bajo demanda. Mitiga riesgos de operador (SHA malformado, path ausente, degradación silenciosa, errores recurrentes) con triggers de fetch, sin expandir superficie canónica."
+homepage = "https://github.com/Opita-Code/dark-memory-mcp"
+tags = ["lucidez", "operator-risk", "governance", "policy", "phase-8"]
+
+[requirements]
+constitution_compatibility = ["dark-agents/dark-mem"]
+
+[capabilities]
+# Sin tools/parsers/backends: este mod es solo directivas + punteros.
+# El enforcement vive en código (R12 pre-flight, R13 mensajes), no aquí.
+
+[knowledge]
+# Punteros, no contenido (diseño índice + fetch-on-trigger):
+data_sources = [
+  "docs/specs/SPEC-lucidez-rrules.md",
+  "docs/operator-risk-register.md",
+  "docs/specs/SPEC-TEMPLATE.md#9",
+]
+
+[directives]
+prompt_fragments = ["directives/op-risk-index.md"]
+
+[activation]
+auto_load = true
+
+[risk]
+# NOTA HONESTA: el enum risk_class se diseñó para red-team
+# (research-only/active-probing/exploit-development), no para gobernanza.
+# Se usan los valores más restrictivos; `risk_class=governance` es
+# follow-up propuesto (toca internal/mods/types.go + validación).
+# Ver SPEC-lucidez-rrules.md §8 Q1.
+risk_class = "research-only"
+target_scope = "local_only"

@@ -138,26 +138,31 @@
 | Local-only policy | YES — no `git push`/`fetch`/`pull`, no remote tags/releases |
 
 ---
-## 1. Tools inventory (73 of 97+, 20 namespaces, schema v32)
+## 1. Tools inventory (78 of 97+, 21 namespaces, schema v32)
 
-**Measured, not declared** (2026-10-08, verified by an in-package probe
+**Measured, not declared** (2026-10-14, verified by an in-package probe
 over `tools.NamespaceGroups()` and `tools.NamespaceCount()`):
 
-- **73 canonical tools** across **20 namespaces**
+- **78 canonical tools** across **21 namespaces**
 - Plus **3 env-gated armed extras** (`DARK_REDTEAM=armed` red-team,
-  federation under `DARK_FEDERATION_PEER_DSN`, and one more) → **76 tools
-  live** when armed. Both numbers are real; 73 is the canonical registry,
-  76 is the maximum reachable surface. Say which one you mean.
+  federation under `DARK_FEDERATION_PEER_DSN`, and one more) → **81 tools
+  live** when armed. Both numbers are real; 78 is the canonical registry,
+  81 is the maximum reachable surface. Say which one you mean.
 - `97+` is the **original aspirational target** from
   `ARCHITECTURE-V4.md §6.3`, not a measurement. The honest ratio is
-  **73/97 ≈ 75%** of the originally-promised surface.
+  **78/97 ≈ 80%** of the originally-promised surface.
+- Surface delta since the 73/20 baseline (2026-10-08): +1 `vibe_compile`
+  in VIBE (Sesión 5bis, commit `c3b0a51`) + new OAUTH namespace with 4
+  (`judge_options`, `oauth_connect`, `oauth_status`, `oauth_disconnect`;
+  Sesión 6, commit `8ed967a`). The freeze test
+  `TestCanonicalOrder_Frozen_78_21_28` pins this surface.
 
 The `~20` remaining tools are tracked as the tail of the 97+ target, not
 as a phase commitment. Per-namespace counts as measured:
 ADMIN 3 · AGENT_BOOTSTRAP 3 · AGENT_MEMORY 13 · CONTEXT 4 · DELEGATION 1 ·
 EMBEDDER 1 · ERROR_OBS 4 · EVENTS 2 · JUDGE 4 · JUDGE_UTIL 7 · L6-VLP 1 ·
-LLM_BIND 2 · LLM_CONFIG 4 · MINDSET 1 · OBSERVABILITY 6 · POLICY 2 ·
-PROJECT 1 · RESEARCH 3 · SESSION 7 · VIBE 4.
+LLM_BIND 2 · LLM_CONFIG 4 · MINDSET 1 · OAUTH 4 · OBSERVABILITY 6 · POLICY 2 ·
+PROJECT 1 · RESEARCH 3 · SESSION 7 · VIBE 5.
 
 > **Historical note:** earlier revisions of this section claimed "57
 > tools" and "alpha.17 registers 46 of those" while the section header

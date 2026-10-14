@@ -148,11 +148,23 @@ func TestCanonicalOrder_WirePrefixConsistent(t *testing.T) {
 // 71 → 73 tools, 19 → 20 namespaces. Schema stays v32 (no further
 // migration; the NLIConfig JSON column added in T-07 already covers
 // the storage shape — T-303 is pure operator wiring).
-func TestCanonicalOrder_Frozen_73_20_28(t *testing.T) {
+//
+// Bumping 73 → 78 (Sesión 5bis + Sesión 6, 2026-10-14, LUCIDEZ R16
+// disclosure): two deliberate surface additions that shipped without
+// updating this freeze (the freeze was red on HEAD until this bump):
+//   (a) Sesión 5bis commit c3b0a51 adds vibe_compile to VIBE
+//       (74th tool; bash compiler for the vibe-loop-git runtime).
+//   (b) Sesión 6 commit 8ed967a adds the OAUTH namespace with 4
+//       tools (judge_options + oauth_connect + oauth_status +
+//       oauth_disconnect) for Tier 0 self-auth.
+// Surface advances 73 → 78 tools, 20 → 21 namespaces. Schema stays
+// v32. Suffix 28 unchanged (meaning per SPEC 1276; not re-derived
+// here — declared unknown per LUCIDEZ R6).
+func TestCanonicalOrder_Frozen_78_21_28(t *testing.T) {
 	const (
-		frozenToolCount      = 73 // 71 (alpha.23 Phase 12 T-105) + 2 from alpha.25 Phase 14 T-303 (LLM_BIND namespace)
-		frozenNamespaceCount = 20 // 19 (alpha.23) + 1 new namespace (LLM_BIND)
-		frozenSchemaVersion  = 32 // v31 = bitemporal_lite; v32 = events_polymorphic (Phase 12 T-101); unchanged by Phase 14
+		frozenToolCount      = 78 // 73 (alpha.25 Phase 14 T-303) + 1 vibe_compile (Sesión 5bis c3b0a51) + 4 OAUTH (Sesión 6 8ed967a)
+		frozenNamespaceCount = 21 // 20 (alpha.25) + 1 new namespace (OAUTH)
+		frozenSchemaVersion  = 32 // v31 = bitemporal_lite; v32 = events_polymorphic (Phase 12 T-101); unchanged since
 	)
 
 	if got := len(CanonicalOrder()); got != frozenToolCount {

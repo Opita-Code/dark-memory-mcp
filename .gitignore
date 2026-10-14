@@ -15,8 +15,13 @@ dev/
 dev/
 
 # mods/ is mostly operator-WIP; whitelist the official vibe-loop-git mod
-mods/
+# + the LUCIDEZ operator-risk governance mod (Sesión 8, spec 1997).
+# NOTE: `mods/*` (contents) instead of `mods/` (directory) so git
+# descends and the ! negations below take effect. Re-including a
+# path under an excluded DIRECTORY is a no-op per gitignore(5).
+mods/*
 !mods/vibe-loop-git/
+!mods/lucidez-operator-risk/
 
 # Build artifacts (bin/ directory holds compiled binaries + operator probe files)
 bin/

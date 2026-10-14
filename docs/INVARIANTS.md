@@ -629,6 +629,53 @@ the test pass + code inspection showed the schema is contentless.
 
 ---
 
+## INV-20 — invalid input creates zero persistent state [`feat/v4-redesign`]
+
+**Statement**: no write path may persist ANY row (spec, artifact,
+drift, memory, audit-adjacent) when its input fails validation.
+Validation is total before the first write; a rejected call returns
+an error and leaves every table exactly as it found them.
+
+**Why**: PublishVibe persisted spec + artifact rows BEFORE the drift
+pipeline failed artifact resolution, so every operator typo
+(malformed SHA, path missing from the SHA) left garbage rows behind
+(production artifacts 1658/1660 + drifts 1585/1587 were pollution,
+not signal; Error Observatory IDs 539/540). The rows were
+indistinguishable from real work in later recalls. The fix is
+ordering, not cleanup: validate resolvability (git pre-flight) after
+cheap field checks and before SaveSpec (LUCIDEZ R12, Sesión 8,
+spec 1997).
+
+**Enforced at**:
+- `internal/orchestration/publish_vibe.go` — `PublishVibe` runs
+  `artifact.PreflightGitRef` for `KindGitSHA` refs between field
+  validation and `SaveSpec`. Invalid ref → `ErrInvalidArgument`
+  with the actionable message; zero writes.
+- `internal/artifact/git_preflight.go` — `PreflightGitRef` is the
+  single source of truth (also used by `resolveGit`'s own error
+  path, so the pre-flight and the resolver can never disagree on
+  what "resolvable" means).
+
+**Defensive tests** (Sesión 8):
+- `TestPublishVibe_Preflight_BadSHACreatesZeroRows` — malformed SHA
+  → error containing the SHA + recovery recipe; spec/artifact
+  counts unchanged.
+- `TestPublishVibe_Preflight_MissingPathCreatesZeroRows` — path
+  absent from SHA → error naming the path; counts unchanged.
+- `TestPublishVibe_Preflight_ValidRefProceeds` — valid ref still
+  persists exactly one spec + one artifact (the gate is not a
+  blanket reject).
+
+**Operator signal**: a rejected publish returns a plain tool error
+(no `spec_id`, no `artifact_id`, no `drift_id`); there is nothing
+to reconcile because nothing was persisted. If a publish returns
+IDs, the ref resolved.
+
+**Source**: Sesión 8 (2026-10-14, spec 1997), LUCIDEZ v1.1 R12.
+Commit citado en el cierre de los errores 539/540 (R15).
+
+---
+
 ## Quick reference: which `Save*` enforces which invariant
 
 | Store method | INV-1 | INV-2 | INV-3 | INV-4 | INV-6 | INV-7 | INV-8 | INV-10 | INV-16 | INV-17 | INV-19 |

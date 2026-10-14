@@ -224,6 +224,29 @@ func (o *Orchestrator) PublishVibe(ctx context.Context, in PublishVibeInput) (*P
 		return nil, store.NewFieldError(store.ErrInvalidArgument, "spec.vibe_case: "+err.Error())
 	}
 
+	// Phase 8 / Sesión 8 (spec 1997, LUCIDEZ R12 no garbage rows):
+	// when the caller anchors drift_judge to a git_sha ref, validate
+	// resolvability BEFORE the first write. PublishVibe used to
+	// persist spec + artifact rows and only then fail resolution in
+	// the drift pipeline, leaving garbage rows behind (artifacts
+	// 1658/1660 + drifts 1585/1587 were pollution from operator
+	// typos: malformed SHAs, paths missing from the SHA). Failing
+	// here means zero persistent state is created for invalid refs.
+	// The error is actionable (received SHA vs HEAD, suggestions,
+	// recovery recipe) via artifact.PreflightGitRef — same helper
+	// the resolver itself uses, single source of truth.
+	if ref := in.Artifact.ArtifactRef; ref != nil && ref.Kind == artifact.KindGitSHA {
+		rep := artifact.PreflightGitRef(ctx, ref.GitRepo, ref.GitSHA, ref.Path, 5)
+		if !rep.Exists {
+			msg := rep.ActionableError
+			if msg == "" {
+				msg = "artifact: pre-flight: unresolvable git_sha ref (no detail available)"
+			}
+			return nil, store.NewFieldError(store.ErrInvalidArgument,
+				"artifact.artifact_ref: "+msg)
+		}
+	}
+
 	// 2. Persist the spec. SaveSpec enforces INV-1 (write_audit) and
 	// INV-7 (project_id tagging) inside the Store layer.
 	now := o.now().Format(time.RFC3339Nano)

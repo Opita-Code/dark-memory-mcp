@@ -303,6 +303,14 @@ func (r *Resolver) resolveFile(ctx context.Context, ref ArtifactRef, cap int) (*
 // pinned commit. The git binary is assumed present in PATH (most dev
 // environments have it; production SST deploys include it). We never
 // touch the working tree because that's mutable.
+//
+// Phase 8 / Sesión 8 (spec 1997, LUCIDEZ R13): when cat-file fails,
+// the error is ACTIONABLE, not generic. We run PreflightGitRef on
+// the same (repo, sha, path) to answer the three questions the
+// operator actually has: (1) is the SHA itself bad? (2) is the SHA
+// stale vs HEAD? (3) did I mean a different path? The pre-flight
+// costs 2-4 extra git calls on the failure path only; the happy
+// path is untouched (single cat-file as before).
 func (r *Resolver) resolveGit(ctx context.Context, ref ArtifactRef, cap int) (*Resolved, error) {
 	cmd := exec.CommandContext(ctx, "git", "cat-file", "-p", ref.GitSHA+":"+ref.Path)
 	if ref.GitRepo != "" {
@@ -313,6 +321,11 @@ func (r *Resolver) resolveGit(ctx context.Context, ref ArtifactRef, cap int) (*R
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
+		rep := PreflightGitRef(ctx, ref.GitRepo, ref.GitSHA, ref.Path, 5)
+		if rep.ActionableError != "" {
+			return nil, fmt.Errorf("%w: %s (git cat-file %s:%s: %v)",
+				ErrUnresolved, rep.ActionableError, ref.GitSHA, ref.Path, err)
+		}
 		return nil, fmt.Errorf("%w: git cat-file %s:%s: %v (stderr: %s)",
 			ErrUnresolved, ref.GitSHA, ref.Path, err, stderr.String())
 	}

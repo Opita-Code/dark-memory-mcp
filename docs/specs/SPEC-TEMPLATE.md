@@ -178,6 +178,24 @@ agent_memory_recall(query="<pregunta concreta de la spec>", operator=<op>)
 
 ---
 
+## §9 LUCIDEZ gate (referencia, no redefinición)
+
+Las fases nuevas REFERENCIAN el estándar, no redefinen reglas.
+Fuente canónica: `docs/specs/SPEC-lucidez-rrules.md` (v1.1, R1–R17).
+Fases cerradas quedan `grandfathered` en su versión; no se reescriben.
+
+Copiar esta tabla al SPEC de fase y marcar por regla:
+
+```markdown
+LUCIDEZ v1.1 __/17 GREEN + __ accepted
+  R__ <estado> → <detalle o accepted: <riesgo>, workaround: <receta>>
+```
+
+Regla del formato: lo único prohibido es un rojo sin disclosure.
+`15/17 + 2 accepted` es verde honesto; `15/17` a secas es rojo.
+
+---
+
 ## Ejemplo: SPEC-001 mínimo
 
 (Ver `docs/decisions/ADR-008-work-standard.md` §8 para el ejemplo vivo
