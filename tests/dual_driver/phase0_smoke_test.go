@@ -104,9 +104,20 @@ func TestPhase0_Smoke_PostgresBoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MigrationStatus: %v", err)
 	}
-	if len(status) < 32 {
-		t.Errorf("MigrationStatus: got %d migration rows want >= 32", len(status))
+	// Migration ROW count is implementation detail: PG and SQLite each
+	// track the highest applied version. The PG DDL has 28 migrations
+	// defined (versions skip 8/19/22/26), all reaching schema_version 32.
+	// Assert that AT LEAST ONE migration reached v32 — the canonical
+	// "we're current" signal — instead of asserting a row count.
+	maxVersion := 0
+	for _, m := range status {
+		if m.Version > maxVersion {
+			maxVersion = m.Version
+		}
+	}
+	if maxVersion < 32 {
+		t.Errorf("MigrationStatus: max version %d want >= 32 (freeze Frozen_78_21_28); %d rows applied", maxVersion, len(status))
 	}
 
-	t.Logf("postgres phase0 smoke OK: schema v%d, %d migration rows applied", v, len(status))
+	t.Logf("postgres phase0 smoke OK: schema v%d (max applied), %d migration rows applied", v, len(status))
 }
