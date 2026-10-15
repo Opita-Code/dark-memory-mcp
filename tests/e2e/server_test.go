@@ -257,6 +257,13 @@ func newTestServer(t *testing.T) *testServer {
 	if err != nil {
 		t.Fatalf("server.New: %v", err)
 	}
+	// B1 fix (2026-10-15): wire the OAuth stub registrar so the
+	// canonical-order check in tools/register.go:319 finds
+	// judge_options + 3 siblings. Production boot uses the real
+	// router-backed registrar at cmd/dark-mem-mcp/legacy_main.go:217;
+	// parent-module tests cannot import the cmd sub-module (Go
+	// layering), so we register stubs with identical canonical names.
+	installOAuthStub(t)
 	if _, err := tools.RegisterAll(srv.Registry(), srv.BootState().Orchestrator, srv.BootState().Store, nil); err != nil {
 		srv.Close()
 		t.Fatalf("RegisterAll: %v", err)
