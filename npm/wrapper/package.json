@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "@opitacode/dark-memory-mcp",
   "version": "4.0.0-alpha.32",
   "description": "dark-memory-mcp cross-platform wrapper Ã¢â‚¬â€ installs the right binary for your OS via optionalDependencies. Persistent memory + vibe-loop engine + agent governance for AI agents (MCP server).",
