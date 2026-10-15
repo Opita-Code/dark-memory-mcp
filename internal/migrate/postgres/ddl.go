@@ -537,7 +537,12 @@ ALTER TABLE projects ADD COLUMN drift_strictness TEXT NOT NULL DEFAULT 'default'
 		Version: 15,
 		Name:    "vlp_state_open_spec_id",
 		Up: `
-ALTER TABLE vlp_state ADD COLUMN open_spec_id BIGINT NOT NULL DEFAULT 0;
+-- Idempotent (B2-D Phase 0, 2026-10-15): v9 already declared
+-- open_spec_id on vlp_state (BIGINT NOT NULL DEFAULT 0). The v15
+-- migration ran without IF NOT EXISTS, so re-booting against a
+-- fresh PG hits "column already exists". Use IF NOT EXISTS so
+-- both fresh DBs and re-boot paths converge.
+ALTER TABLE vlp_state ADD COLUMN IF NOT EXISTS open_spec_id BIGINT NOT NULL DEFAULT 0;
 `,
 	},
 	{
@@ -546,8 +551,16 @@ ALTER TABLE vlp_state ADD COLUMN open_spec_id BIGINT NOT NULL DEFAULT 0;
 		Version: 16,
 		Name:    "constitution_watchdog_audit",
 		Up: `
-ALTER TABLE constitutions ADD COLUMN last_verified_at TIMESTAMP WITH TIME ZONE;
-ALTER TABLE constitutions ADD COLUMN last_verified_sha256 TEXT;
+-- Idempotent (B2-D Phase 0, 2026-10-15): v6 already added
+-- last_verified_at (TEXT) and last_verified_sha256 (TEXT) to
+-- constitutions. v16 wanted TIMESTAMP WITH TIME ZONE for
+-- last_verified_at, but PG's ALTER TYPE on a column with
+-- pre-existing TEXT data would require cast logic. Skip if
+-- already present — the legacy TEXT columns remain. Type
+-- refinement belongs to a Phase 1 follow-up (separate migration
+-- that USES ALTER ... TYPE with USING expression).
+ALTER TABLE constitutions ADD COLUMN IF NOT EXISTS last_verified_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE constitutions ADD COLUMN IF NOT EXISTS last_verified_sha256 TEXT;
 `,
 	},
 	{
