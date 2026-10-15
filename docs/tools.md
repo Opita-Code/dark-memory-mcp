@@ -1,22 +1,19 @@
-# Las 73 herramientas
+# Las 78 herramientas
 
 > **Este archivo no se lee para decidir si instalas.** Se lee para
 > confirmar, *después* de instalar, que lo que tenías delante existe.
 > Para la lista completa con namespaces, tabla compacta y qué herramienta
 > usar en cada momento, sigue aquí.
 
-Dark Memory expone **73 herramientas canónicas** (más 3 extras armados por
-variable de entorno, 76 en total) agrupadas en **20 namespaces**. El agente
+Dark Memory expone **78 herramientas canónicas** (más 3 extras armadas por
+variable de entorno, 81 en total) agrupadas en **21 namespaces**. El agente
 las invoca con el prefijo `dark_memory_`.
 
-Estos 73 son la superficie **canónica medida** en el código. El objetivo
-original de `ARCHITECTURE-V4.md` eran 97+, así que la cifra honesta es
-**73/97 ≈ 75% de la superficie originalmente prometida**, no 100%.
-Estructura agrupada por 20 oficios:
-
-Dark Memory expone **73 herramientas canónicas** (más 3 extras arms por variable de entorno, 76 en total) agrupadas en **20 namespaces**. El agente las invoca con el prefijo `dark_memory_`.
-
-Estos 73 son la superficie **canónica medida** en el código. El objetivo original de `ARCHITECTURE-V4.md` eran 97+, así que la cifra honesta es **73/97 ≈ 75% de la superficie originalmente prometida**, no 100%. Estructura agrupada por 20 oficios:
+Las 78 son la superficie **canónica medida** en el código (fijada por el
+freeze test `TestCanonicalOrder_Frozen_78_21_28`; cualquier alta o baja
+mueve ese test en el mismo commit). La fuente de verdad con el conteo por
+oficio está en [`v4-status.md §1`](v4-status.md#1-tools-inventory-78-canonical-21-namespaces-schema-v32).
+Estructura agrupada por 21 oficios (57 + 21 que antes faltaban aquí):
 
 ### Sesión (7 tools)
 `session_start` · `session_resume` · `session_heartbeat` · `session_status` · `session_close` · `session_recover` · `session_resurrect`
@@ -33,12 +30,54 @@ Buscar en la web y recordar investigaciones previas.
 
 El servidor se documenta a sí mismo. El agente puede leer el manual completo sin docs externos.
 
-### Vibe-loop (4 tools)
-`vibe_spec` · `vibe_publish` · `pipeline_status` · `resolve_drift`
+### Vibe-loop (5 tools)
+`vibe_spec` · `vibe_publish` · `pipeline_status` · `resolve_drift` · `vibe_compile`
 
 Crear promesas, entregar artefactos, verificar drift, aceptar o rechazar.
+`vibe_compile` (Sesión 5bis) compila un spec en el script bash que corre
+las 6 fases del protocolo con gates de aprobación del operador.
 
 > **Nuevo en v2.13.0:** `vibe_publish` y `vibe_spec` ahora avanzan automáticamente la máquina de estados del VLP. El agente ya no necesita llamar `vlp_handle_event` manualmente después de cada entrega.
+
+### OAuth self-auth (4 tools)
+`judge_options` · `oauth_connect` · `oauth_status` · `oauth_disconnect`
+
+El usuario final autentica su propia cuenta (Google, HuggingFace) vía
+OAuth 2.0 + PKCE; el operador no provisiona keys compartidas. Sin conexión,
+el juez devuelve un veredicto accionable que nombra `oauth_connect`.
+Detalle del flujo en [`oauth-flow.md`](oauth-flow.md).
+
+### Eventos (2 tools)
+`event_log` · `event_replay`
+
+Leer y reinyectar el stream polimórfico de eventos (modificaciones +
+progreso, schema v32). Timeline estilo LangFuse.
+
+### Juez determinista (7 tools)
+`judge_util_normalize` · `judge_util_validate_overrides` · `judge_util_pattern_descriptions` · `judge_util_verify` · `judge_util_verify_hash` · `judge_util_trace` · `judge_util_validate_trace`
+
+Las 7 primitivas deterministas que complementan al juez LLM: normalizador,
+validador de overrides, catálogo de patrones, verificación Ed25519 y
+SHA-256, trazas W3C. Funciones puras, sin Store ni fila de auditoría.
+
+### Claves LLM (4 tools)
+`llm_key_add` · `llm_key_list` · `llm_key_remove` · `llm_provider_status`
+
+Keystore de proveedores por proyecto y vista de ruteo (proveedor activo,
+cooldowns, pin `DARK_JUDGE_PROVIDER`).
+
+### Bind de proveedor (2 tools)
+`llm_provider_bind` · `llm_provider_probe`
+
+Persistir el `NLIConfig` del proyecto activo y probar conectividad con un
+ping mínimo. Ninguna de las dos invoca al LLM: son operadores sobre estado
+persistido + tráfico de probe.
+
+### Proyecto (1 tool)
+`project_create`
+
+Crear un proyecto (primitiva de tenencia INV-7; idempotente por
+`project_id`).
 
 ### Contexto (4 tools)
 `artifact_context` · `spec_context` · `session_context` · `recall`

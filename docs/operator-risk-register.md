@@ -14,7 +14,7 @@
 | R3 | Publicar creyendo que el judge ve el tree sucio (`kind: file` sin pin) | latente, sin incidente | 1 | DIFERIDO a Sesión 9: modo `auto` (`kind: head` + clean-tree check) | — | — | accepted (ver disclosure) |
 | R4 | NLIConfig con endpoint/token erróneo | row 1370 / Phase H5 (histórico) | 2+4 | `llm_provider_probe` + mensajes accionables | existentes (probe) | — | mitigated (histórico) |
 | R5 | Token OAuth expirado sin refresh | — (preventivo, Sesión 7) | 3 | `ErrConnectionExpired` sticky + mensaje con `oauth_connect` | `TestOAuthNLIProvider_HandlesConnectionExpired` | — | mitigated (Sesión 7) |
-| R6 | Operar contra binario viejo sin saberlo (73 vs 77 tools) | Sesión 8: live en alpha.31 con Sesión 6/7 dormidas | 4 | check binario-vs-HEAD al abrir sesión (agent config) | manual (health_ping vs rev-parse) | — | mitigated-proceso (Sesión 8) |
+| R6 | Operar contra binario viejo sin saberlo (tag publicado = 73 tools vs HEAD local = 78) | Sesión 8: live en alpha.31 con Sesión 6/7 dormidas; doc-audit 2026-10-15: el check `health_ping.git.commit` vs `rev-parse HEAD` es el que delata al binario stale | 4 | check binario-vs-HEAD al abrir sesión (agent config) | manual (health_ping vs rev-parse) | — | mitigated-proceso (Sesión 8) |
 | R7 | Secretos en env vars plaintext en producción | documentado en `keystore.go` (MUST NOT) | 4 | Solo documentado; sin enforcement | — | — | accepted (ver disclosure) |
 | R8 | `resolve_drift(accept)` a ciegas | anti-patrón #4 del harness | 4 | Solo documentado | — | — | accepted (ver disclosure) |
 | R9 | Sesiones colgadas / `session_start` por turno | `sess-5dbc5f8c22dffbdc` colgada | 4 | Solo documentado | — | — | accepted (ver disclosure) |

@@ -130,35 +130,41 @@
 | Field | Value |
 |---|---|
 | Branch | `feat/v4-redesign` (from `v2.20.0`, NOT from `v3.0-void`) |
-| Last reviewed | **2026-10-09** |
-| Status | **alpha.31** (released as `v4.0.0-alpha.31`) — pre-release. Published to a public repo (MIT). No external consumers yet; the operator reports running this build in daily use since 2026-10-08, so the tag is the first release the maintainer treats as stable. Now distributed: 7/7 npm packages and the MCP Registry entry are live at `4.0.0-alpha.31`. |
+| Last reviewed | **2026-10-15** |
+| Status | **alpha.31** (released as `v4.0.0-alpha.31`) — pre-release. Published to a public repo (MIT). No external consumers yet; the operator reports running this build in daily use since 2026-10-08, so the tag is the first release the maintainer treats as stable. Now distributed: 7/7 npm packages and the MCP Registry entry are live at `4.0.0-alpha.31`. Local HEAD is 7 commits ahead (Sesión 5bis + 6-license + 6-OAuth + 7 + 8 + boot-fix + mod-fix): the next release cuts alpha.32 (unpushed — operator decision). Bare "alpha.32" prose is intentional: the `v`-prefixed tag does not exist yet, and the doc-truth test (§1.17) anchors Status to the highest released tag. |
 | Version constant | Resolved at build time, not a checked-in constant. `internal/version/version.go:34` holds an empty `buildVersion`, injected via `-ldflags "-X .../internal/version.buildVersion=<v>"`; falls back to `devVersion = "dev"` (`internal/version/version.go:39`), which sets `IsDev=true`. **G4 is CLOSED** (2026-10-08, commit `b94b5a3`): `scripts/inject-version.sh` now parses dotted pre-release versions and mod-tag suffixes, guarded by `internal/tools/g4_version_regex_test.go`. The historical analysis of the old failing stamp remains in §1.16. |
 | Schema version | **32**, stored as an integer in `schema_migrations.version` (verified live against `dark.db` on 2026-10-08). Historical: audit_log gains `prev_hash`, `row_hash` (alpha.15); sdd_evaluations gains the 4 calibration columns (alpha.16); 5 tables gain `project_id` (alpha.17). The earlier `v4alpha/2026-09-30/004` string format no longer exists. |
-| Binary | **`bin/dark-mem-mcp.exe`** (32,854,528 bytes / 31.33 MB Windows, 2026-10-08). Note: the previously documented `dark-memory-v4` (19.66 MB) is **not a file on disk** — that claim was stale from alpha.17. |
-| Local-only policy | YES — no `git push`/`fetch`/`pull`, no remote tags/releases |
+| Binary | **`bin/dark-mem-mcp.exe`** (local build 2026-10-14, ~32.48 MB Windows; exact bytes vary per build — the doc-truth test (§1.17) asserts the *name* exists on disk, not the size). Note: the previously documented `dark-memory-v4` (19.66 MB) is **not a file on disk** — that claim was stale from alpha.17. |
+| Local-only policy | RETIRED 2026-10-08 — repo is public (`github.com/Opita-Code/dark-memory-mcp`, MIT + CC-BY-NC-4.0 for `mods/vibe-loop-git/`), releases published (npm + MCP Registry). Pushes and remote tags happen only by operator decision, not by default. |
 
 ---
-## 1. Tools inventory (78 of 97+, 21 namespaces, schema v32)
+## 1. Tools inventory (78 canonical, 21 namespaces, schema v32)
 
-**Measured, not declared** (2026-10-14, verified by an in-package probe
-over `tools.NamespaceGroups()` and `tools.NamespaceCount()`):
+**Measured, not declared** (2026-10-15, verified by an in-package probe
+over `tools.NamespaceGroups()` and `tools.NamespaceCount()`, and live
+via `dark_memory_health_ping`: 78 canonical + 3 extras, schema 32):
 
 - **78 canonical tools** across **21 namespaces**
 - Plus **3 env-gated armed extras** (`DARK_REDTEAM=armed` red-team,
   federation under `DARK_FEDERATION_PEER_DSN`, and one more) → **81 tools
   live** when armed. Both numbers are real; 78 is the canonical registry,
   81 is the maximum reachable surface. Say which one you mean.
-- `97+` is the **original aspirational target** from
-  `ARCHITECTURE-V4.md §6.3`, not a measurement. The honest ratio is
-  **78/97 ≈ 80%** of the originally-promised surface.
 - Surface delta since the 73/20 baseline (2026-10-08): +1 `vibe_compile`
   in VIBE (Sesión 5bis, commit `c3b0a51`) + new OAUTH namespace with 4
   (`judge_options`, `oauth_connect`, `oauth_status`, `oauth_disconnect`;
   Sesión 6, commit `8ed967a`). The freeze test
   `TestCanonicalOrder_Frozen_78_21_28` pins this surface.
+- **On the old "97+" denominator (retired 2026-10-15):** revisions of
+  this section and `README.md` cited "`97+` originally promised" with a
+  pointer to `ARCHITECTURE-V4.md §6.3`. That pointer does not resolve —
+  §6.3 is an invariant-to-module table with no tool inventory, and no
+  enumeration of 97 planned tools exists anywhere in the repo (the number
+  was asserted, never derived; see commit `4d0162f`). A ratio against an
+  unenumerated target is not a measurement, so this document no longer
+  reports one. Growth is tracked as absolute surface + per-release delta,
+  pinned by the freeze test — that is the honest metric.
 
-The `~20` remaining tools are tracked as the tail of the 97+ target, not
-as a phase commitment. Per-namespace counts as measured:
+The per-namespace counts as measured:
 ADMIN 3 · AGENT_BOOTSTRAP 3 · AGENT_MEMORY 13 · CONTEXT 4 · DELEGATION 1 ·
 EMBEDDER 1 · ERROR_OBS 4 · EVENTS 2 · JUDGE 4 · JUDGE_UTIL 7 · L6-VLP 1 ·
 LLM_BIND 2 · LLM_CONFIG 4 · MINDSET 1 · OAUTH 4 · OBSERVABILITY 6 · POLICY 2 ·
@@ -2557,7 +2563,7 @@ then OI-1..OI-3 BLOCKING operator validation from Loop 6 carry-over.
 
 | Reliability | What's stable |
 |---|---|
-| ✅ Stable (won't change) | Tool wire names (73 canonical), agent_memory schema, FTS5 ordering (INV-17), worker pool size=1, store/WithTx contract (INV-16), `sdd_evaluations` schema (22 cols; +4 for calibration in alpha.16), **events table schema v32 (27 cols, 3 indexes, polymorphic)**, judge MCP tool wire shapes (4 base + 7 util), persona registry ids (16 total, 8 v4alpha), `BootstrapCI` deterministic seed=42, **EVENTS namespace tools (event_log + event_replay) wire shapes**, **HMAC chain continuous across events + write_audit (ADR-016 + ADR-018)**, **LLM_BIND namespace tools (llm_provider_bind + llm_provider_probe) wire shapes**, **drift_judge 9-step pipeline (LLMJudge primary, NLI fallback)**, **provider_id prefix routing: judge-* → LLMJudge, chat-* → NLI ChatProvider**, **`vibe-loop-git v0.1.0` companion mod (6 loops + 1 design + 4 adapters + 7 templates + 9 tests, all SHIPPED) at `mods/vibe-loop-git/`**, **T-407-c 3-layer defensive pattern (per-model defaults table + operator override + finish_reason="length" retry-on-length) for `ChatProvider`** |
+| ✅ Stable (won't change) | Tool wire names (78 canonical, append-only: 73 at alpha.25 + `vibe_compile` + 4 OAUTH since), agent_memory schema, FTS5 ordering (INV-17), worker pool size=1, store/WithTx contract (INV-16), `sdd_evaluations` schema (22 cols; +4 for calibration in alpha.16), **events table schema v32 (27 cols, 3 indexes, polymorphic)**, judge MCP tool wire shapes (4 base + 7 util), persona registry ids (16 total, 8 v4alpha), `BootstrapCI` deterministic seed=42, **EVENTS namespace tools (event_log + event_replay) wire shapes**, **HMAC chain continuous across events + write_audit (ADR-016 + ADR-018)**, **LLM_BIND namespace tools (llm_provider_bind + llm_provider_probe) wire shapes**, **drift_judge 9-step pipeline (LLMJudge primary, NLI fallback)**, **provider_id prefix routing: judge-* → LLMJudge, chat-* → NLI ChatProvider**, **`vibe-loop-git v0.1.0` companion mod (6 loops + 1 design + 4 adapters + 7 templates + 9 tests, all SHIPPED) at `mods/vibe-loop-git/`**, **T-407-c 3-layer defensive pattern (per-model defaults table + operator override + finish_reason="length" retry-on-length) for `ChatProvider`** |
 | ⚠️ Likely to evolve | Package names (still aspirational vs actual drift), Pipeline API (LLM judge swap), Constitution (still hardcoded), persona override mechanism (spec 1155 v14 inheritance), progress emitter phases (3 → N as new pipeline stages emerge) |
 | ❌ Not implemented | security/* (INV-11..15), mutable Workflow, red-team mods, federated research, L6-VLP, admin (vacuum only), EmbedderRefresh wire (no embedder code), semantic CacheInvalidation wire (no semantic cache trigger) |
 

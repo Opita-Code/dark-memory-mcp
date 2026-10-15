@@ -94,8 +94,13 @@ func TestStatusDoc_ToolCountMatchesRegistry(t *testing.T) {
 	measured := measuredToolCount()
 
 	// The section header is the canonical statement of surface:
-	//   "## 1. Tools inventory (73 of 97+, 20 namespaces, schema v32)"
-	re := regexp.MustCompile(`## 1\. Tools inventory \((\d+) of (\d+)\+, (\d+) namespaces, schema v(\d+)\)`)
+	//   "## 1. Tools inventory (78 canonical, 21 namespaces, schema v32)"
+	// Since 2026-10-15 the header reports absolute surface, not a ratio:
+	// the old "of 97+" denominator cited an enumeration that never
+	// existed (ARCH §6.3 has no tool list), so it was retired rather
+	// than re-asserted. Growth is tracked as absolute + per-release
+	// delta in the section body.
+	re := regexp.MustCompile(`## 1\. Tools inventory \((\d+) canonical, (\d+) namespaces, schema v(\d+)\)`)
 	m := re.FindStringSubmatch(doc)
 	if m == nil {
 		t.Fatalf("could not find the '## 1. Tools inventory (...)' header in %s.\n"+
@@ -107,8 +112,8 @@ func TestStatusDoc_ToolCountMatchesRegistry(t *testing.T) {
 	}
 
 	docTools, _ := strconv.Atoi(m[1])
-	docNS, _ := strconv.Atoi(m[3])
-	docSchema, _ := strconv.Atoi(m[4])
+	docNS, _ := strconv.Atoi(m[2])
+	docSchema, _ := strconv.Atoi(m[3])
 
 	if docTools != measured {
 		t.Errorf("FIELD: tools-inventory tool count\nDOCUMENTED: %d\nMEASURED:  %d\n"+

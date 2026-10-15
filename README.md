@@ -23,16 +23,17 @@ pediste. Sin servidor remoto, sin telemetría, sin costo.
 
 [![MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Go 1.25+](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go&logoColor=white)](go.mod)
-[![MCP tools](https://img.shields.io/badge/MCP-73%20canonical%20tools-blueviolet)](docs/tools.md)
+[![MCP tools](https://img.shields.io/badge/MCP-78%20canonical%20tools-blueviolet)](docs/tools.md)
 [![Schema](https://img.shields.io/badge/schema-v32-blueviolet)](docs/v4-status.md)
 [![Install](https://img.shields.io/badge/install-npx%20%40opita--code%2Fdark--memory--mcp-cc3534)](docs/npm-install.md)
 
-[Qué es](#el-problema-que-resuelve) · [Quickstart](#quickstart) · [Las 73 herramientas](docs/tools.md) · [Vibe-cases](docs/tools.md#vibe-cases) · [Ayuda](docs/npm-install.md) · [Estado real](docs/v4-status.md) · [Contribuir](CONTRIBUTING.md)
+[Qué es](#el-problema-que-resuelve) · [Quickstart](#quickstart) · [Las 78 herramientas](docs/tools.md) · [Vibe-cases](docs/tools.md#vibe-cases) · [Ayuda](docs/npm-install.md) · [Estado real](docs/v4-status.md) · [Contribuir](CONTRIBUTING.md)
 
-> **STATUS: v4-alpha.31** — pre-release. 73 herramientas canónicas, schema 32,
+> **STATUS: v4-alpha.31** — pre-release. 78 herramientas canónicas, schema 32,
 > MIT. Lo que funciona y lo que no está medido en
 > **[`docs/v4-status.md`](docs/v4-status.md)** — léelo antes de apostar
-> producción por esto.
+> producción por esto. (Tag publicado: alpha.31 con 73; HEAD local va 7
+> commits por delante con 78 — el próximo corte es alpha.32.)
 
 </div>
 
@@ -136,9 +137,12 @@ Necesitas **Node.js 18+** (wrapper npm) o **Go 1.25+** (desde source).
 {
   "server": { "version": "4.0.0-alpha.31", "name": "dark-memory-mcp" },
   "db": { "live": true, "schema_version": 32 },
-  "registry": { "canonical_tools": 73 }
+  "registry": { "canonical_tools": 78 }
 }
 ```
+
+78 es HEAD local (el tag publicado alpha.31 sirve 73; el delta +5 —
+`vibe_compile` + 4 OAUTH — sale con alpha.32).
 
 `server.version` refleja el stamp de build: si compilaste sin `-ldflags` verás
 `dev` en vez de una versión. Eso no es un error.
@@ -206,8 +210,11 @@ Catálogo completo: **[`docs/tools.md`](docs/tools.md)**.
 
 Honesto, porque un README que sólo vende no sirve para decidir:
 
-- **Pre-release.** 73 de las 97 herramientas que `ARCHITECTURE-V4.md` prometió
-  — **75%**, no 100%.
+- **Pre-release.** 78 herramientas canónicas medidas en el registro
+  (+3 extras armadas por variable de entorno = 81). La superficie crece
+  por release y la fija el freeze test — el delta desde alpha.31 es +5
+  (`vibe_compile` + namespace OAUTH con 4). Detalle por namespace en
+  [`docs/v4-status.md §1`](docs/v4-status.md).
 - **Phase 21 en 2 de 9 primitivas.** El motor de vibe-loop es una biblioteca
   verificada con el cableado empezado, no un producto terminado. Las 7
   primitivas restantes cambian comportamiento y necesitan
@@ -228,7 +235,7 @@ se contradice con el código que corre, así que no puede pudrirse en silencio.
 Tu agente (Claude / opencode / Cursor)
     │  MCP (JSON-RPC sobre stdin/stdout)
     ▼
-dark-mem-mcp.exe  ←── proceso local, 73+3 herramientas
+dark-mem-mcp.exe  ←── proceso local, 78+3 herramientas
     │  SQL
     ▼
 SQLite (archivo .db en tu disco)   ←── o Postgres con DARK_DRIVER=postgres

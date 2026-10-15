@@ -618,10 +618,18 @@ cmd/
   os.Stdin, stdout)`.
 - 23 tests in `cmd/dark-memory-v4/*_test.go`.
 
-### 5.0.11 Tool inventory (25 of 57 canonical)
+### 5.0.11 Tool inventory (SUPERSEDED as a number, kept as history)
 
-See [`docs/v4-status.md §1`](docs/v4-status.md) for the full table.
-Summary: 25 registered, 32 deferred to BUG-9+.
+This section once said "25 of 57 canonical". That was a design-time
+snapshot from 2026-09-27, already stale when written, and the "97+"
+target cited elsewhere in later docs never had an enumeration behind
+it (`ARCHITECTURE-V4.md §6.3` is an invariant-to-module table, not a
+tool list). **Do not quote any number from this section.** The measured
+surface lives in [`docs/v4-status.md §1`](docs/v4-status.md) (78
+canonical / 21 namespaces at HEAD, pinned by
+`TestCanonicalOrder_Frozen_78_21_28`), enforced at boot by the
+completeness check in `internal/tools/register.go` and at doc level by
+`internal/tools/v4_status_consistency_test.go`.
 
 ### 5.0.12 Schema
 
@@ -750,12 +758,12 @@ dark-memory-v4/
 │   └── research-only.yaml             # Example for OSINT-only deployments
 │
 ├── transport/                         # Thin adapters. No business logic.
-│   ├── mcp/                           # The canonical interface (75 tools auto-discovered)
+│   ├── mcp/                           # The canonical interface (design sketch — actual surface in docs/v4-status.md §1 + freeze test)
 │   ├── http/                          # REST for non-MCP integrations
 │   ├── cli/                           # Operator CLI
 │   └── grpc/                          # Internal high-perf
 │
-├── tools/                             # 75 tools auto-discovered via manifests
+├── tools/                             # Design sketch (never matched the registry — sub-counts below are aspirational, not measured)
 │   ├── vibe/                          # 14 vibe-loop tools (publish, spec, modify, ...)
 │   ├── memory/                        # 6 agent_memory tools
 │   ├── governance/                    # 8 judge/consensus/drift tools
@@ -856,12 +864,12 @@ dark-memory-v4/
 │   └── research-only.yaml             # Example for OSINT-only deployments
 │
 ├── transport/                         # Thin adapters. No business logic.
-│   ├── mcp/                           # The canonical interface (75 tools auto-discovered)
+│   ├── mcp/                           # The canonical interface (design sketch — actual surface in docs/v4-status.md §1 + freeze test)
 │   ├── http/                          # REST for non-MCP integrations
 │   ├── cli/                           # Operator CLI
 │   └── grpc/                          # Internal high-perf
 │
-├── tools/                             # 75 tools auto-discovered via manifests
+├── tools/                             # Design sketch (never matched the registry — sub-counts below are aspirational, not measured)
 │   ├── vibe/                          # 14 vibe-loop tools (publish, spec, modify, ...)
 │   ├── memory/                        # 6 agent_memory tools
 │   ├── governance/                    # 8 judge/consensus/drift tools
@@ -1497,6 +1505,10 @@ steps:
   - /tmp/test-dm4/node_modules/.bin/dark-mem &
   - mcp_handshake_mock --tools 75
   - assert: handshake returns 75 tools
+  # NOTE (2026-10-15): sketch values from the 75-tool era; the live
+  # registry serves 78 canonical (+3 armed). A mock that asserts a stale
+  # count teaches the wrong lesson — update these numbers when copying
+  # this sketch into real CI.
 ```
 
 ---
