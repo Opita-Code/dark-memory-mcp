@@ -482,9 +482,16 @@ SELECT
     ELSE 'closed_clean'
   END,
   constitution_id, constitution_ver, active_mods,
-  operator, started_at, closed_at,
+  operator,
+  -- Casts (B2-D Phase 0, 2026-10-15): _sessions_old.started_at was
+  -- declared TEXT (line 251) and the new sessions.started_at is
+  -- TIMESTAMP WITH TIME ZONE (line 452). PostgreSQL refuses the
+  -- implicit cast; SQLite is duck-typed so the same DDL passed there.
+  started_at::TIMESTAMP WITH TIME ZONE,
+  closed_at::TIMESTAMP WITH TIME ZONE,
   NULL, NULL, NULL,
-  notes, project_id, started_at
+  notes, project_id,
+  started_at::TIMESTAMP WITH TIME ZONE
 FROM _sessions_old;
 
 DROP TABLE _sessions_old;
