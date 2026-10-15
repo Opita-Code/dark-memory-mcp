@@ -1,6 +1,6 @@
-{
+﻿{
   "name": "@opitacode/dark-memory-mcp-linux-arm64",
-  "version": "4.0.0-alpha.31",
+  "version": "4.0.0-alpha.32",
   "description": "dark-memory-mcp binary for Linux (ARM64)",
   "license": "MIT",
   "main": "index.js",

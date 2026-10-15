@@ -1,14 +1,14 @@
-{
+﻿{
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
   "name": "io.github.Opita-Code/dark-memory-mcp",
   "title": "dark-memory-mcp",
   "description": "Persistent memory + vibe-loop engine for AI agents. Single Go binary, SQLite-backed, stdio MCP.",
-      "version": "4.0.0-alpha.31",
+      "version": "4.0.0-alpha.32",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@opitacode/dark-memory-mcp",
-  "version": "4.0.0-alpha.31",
+  "version": "4.0.0-alpha.32",
       "transport": {
         "type": "stdio"
       }

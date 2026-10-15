@@ -29,11 +29,10 @@ pediste. Sin servidor remoto, sin telemetría, sin costo.
 
 [Qué es](#el-problema-que-resuelve) · [Quickstart](#quickstart) · [Las 78 herramientas](docs/tools.md) · [Vibe-cases](docs/tools.md#vibe-cases) · [Ayuda](docs/npm-install.md) · [Estado real](docs/v4-status.md) · [Contribuir](CONTRIBUTING.md)
 
-> **STATUS: v4-alpha.31** — pre-release. 78 herramientas canónicas, schema 32,
+> **STATUS: v4-alpha.32** — pre-release. 78 herramientas canónicas, schema 32,
 > MIT. Lo que funciona y lo que no está medido en
 > **[`docs/v4-status.md`](docs/v4-status.md)** — léelo antes de apostar
-> producción por esto. (Tag publicado: alpha.31 con 73; HEAD local va 7
-> commits por delante con 78 — el próximo corte es alpha.32.)
+> producción por esto. (Corte alpha.32: tag → HEAD, CI publica npm + registry.)
 
 </div>
 
@@ -135,14 +134,15 @@ Necesitas **Node.js 18+** (wrapper npm) o **Go 1.25+** (desde source).
 
 ```json
 {
-  "server": { "version": "4.0.0-alpha.31", "name": "dark-memory-mcp" },
+  "server": { "version": "4.0.0-alpha.32", "name": "dark-memory-mcp" },
   "db": { "live": true, "schema_version": 32 },
   "registry": { "canonical_tools": 78 }
 }
 ```
 
-78 es HEAD local (el tag publicado alpha.31 sirve 73; el delta +5 —
-`vibe_compile` + 4 OAUTH — sale con alpha.32).
+78 es el registro medido en vivo. `server.version` es el stamp de build
+(tag publicado o pseudo-versión local); la forma que importa es la de
+arriba: vivo + schema + conteo.
 
 `server.version` refleja el stamp de build: si compilaste sin `-ldflags` verás
 `dev` en vez de una versión. Eso no es un error.

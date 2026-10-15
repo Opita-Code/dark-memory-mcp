@@ -11,6 +11,45 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [4.0.0-alpha.32] — 2026-10-15 — judge OAuth end-to-end, pre-flight R12/R13, 78 tools
+
+9 commits over alpha.31 (`16215c7` → tag). The judge works out-of-the-box
+via user self-auth; the publish path refuses garbage before writing;
+the documented surface is measured (78 canonical / 21 namespaces).
+
+### Added
+
+- **OAuth self-auth Tier 0 + Tier 1** (Sesión 6/7): 4 canonical tools
+  (`judge_options`, `oauth_connect`, `oauth_status`, `oauth_disconnect`;
+  new OAUTH namespace) + `defaultDriftJudgeProvider` wired to
+  OAuth-backed providers with transparent token auto-refresh. Operator
+  provisions no shared keys. See `docs/oauth-flow.md`.
+- **`dark_memory_vibe_compile`** (Sesión 5bis): 74th→78th tool arc;
+  compiles a vibe spec into the operator-gated 6-phase bash driver.
+- **R12 pre-flight + R13 actionable refusals** (Sesión 8, LUCIDEZ v1.1):
+  `PublishVibe` validates git refs before `SaveSpec` (zero garbage
+  rows); bad refs fail with the fix recipe. See
+  `docs/specs/SPEC-lucidez-rrules.md`, `docs/operator-risk-register.md`.
+- **`docs/tools.md` now sections all 78 tools** (21 previously
+  undocumented: OAUTH, EVENTS, JUDGE_UTIL, LLM_CONFIG, LLM_BIND,
+  PROJECT, `vibe_compile`); the unenumerated "97+" denominator is
+  retired — surface is reported absolute + per-release delta
+  (`docs/v4-status.md` §1).
+- Companion mod `vibe-loop-git` **0.4.7** (18/21 namespaces + tracked
+  OAUTH gap).
+
+### Changed
+
+- Dual-licensing: `mods/vibe-loop-git/` → CC-BY-NC-4.0, repo stays MIT.
+- `docs/v4-status.md`: local-only policy marked RETIRED (public repo),
+  binary/binary-activation and tag-vs-HEAD disclosure updated.
+
+### Fixed
+
+- Local binary never booted (OAuth tools registered outside
+  `RegisterAllWithDeps`); fixed via `tools.OAuthRegistrar` hook in
+  canonical position. First boot-test caught it during activation.
+
 ## [4.0.0-alpha.30-pre-1] — 2026-10-07 — Phase 19 Loop 9: T-411 Performance Baseline (NO optimization applied)
 
 Phase 19 Loop 9 (alpha.30-pre-1) delivers the **measurement-first**
