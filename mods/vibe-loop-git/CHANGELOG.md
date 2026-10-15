@@ -3,6 +3,27 @@
 All notable changes to **vibe-loop-git** are documented in this file.
 Format: [version] — date — summary.
 
+## [0.4.7] — 2026-10-15 — namespace counts honest (18/21 + OAUTH gap)
+
+Doc-only patch. The registry grew to 21 namespaces (Sesión 6 OAUTH) and
+78 canonical tools while the mod still said 18/20 and 76 tools.
+
+### Fixed
+
+- `core/loop-7-vibe-flow.md`: 76/75 → 81/80 tools; coverage 18/20 →
+  18/21 explicit + 2 indirect (ADMIN, PROJECT) = 20/21 wired; OAUTH
+  recorded as tracked gap; `vibe_compile` noted ungated-by-design;
+  JUDGE_UTIL row uses full wire names.
+- `core/gate-protocol.md`: reconciled with loop-7 (JUDGE_UTIL explicit
+  via G19, not "unwired"); OAUTH gap tracked.
+- `mod.json`: matrix title 18/20 → 18/21.
+
+## [0.4.6] — 2026-10-14 — re-licensed MIT → CC-BY-NC-4.0 (was unrecorded)
+
+Retroactive entry: the license change shipped in the manifest without a
+changelog line. Dual-licensing notice: parent repo stays MIT, this mod is
+`CC-BY-NC-4.0` (see `LICENSE`, root `NOTICE.md`).
+
 ## [0.4.5] — 2026-10-09 — public MIT release, LOCAL ONLY retired, G4 closed
 
 The mod manifest declared 0.4.5 while this file stopped at 0.4.4. This

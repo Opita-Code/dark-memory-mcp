@@ -79,15 +79,19 @@ each, a vibe-flow gate invokes 1-4 dark-memory tool calls to surface context.
 | E22 | event_stream_debug | G22.event-stream-debug | EVENTS |
 | E23 | vlp_transition | G23.vlp-transition | L6-VLP |
 
-## The 18/20 namespaces covered
+## The 18/21 namespaces covered (+1 tracked gap)
 
-vibe-flow wires 18 of 20 dark-memory namespaces:
-- SESSION, RESEARCH, AGENT_BOOTSTRAP, VIBE, CONTEXT, AGENT_MEMORY (13 tools)
-- MINDSET, DELEGATION, LLM_CONFIG, LLM_BIND, JUDGE, POLICY
-- OBSERVABILITY, ERROR_OBS, EVENTS, L6-VLP, EMBEDDER, PROJECT
+vibe-flow wires 18 of 21 dark-memory namespaces explicitly (matrix rows
+in `loop-7-vibe-flow.md` §5), plus 2 indirectly:
+- Explicit 18: SESSION, RESEARCH, AGENT_BOOTSTRAP, VIBE, CONTEXT,
+  AGENT_MEMORY (13 tools), MINDSET, DELEGATION, LLM_CONFIG, LLM_BIND,
+  JUDGE, JUDGE_UTIL (via G19), POLICY, OBSERVABILITY, ERROR_OBS, EVENTS,
+  L6-VLP, EMBEDDER
+- Indirect 2: ADMIN (via G11) and PROJECT (via G14)
 
-The 2 unwired: ADMIN (invoked indirectly via G11) and JUDGE_UTIL (invoked
-via G19 with eval_type=prompt_injection_scan).
+The 1 unwired: **OAUTH** (`judge_options`, `oauth_connect`, `oauth_status`,
+`oauth_disconnect`; Sesión 6). No gate needs a token yet, so this is a
+tracked gap, not silent coverage — wire it when a gate consumes identity.
 
 ## How vibe-flow differs from "intrusive"
 

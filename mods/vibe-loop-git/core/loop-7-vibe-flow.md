@@ -22,8 +22,9 @@ Loops 1-6 of `vibe-loop-git` give the operator **6 protocol artifacts**
 latency budgets, self-eval) that document **what a good artifact looks
 like**. But none of them ensure the **agent stays inside that envelope
 while producing the artifact**. Drift happens *between* phases, not
-*at* phases. Recall is one of 76 dark-memory tools, used at one
-moment (session_start). The other 75 tools sit unused while the agent
+*at* phases. Recall is one of 81 dark-memory tools (78 canonical + 3
+armed extras), used at one
+moment (session_start). The other 80 tools sit unused while the agent
 types its 470th edit of the day and quietly loses the thread.
 
 **Vibe-flow mode** (Loop 7) closes this gap by turning the mod from
@@ -197,13 +198,20 @@ Summary by dark-memory namespace:
 | EVENTS | event_log, event_replay | G22 |
 | L6-VLP | vlp_handle_event | G23 |
 | EMBEDDER | embedder_setup_prompt | G13 |
-| JUDGE_UTIL | validate_overrides, normalize | G19 |
+| JUDGE_UTIL | judge_util_validate_overrides, judge_util_normalize | G19 |
 
-Coverage: **18 of 20 namespaces** invoked explicitly. PROJECT
-is invoked indirectly via G14 (`active_policy` switches project
-on `project_create`). ADMIN is invoked via G11 (error_db_admin
-when schema_version mismatch). The `JULIENCE` of vibe-flow =
-*every namespace is wired into at least one gate*.
+Coverage: **18 of 21 namespaces** invoked explicitly (matrix rows
+above). PROJECT is invoked indirectly via G14 (`active_policy`
+switches project on `project_create`). ADMIN is invoked via G11
+(error_db_admin when schema_version mismatch). So 20/21 namespaces
+are wired; the unwired one is **OAUTH** (`judge_options`,
+`oauth_connect`, `oauth_status`, `oauth_disconnect`; Sesión 6) —
+no gate consumes identity yet, so this is a tracked gap, not
+silent coverage. Minor: the VIBE row predates `vibe_compile`
+(Sesión 5bis); the compiler is ungated by design (operator runs it,
+not a gate). The `JULIENCE` of vibe-flow still holds directionally:
+*every namespace except the identity plane is wired into at least
+one gate*.
 
 ---
 
