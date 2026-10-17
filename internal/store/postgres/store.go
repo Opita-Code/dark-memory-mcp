@@ -2129,16 +2129,162 @@ func (s *Store) ListSpecs(ctx context.Context, f vibeflow.SpecListFilters) ([]vi
 	return nil, notImpl("ListSpecs")
 }
 func (s *Store) SaveBrandGuide(ctx context.Context, wc store.WriteContext, b *vibeflow.BrandGuide) error {
-	return notImpl("SaveBrandGuide")
+	if err := s.requireProject(); err != nil {
+		return err
+	}
+	projectID := projectIDOrActive(wc.ProjectID, s.activeProject)
+	if b.CreatedAt == "" {
+		b.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+	b.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	return s.runInTx(ctx, func(tx pgx.Tx) error {
+		// ON CONFLICT on (project_id, brand_id) — UNIQUE constraint
+		// created by migration v34 (mirrors SQLite v7 project_namespace
+		// + spec 171 T4f: brand_id reusable across projects).
+		_, err := tx.Exec(ctx,
+			`INSERT INTO vibe_brands (brand_id, voice_json, visual_json, narrative_json,
+			                          compliance_json, created_at, updated_at, project_id)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			 ON CONFLICT (project_id, brand_id) DO UPDATE SET
+			   voice_json = EXCLUDED.voice_json,
+			   visual_json = EXCLUDED.visual_json,
+			   narrative_json = EXCLUDED.narrative_json,
+			   compliance_json = EXCLUDED.compliance_json,
+			   updated_at = EXCLUDED.updated_at`,
+			b.BrandID, nullStr(b.Voice), nullStr(b.Visual), nullStr(b.Narrative), nullStr(b.Compliance),
+			b.CreatedAt, b.UpdatedAt, projectID)
+		if err != nil {
+			return err
+		}
+		return s.recordWriteTx(ctx, tx, audit.WriteEvent{
+			TableName:       "vibe_brands",
+			Actor:           wc.Actor,
+			SessionID:       wc.SessionID,
+			WritePath:       wc.WritePath,
+			ConstitutionID:  wc.ConstitutionID,
+			ConstitutionVer: wc.ConstitutionVer,
+			CreatedAt:       b.UpdatedAt,
+			Notes:           "brand_id=" + b.BrandID + " project_id=" + projectID,
+		}, "")
+	})
 }
+
 func (s *Store) GetBrandGuide(ctx context.Context, brandID string) (*vibeflow.BrandGuide, error) {
-	return nil, notImpl("GetBrandGuide")
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.ActiveProject()
+	var b vibeflow.BrandGuide
+	var voice, visual, narrative, compliance, updatedAt *string
+	err := s.pool.QueryRow(ctx,
+		`SELECT brand_id, COALESCE(voice_json, ''), COALESCE(visual_json, ''),
+		        COALESCE(narrative_json, ''), COALESCE(compliance_json, ''),
+		        created_at, COALESCE(updated_at, '')
+		   FROM vibe_brands
+		  WHERE brand_id = $1 AND project_id = $2`, brandID, activeProject).Scan(
+		&b.BrandID, &voice, &visual, &narrative, &compliance, &b.CreatedAt, &updatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if voice != nil {
+		b.Voice = *voice
+	}
+	if visual != nil {
+		b.Visual = *visual
+	}
+	if narrative != nil {
+		b.Narrative = *narrative
+	}
+	if compliance != nil {
+		b.Compliance = *compliance
+	}
+	if updatedAt != nil {
+		b.UpdatedAt = *updatedAt
+	}
+	return &b, nil
 }
+
 func (s *Store) DeleteBrandGuide(ctx context.Context, wc store.WriteContext, brandID string) error {
-	return notImpl("DeleteBrandGuide")
+	if err := s.requireProject(); err != nil {
+		return err
+	}
+	activeProject := s.ActiveProject()
+	// Path-safety: reject brand_id with characters that could escape
+	// into other SQL or filesystem paths (mirror of sqlite/store.go:1891).
+	if strings.ContainsAny(brandID, "/\\\x00\n\r") {
+		return fmt.Errorf("%w: brand_id contains invalid characters", store.ErrInvalidArgument)
+	}
+	return s.runInTx(ctx, func(tx pgx.Tx) error {
+		res, err := tx.Exec(ctx,
+			`DELETE FROM vibe_brands WHERE brand_id = $1 AND project_id = $2`,
+			brandID, activeProject)
+		if err != nil {
+			return err
+		}
+		if n := res.RowsAffected(); n == 0 {
+			return store.ErrNotFound
+		}
+		return s.recordWriteTx(ctx, tx, audit.WriteEvent{
+			TableName:       "vibe_brands",
+			Actor:           wc.Actor,
+			SessionID:       wc.SessionID,
+			WritePath:       wc.WritePath,
+			ConstitutionID:  wc.ConstitutionID,
+			ConstitutionVer: wc.ConstitutionVer,
+			CreatedAt:       time.Now().UTC().Format(time.RFC3339Nano),
+			Notes:           "brand_id=" + brandID + " project_id=" + activeProject,
+		}, "")
+	})
 }
+
 func (s *Store) ListBrandGuides(ctx context.Context, limit int) ([]vibeflow.BrandGuide, error) {
-	return nil, notImpl("ListBrandGuides")
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.ActiveProject()
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := s.pool.Query(ctx,
+		`SELECT brand_id, COALESCE(voice_json, ''), COALESCE(visual_json, ''),
+		        COALESCE(narrative_json, ''), COALESCE(compliance_json, ''),
+		        created_at, COALESCE(updated_at, '')
+		   FROM vibe_brands
+		  WHERE project_id = $1
+		  ORDER BY updated_at DESC, brand_id ASC
+		  LIMIT $2`, activeProject, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []vibeflow.BrandGuide{}
+	for rows.Next() {
+		var b vibeflow.BrandGuide
+		var voice, visual, narrative, compliance, updatedAt *string
+		if err := rows.Scan(&b.BrandID, &voice, &visual, &narrative, &compliance, &b.CreatedAt, &updatedAt); err != nil {
+			return nil, err
+		}
+		if voice != nil {
+			b.Voice = *voice
+		}
+		if visual != nil {
+			b.Visual = *visual
+		}
+		if narrative != nil {
+			b.Narrative = *narrative
+		}
+		if compliance != nil {
+			b.Compliance = *compliance
+		}
+		if updatedAt != nil {
+			b.UpdatedAt = *updatedAt
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
 }
 func (s *Store) SaveComplianceRule(ctx context.Context, wc store.WriteContext, r *vibeflow.ComplianceRule) error {
 	return notImpl("SaveComplianceRule")
@@ -2192,13 +2338,105 @@ func (s *Store) ListSDDEvaluations(ctx context.Context, f ssd.ListFilters) ([]ss
 	return nil, notImpl("ListSDDEvaluations")
 }
 func (s *Store) SaveConstitution(ctx context.Context, wc store.WriteContext, c *constitution.Constitution) error {
-	return notImpl("SaveConstitution")
+	if c.CreatedAt == "" {
+		c.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+	if c.ActivatedAt == "" {
+		c.ActivatedAt = c.CreatedAt
+	}
+	return s.runInTx(ctx, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx,
+			`INSERT INTO constitutions (constitution_id, version, label, source, file_path,
+			                           parsed_json, sha256, enabled, created_at, activated_at,
+			                           last_verified_at, last_verified_sha256)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULL, NULL)
+			 ON CONFLICT (constitution_id, version) DO UPDATE SET
+			   label = EXCLUDED.label,
+			   source = EXCLUDED.source,
+			   file_path = EXCLUDED.file_path,
+			   parsed_json = EXCLUDED.parsed_json,
+			   sha256 = EXCLUDED.sha256,
+			   enabled = EXCLUDED.enabled,
+			   activated_at = EXCLUDED.activated_at`,
+			c.ConstitutionID, c.Version, nullStr(c.Label), c.Source, c.FilePath,
+			c.ParsedJSON, c.SHA256, c.Enabled, c.CreatedAt, c.ActivatedAt)
+		if err != nil {
+			return err
+		}
+		return s.recordWriteTx(ctx, tx, audit.WriteEvent{
+			TableName:       "constitutions",
+			Actor:           wc.Actor,
+			SessionID:       wc.SessionID,
+			WritePath:       wc.WritePath,
+			ConstitutionID:  c.ConstitutionID,
+			ConstitutionVer: c.Version,
+			CreatedAt:       c.CreatedAt,
+			Notes:           "constitution_id=" + c.ConstitutionID + "@" + c.Version + " (global)",
+		}, "")
+	})
 }
+
 func (s *Store) GetConstitution(ctx context.Context, constitutionID, version string) (*constitution.Constitution, error) {
-	return nil, notImpl("GetConstitution")
+	// Empty version = "latest enabled". Mirror of sqlite/store.go:2896
+	// (DARK-MEM-019): without this branch the WHERE version='' never
+	// matches and ActiveConstitution falls through to defaults.
+	var query string
+	var args []any
+	if version == "" {
+		query = `SELECT id, constitution_id, version, COALESCE(label, ''),
+		                source, file_path, parsed_json, sha256,
+		                enabled, created_at, COALESCE(activated_at, '')
+		           FROM constitutions
+		          WHERE constitution_id = $1 AND enabled = TRUE
+		          ORDER BY activated_at DESC NULLS LAST, version DESC
+		          LIMIT 1`
+		args = []any{constitutionID}
+	} else {
+		query = `SELECT id, constitution_id, version, COALESCE(label, ''),
+		                source, file_path, parsed_json, sha256,
+		                enabled, created_at, COALESCE(activated_at, '')
+		           FROM constitutions
+		          WHERE constitution_id = $1 AND version = $2`
+		args = []any{constitutionID, version}
+	}
+	var c constitution.Constitution
+	err := s.pool.QueryRow(ctx, query, args...).Scan(
+		&c.ID, &c.ConstitutionID, &c.Version, &c.Label, &c.Source, &c.FilePath,
+		&c.ParsedJSON, &c.SHA256, &c.Enabled, &c.CreatedAt, &c.ActivatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &c, nil
 }
+
 func (s *Store) ListConstitutions(ctx context.Context, limit int) ([]constitution.Constitution, error) {
-	return nil, notImpl("ListConstitutions")
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, constitution_id, version, COALESCE(label, ''),
+		        source, file_path, parsed_json, sha256,
+		        enabled, created_at, COALESCE(activated_at, '')
+		   FROM constitutions
+		  ORDER BY activated_at DESC NULLS LAST, version DESC
+		  LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []constitution.Constitution{}
+	for rows.Next() {
+		var c constitution.Constitution
+		if err := rows.Scan(&c.ID, &c.ConstitutionID, &c.Version, &c.Label, &c.Source, &c.FilePath,
+			&c.ParsedJSON, &c.SHA256, &c.Enabled, &c.CreatedAt, &c.ActivatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
 }
 func (s *Store) VerifyConstitutionHash(ctx context.Context, constitutionID, sha256Hash string) (bool, error) {
 	var stored *string
@@ -2216,19 +2454,179 @@ func (s *Store) VerifyConstitutionHash(ctx context.Context, constitutionID, sha2
 	return *stored == sha256Hash, nil
 }
 func (s *Store) SaveMod(ctx context.Context, wc store.WriteContext, m *mods.Mod) error {
-	return notImpl("SaveMod")
+	if m.CreatedAt == "" {
+		m.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	m.UpdatedAt = now
+	return s.runInTx(ctx, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx,
+			`INSERT INTO mods (mod_id, name, version, source, manifest_json, sha256,
+			                 risk_class, target_scope, requires_tor, created_at, updated_at)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+			 ON CONFLICT (mod_id) DO UPDATE SET
+			   name = EXCLUDED.name,
+			   version = EXCLUDED.version,
+			   source = EXCLUDED.source,
+			   manifest_json = EXCLUDED.manifest_json,
+			   sha256 = EXCLUDED.sha256,
+			   risk_class = EXCLUDED.risk_class,
+			   target_scope = EXCLUDED.target_scope,
+			   requires_tor = EXCLUDED.requires_tor,
+			   updated_at = EXCLUDED.updated_at`,
+			m.ModID, m.Name, m.Version, m.Source, m.ManifestJSON, m.SHA256,
+			nullStr(m.RiskClass), nullStr(m.TargetScope), m.RequiresTor, m.CreatedAt, m.UpdatedAt)
+		if err != nil {
+			return err
+		}
+		return s.recordWriteTx(ctx, tx, audit.WriteEvent{
+			TableName:       "mods",
+			Actor:           wc.Actor,
+			SessionID:       wc.SessionID,
+			WritePath:       wc.WritePath,
+			ConstitutionID:  wc.ConstitutionID,
+			ConstitutionVer: wc.ConstitutionVer,
+			CreatedAt:       m.UpdatedAt,
+			Notes:           "mod_id=" + m.ModID + " (global catalog)",
+		}, "")
+	})
 }
+
 func (s *Store) GetMod(ctx context.Context, modID string) (*mods.Mod, error) {
-	return nil, notImpl("GetMod")
+	// mods catalog is global (spec 171 T4f). Same shape as sqlite/store.go:3056
+	// but no project filter — mods are reusable across projects.
+	var m mods.Mod
+	var riskClass, targetScope, updatedAt *string
+	err := s.pool.QueryRow(ctx,
+		`SELECT id, mod_id, name, version, source, manifest_json, sha256,
+		        COALESCE(risk_class, ''), COALESCE(target_scope, ''),
+		        requires_tor, created_at, COALESCE(updated_at, '')
+		   FROM mods WHERE mod_id = $1`, modID).Scan(
+		&m.ID, &m.ModID, &m.Name, &m.Version, &m.Source, &m.ManifestJSON, &m.SHA256,
+		&riskClass, &targetScope, &m.RequiresTor, &m.CreatedAt, &updatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if riskClass != nil {
+		m.RiskClass = *riskClass
+	}
+	if targetScope != nil {
+		m.TargetScope = *targetScope
+	}
+	if updatedAt != nil {
+		m.UpdatedAt = *updatedAt
+	}
+	return &m, nil
 }
+
 func (s *Store) ListMods(ctx context.Context, limit int) ([]mods.Mod, error) {
-	return nil, notImpl("ListMods")
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, mod_id, name, version, source, manifest_json, sha256,
+		        COALESCE(risk_class, ''), COALESCE(target_scope, ''),
+		        requires_tor, created_at, COALESCE(updated_at, '')
+		   FROM mods
+		  ORDER BY updated_at DESC, mod_id ASC
+		  LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []mods.Mod{}
+	for rows.Next() {
+		var m mods.Mod
+		var riskClass, targetScope, updatedAt *string
+		if err := rows.Scan(&m.ID, &m.ModID, &m.Name, &m.Version, &m.Source, &m.ManifestJSON, &m.SHA256,
+			&riskClass, &targetScope, &m.RequiresTor, &m.CreatedAt, &updatedAt); err != nil {
+			return nil, err
+		}
+		if riskClass != nil {
+			m.RiskClass = *riskClass
+		}
+		if targetScope != nil {
+			m.TargetScope = *targetScope
+		}
+		if updatedAt != nil {
+			m.UpdatedAt = *updatedAt
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
 }
+
 func (s *Store) RecordModLoad(ctx context.Context, wc store.WriteContext, load *mods.ModLoad) (int64, error) {
-	return 0, notImpl("RecordModLoad")
+	if err := s.requireProject(); err != nil {
+		return 0, err
+	}
+	projectID := s.activeProject
+	if load.LoadedAt == "" {
+		load.LoadedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+	var id int64
+	err := s.runInTx(ctx, func(tx pgx.Tx) error {
+		// project_id column added in migration v7 (idempotent via IF
+		// NOT EXISTS). Default 'default' matches the column default.
+		var insertedID int64
+		err := tx.QueryRow(ctx,
+			`INSERT INTO mod_loads (mod_id, session_id, loaded_at, duration_ms,
+			                       capabilities_count, error, constitution_id, project_id)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			 RETURNING id`,
+			load.ModID, nullStr(load.SessionID), load.LoadedAt, load.DurationMs,
+			load.CapabilitiesCount, nullStr(load.Error), nullStr(load.ConstitutionID), projectID).Scan(&insertedID)
+		if err != nil {
+			return err
+		}
+		id = insertedID
+		return s.recordWriteTx(ctx, tx, audit.WriteEvent{
+			TableName:       "mod_loads",
+			RowID:           insertedID,
+			Actor:           wc.Actor,
+			SessionID:       load.SessionID,
+			WritePath:       wc.WritePath,
+			ConstitutionID:  load.ConstitutionID,
+			ConstitutionVer: wc.ConstitutionVer,
+			CreatedAt:       load.LoadedAt,
+			Notes:           "mod_id=" + load.ModID + " project_id=" + projectID,
+		}, "")
+	})
+	return id, err
 }
+
 func (s *Store) ListModLoads(ctx context.Context, modID string, limit int) ([]mods.ModLoad, error) {
-	return nil, notImpl("ListModLoads")
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	activeProject := s.ActiveProject()
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, mod_id, COALESCE(session_id, ''), loaded_at, duration_ms,
+		        capabilities_count, COALESCE(error, ''), COALESCE(constitution_id, '')
+		   FROM mod_loads
+		  WHERE mod_id = $1 AND project_id = $2
+		  ORDER BY loaded_at DESC
+		  LIMIT $3`, modID, activeProject, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []mods.ModLoad{}
+	for rows.Next() {
+		var ml mods.ModLoad
+		if err := rows.Scan(&ml.ID, &ml.ModID, &ml.SessionID, &ml.LoadedAt, &ml.DurationMs,
+			&ml.CapabilitiesCount, &ml.Error, &ml.ConstitutionID); err != nil {
+			return nil, err
+		}
+		out = append(out, ml)
+	}
+	return out, rows.Err()
 }
 func (s *Store) Vacuum(ctx context.Context, policy store.VacuumPolicy) (store.VacuumStats, error) {
 	stats := store.VacuumStats{Duration: time.Now().UTC().Format(time.RFC3339Nano)}
@@ -2475,6 +2873,21 @@ func nullStr(s string) any {
 		return nil
 	}
 	return s
+}
+
+// isExpired reports whether (RFC3339Nano spawnedAt + ttlSeconds) is
+// before now. Returns true on parse errors (defensive: a row with bad
+// data is treated as expired). Mirror of sqlite.store.isExpired so
+// both drivers agree on TTL semantics for active_subagents. Postgres
+// could compute this server-side via TIMESTAMP arithmetic but we keep
+// the Go-side filter for cross-driver determinism.
+func isExpired(spawnedAt string, ttlSeconds int) bool {
+	t, err := time.Parse(time.RFC3339Nano, spawnedAt)
+	if err != nil {
+		return true
+	}
+	expiry := t.Add(time.Duration(ttlSeconds) * time.Second)
+	return time.Now().UTC().After(expiry)
 }
 
 // driftStrictnessOrDefault (Wave 5X.3) normalizes the operator's
@@ -3157,15 +3570,104 @@ func notImpl(name string) error {
 // statements, modulo TIMESTAMP WITH TIME ZONE for the second
 // column).
 func (s *Store) SetActiveSession(ctx context.Context, projectID, sessionID string) error {
-	return notImpl("SetActiveSession")
+	if strings.TrimSpace(projectID) == "" || strings.TrimSpace(sessionID) == "" {
+		return fmt.Errorf("postgres: SetActiveSession: projectID and sessionID required")
+	}
+	if err := s.requireProject(); err != nil {
+		return err
+	}
+	activeProject := s.ActiveProject()
+
+	// Verify the project exists (defense vs concurrent ArchiveProject).
+	p, err := s.GetProject(ctx, projectID)
+	if err != nil {
+		return err
+	}
+	if p == nil {
+		return fmt.Errorf("%w: project_id=%s", store.ErrProjectNotFound, projectID)
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	res, err := s.pool.Exec(ctx,
+		`UPDATE projects SET active_session_id = $1, active_session_set_at = $2 WHERE project_id = $3`,
+		sessionID, now, projectID)
+	if err != nil {
+		return err
+	}
+	if n := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("%w: project_id=%s", store.ErrProjectNotFound, projectID)
+	}
+
+	// Best-effort audit row (INV-1). Same "log + carry on" policy as
+	// SQLite — failing the audit must not fail the pointer flip.
+	_ = s.recordWrite(ctx, audit.WriteEvent{
+		Actor:          activeProject,
+		ProjectID:      projectID,
+		WritePath:      "SetActiveSession",
+		SessionID:      sessionID,
+		ConstitutionID: "",
+		ConstitutionVer: "",
+		CreatedAt:      now,
+	}, "")
+	return nil
 }
 
 func (s *Store) GetActiveSession(ctx context.Context, projectID string) (string, error) {
-	return "", notImpl("GetActiveSession")
+	if strings.TrimSpace(projectID) == "" {
+		return "", nil
+	}
+	if err := s.requireProject(); err != nil {
+		return "", err
+	}
+	var active *string
+	err := s.pool.QueryRow(ctx,
+		`SELECT active_session_id FROM projects WHERE project_id = $1`, projectID).Scan(&active)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil
+		}
+		return "", err
+	}
+	if active == nil {
+		return "", nil
+	}
+	return *active, nil
 }
 
 func (s *Store) ClearActiveSession(ctx context.Context, projectID, expectedSessionID string) error {
-	return notImpl("ClearActiveSession")
+	if strings.TrimSpace(projectID) == "" || strings.TrimSpace(expectedSessionID) == "" {
+		return fmt.Errorf("postgres: ClearActiveSession: projectID and expectedSessionID required")
+	}
+	if err := s.requireProject(); err != nil {
+		return err
+	}
+	activeProject := s.ActiveProject()
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+
+	res, err := s.pool.Exec(ctx,
+		`UPDATE projects SET active_session_id = NULL, active_session_set_at = NULL
+		   WHERE project_id = $1 AND active_session_id = $2`,
+		projectID, expectedSessionID)
+	if err != nil {
+		return err
+	}
+	n := res.RowsAffected()
+	if n > 0 {
+		// CAS matched — emit audit (INV-1). Stale CAS (n == 0) is
+		// silently skipped: the newer session is the live one and
+		// shouldn't be double-counted (mirror of SQLite at
+		// sqlite/store.go:4312).
+		_ = s.recordWrite(ctx, audit.WriteEvent{
+			Actor:          activeProject,
+			ProjectID:      projectID,
+			WritePath:      "ClearActiveSession",
+			SessionID:      expectedSessionID,
+			ConstitutionID: "",
+			ConstitutionVer: "",
+			CreatedAt:      now,
+		}, "")
+	}
+	return nil
 }
 
 // --- Agent memory (v2.1.0) --------------------------------------------
@@ -3207,19 +3709,224 @@ func (s *Store) SearchAgentMemory(ctx context.Context, f agentmemory.SearchFilte
 // and harness wiring is complete; the runtime path will return
 // notImpl until the Postgres backplane is built out.
 func (s *Store) SetActiveSubagent(ctx context.Context, wc store.WriteContext, row *store.ActiveSubagent) (int64, error) {
-	return 0, notImpl("SetActiveSubagent")
+	if row == nil {
+		return 0, fmt.Errorf("postgres: SetActiveSubagent: nil row")
+	}
+	if strings.TrimSpace(row.SubagentID) == "" {
+		return 0, fmt.Errorf("postgres: SetActiveSubagent: subagent_id required")
+	}
+	if strings.TrimSpace(row.Operator) == "" {
+		return 0, fmt.Errorf("postgres: SetActiveSubagent: operator required")
+	}
+	if err := s.requireProject(); err != nil {
+		return 0, err
+	}
+	projectID := projectIDOrActive(wc.ProjectID, s.activeProject)
+	ttl := row.TTLSeconds
+	if ttl <= 0 {
+		ttl = 3600
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+
+	var id int64
+	err := s.runInTx(ctx, func(tx pgx.Tx) error {
+		// ON CONFLICT on the composite PK refreshes spawned_at +
+		// parent_agent_id + ttl_seconds. The id column (BIGSERIAL
+		// UNIQUE from migration v33) auto-fills on insert and stays
+		// the same on conflict-update. RETURNING id hands the int64
+		// the Store contract demands back to the caller.
+		if err := tx.QueryRow(ctx,
+			`INSERT INTO active_subagents (project_id, operator, subagent_id, parent_agent_id,
+			                               spawned_at, ttl_seconds)
+			 VALUES ($1, $2, $3, $4, $5, $6)
+			 ON CONFLICT (project_id, operator, subagent_id) DO UPDATE SET
+			   parent_agent_id = EXCLUDED.parent_agent_id,
+			   spawned_at = EXCLUDED.spawned_at,
+			   ttl_seconds = EXCLUDED.ttl_seconds
+			 RETURNING id`,
+			projectID, row.Operator, row.SubagentID, row.ParentAgentID,
+			now, ttl).Scan(&id); err != nil {
+			return fmt.Errorf("active_subagents: upsert: %w", err)
+		}
+
+		if wc.WritePath == "" {
+			wc.WritePath = "SetActiveSubagent"
+		}
+		return s.recordWriteTx(ctx, tx, audit.WriteEvent{
+			TableName:       "active_subagents",
+			RowID:           id,
+			ProjectID:       projectID,
+			Actor:           wc.Actor,
+			WritePath:       wc.WritePath,
+			ConstitutionID:  wc.ConstitutionID,
+			ConstitutionVer: wc.ConstitutionVer,
+			CreatedAt:       now,
+		}, "")
+	})
+	if err != nil {
+		return 0, err
+	}
+
+	row.ID = id
+	row.ProjectID = projectID
+	row.SpawnedAt = now
+	row.TTLSeconds = ttl
+	return id, nil
 }
 
 func (s *Store) GetActiveSubagent(ctx context.Context, operator string) (*store.ActiveSubagent, error) {
-	return nil, notImpl("GetActiveSubagent")
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(operator) == "" {
+		return nil, nil
+	}
+	activeProject := s.ActiveProject()
+
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, project_id, operator, subagent_id, parent_agent_id,
+		        spawned_at, ttl_seconds
+		   FROM active_subagents
+		  WHERE project_id = $1 AND operator = $2
+		  ORDER BY spawned_at DESC
+		  LIMIT 1`, activeProject, operator)
+	if err != nil {
+		return nil, fmt.Errorf("active_subagents: get: %w", err)
+	}
+	defer rows.Close()
+
+	if !rows.Next() {
+		return nil, nil
+	}
+
+	var row store.ActiveSubagent
+	var spawnedAt time.Time
+	var ttl int
+	if err := rows.Scan(&row.ID, &row.ProjectID, &row.Operator, &row.SubagentID,
+		&row.ParentAgentID, &spawnedAt, &ttl); err != nil {
+		return nil, fmt.Errorf("active_subagents: scan: %w", err)
+	}
+	// spawned_at is TIMESTAMP WITH TIME ZONE on Postgres; rendered as
+	// RFC3339Nano in the Go struct (json contract preserved).
+	row.SpawnedAt = spawnedAt.UTC().Format(time.RFC3339Nano)
+	row.TTLSeconds = ttl
+
+	// TTL filter (Go-side; defense-in-depth if sweeper missed one).
+	if isExpired(row.SpawnedAt, row.TTLSeconds) {
+		return nil, nil
+	}
+	return &row, nil
 }
 
 func (s *Store) ClearActiveSubagent(ctx context.Context, wc store.WriteContext, operator, subagentID string) error {
-	return notImpl("ClearActiveSubagent")
+	if err := s.requireProject(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(operator) == "" {
+		return fmt.Errorf("postgres: ClearActiveSubagent: operator required")
+	}
+	if strings.TrimSpace(subagentID) == "" {
+		return fmt.Errorf("postgres: ClearActiveSubagent: subagent_id required")
+	}
+	projectID := projectIDOrActive(wc.ProjectID, s.activeProject)
+
+	return s.runInTx(ctx, func(tx pgx.Tx) error {
+		var rowID int64
+		var parentAgentID string
+		err := tx.QueryRow(ctx,
+			`SELECT id, parent_agent_id
+			   FROM active_subagents
+			  WHERE project_id = $1 AND operator = $2 AND subagent_id = $3`,
+			projectID, operator, subagentID,
+		).Scan(&rowID, &parentAgentID)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return store.ErrNotFound
+			}
+			return fmt.Errorf("active_subagents: lookup: %w", err)
+		}
+
+		res, err := tx.Exec(ctx,
+			`DELETE FROM active_subagents
+			  WHERE project_id = $1 AND operator = $2 AND subagent_id = $3`,
+			projectID, operator, subagentID)
+		if err != nil {
+			return fmt.Errorf("active_subagents: delete: %w", err)
+		}
+		if n := res.RowsAffected(); n == 0 {
+			return store.ErrNotFound
+		}
+
+		if wc.WritePath == "" {
+			wc.WritePath = "ClearActiveSubagent"
+		}
+		now := time.Now().UTC().Format(time.RFC3339Nano)
+		return s.recordWriteTx(ctx, tx, audit.WriteEvent{
+			TableName:       "active_subagents",
+			RowID:           rowID,
+			ProjectID:       projectID,
+			Actor:           wc.Actor,
+			WritePath:       wc.WritePath,
+			ConstitutionID:  wc.ConstitutionID,
+			ConstitutionVer: wc.ConstitutionVer,
+			CreatedAt:       now,
+		}, "")
+	})
 }
 
 func (s *Store) SweepExpiredSubagents(ctx context.Context) (int64, error) {
-	return 0, notImpl("SweepExpiredSubagents")
+	// Postgres advantage over SQLite: spawned_at is TIMESTAMP WITH TIME
+	// ZONE, so the date math is naturally server-side. Bulk-delete with
+	// RETURNING id, then emit one write_audit row per deleted id
+	// (matching SQLite's per-row audit semantics from
+	// sqlite/store.go:5540).
+	rows, err := s.pool.Query(ctx,
+		`DELETE FROM active_subagents
+		  WHERE spawned_at + make_interval(secs => ttl_seconds) < NOW()
+		  RETURNING id, project_id, operator, subagent_id`)
+	if err != nil {
+		return 0, fmt.Errorf("active_subagents: sweep: %w", err)
+	}
+	defer rows.Close()
+
+	type deletedRow struct {
+		id      int64
+		project string
+		oper    string
+		sub     string
+	}
+	var cands []deletedRow
+	for rows.Next() {
+		var c deletedRow
+		if err := rows.Scan(&c.id, &c.project, &c.oper, &c.sub); err != nil {
+			rows.Close()
+			return 0, fmt.Errorf("active_subagents: sweep-scan: %w", err)
+		}
+		cands = append(cands, c)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("active_subagents: sweep-rows: %w", err)
+	}
+
+	var deletedCount int64
+	for _, c := range cands {
+		now := time.Now().UTC().Format(time.RFC3339Nano)
+		if err := s.recordWrite(ctx, audit.WriteEvent{
+			TableName: "active_subagents",
+			RowID:     c.id,
+			ProjectID: c.project,
+			Actor:     "system/sweeper",
+			WritePath: "SweepExpiredSubagents",
+			CreatedAt: now,
+		}, ""); err != nil {
+			// Mirror SQLite: best-effort, log + carry on. The sweep
+			// already deleted the row (committed), so don't fail the
+			// whole sweep on one audit error.
+			_ = err
+		}
+		deletedCount++
+	}
+	return deletedCount, nil
 }
 
 // --- Error Observatory (spec 757, Wave 5D, migration v25) -------------
