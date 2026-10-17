@@ -921,4 +921,73 @@ ALTER TABLE agent_memory ADD COLUMN IF NOT EXISTS last_modified_by_event_id BIGI
 CREATE INDEX IF NOT EXISTS idx_last_modified_by_event_id ON agent_memory(last_modified_by_event_id);
 `,
 	},
+	{
+		// v33 — active_subagents.id BIGSERIAL UNIQUE (B2-D Phase 1, 2026-10-17).
+		//
+		// The active_subagents PG table (v21) declares PRIMARY KEY
+		// (project_id, operator, subagent_id) and no surrogate id. The
+		// Store interface returns int64 from SetActiveSubagent (per the
+		// SQLite impl's BIGSERIAL id) and the dual-driver tests assert
+		// `id > 0`. To honor that contract without breaking the
+		// composite PK (no inbound FKs — see T1.1 audit), add a
+		// BIGSERIAL UNIQUE column. BIGSERIAL auto-fills sequential
+		// values for both fresh inserts and existing rows (backfill via
+		// identity sequence on first INSERT after the migration).
+		//
+		// The SQLite impl equivalent is the implicit BIGSERIAL id from
+		// the v21 CREATE TABLE. PG parity = same column exists with the
+		// same semantic, just without joining to the composite PK.
+		Version: 33,
+		Name:    "active_subagents_synthetic_id",
+		Up: `
+ALTER TABLE active_subagents ADD COLUMN IF NOT EXISTS id BIGSERIAL UNIQUE;
+`,
+	},
+	{
+		// v34 — vibe_brands.project_id with UNIQUE(project_id, brand_id)
+		// (B2-D Phase 1, 2026-10-17).
+		//
+		// Mirror of the SQLite v7 project_namespace + spec 171 T4f
+		// decision: BrandGuides are project-scoped, with the same
+		// brand_id reusable across projects. SQLite stores
+		// UNIQUE(project_id, brand_id); the original PG v1 created
+		// brand_id as the sole PK, which is single-tenant and conflicts
+		// with the SQLite interface contract (GetBrandGuide filters by
+		// active_project; ListBrandGuides returns rows for that project
+		// only).
+		//
+		// Migration: add project_id column with default 'default' for
+		// backfill of legacy single-tenant rows, drop the PK, add the
+		// composite UNIQUE. Idempotent: ADD COLUMN IF NOT EXISTS +
+		// DO block that drops-and-recreates. The constraint name uses
+		// the auto-generated 'vibe_brands_pkey' (verified T1.1 audit;
+		// zero inbound FKs).
+		Version: 34,
+		Name:    "vibe_brands_project_id",
+		Up: `
+DO $$
+BEGIN
+  -- Add project_id column (idempotent). Default 'default' for
+  -- backfill of legacy single-tenant rows so existing reads still
+  -- resolve to a valid project.
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+     WHERE table_name = 'vibe_brands' AND column_name = 'project_id'
+  ) THEN
+    ALTER TABLE vibe_brands ADD COLUMN project_id TEXT NOT NULL DEFAULT 'default';
+  END IF;
+  -- Drop the old single-PK if it still exists (idempotent — second
+  -- run no-ops on the same DB).
+  EXECUTE 'ALTER TABLE vibe_brands DROP CONSTRAINT IF EXISTS vibe_brands_pkey';
+  -- Add the new composite UNIQUE if not already there.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conname = 'vibe_brands_project_brand_unique'
+  ) THEN
+    ALTER TABLE vibe_brands ADD CONSTRAINT vibe_brands_project_brand_unique UNIQUE (project_id, brand_id);
+  END IF;
+END$$;
+CREATE INDEX IF NOT EXISTS idx_vibe_brands_project ON vibe_brands(project_id);
+`,
+	},
 }
