@@ -134,7 +134,11 @@ jobs:
         with:
           go-version: '1.25.12'
           cache: true
-      - name: dual-driver smoke against live pg
+      - name: dual-driver smoke + phase1 implementations against live pg
         env:
           DARK_TEST_POSTGRES_DSN: postgres://dark:dark-test@127.0.0.1:5432/dark_mem?sslmode=disable
-        run: go test ./tests/dual_driver/ -run TestPhase0_Smoke_PostgresBoot -count=1 -v -timeout 60s
+        # Phase 0 (boot smoke, ci.md:8 commit ef2723d) + Phase 1
+        # (19 notImpl replacements: Constitution/Mod/ActiveSession/
+        # ActiveSubagent/BrandGuide). Future phases extend this regex
+        # with TestPhase2_*, TestPhase3_*, etc.
+        run: go test ./tests/dual_driver/ -run 'TestPhase0_Smoke_PostgresBoot|TestPhase1_.*' -count=1 -v -timeout 240s
