@@ -27,6 +27,10 @@
 // with a key wins).
 package llm
 
+import (
+	"strings"
+)
+
 // ProviderDialect is the wire dialect a provider speaks.
 type ProviderDialect string
 
@@ -58,6 +62,34 @@ const (
 	ProbeAuthXAPIKey ProbeAuthMode = "x-api-key"
 )
 
+// EndpointSpec is one concrete deployment (region) of a provider.
+//
+// A provider may be reachable at more than one endpoint, and which
+// one accepts a given API key is a property of the CREDENTIAL, not of
+// the provider: MiniMax, for instance, mints region-scoped keys
+// (api.minimax.io for the global region, api.minimaxi.com for China)
+// and each key authenticates ONLY against its own endpoint.
+//
+// The catalog therefore declares CANDIDATES and the effective endpoint
+// is resolved against the key at runtime — see ResolveEndpoint in
+// internal/llm/endpoint.go.
+type EndpointSpec struct {
+	// ID is a stable identifier for the deployment ("global", "cn",
+	// "env" for an operator override). It is persisted alongside the
+	// key in the credential record.
+	ID string
+	// BaseURL is the base URL for the provider's primary dialect.
+	BaseURL string
+	// AnthropicBaseURL is the Anthropic-compatible base, when the
+	// deployment offers one.
+	AnthropicBaseURL string
+	// ProbePath is the GET path appended to BaseURL to validate a key
+	// without spending tokens.
+	ProbePath string
+	// ProbeAuthMode is how the probe authenticates.
+	ProbeAuthMode ProbeAuthMode
+}
+
 // ProviderSpec describes one supported LLM provider. It is the union of
 // the old orchestration.ProviderSpec (endpoint/dialect/model) and the
 // old lifecycle.ProviderInfo (family/models/rung), plus the T3 probe
@@ -73,12 +105,20 @@ type ProviderSpec struct {
 	// openai it is the full OpenAI-compatible base (the client appends
 	// /chat/completions); for dialect anthropic it is the base the
 	// client appends /v1/messages to.
+	//
+	// It is the DEFAULT endpoint (the first candidate) and is kept
+	// for the legacy compat wrappers that read it directly. Code that
+	// has a credential in hand must use ResolveEndpoint instead.
 	BaseURL string
 	// AnthropicBaseURL is optional; set for providers that ALSO speak
 	// Anthropic Messages (deepseek, minimax, qwen). When the operator
 	// pins DARK_JUDGE_DIALECT=anthropic for such a provider, this URL
 	// is used instead of BaseURL.
 	AnthropicBaseURL string
+	// Endpoints are the deployment candidates for this provider, in
+	// preference order. Empty means "one implicit endpoint built from
+	// BaseURL/AnthropicBaseURL" (see EndpointCandidates).
+	Endpoints []EndpointSpec
 	// EnvKey is the environment variable that carries the API key.
 	EnvKey string
 	// DefaultModel is the model requested when the operator does not
@@ -109,6 +149,48 @@ type ProviderSpec struct {
 	BalancePath string
 }
 
+// EndpointCandidates returns the deployment candidates for this
+// provider, in preference order. Never empty: a provider that declares
+// no Endpoints yields one implicit candidate built from its own
+// BaseURL/AnthropicBaseURL fields.
+func (p *ProviderSpec) EndpointCandidates() []EndpointSpec {
+	if p == nil {
+		return nil
+	}
+	if len(p.Endpoints) > 0 {
+		out := make([]EndpointSpec, len(p.Endpoints))
+		copy(out, p.Endpoints)
+		return out
+	}
+	return []EndpointSpec{{
+		ID:               "default",
+		BaseURL:          p.BaseURL,
+		AnthropicBaseURL: p.AnthropicBaseURL,
+		ProbePath:        p.ProbePath,
+		ProbeAuthMode:    p.ProbeAuthMode,
+	}}
+}
+
+// DefaultEndpoint returns the first candidate — the endpoint used when
+// no credential-specific resolution has happened.
+func (p *ProviderSpec) DefaultEndpoint() EndpointSpec {
+	cands := p.EndpointCandidates()
+	if len(cands) == 0 {
+		return EndpointSpec{}
+	}
+	return cands[0]
+}
+
+// EndpointByID returns the candidate with the given id.
+func (p *ProviderSpec) EndpointByID(id string) (EndpointSpec, bool) {
+	for _, e := range p.EndpointCandidates() {
+		if e.ID == id {
+			return e, true
+		}
+	}
+	return EndpointSpec{}, false
+}
+
 // Aliases maps legacy provider IDs to canonical ones. Accepted by
 // ResolveID and surfaced as a deprecation warning on first use.
 var Aliases = map[string]string{
@@ -129,10 +211,28 @@ var Aliases = map[string]string{
 //	moonshot   -> https://platform.moonshot.cn/docs/guide/start-using-kimi-api
 //	qwen       -> https://help.aliyun.com/zh/model-studio/getting-started/models
 //
-// minimax endpoint note (2026-08-13, operator directive): the catalog
-// points at api.minimaxi.com (CN regional) — the key currently injected
-// by the harness is scoped to it only. minimax-cn shares the endpoint
-// but uses the MINIMAX_API_KEY_CN env var.
+// minimax endpoint note (2026-08-13, operator directive; revised
+// 2026-11-02): the catalog originally pointed at api.minimaxi.com (CN
+// regional) because the key injected by the harness was scoped to it.
+//
+// The truth is that the endpoint is a property of the CREDENTIAL, not
+// of the provider: MiniMax mints DIFFERENT keys per region and each
+// one authenticates ONLY against its own endpoint (a CN key against
+// api.minimax.io returns HTTP 401 "invalid api key"). A single
+// hardcoded BaseURL therefore breaks the moment the operator rotates
+// keys or uses a key from another region.
+//
+// So the catalog declares CANDIDATES (Endpoints) and the effective
+// endpoint is resolved against the credential at runtime by
+// ResolveEndpoint (internal/llm/endpoint.go): env override -> cached
+// credential endpoint -> probe discovery.
+//
+//	minimax    -> global (api.minimax.io), cn (api.minimaxi.com)
+//	minimax-cn -> cn (api.minimaxi.com), key from MINIMAX_API_KEY_CN
+//
+// Both speak the OpenAI dialect and expose an Anthropic-compatible
+// /anthropic path. An operator can still force one endpoint without a
+// recompile: DARK_LLM_BASE_URL_minimax / DARK_LLM_ANTHROPIC_BASE_URL_minimax.
 var Catalog = []ProviderSpec{
 	{
 		ID:            "anthropic",
@@ -190,17 +290,33 @@ var Catalog = []ProviderSpec{
 	},
 	{
 		ID:               "minimax",
-		Region:           RegionChina,
+		Region:           RegionUS,
 		Dialect:          DialectOpenAI,
-		BaseURL:          "https://api.minimaxi.com/v1",
-		AnthropicBaseURL: "https://api.minimaxi.com/anthropic",
-		EnvKey:           "MINIMAX_API_KEY",
-		DefaultModel:     "MiniMax-M3",
-		Family:           "minimax",
-		Models:           []string{"MiniMax-M3", "minimax/M3"},
-		DefaultRung:      "heavy",
-		ProbePath:        "/models",
-		ProbeAuthMode:    ProbeAuthBearer,
+		BaseURL:          "https://api.minimax.io/v1",
+		AnthropicBaseURL: "https://api.minimax.io/anthropic",
+		Endpoints: []EndpointSpec{
+			{
+				ID:               "global",
+				BaseURL:          "https://api.minimax.io/v1",
+				AnthropicBaseURL: "https://api.minimax.io/anthropic",
+				ProbePath:        "/models",
+				ProbeAuthMode:    ProbeAuthBearer,
+			},
+			{
+				ID:               "cn",
+				BaseURL:          "https://api.minimaxi.com/v1",
+				AnthropicBaseURL: "https://api.minimaxi.com/anthropic",
+				ProbePath:        "/models",
+				ProbeAuthMode:    ProbeAuthBearer,
+			},
+		},
+		EnvKey:        "MINIMAX_API_KEY",
+		DefaultModel:  "MiniMax-M3",
+		Family:        "minimax",
+		Models:        []string{"MiniMax-M3", "minimax/M3"},
+		DefaultRung:   "heavy",
+		ProbePath:     "/models",
+		ProbeAuthMode: ProbeAuthBearer,
 	},
 	{
 		ID:               "minimax-cn",
@@ -208,13 +324,22 @@ var Catalog = []ProviderSpec{
 		Dialect:          DialectOpenAI,
 		BaseURL:          "https://api.minimaxi.com/v1",
 		AnthropicBaseURL: "https://api.minimaxi.com/anthropic",
-		EnvKey:           "MINIMAX_API_KEY_CN",
-		DefaultModel:     "MiniMax-M3",
-		Family:           "minimax-cn",
-		Models:           []string{"MiniMax-M3"},
-		DefaultRung:      "heavy",
-		ProbePath:        "/models",
-		ProbeAuthMode:    ProbeAuthBearer,
+		Endpoints: []EndpointSpec{
+			{
+				ID:               "cn",
+				BaseURL:          "https://api.minimaxi.com/v1",
+				AnthropicBaseURL: "https://api.minimaxi.com/anthropic",
+				ProbePath:        "/models",
+				ProbeAuthMode:    ProbeAuthBearer,
+			},
+		},
+		EnvKey:        "MINIMAX_API_KEY_CN",
+		DefaultModel:  "MiniMax-M3",
+		Family:        "minimax-cn",
+		Models:        []string{"MiniMax-M3"},
+		DefaultRung:   "heavy",
+		ProbePath:     "/models",
+		ProbeAuthMode: ProbeAuthBearer,
 	},
 	{
 		ID:            "zhipu",
@@ -269,6 +394,11 @@ func ResolveID(id string) (canonical string, wasAlias bool) {
 
 // SpecByID returns the catalog spec for a canonical or legacy id, or
 // nil when unknown.
+//
+// The returned spec is a POINTER INTO the package-level Catalog, so
+// callers must treat it as read-only. Endpoint resolution (which
+// endpoint accepts a given key) lives in internal/llm/endpoint.go, not
+// here: the catalog is data, the resolution is policy.
 func SpecByID(id string) *ProviderSpec {
 	canonical, _ := ResolveID(id)
 	for i := range Catalog {
@@ -277,6 +407,35 @@ func SpecByID(id string) *ProviderSpec {
 		}
 	}
 	return nil
+}
+
+// DefaultModelForURL returns the catalog DefaultModel of the provider
+// whose endpoint (any candidate) prefixes the given endpoint URL.
+// Empty string when no catalog entry matches.
+//
+// Used by the connectivity probe: providers reject a request whose
+// "model" field names a model they do not know, so the probe cannot
+// send a placeholder model name.
+func DefaultModelForURL(endpoint string) string {
+	ep := strings.TrimRight(strings.TrimSpace(endpoint), "/")
+	if ep == "" {
+		return ""
+	}
+	for i := range Catalog {
+		s := &Catalog[i]
+		for _, e := range s.EndpointCandidates() {
+			for _, base := range []string{e.BaseURL, e.AnthropicBaseURL} {
+				base = strings.TrimRight(strings.TrimSpace(base), "/")
+				if base == "" {
+					continue
+				}
+				if ep == base || strings.HasPrefix(ep, base+"/") {
+					return s.DefaultModel
+				}
+			}
+		}
+	}
+	return ""
 }
 
 // SpecByEnvKey returns the catalog spec whose EnvKey matches, or nil.

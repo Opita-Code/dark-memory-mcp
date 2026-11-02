@@ -17,9 +17,18 @@
 // Migration: MigrateFromEnv copies env keys into the keyring exactly
 // once per missing key. It is idempotent and crash-safe: if the
 // keyring write fails, the env var remains the source of truth.
+//
+// Credential records: the valid endpoint of a provider depends on the
+// CREDENTIAL (a provider may mint region-scoped keys that only
+// authenticate against the endpoint they were issued for). The
+// keystore therefore can persist the key TOGETHER with the endpoint
+// that was resolved for it (see Credential / CredentialStore). The
+// endpoint travels with the key; it is never inferred from the key
+// alone.
 package llmkeystore
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -49,24 +58,98 @@ type KeyStore interface {
 	Source(providerID string) string
 }
 
+// Credential is a provider API key together with the endpoint that was
+// resolved for it. The endpoint is part of the credential because a
+// provider may issue region-scoped keys: the key determines which
+// endpoint accepts it.
+type Credential struct {
+	Key        string `json:"key"`
+	EndpointID string `json:"endpoint_id,omitempty"`
+	BaseURL    string `json:"base_url,omitempty"`
+}
+
+// CredentialStore is an OPTIONAL extension of KeyStore: it can also
+// persist the endpoint that was resolved for a key. Implementations
+// that cannot persist the endpoint (the env backend) must still
+// implement it: LoadCredential returns the key with an empty endpoint
+// and StoreCredential is a no-op that reports the key as stored.
+type CredentialStore interface {
+	// StoreCredential persists key+endpoint for a provider id.
+	StoreCredential(providerID string, c Credential) error
+	// LoadCredential returns the stored credential. The bool is false
+	// when no credential exists for that provider.
+	LoadCredential(providerID string) (Credential, bool)
+}
+
+// Store is the full key store contract: KeyStore plus the optional
+// credential-record extension.
+//
+// Store satisfies KeyStore, so every consumer that only needs
+// Get/Set/Delete/Has/Source keeps compiling unchanged.
+type Store interface {
+	KeyStore
+	CredentialStore
+}
+
+// CredentialStoreOf returns the credential-record extension of a
+// KeyStore when the backing store supports it. Every store shipped
+// by this package does, so callers that hold a plain KeyStore (e.g.
+// the one returned by the orchestration wiring) can upgrade it
+// without changing the wiring.
+func CredentialStoreOf(ks KeyStore) (CredentialStore, bool) {
+	if ks == nil {
+		return nil, false
+	}
+	cs, ok := ks.(CredentialStore)
+	return cs, ok
+}
+
+// decodeCredential parses a stored payload as a credential record.
+//
+// LEGACY tolerance: items written before credential records existed
+// hold the RAW key (not JSON). They are still valid and must keep
+// working: a payload that is not JSON, or that unmarshals but carries
+// no "key" field, is treated as the raw key with an empty endpoint.
+func decodeCredential(data []byte) Credential {
+	var c Credential
+	if err := json.Unmarshal(data, &c); err != nil {
+		// Not JSON at all → legacy raw key.
+		return Credential{Key: string(data)}
+	}
+	if c.Key == "" {
+		// JSON but no usable key → legacy raw key (e.g. "{}").
+		return Credential{Key: string(data)}
+	}
+	return c
+}
+
 // keyringStore wraps a 99designs/keyring.Keyring with a key prefix.
 type keyringStore struct {
 	ring   keyring.Keyring
 	prefix string
 }
 
+// Compile-time guarantees: every shipped backend implements the full
+// Store contract (KeyStore + credential records).
+var (
+	_ Store = (*keyringStore)(nil)
+	_ Store = (*envStore)(nil)
+	_ Store = (*Composite)(nil)
+	_ Store = (*MemoryStore)(nil)
+)
+
 // KeyringStore builds a KeyStore on an already-opened keyring.
 // prefix is prepended to every item key (namespace separation).
-func KeyringStore(ring keyring.Keyring, prefix string) KeyStore {
+func KeyringStore(ring keyring.Keyring, prefix string) Store {
 	return &keyringStore{ring: ring, prefix: prefix}
 }
 
 // DefaultKeyring opens the OS credential vault with the canonical
 // service name. On Windows this is Credential Manager with target
 // prefix "dark-memory/".
-func DefaultKeyring() (KeyStore, error) {
+func DefaultKeyring() (Store, error) {
 	ring, err := keyring.Open(keyring.Config{
-		ServiceName:  "dark-memory-mcp",
+		ServiceName:   "dark-memory-mcp",
 		WinCredPrefix: "dark-memory/",
 	})
 	if err != nil {
@@ -87,16 +170,32 @@ func (k *keyringStore) Get(providerID string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("llm keystore: keyring get: %w", err)
 	}
-	return string(item.Data), nil
+	// The item holds either a credential record (JSON, written by
+	// StoreCredential) or a legacy raw key. Both decode to the key.
+	return decodeCredential(item.Data).Key, nil
 }
 
+// Set stores the key for a provider id.
+//
+// The endpoint that was resolved for the key is preserved when the
+// SAME key is re-set (the endpoint belongs to the key, not to the
+// write). Storing a DIFFERENT key drops the endpoint: the new key may
+// belong to another region and its endpoint is unknown until it is
+// resolved again.
 func (k *keyringStore) Set(providerID, key string) error {
 	if strings.TrimSpace(key) == "" {
 		return errors.New("llm keystore: refusing to store an empty key")
 	}
+	data := []byte(key)
+	if cur, ok := k.LoadCredential(providerID); ok && cur.Key == key {
+		// Same key → keep the resolved endpoint, store the full record.
+		if enc, err := json.Marshal(cur); err == nil {
+			data = enc
+		}
+	}
 	if err := k.ring.Set(keyring.Item{
 		Key:         k.itemKey(providerID),
-		Data:        []byte(key),
+		Data:        data,
 		Label:       "dark-memory-mcp LLM key (" + providerID + ")",
 		Description: "dark-memory-mcp LLM-as-judge API key for provider " + providerID,
 	}); err != nil {
@@ -128,6 +227,40 @@ func (k *keyringStore) Source(providerID string) string {
 	return "none"
 }
 
+// StoreCredential persists the key together with the endpoint that was
+// resolved for it. The item is stored as UTF-8 JSON of Credential
+// ({"key":"...","endpoint_id":"...","base_url":"..."}) so the endpoint
+// survives a restart and travels with the key it belongs to.
+func (k *keyringStore) StoreCredential(providerID string, c Credential) error {
+	if strings.TrimSpace(c.Key) == "" {
+		return errors.New("llm keystore: refusing to store an empty credential")
+	}
+	data, err := json.Marshal(c)
+	if err != nil {
+		return fmt.Errorf("llm keystore: encode credential for %s: %w", providerID, err)
+	}
+	if err := k.ring.Set(keyring.Item{
+		Key:         k.itemKey(providerID),
+		Data:        data,
+		Label:       "dark-memory-mcp LLM key (" + providerID + ")",
+		Description: "dark-memory-mcp LLM-as-judge API key + endpoint for provider " + providerID,
+	}); err != nil {
+		return fmt.Errorf("llm keystore: keyring set credential: %w", err)
+	}
+	return nil
+}
+
+// LoadCredential returns the stored credential. Legacy items (raw key,
+// no JSON) are tolerated: they yield the key with an empty endpoint.
+// A missing item (or an unreadable vault) yields (Credential{}, false).
+func (k *keyringStore) LoadCredential(providerID string) (Credential, bool) {
+	item, err := k.ring.Get(k.itemKey(providerID))
+	if err != nil {
+		return Credential{}, false
+	}
+	return decodeCredential(item.Data), true
+}
+
 // envStore reads keys from process environment variables. It is
 // read-only: Set/Delete are no-ops (the env is owned by the harness).
 type envStore struct {
@@ -138,7 +271,7 @@ type envStore struct {
 }
 
 // EnvStore builds a read-only KeyStore over environment variables.
-func EnvStore(envKeyResolver func(providerID string) string) KeyStore {
+func EnvStore(envKeyResolver func(providerID string) string) Store {
 	return &envStore{EnvKey: envKeyResolver}
 }
 
@@ -174,6 +307,35 @@ func (e *envStore) Source(providerID string) string {
 	return "none"
 }
 
+// StoreCredential is a no-op by design: the environment is owned by the
+// harness, not by dark-memory (same rule as Set, which errors out
+// instead of writing). The env carries the KEY only — never the
+// endpoint it was minted for — so there is nothing to persist. The
+// call reports success (the key IS stored, in the env) and the
+// endpoint is resolved at read time by the caller.
+//
+// The consequence is documented on purpose: an env-backed provider
+// always loads with an empty endpoint (see LoadCredential), so the
+// endpoint must be re-resolved for that credential.
+func (e *envStore) StoreCredential(providerID string, c Credential) error {
+	return nil
+}
+
+// LoadCredential returns the env-provided key with an EMPTY endpoint:
+// the env var carries the key only. The bool is false when the env var
+// is unset or empty.
+func (e *envStore) LoadCredential(providerID string) (Credential, bool) {
+	v := os.Getenv(e.keyName(providerID))
+	if v == "" {
+		return Credential{}, false
+	}
+	return Credential{Key: v}, true
+}
+
+// readOnlyCredentials marks the env backend as unable to persist a
+// credential record (the environment carries the key only).
+func (e *envStore) readOnlyCredentials() bool { return true }
+
 // Composite chains backends in order: reads consult each until one
 // hits; writes go to the first backend only.
 type Composite struct {
@@ -181,7 +343,7 @@ type Composite struct {
 }
 
 // NewComposite builds a chain. Read order = argument order.
-func NewComposite(backends ...KeyStore) KeyStore {
+func NewComposite(backends ...KeyStore) Store {
 	return &Composite{backends: backends}
 }
 
@@ -229,16 +391,70 @@ func (c *Composite) Source(providerID string) string {
 	return "none"
 }
 
+// readOnlyCredentialStore marks backends whose StoreCredential is a
+// no-op (the env backend: the environment is owned by the harness and
+// cannot carry an endpoint). The composite skips them when writing so
+// a credential lands in the keyring instead of vanishing.
+type readOnlyCredentialStore interface {
+	readOnlyCredentials() bool
+}
+
+// StoreCredential persists the credential in the first backend that can
+// actually persist it — same write order as Set (the keyring normally
+// comes first, the env is read-only and last). Read-only backends are
+// skipped so the credential lands in the keyring.
+func (c *Composite) StoreCredential(providerID string, cred Credential) error {
+	if len(c.backends) == 0 {
+		return errors.New("llm keystore: composite has no backends")
+	}
+	var fallback CredentialStore
+	for _, b := range c.backends {
+		cs, ok := b.(CredentialStore)
+		if !ok {
+			continue
+		}
+		if fallback == nil {
+			fallback = cs
+		}
+		if ro, ok := b.(readOnlyCredentialStore); ok && ro.readOnlyCredentials() {
+			continue
+		}
+		return cs.StoreCredential(providerID, cred)
+	}
+	if fallback != nil {
+		// Only read-only backends: report the key as stored (the env
+		// carries the key; the endpoint is resolved at read time).
+		return fallback.StoreCredential(providerID, cred)
+	}
+	return errors.New("llm keystore: no backend can store a credential record")
+}
+
+// LoadCredential reads the credential from the first backend that has
+// one: keyring first, env second (same order as Get).
+func (c *Composite) LoadCredential(providerID string) (Credential, bool) {
+	for _, b := range c.backends {
+		cs, ok := b.(CredentialStore)
+		if !ok {
+			continue
+		}
+		if cred, found := cs.LoadCredential(providerID); found {
+			return cred, true
+		}
+	}
+	return Credential{}, false
+}
+
 // MemoryStore is an in-memory KeyStore for tests and one-shot tool
 // invocations. NOT production-safe (no encryption, no persistence).
 type MemoryStore struct {
-	mu   sync.RWMutex
-	keys map[string]string
+	mu    sync.RWMutex
+	keys  map[string]string
+	creds map[string]Credential
 }
 
 // NewMemoryStore returns an empty in-memory store.
 func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{keys: map[string]string{}}
+	return &MemoryStore{keys: map[string]string{}, creds: map[string]Credential{}}
 }
 
 func (m *MemoryStore) Get(providerID string) (string, error) {
@@ -251,10 +467,17 @@ func (m *MemoryStore) Get(providerID string) (string, error) {
 	return v, nil
 }
 
+// Set stores the key for a provider id. Re-setting the SAME key keeps
+// the endpoint that was resolved for it (the endpoint belongs to the
+// key); a DIFFERENT key drops it.
 func (m *MemoryStore) Set(providerID, key string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.keys[providerID] = key
+	if cur, ok := m.creds[providerID]; ok && cur.Key == key {
+		return nil // same key → keep the resolved endpoint
+	}
+	delete(m.creds, providerID)
 	return nil
 }
 
@@ -262,6 +485,7 @@ func (m *MemoryStore) Delete(providerID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.keys, providerID)
+	delete(m.creds, providerID)
 	return nil
 }
 
@@ -277,6 +501,29 @@ func (m *MemoryStore) Source(providerID string) string {
 		return "memory"
 	}
 	return "none"
+}
+
+// StoreCredential persists the key+endpoint pair in memory.
+func (m *MemoryStore) StoreCredential(providerID string, c Credential) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.creds[providerID] = c
+	m.keys[providerID] = c.Key
+	return nil
+}
+
+// LoadCredential returns the stored credential. A key stored without a
+// credential record (legacy shape) is returned with an empty endpoint.
+func (m *MemoryStore) LoadCredential(providerID string) (Credential, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if c, ok := m.creds[providerID]; ok {
+		return c, true
+	}
+	if k, ok := m.keys[providerID]; ok {
+		return Credential{Key: k}, true
+	}
+	return Credential{}, false
 }
 
 // EnvEntry pairs a provider id with its env var name (migration input).

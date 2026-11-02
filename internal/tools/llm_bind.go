@@ -47,6 +47,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dark-agents/dark-memory-mcp/internal/llm"
 	"github.com/dark-agents/dark-memory-mcp/internal/project"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 )
@@ -360,6 +361,12 @@ func runLLMProviderProbe(ctx context.Context, in LLMProviderProbeInput) (*ToolRe
 	endpoint := in.Endpoint
 	authToken := in.AuthToken
 	timeout := in.TimeoutMS
+	// model names the model the probe asks for. It comes from the
+	// binding (operator's model_rev) or from the catalog entry that
+	// owns the endpoint. NEVER a placeholder: providers reject an
+	// unknown model name with HTTP 400, which would look like a bad
+	// credential when it is not.
+	model := ""
 
 	if in.ProviderID != "" {
 		if endpoint != "" {
@@ -387,12 +394,14 @@ func runLLMProviderProbe(ctx context.Context, in LLMProviderProbeInput) (*ToolRe
 		if proj.NLIConfig.Primary.ProviderID == in.ProviderID {
 			endpoint = proj.NLIConfig.Primary.Endpoint
 			authToken = proj.NLIConfig.Primary.AuthToken
+			model = proj.NLIConfig.Primary.ModelRev
 			if timeout == 0 {
 				timeout = proj.NLIConfig.Primary.TimeoutMS
 			}
 		} else if proj.NLIConfig.FallbackEnabled && proj.NLIConfig.Fallback.ProviderID == in.ProviderID {
 			endpoint = proj.NLIConfig.Fallback.Endpoint
 			authToken = proj.NLIConfig.Fallback.AuthToken
+			model = proj.NLIConfig.Fallback.ModelRev
 			if timeout == 0 {
 				timeout = proj.NLIConfig.Fallback.TimeoutMS
 			}
@@ -407,18 +416,42 @@ func runLLMProviderProbe(ctx context.Context, in LLMProviderProbeInput) (*ToolRe
 	if timeout <= 0 {
 		timeout = 5000
 	}
+	if strings.TrimSpace(model) == "" {
+		model = llm.DefaultModelForURL(endpoint)
+	}
 
-	result := probeLLMProvider(ctx, endpoint, authToken, timeout)
+	result := probeLLMProvider(ctx, endpoint, authToken, timeout, model)
 	return &ToolResponse{Data: result}, nil
 }
 
 // probeLLMProvider sends a tiny POST and returns the outcome.
+//
+// model must name a model the provider actually serves: providers
+// reject a request whose "model" field is unknown (HTTP 400), so a
+// placeholder like "probe" makes the probe fail for reasons that have
+// nothing to do with the credential. An empty model means "send the
+// request without a model field" (last resort).
+//
 // Exposed as a free function so tests can call it directly with a
 // stub server.
-func probeLLMProvider(ctx context.Context, endpoint, authToken string, timeoutMS int64) LLMProviderProbeResult {
+func probeLLMProvider(ctx context.Context, endpoint, authToken string, timeoutMS int64, model string) LLMProviderProbeResult {
 	now := time.Now().UTC().Format(time.RFC3339)
-	body := `{"model":"probe","messages":[{"role":"system","content":"reply with pong"},{"role":"user","content":"ping"}],"temperature":0,"max_tokens":4}`
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader([]byte(body)))
+	payload := map[string]any{
+		"messages": []map[string]string{
+			{"role": "system", "content": "reply with pong"},
+			{"role": "user", "content": "ping"},
+		},
+		"temperature": 0,
+		"max_tokens":  4,
+	}
+	if strings.TrimSpace(model) != "" {
+		payload["model"] = model
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return LLMProviderProbeResult{OK: false, Reason: err.Error(), ProbeAt: now}
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(raw))
 	if err != nil {
 		return LLMProviderProbeResult{OK: false, Reason: err.Error(), ProbeAt: now}
 	}
@@ -434,15 +467,15 @@ func probeLLMProvider(ctx context.Context, endpoint, authToken string, timeoutMS
 		return LLMProviderProbeResult{OK: false, LatencyMS: latency, Reason: err.Error(), ProbeAt: now}
 	}
 	defer resp.Body.Close()
-	raw, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return LLMProviderProbeResult{OK: false, LatencyMS: latency, StatusCode: resp.StatusCode, Reason: "read body: " + err.Error(), ProbeAt: now}
 	}
 	excerpt := ""
-	if len(raw) > 0 && len(raw) <= 64 {
-		excerpt = string(raw)
-	} else if len(raw) > 64 {
-		excerpt = string(raw[:64]) + "..."
+	if len(body) > 0 && len(body) <= 64 {
+		excerpt = string(body)
+	} else if len(body) > 64 {
+		excerpt = string(body[:64]) + "..."
 	}
 	ok := resp.StatusCode == 200
 	reason := ""

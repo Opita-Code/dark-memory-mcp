@@ -17,6 +17,8 @@ package orchestration
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -311,11 +313,31 @@ func NewSelfHarnessClient() (*SelfHarnessClient, error) {
 // honoring DARK_JUDGE_MODEL_<PROVIDER> overrides and the optional
 // DARK_JUDGE_DIALECT=anthropic switch for providers that speak both
 // dialects.
+//
+// The endpoint is RESOLVED AGAINST THE CREDENTIAL: a provider may mint
+// region-scoped keys (MiniMax: global + China) and each key only
+// authenticates against the endpoint it was issued for, so the client
+// must talk to the endpoint that accepts THIS key.
+//
+// The resolution is bounded (endpointResolveTimeout) and never fatal: if
+// no candidate accepts the key the failure is LOGGED (the operator must
+// see it — a wrong key and a wrong endpoint must not look the same) and
+// the client falls back to the provider's default endpoint, so the judge
+// keeps a client instead of losing its verdict.
 func newCatalogClient(spec *ProviderSpec, key string) *SelfHarnessClient {
-	dialect := providerDialect(spec)
-	baseURL := spec.BaseURL
-	if dialect == DialectAnthropic && spec.AnthropicBaseURL != "" {
-		baseURL = spec.AnthropicBaseURL
+	return newCatalogClientWithEndpoint(spec, key, resolveEndpointForCredential(spec, key))
+}
+
+// newCatalogClientWithEndpoint builds a SelfHarnessClient against an
+// ALREADY resolved endpoint (see resolveEndpointForCredential).
+func newCatalogClientWithEndpoint(spec *ProviderSpec, key string, ep llm.EndpointSpec) *SelfHarnessClient {
+	dialect := spec.Dialect
+	baseURL := ep.BaseURL
+	// The Anthropic-compatible base belongs to the RESOLVED endpoint
+	// too (MiniMax global vs China serve their own /anthropic path).
+	if os.Getenv("DARK_JUDGE_DIALECT") == "anthropic" && ep.AnthropicBaseURL != "" {
+		dialect = DialectAnthropic
+		baseURL = ep.AnthropicBaseURL
 	}
 	model := os.Getenv("DARK_JUDGE_MODEL_" + strings.ToUpper(spec.ID))
 	if model == "" {
@@ -327,6 +349,142 @@ func newCatalogClient(spec *ProviderSpec, key string) *SelfHarnessClient {
 		key:      key,
 		dialect:  dialect,
 		baseURL:  baseURL,
+	}
+}
+
+// endpointResolveTimeout bounds the credential→endpoint discovery that
+// happens while building a client. The discovery is a cheap GET (a
+// model listing, never a completion), but it must not stall a judge
+// call: six seconds is enough for the candidates of one provider.
+const endpointResolveTimeout = 6 * time.Second
+
+// resolveEndpointForCredential returns the endpoint of spec that
+// accepts key, falling back to the provider's default endpoint when the
+// discovery fails.
+//
+// This function is synchronous by contract (the failover factory has no
+// context), so the probe runs on a background context with its own
+// deadline.
+//
+// A provider with ONE endpoint candidate never probes: the resolver
+// short-circuits to that endpoint, so the behaviour of anthropic,
+// openai, google, deepseek, ... is unchanged (no extra request).
+func resolveEndpointForCredential(spec *ProviderSpec, key string) llm.EndpointSpec {
+	if spec == nil {
+		return llm.EndpointSpec{}
+	}
+	// A failed discovery is remembered for a short while: the failover
+	// factory runs on EVERY judge call, and re-probing a dead key on
+	// every call would add seconds of latency to a verdict that is
+	// going to fail anyway.
+	if err, logIt := recentEndpointFailure(spec, key); err != nil {
+		if logIt {
+			logEndpointFailure(spec, err)
+		}
+		return spec.DefaultEndpoint()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), endpointResolveTimeout)
+	defer cancel()
+	ep, err := llm.ResolveCredentialEndpoint(ctx, spec, key)
+	if err != nil {
+		rememberEndpointFailure(spec, key, err)
+		logEndpointFailure(spec, err)
+		return spec.DefaultEndpoint()
+	}
+	return ep
+}
+
+// logEndpointFailure reports a discovery failure. The operator must see
+// it: a wrong key and a wrong endpoint must not look the same.
+func logEndpointFailure(spec *ProviderSpec, err error) {
+	log.Printf("dark-mem-mcp: provider %s: no endpoint accepts this credential (%v) — using the default endpoint %s",
+		spec.ID, err, spec.DefaultEndpoint().BaseURL)
+}
+
+// endpointFailureTTL is how long a failed credential→endpoint discovery
+// is remembered. Short enough that a rotated key or a restored network
+// is picked up quickly, long enough that consecutive judge calls do not
+// pay the probe cost again.
+const endpointFailureTTL = 5 * time.Minute
+
+// endpointFailureLogInterval is the minimum delay between two log
+// lines about the SAME failed discovery: the failover factory runs on
+// every judge call, and the operator needs the report, not the flood.
+const endpointFailureLogInterval = time.Minute
+
+// endpointFailure is one remembered discovery failure.
+type endpointFailure struct {
+	err        error
+	expiresAt  time.Time
+	lastLogged time.Time
+}
+
+// endpointFailureMemo remembers the discovery failures per
+// (provider, credential). The failover factory runs on EVERY judge
+// call, and a failed discovery is not cached by the resolver (only
+// successful ones are), so without this memo a dead key would cost a
+// full probe round-trip on every verdict.
+var endpointFailureMemo = struct {
+	sync.Mutex
+	entries map[string]endpointFailure
+}{entries: map[string]endpointFailure{}}
+
+// endpointFailureKey identifies one (provider, credential) pair without
+// storing the credential itself: only a truncated digest of the key is
+// kept.
+func endpointFailureKey(spec *ProviderSpec, key string) string {
+	sum := sha256.Sum256([]byte(key))
+	return spec.ID + "|" + hex.EncodeToString(sum[:8])
+}
+
+// recentEndpointFailure returns the remembered discovery failure for
+// this (provider, credential) and whether it should be logged again
+// (at most once per endpointFailureLogInterval).
+func recentEndpointFailure(spec *ProviderSpec, key string) (error, bool) {
+	if spec == nil {
+		return nil, false
+	}
+	endpointFailureMemo.Lock()
+	defer endpointFailureMemo.Unlock()
+	k := endpointFailureKey(spec, key)
+	f, ok := endpointFailureMemo.entries[k]
+	if !ok {
+		return nil, false
+	}
+	now := time.Now()
+	if now.After(f.expiresAt) {
+		delete(endpointFailureMemo.entries, k)
+		return nil, false
+	}
+	logIt := now.Sub(f.lastLogged) >= endpointFailureLogInterval
+	if logIt {
+		f.lastLogged = now
+		endpointFailureMemo.entries[k] = f
+	}
+	return f.err, logIt
+}
+
+// rememberEndpointFailure records a discovery failure for this
+// (provider, credential).
+func rememberEndpointFailure(spec *ProviderSpec, key string, err error) {
+	if spec == nil {
+		return
+	}
+	endpointFailureMemo.Lock()
+	defer endpointFailureMemo.Unlock()
+	// Opportunistic purge: the memo must not grow without bound.
+	if len(endpointFailureMemo.entries) > 64 {
+		now := time.Now()
+		for k, f := range endpointFailureMemo.entries {
+			if now.After(f.expiresAt) {
+				delete(endpointFailureMemo.entries, k)
+			}
+		}
+	}
+	endpointFailureMemo.entries[endpointFailureKey(spec, key)] = endpointFailure{
+		err:        err,
+		expiresAt:  time.Now().Add(endpointFailureTTL),
+		lastLogged: time.Now(),
 	}
 }
 

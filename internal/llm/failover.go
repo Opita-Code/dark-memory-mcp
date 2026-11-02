@@ -46,6 +46,12 @@ type FailoverOptions struct {
 	Pin string
 	// Factory builds the concrete JudgeClient for one provider+key.
 	// The orchestration package wires newCatalogClient here.
+	//
+	// The Factory is also where the credential→endpoint resolution
+	// happens: it receives the KEY, so it is the component that can
+	// resolve the endpoint that accepts it (a provider may mint
+	// region-scoped keys — see internal/llm/endpoint.go). The
+	// FailoverClient itself stays endpoint-agnostic.
 	Factory func(spec *ProviderSpec, key string) (JudgeClient, error)
 	// Classify maps a client error to a FailClass. Nil = default
 	// classifier (timeouts/deadlines → FailTimeout, else FailServer).

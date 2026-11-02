@@ -14,6 +14,25 @@ import (
 // contract). It DOES retry on ErrProviderTimeout / ErrProviderUnavailable /
 // ErrProviderRateLimited when FallbackEnabled is true.
 //
+// # Endpoints are resolved by the PROVIDER, not by the Router
+//
+// The endpoint a provider talks to is a property of the CREDENTIAL it
+// holds (MiniMax mints region-scoped keys; each key authenticates only
+// against the endpoint it was issued for). So the resolution lives with
+// the provider that owns the credential — the chat providers resolve it
+// when they are built (see chat.go::resolveChatEndpoint) — and NOT
+// here.
+//
+// The Router therefore never rewrites an endpoint and never needs to
+// know a base URL. Two consequences worth stating:
+//
+//   - the credential→endpoint discovery (a cheap model-listing probe)
+//     happens at PROVIDER CONSTRUCTION time, so it never eats into the
+//     latency budget the Router enforces on the primary call;
+//   - the fallback provider resolves its own endpoint too, from its own
+//     credential — the two sides of the Router may legitimately talk to
+//     different endpoints.
+//
 // Hard invariants:
 //   - Score returned by Router ALWAYS has ProviderID set (one of the
 //     configured providers' ID()), or returns a sealed error.

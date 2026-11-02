@@ -69,14 +69,14 @@ func nliProviderForConfig(ctx context.Context, nliCfg *project.NLIConfig, hc nli
 		hc = http.DefaultClient
 	}
 
-	primary, err := buildNLIPrimary(nliCfg.Primary, hc, nliCfg.MaxPremiseBytes, nliCfg.MaxHypothesisBytes)
+	primary, err := buildNLIPrimary(ctx, nliCfg.Primary, hc, nliCfg.MaxPremiseBytes, nliCfg.MaxHypothesisBytes)
 	if err != nil {
 		return nil, fmt.Errorf("nli primary: %w", err)
 	}
 
 	var fallback nli.Provider
 	if nliCfg.FallbackEnabled {
-		fallback, err = buildNLIPrimary(nliCfg.Fallback, hc, nliCfg.MaxPremiseBytes, nliCfg.MaxHypothesisBytes)
+		fallback, err = buildNLIPrimary(ctx, nliCfg.Fallback, hc, nliCfg.MaxPremiseBytes, nliCfg.MaxHypothesisBytes)
 		if err != nil {
 			return nil, fmt.Errorf("nli fallback: %w", err)
 		}
@@ -130,10 +130,14 @@ func nliProviderForConfig(ctx context.Context, nliCfg *project.NLIConfig, hc nli
 // dispatch case for the operator's chat-provider configs (closes
 // row 1370 / Phase H5 partial).
 //
+// The context is used by the chat providers to resolve their endpoint
+// against the credential in the config: the endpoint is a property of
+// the CREDENTIAL, not of the provider (see internal/nli/chat.go).
+//
 // Anything else → ErrInvalidConfig. The operator can extend the
 // dispatch via a project.NLIConfig fixture when new providers land
 // (registry grow path is the same as the nli package's labels).
-func buildNLIPrimary(p project.NLIPrimary, hc nli.HFInferenceClient, maxPBytes, maxHBytes int) (nli.Provider, error) {
+func buildNLIPrimary(ctx context.Context, p project.NLIPrimary, hc nli.HFInferenceClient, maxPBytes, maxHBytes int) (nli.Provider, error) {
 	if p.ProviderID == "" {
 		return nil, fmt.Errorf("%w: provider_id empty", nli.ErrInvalidConfig)
 	}
@@ -147,7 +151,7 @@ func buildNLIPrimary(p project.NLIPrimary, hc nli.HFInferenceClient, maxPBytes, 
 	case strings.HasPrefix(p.ProviderID, "minicheck"):
 		return nli.NewMiniCheckProvider(pc, hc, maxPBytes, maxHBytes)
 	case strings.HasPrefix(p.ProviderID, "chat-"):
-		return nli.NewChatProvider(pc, hc, maxPBytes, maxHBytes)
+		return nli.NewChatProviderWithContext(ctx, pc, hc, maxPBytes, maxHBytes)
 	default:
 		return nil, fmt.Errorf("%w: unknown provider_id %q (supported: deberta*, minicheck*, chat-*)",
 			nli.ErrInvalidConfig, p.ProviderID)

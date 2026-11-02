@@ -328,7 +328,7 @@ func TestLLMProviderProbe_01_HappyPath_SendsPong(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	result := probeLLMProvider(context.Background(), srv.URL, "test-token", 5000)
+	result := probeLLMProvider(context.Background(), srv.URL, "test-token", 5000, "MiniMax-M3")
 	if !result.OK {
 		t.Errorf("OK: got false, reason=%q", result.Reason)
 	}
@@ -436,7 +436,7 @@ func TestLLMProviderProbe_05_ReportsFailure(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	result := probeLLMProvider(context.Background(), srv.URL, "", 5000)
+	result := probeLLMProvider(context.Background(), srv.URL, "", 5000, "")
 	if result.OK {
 		t.Error("OK: got true, want false")
 	}
@@ -445,5 +445,55 @@ func TestLLMProviderProbe_05_ReportsFailure(t *testing.T) {
 	}
 	if !strings.Contains(result.Reason, "500") {
 		t.Errorf("Reason: got %q, want substring '500'", result.Reason)
+	}
+}
+// TestProbeLLMProvider_SendsRealModel pins the fix for the probe bug:
+// the request must name a model the provider actually serves. A
+// placeholder ("probe") produced HTTP 400 "unknown model" for every
+// provider, which looked like an authentication fault.
+func TestProbeLLMProvider_SendsRealModel(t *testing.T) {
+	var gotModel any
+	var hadModel bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &payload)
+		gotModel, hadModel = payload["model"]
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"pong"}}]}`))
+	}))
+	defer srv.Close()
+
+	result := probeLLMProvider(context.Background(), srv.URL, "tok", 5000, "MiniMax-M3")
+	if !result.OK {
+		t.Fatalf("OK: got false, reason=%q", result.Reason)
+	}
+	if !hadModel {
+		t.Fatal("probe body has no model field")
+	}
+	if gotModel != "MiniMax-M3" {
+		t.Errorf("model: got %v, want %q", gotModel, "MiniMax-M3")
+	}
+}
+
+// TestProbeLLMProvider_NoModelFieldWhenEmpty: with no model known, the
+// field is omitted rather than sent as a placeholder.
+func TestProbeLLMProvider_NoModelFieldWhenEmpty(t *testing.T) {
+	var hadModel bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload map[string]any
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &payload)
+		_, hadModel = payload["model"]
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(`{"choices":[]}`))
+	}))
+	defer srv.Close()
+
+	if result := probeLLMProvider(context.Background(), srv.URL, "tok", 5000, ""); !result.OK {
+		t.Fatalf("OK: got false, reason=%q", result.Reason)
+	}
+	if hadModel {
+		t.Error("probe body must omit the model field when no model is known")
 	}
 }

@@ -143,7 +143,7 @@ func legacyMain() {
 	//     is fully wired.
 	// Operators without an LLM key can roll back to v2 with
 	// DARK_DELEGATION_BACKEND=v2.
-	v4LLM, v4LLMErr := judge.NewRealLLMClient()
+	v4LLM, v4LLMErr := judge.NewRealLLMClientWithContext(ctx)
 	if v4LLMErr != nil {
 		// No provider key — fall through. The v4alpha adapter
 		// will surface needs_human with llm_network_error

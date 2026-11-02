@@ -29,6 +29,10 @@
 // What is reused (via internal/llm — the canonical types package):
 //   - ProviderSpec / Catalog (endpoints + dialect + default model)
 //   - SpecByID / ResolveID (canonical id lookup + legacy aliases)
+//   - ResolveCredentialEndpoint (endpoint discovery against the key in
+//     hand — the endpoint is a property of the CREDENTIAL, not of the
+//     provider: MiniMax mints region-scoped keys and each key only
+//     authenticates against the endpoint it was issued for)
 //
 // Wiring (in transport/mcp/server.go):
 //   - Server.NewServer calls NewRealLLMClient() at boot.
@@ -127,6 +131,9 @@ type RealLLMClient struct {
 // NewRealLLMClient builds a RealLLMClient from env vars. Returns
 // ErrNoKey when no provider has a key configured.
 //
+// It is the context-free variant of NewRealLLMClientWithContext: the
+// endpoint discovery (see below) runs with a background context.
+//
 // Env vars consumed (per ADR-007 §7):
 //
 //	DARK_JUDGE_PROVIDER       explicit pin (overrides auto-detect)
@@ -149,14 +156,40 @@ type RealLLMClient struct {
 //	5. DEEPSEEK_API_KEY → deepseek
 //	6. none → ErrNoKey
 func NewRealLLMClient() (*RealLLMClient, error) {
-	providerID, key, dialect, baseURL, err := resolveProviderFromEnv()
+	return NewRealLLMClientWithContext(context.Background())
+}
+
+// NewRealLLMClientWithContext builds a RealLLMClient from env vars and
+// resolves the endpoint AGAINST THE CREDENTIAL in hand.
+//
+// The endpoint is a property of the credential, not of the provider:
+// MiniMax mints region-scoped keys and each key authenticates only
+// against the endpoint it was issued for (the other answers HTTP 401
+// "invalid api key", which is indistinguishable from a bad key). So the
+// base URL is resolved with llm.ResolveCredentialEndpoint instead of
+// being read from the catalog a priori.
+//
+// A provider with a single endpoint candidate keeps its previous
+// behaviour: the resolver short-circuits to that endpoint without a
+// probe (no extra HTTP request, no behaviour change for anthropic,
+// openai, google, deepseek, ...).
+//
+// When NO candidate accepts the key the error names every candidate that
+// was tried, wrapped in ErrLLMUnavailable — the judge must not pretend
+// a wrong endpoint is a wrong key.
+func NewRealLLMClientWithContext(ctx context.Context) (*RealLLMClient, error) {
+	providerID, key, spec, err := resolveProviderFromEnv()
 	if err != nil {
 		return nil, err
 	}
-	spec := llm.SpecByID(providerID)
 	if spec == nil {
 		return nil, fmt.Errorf("%w: provider %q not in canonical catalog", ErrLLMUnavailable, providerID)
 	}
+	ep, err := llm.ResolveCredentialEndpoint(ctx, spec, key)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrLLMUnavailable, err)
+	}
+	dialect, baseURL := effectiveDialectAndURL(spec, ep)
 	model := resolveModel(spec)
 	httpClient := &http.Client{
 		Transport: &http.Transport{
@@ -177,31 +210,33 @@ func NewRealLLMClient() (*RealLLMClient, error) {
 }
 
 // resolveProviderFromEnv implements the detection-order chain.
-// Returns (providerID, apiKey, dialect, baseURL, nil) on success.
-func resolveProviderFromEnv() (string, string, llm.ProviderDialect, string, error) {
+// Returns (providerID, apiKey, providerSpec, nil) on success.
+//
+// The endpoint is NOT decided here: it is resolved against the key by
+// the caller (see NewRealLLMClientWithContext).
+func resolveProviderFromEnv() (string, string, *llm.ProviderSpec, error) {
 	// 0. Explicit pin overrides auto-detect.
 	if pin := os.Getenv("DARK_JUDGE_PROVIDER"); pin != "" {
 		canonical, _ := llm.ResolveID(pin)
 		if !supportedProviderIDs[canonical] {
-			return "", "", "", "", fmt.Errorf(
+			return "", "", nil, fmt.Errorf(
 				"%w: DARK_JUDGE_PROVIDER=%q not in supportedProviderIDs (supported: %s)",
 				ErrLLMUnavailable, pin, strings.Join(supportedProviderIDList(), ", "),
 			)
 		}
 		spec := llm.SpecByID(canonical)
 		if spec == nil {
-			return "", "", "", "", fmt.Errorf(
+			return "", "", nil, fmt.Errorf(
 				"%w: DARK_JUDGE_PROVIDER=%q not in canonical llm.Catalog", ErrLLMUnavailable, pin,
 			)
 		}
 		key := os.Getenv(spec.EnvKey)
 		if key == "" {
-			return "", "", "", "", fmt.Errorf(
+			return "", "", nil, fmt.Errorf(
 				"%w: DARK_JUDGE_PROVIDER=%s but %s is not set", ErrLLMUnavailable, spec.ID, spec.EnvKey,
 			)
 		}
-		dialect, baseURL := effectiveDialectAndURL(spec)
-		return canonical, key, dialect, baseURL, nil
+		return canonical, key, spec, nil
 	}
 	// 1-9. Auto-detect by env key presence.
 	for _, id := range autoDetectOrder {
@@ -213,8 +248,7 @@ func resolveProviderFromEnv() (string, string, llm.ProviderDialect, string, erro
 		if key == "" {
 			continue
 		}
-		dialect, baseURL := effectiveDialectAndURL(spec)
-		return id, key, dialect, baseURL, nil
+		return id, key, spec, nil
 	}
 	envKeys := make([]string, 0, len(autoDetectOrder))
 	for _, id := range autoDetectOrder {
@@ -222,7 +256,7 @@ func resolveProviderFromEnv() (string, string, llm.ProviderDialect, string, erro
 			envKeys = append(envKeys, spec.EnvKey)
 		}
 	}
-	return "", "", "", "", fmt.Errorf(
+	return "", "", nil, fmt.Errorf(
 		"%w: no LLM key detected (set one of %s, or DARK_JUDGE_PROVIDER=<id>)",
 		ErrLLMUnavailable, strings.Join(envKeys, ", "),
 	)
@@ -243,11 +277,16 @@ func supportedProviderIDList() []string {
 // effectiveDialectAndURL applies the DARK_JUDGE_DIALECT override
 // (providers that speak both Anthropic Messages + OpenAI Chat
 // Completions switch to Anthropic when the override is set).
-func effectiveDialectAndURL(spec *llm.ProviderSpec) (llm.ProviderDialect, string) {
-	if os.Getenv("DARK_JUDGE_DIALECT") == "anthropic" && spec.AnthropicBaseURL != "" {
-		return llm.DialectAnthropic, spec.AnthropicBaseURL
+//
+// The URLs come from the RESOLVED endpoint (ep), not from the catalog:
+// the endpoint that accepts the credential is the one that carries the
+// Anthropic-compatible base too (MiniMax global vs China, for
+// instance).
+func effectiveDialectAndURL(spec *llm.ProviderSpec, ep llm.EndpointSpec) (llm.ProviderDialect, string) {
+	if os.Getenv("DARK_JUDGE_DIALECT") == "anthropic" && ep.AnthropicBaseURL != "" {
+		return llm.DialectAnthropic, ep.AnthropicBaseURL
 	}
-	return spec.Dialect, spec.BaseURL
+	return spec.Dialect, ep.BaseURL
 }
 
 // resolveModel picks the model name in priority order:

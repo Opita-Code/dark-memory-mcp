@@ -7,6 +7,11 @@
 //	Anthropic      -> GET {BaseURL}{ProbePath}  (x-api-key + anthropic-version)
 //	DeepSeek bonus -> GET {BaseURL}/user/balance (also free)
 //
+// The URL is the one that accepts the KEY: the endpoint is a property
+// of the credential, so the probe resolves it first (see
+// ResolveCredentialEndpoint). A provider with a single endpoint
+// candidate is probed there, exactly as before.
+//
 // Classification:
 //
 //	200            -> valid
@@ -73,29 +78,43 @@ var probeHTTPClient = &http.Client{
 
 // ValidateProvider runs the free probe for one provider+key. ctx can
 // additionally bound the call (caller may pass a shorter deadline).
+//
+// The endpoint is resolved AGAINST THE KEY: a provider with several
+// candidates (MiniMax: global + China) mints region-scoped keys, and
+// probing the wrong one would report a perfectly healthy provider as
+// dead (the key answers 401 there) — the health registry would then
+// cool it down and the failover chain would skip it.
+//
+// A provider with ONE candidate is probed at that endpoint, exactly as
+// before: the resolver short-circuits, so no extra request is made.
+//
+// When the discovery fails (no candidate accepts the key) the default
+// endpoint is probed instead and the probe's own verdict decides the
+// classification — a wrong key must not be reported as a dead server.
 func ValidateProvider(ctx context.Context, spec *ProviderSpec, key string) ProbeResult {
 	start := time.Now()
 	res := ProbeResult{
-		ProviderID: spec.ID,
-		State:      ProbeUnreachable,
-		CheckedAt:  time.Now().UTC(),
+		State:     ProbeUnreachable,
+		CheckedAt: time.Now().UTC(),
 	}
 	if spec == nil {
 		res.Error = "nil provider spec"
 		return res
 	}
+	res.ProviderID = spec.ID
 	if strings.TrimSpace(key) == "" {
 		res.Error = "empty key"
 		return res
 	}
 
-	endpoint := strings.TrimRight(spec.BaseURL, "/") + spec.ProbePath
+	ep, resolveErr := resolveProbeEndpoint(ctx, spec, key)
+	endpoint := strings.TrimRight(ep.BaseURL, "/") + ep.ProbePath
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		res.Error = fmt.Sprintf("build probe request: %v", err)
 		return res
 	}
-	switch spec.ProbeAuthMode {
+	switch ep.ProbeAuthMode {
 	case ProbeAuthXAPIKey:
 		req.Header.Set("x-api-key", key)
 		req.Header.Set("anthropic-version", "2023-06-01")
@@ -138,19 +157,42 @@ func ValidateProvider(ctx context.Context, spec *ProviderSpec, key string) Probe
 		res.Class = FailServer
 		res.Error = fmt.Sprintf("HTTP %d", httpResp.StatusCode)
 	}
+	if resolveErr != nil {
+		// The endpoint discovery failed: no candidate accepted the key.
+		// Keep the probe verdict (it is the authoritative one) and add
+		// the discovery detail so the operator can tell a wrong key
+		// from a wrong endpoint.
+		res.Error = fmt.Sprintf("%s (endpoint discovery failed: %v)", res.Error, resolveErr)
+	}
 	return res
+}
+
+// resolveProbeEndpoint returns the endpoint to probe for this
+// credential. On discovery failure the provider's default endpoint is
+// returned together with the discovery error, so the caller can report
+// it without losing the probe verdict.
+func resolveProbeEndpoint(ctx context.Context, spec *ProviderSpec, key string) (EndpointSpec, error) {
+	ep, err := ResolveCredentialEndpoint(ctx, spec, key)
+	if err != nil {
+		return spec.DefaultEndpoint(), err
+	}
+	return ep, nil
 }
 
 // ValidateProviderWithBalance runs the standard probe and, when the
 // spec declares a BalancePath, also fetches it for extra evidence.
 // The verdict stays driven by the primary probe; the balance fetch is
 // best-effort and only fills res.Error detail when it fails.
+//
+// The balance endpoint belongs to the RESOLVED endpoint too (the
+// credential decides which deployment serves it).
 func ValidateProviderWithBalance(ctx context.Context, spec *ProviderSpec, key string) ProbeResult {
 	res := ValidateProvider(ctx, spec, key)
 	if spec.BalancePath == "" {
 		return res
 	}
-	bEndpoint := strings.TrimRight(spec.BaseURL, "/") + spec.BalancePath
+	ep, _ := resolveProbeEndpoint(ctx, spec, key)
+	bEndpoint := strings.TrimRight(ep.BaseURL, "/") + spec.BalancePath
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, bEndpoint, nil)
 	if err != nil {
 		return res

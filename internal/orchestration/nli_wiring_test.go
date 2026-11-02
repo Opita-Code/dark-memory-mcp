@@ -242,7 +242,7 @@ func TestNLIProviderForConfig_NilHTTPClient_DefaultsToDefaultClient(t *testing.T
 // chat-* case; this test pins all three.
 func TestBuildNLIPrimary_DispatchesByPrefix(t *testing.T) {
 	hc := &http.Client{Transport: &countingTransport{}}
-	deb, err := buildNLIPrimary(project.NLIPrimary{
+	deb, err := buildNLIPrimary(context.Background(), project.NLIPrimary{
 		ProviderID: "deberta-v3-large-mnli",
 		Endpoint:   "http://x/deberta",
 		TimeoutMS:  5000,
@@ -254,7 +254,7 @@ func TestBuildNLIPrimary_DispatchesByPrefix(t *testing.T) {
 		t.Errorf("deberta: got %T", deb)
 	}
 
-	minicheck, err := buildNLIPrimary(project.NLIPrimary{
+	minicheck, err := buildNLIPrimary(context.Background(), project.NLIPrimary{
 		ProviderID: "minicheck-roberta-large",
 		Endpoint:   "http://x/minicheck",
 		TimeoutMS:  5000,
@@ -267,7 +267,7 @@ func TestBuildNLIPrimary_DispatchesByPrefix(t *testing.T) {
 	}
 
 	// Phase 13 T-201: chat-* prefix → ChatProvider (closes row 1370).
-	chat, err := buildNLIPrimary(project.NLIPrimary{
+	chat, err := buildNLIPrimary(context.Background(), project.NLIPrimary{
 		ProviderID: "chat-minimax-cn",
 		Endpoint:   "http://x/chat",
 		TimeoutMS:  5000,

@@ -70,11 +70,17 @@ func TestRealLLMClient_NewWithExplicitPin(t *testing.T) {
 }
 
 func TestRealLLMClient_NewAutoDetect_Minimax(t *testing.T) {
+	clearAllProviderKeys(t)
 	t.Setenv("DARK_JUDGE_PROVIDER", "")
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("MINIMAX_API_KEY", "minimax-test-key")
 	t.Setenv("MINIMAX_API_KEY_CN", "")
 	t.Setenv("DEEPSEEK_API_KEY", "")
+	// MiniMax declares TWO endpoint candidates (global + China), so the
+	// endpoint is resolved against the credential. The operator override
+	// wins outright (no probe) — that keeps the test hermetic and
+	// exercises the override path.
+	t.Setenv("DARK_LLM_BASE_URL_MINIMAX", "https://api.minimaxi.com/v1")
 
 	c, err := NewRealLLMClient()
 	if err != nil {
@@ -82,6 +88,9 @@ func TestRealLLMClient_NewAutoDetect_Minimax(t *testing.T) {
 	}
 	if c.provider != "minimax" {
 		t.Errorf("provider = %q; want minimax", c.provider)
+	}
+	if c.baseURL != "https://api.minimaxi.com/v1" {
+		t.Errorf("baseURL = %q; want the operator override", c.baseURL)
 	}
 }
 
@@ -382,6 +391,10 @@ func TestEnrichSystemPrompt_EmptyPersona_Unchanged(t *testing.T) {
 
 // clearAllProviderKeys removes every LLM env var so the
 // auto-detect chain has nothing to find. Helper for ADR-009 tests.
+//
+// It also clears the operator endpoint overrides
+// (DARK_LLM_BASE_URL_<PROVIDER> / DARK_LLM_ANTHROPIC_BASE_URL_<PROVIDER>)
+// so one test cannot leak an endpoint into the next.
 func clearAllProviderKeys(t *testing.T) {
 	t.Helper()
 	for _, k := range []string{
@@ -397,6 +410,11 @@ func clearAllProviderKeys(t *testing.T) {
 		"DASHSCOPE_API_KEY",
 	} {
 		t.Setenv(k, "")
+	}
+	for _, p := range llm.CanonicalIDs() {
+		suffix := strings.ToUpper(strings.ReplaceAll(p, "-", "_"))
+		t.Setenv("DARK_LLM_BASE_URL_"+suffix, "")
+		t.Setenv("DARK_LLM_ANTHROPIC_BASE_URL_"+suffix, "")
 	}
 }
 

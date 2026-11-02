@@ -108,9 +108,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/dark-agents/dark-memory-mcp/internal/llm"
 )
 
 // ChatProvider scores a (premise, hypothesis) pair against an
@@ -250,10 +253,34 @@ type ChatProvider struct {
 // cfg.Endpoint is empty, the HTTP client is nil, or the size caps
 // are negative.
 //
+// It is the context-free variant of NewChatProviderWithContext.
+//
 // The "chat-" prefix is required (not a convention) so dispatch in
 // orchestration/nli_wiring.go::buildNLIPrimary can route operator configs
 // unambiguously to ChatProvider vs DeBERTaProvider / MiniCheckProvider.
 func NewChatProvider(cfg ProviderConfig, hc HFInferenceClient, maxP, maxH int) (*ChatProvider, error) {
+	return NewChatProviderWithContext(context.Background(), cfg, hc, maxP, maxH)
+}
+
+// NewChatProviderWithContext validates cfg and returns a ChatProvider,
+// resolving the endpoint AGAINST THE CREDENTIAL in cfg.AuthToken.
+//
+// The endpoint is a property of the CREDENTIAL, not of the provider:
+// MiniMax mints region-scoped keys and each key authenticates only
+// against the endpoint it was issued for (the other answers HTTP 401
+// "invalid api key", indistinguishable from a bad key). So when the
+// configured endpoint is one of the catalog candidates for that
+// provider, it is replaced by the candidate that accepts THIS key (the
+// trailing path — /chat/completions — is preserved).
+//
+// A configured endpoint that is NOT a catalog candidate (self-hosted
+// vLLM, corporate proxy, ...) is left untouched: it is the operator's
+// explicit choice and no catalog candidate describes it.
+//
+// A failed resolution is NOT fatal: the configured endpoint is kept (it
+// may well be the right one — e.g. a proxy that only the operator
+// knows about) and the failure is logged. The judge keeps running.
+func NewChatProviderWithContext(ctx context.Context, cfg ProviderConfig, hc HFInferenceClient, maxP, maxH int) (*ChatProvider, error) {
 	if !strings.HasPrefix(cfg.ProviderID, "chat-") {
 		return nil, fmt.Errorf("%w: ChatProvider requires provider_id starting with 'chat-' (got %q)",
 			ErrInvalidConfig, cfg.ProviderID)
@@ -271,9 +298,19 @@ func NewChatProvider(cfg ProviderConfig, hc HFInferenceClient, maxP, maxH int) (
 		return nil, fmt.Errorf("%w: negative max_tokens_override", ErrInvalidConfig)
 	}
 	cfg = cfg.WithDefaults()
+	endpoint := cfg.Endpoint
+	if resolved, err := resolveChatEndpoint(ctx, cfg); err != nil {
+		// The credential was not accepted by any candidate endpoint.
+		// Keep the operator's endpoint and report it (no token in the
+		// message — the token is never logged).
+		log.Printf("nli: provider %s: no endpoint accepts this credential (%v) — keeping the configured endpoint",
+			cfg.ProviderID, err)
+	} else {
+		endpoint = resolved
+	}
 	return &ChatProvider{
 		client:            hc,
-		endpoint:          cfg.Endpoint,
+		endpoint:          endpoint,
 		authToken:         cfg.AuthToken,
 		timeout:           time.Duration(cfg.TimeoutMS) * time.Millisecond,
 		maxPBytes:         maxP,
@@ -284,10 +321,113 @@ func NewChatProvider(cfg ProviderConfig, hc HFInferenceClient, maxP, maxH int) (
 	}, nil
 }
 
+// chatProviderCatalogID maps a chat provider id to the catalog
+// provider it talks to: "chat-minimax-cn" → "minimax-cn",
+// "chat-deepseek" → "deepseek". The "chat-" prefix is the NLI dispatch
+// prefix; what follows is the provider id of the canonical catalog.
+// False when the id does not name a catalog provider.
+func chatProviderCatalogID(providerID string) (string, bool) {
+	id := strings.TrimPrefix(providerID, "chat-")
+	if id == providerID || id == "" {
+		return "", false
+	}
+	canonical, _ := llm.ResolveID(id)
+	if llm.SpecByID(canonical) == nil {
+		return "", false
+	}
+	return canonical, true
+}
+
+// chatProviderSpec returns the catalog spec of the provider behind a
+// chat provider id (nil when the id names no catalog provider).
+func chatProviderSpec(providerID string) (*llm.ProviderSpec, bool) {
+	id, ok := chatProviderCatalogID(providerID)
+	if !ok {
+		return nil, false
+	}
+	spec := llm.SpecByID(id)
+	return spec, spec != nil
+}
+
+// resolveChatEndpoint returns the endpoint the chat provider must POST
+// to, for the credential carried by cfg.
+//
+//   - No catalog provider behind the provider id → the configured
+//     endpoint (the operator's own deployment) is kept as is.
+//   - No credential → the configured endpoint is kept as is (nothing to
+//     resolve against).
+//   - A provider with ONE endpoint candidate → the configured endpoint
+//     is kept as is (there is nothing to discover).
+//   - A configured endpoint that is NOT one of the candidates → kept as
+//     is (self-hosted deployments, proxies, ...).
+//   - Otherwise the candidate that accepts the credential wins, and the
+//     configured path (/chat/completions) is preserved.
+func resolveChatEndpoint(ctx context.Context, cfg ProviderConfig) (string, error) {
+	spec, ok := chatProviderSpec(cfg.ProviderID)
+	if !ok {
+		return cfg.Endpoint, nil
+	}
+	return resolveChatEndpointForSpec(ctx, cfg, spec)
+}
+
+// resolveChatEndpointForSpec is the testable core of
+// resolveChatEndpoint: it resolves the endpoint of spec that accepts
+// the credential in cfg.
+func resolveChatEndpointForSpec(ctx context.Context, cfg ProviderConfig, spec *llm.ProviderSpec) (string, error) {
+	if cfg.AuthToken == "" || spec == nil {
+		return cfg.Endpoint, nil
+	}
+	candidates := spec.EndpointCandidates()
+	if len(candidates) <= 1 {
+		return cfg.Endpoint, nil
+	}
+	suffix, matched := candidatePathSuffix(candidates, cfg.Endpoint)
+	if !matched {
+		// The operator's endpoint is not a catalog endpoint: leave it.
+		return cfg.Endpoint, nil
+	}
+	ep, err := llm.ResolveCredentialEndpoint(ctx, spec, cfg.AuthToken)
+	if err != nil {
+		return cfg.Endpoint, err
+	}
+	return strings.TrimRight(ep.BaseURL, "/") + suffix, nil
+}
+
+// candidatePathSuffix returns the path of endpoint relative to the
+// candidate base it belongs to (e.g. "/chat/completions"), and whether
+// endpoint belongs to one of the candidates at all.
+func candidatePathSuffix(candidates []llm.EndpointSpec, endpoint string) (string, bool) {
+	ep := strings.TrimRight(strings.TrimSpace(endpoint), "/")
+	if ep == "" {
+		return "", false
+	}
+	for _, c := range candidates {
+		for _, base := range []string{c.BaseURL, c.AnthropicBaseURL} {
+			base = strings.TrimRight(strings.TrimSpace(base), "/")
+			if base == "" {
+				continue
+			}
+			if ep == base {
+				return "", true
+			}
+			if strings.HasPrefix(ep, base+"/") {
+				return ep[len(base):], true
+			}
+		}
+	}
+	return "", false
+}
+
 // ID returns the provider's logical id (the verbatim provider_id from
 // the project's NLIConfig.Primary — e.g. "chat-minimax-cn"). Provenance
 // flows through the audit chain.
 func (p *ChatProvider) ID() string { return p.providerID }
+
+// Endpoint returns the URL the provider POSTs to: the configured one,
+// or the catalog candidate that accepts the credential in hand (see
+// NewChatProviderWithContext). Exposed for observability — never the
+// auth token.
+func (p *ChatProvider) Endpoint() string { return p.endpoint }
 
 // Score implements Provider.Score for OpenAI-compatible chat APIs.
 //

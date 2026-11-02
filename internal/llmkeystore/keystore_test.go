@@ -1,6 +1,7 @@
 package llmkeystore
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -179,5 +180,221 @@ func TestKeyringRoundTrip(t *testing.T) {
 	// Empty key refused.
 	if err := ks.Set("openai", "  "); err == nil {
 		t.Error("Set with blank key should be refused")
+	}
+}
+
+// TestCredentialRoundTrip verifies a credential (key + resolved
+// endpoint) survives a write/read cycle through the keyring.
+func TestCredentialRoundTrip(t *testing.T) {
+	ring := keyring.NewArrayKeyring(nil)
+	ks := KeyringStore(ring, "llm/")
+
+	want := Credential{
+		Key:        "sk-region-scoped",
+		EndpointID: "minimax-cn",
+		BaseURL:    "https://api.minimaxi.com",
+	}
+	if err := ks.StoreCredential("minimax", want); err != nil {
+		t.Fatalf("StoreCredential: %v", err)
+	}
+
+	got, ok := ks.LoadCredential("minimax")
+	if !ok {
+		t.Fatal("LoadCredential = not found, want found")
+	}
+	if got != want {
+		t.Fatalf("LoadCredential = %+v, want %+v", got, want)
+	}
+
+	// The key alone is still reachable through the plain KeyStore API.
+	v, err := ks.Get("minimax")
+	if err != nil || v != want.Key {
+		t.Fatalf("Get = (%q, %v), want (%q, nil)", v, err, want.Key)
+	}
+
+	// A missing provider yields (zero credential, false).
+	if c, ok := ks.LoadCredential("openai"); ok || c != (Credential{}) {
+		t.Errorf("LoadCredential(missing) = (%+v, %v), want (zero, false)", c, ok)
+	}
+}
+
+// TestCredentialStoredAsJSON verifies the on-disk item is the JSON
+// credential record (so the endpoint travels with the key).
+func TestCredentialStoredAsJSON(t *testing.T) {
+	ring := keyring.NewArrayKeyring(nil)
+	ks := KeyringStore(ring, "llm/")
+
+	cred := Credential{Key: "sk-1", EndpointID: "minimax", BaseURL: "https://api.minimax.io"}
+	if err := ks.StoreCredential("minimax", cred); err != nil {
+		t.Fatalf("StoreCredential: %v", err)
+	}
+
+	item, err := ring.Get("llm/minimax")
+	if err != nil {
+		t.Fatalf("ring.Get: %v", err)
+	}
+	var decoded Credential
+	if err := json.Unmarshal(item.Data, &decoded); err != nil {
+		t.Fatalf("stored item is not valid credential JSON: %v (raw=%q)", err, string(item.Data))
+	}
+	if decoded != cred {
+		t.Fatalf("stored JSON = %+v, want %+v", decoded, cred)
+	}
+}
+
+// TestCredentialLegacyRawKey verifies the legacy format (the item
+// holds the raw key, not JSON) is still readable: the key comes back,
+// the endpoint is empty.
+func TestCredentialLegacyRawKey(t *testing.T) {
+	ring := keyring.NewArrayKeyring(nil)
+	ks := KeyringStore(ring, "llm/")
+
+	// Write the item directly, bypassing StoreCredential, exactly like
+	// the pre-credential-record code did.
+	if err := ring.Set(keyring.Item{
+		Key:  "llm/minimax",
+		Data: []byte("sk-legacy-raw-key"),
+	}); err != nil {
+		t.Fatalf("ring.Set: %v", err)
+	}
+
+	got, ok := ks.LoadCredential("minimax")
+	if !ok {
+		t.Fatal("LoadCredential = not found, want found")
+	}
+	if got.Key != "sk-legacy-raw-key" {
+		t.Errorf("LoadCredential.Key = %q, want sk-legacy-raw-key", got.Key)
+	}
+	if got.EndpointID != "" || got.BaseURL != "" {
+		t.Errorf("legacy credential should have an empty endpoint, got %+v", got)
+	}
+
+	// The plain key API keeps working on legacy items too.
+	v, err := ks.Get("minimax")
+	if err != nil || v != "sk-legacy-raw-key" {
+		t.Errorf("Get = (%q, %v), want (sk-legacy-raw-key, nil)", v, err)
+	}
+}
+
+// TestEnvStore_LoadCredential verifies the env backend reports the key
+// with an EMPTY endpoint (the env carries the key only) and that
+// StoreCredential is a no-op that reports the key as stored.
+func TestEnvStore_LoadCredential(t *testing.T) {
+	t.Setenv("MINIMAX_API_KEY", "sk-env")
+	s := EnvStore(func(id string) string {
+		if id == "minimax" {
+			return "MINIMAX_API_KEY"
+		}
+		return ""
+	})
+
+	got, ok := s.LoadCredential("minimax")
+	if !ok {
+		t.Fatal("LoadCredential = not found, want found")
+	}
+	if got.Key != "sk-env" {
+		t.Errorf("LoadCredential.Key = %q, want sk-env", got.Key)
+	}
+	if got.EndpointID != "" || got.BaseURL != "" {
+		t.Errorf("env credential must have an empty endpoint, got %+v", got)
+	}
+
+	// Missing env var → not found.
+	if c, ok := s.LoadCredential("openai"); ok || c != (Credential{}) {
+		t.Errorf("LoadCredential(missing) = (%+v, %v), want (zero, false)", c, ok)
+	}
+
+	// StoreCredential is a documented no-op: it reports success and
+	// does not touch the environment.
+	if err := s.StoreCredential("minimax", Credential{Key: "sk-other", EndpointID: "x"}); err != nil {
+		t.Errorf("StoreCredential on the env backend should be a no-op, got err: %v", err)
+	}
+	if v, _ := s.Get("minimax"); v != "sk-env" {
+		t.Errorf("env value changed by StoreCredential: %q, want sk-env", v)
+	}
+}
+
+// TestComposite_CredentialDelegation verifies the composite stores the
+// credential in the FIRST (writable) backend — the keyring — and
+// reads it back from there, with the env as fallback.
+func TestComposite_CredentialDelegation(t *testing.T) {
+	t.Setenv("DEEPSEEK_API_KEY", "env-key")
+	ring := keyring.NewArrayKeyring(nil)
+	ks := KeyringStore(ring, "llm/")
+	env := EnvStore(func(id string) string { return "DEEPSEEK_API_KEY" })
+	c := NewComposite(ks, env)
+
+	cred := Credential{Key: "ring-key", EndpointID: "deepseek", BaseURL: "https://api.deepseek.com"}
+	if err := c.StoreCredential("deepseek", cred); err != nil {
+		t.Fatalf("StoreCredential: %v", err)
+	}
+
+	// Written to the keyring, NOT to the env backend.
+	if _, err := ring.Get("llm/deepseek"); err != nil {
+		t.Fatalf("credential not stored in the keyring: %v", err)
+	}
+	got, ok := c.LoadCredential("deepseek")
+	if !ok {
+		t.Fatal("LoadCredential = not found, want found")
+	}
+	if got != cred {
+		t.Fatalf("LoadCredential = %+v, want %+v", got, cred)
+	}
+
+	// Env fallback: a provider only present in the env yields the key
+	// with an empty endpoint.
+	envOnly, ok := c.LoadCredential("openai")
+	if !ok {
+		t.Fatal("LoadCredential(env-only) = not found, want found")
+	}
+	if envOnly.Key != "env-key" || envOnly.EndpointID != "" {
+		t.Errorf("LoadCredential(env-only) = %+v, want key env-key with empty endpoint", envOnly)
+	}
+}
+
+// TestComposite_CredentialLegacyFallback verifies a LEGACY keyring
+// item (raw key) still loads through the composite, with an empty
+// endpoint.
+func TestComposite_CredentialLegacyFallback(t *testing.T) {
+	ring := keyring.NewArrayKeyring(nil)
+	if err := ring.Set(keyring.Item{
+		Key:  "llm/minimax",
+		Data: []byte("sk-legacy"),
+	}); err != nil {
+		t.Fatalf("ring.Set: %v", err)
+	}
+	ks := KeyringStore(ring, "llm/")
+	c := NewComposite(ks, EnvStore(func(id string) string { return "MINIMAX_API_KEY" }))
+
+	got, ok := c.LoadCredential("minimax")
+	if !ok {
+		t.Fatal("LoadCredential = not found, want found")
+	}
+	if got.Key != "sk-legacy" {
+		t.Errorf("LoadCredential.Key = %q, want sk-legacy", got.Key)
+	}
+	if got.EndpointID != "" || got.BaseURL != "" {
+		t.Errorf("legacy credential must have an empty endpoint, got %+v", got)
+	}
+}
+
+// TestCredentialStoreOf verifies a plain KeyStore handle can be
+// upgraded to the credential-record extension.
+func TestCredentialStoreOf(t *testing.T) {
+	ring := keyring.NewArrayKeyring(nil)
+	var ks KeyStore = KeyringStore(ring, "llm/")
+	cs, ok := CredentialStoreOf(ks)
+	if !ok {
+		t.Fatal("CredentialStoreOf = not ok, want ok")
+	}
+	if err := cs.StoreCredential("minimax", Credential{Key: "sk-1", EndpointID: "minimax"}); err != nil {
+		t.Fatalf("StoreCredential: %v", err)
+	}
+	got, ok := cs.LoadCredential("minimax")
+	if !ok || got.Key != "sk-1" || got.EndpointID != "minimax" {
+		t.Fatalf("LoadCredential = (%+v, %v), want the stored credential", got, ok)
+	}
+	if _, ok := CredentialStoreOf(nil); ok {
+		t.Error("CredentialStoreOf(nil) = ok, want not ok")
 	}
 }
