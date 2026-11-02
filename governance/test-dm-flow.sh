@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # governance/test-dm-flow.sh
 #
-# Tests de dm-flow.sh.
+# Tests de dm-flow.sh y de la coherencia de la constitution del workspace.
 #
 # POR QUE EXISTEN
 #
@@ -18,6 +18,8 @@
 #   - codigo 65: la constitution no esta dentro del workspace
 #   - codigo 66: el artefacto esta fuera del workspace (incluido /tmp)
 #   - el plan emite los 8 pasos en orden y lleva agent_id explicito
+#   - los artefactos versionados no llevan rutas del home del operador
+#   - el contrato fija el SHA del ejemplo, no el de una maquina
 #
 # USO:  governance/test-dm-flow.sh
 # CODIGO: 0 todo verde · 1 algun fallo
@@ -25,7 +27,9 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 FLOW="$SCRIPT_DIR/dm-flow.sh"
+CHECK="$SCRIPT_DIR/check-constitution.sh"
 
 PASS=0
 FAIL=0
@@ -106,6 +110,41 @@ echo "$plan" | grep -q "agent_memory_save" \
 
 # --- 7. sintaxis -------------------------------------------------------------
 bash -n "$FLOW" && ok "sintaxis de dm-flow.sh" || bad "sintaxis de dm-flow.sh"
+bash -n "$CHECK" && ok "sintaxis de check-constitution.sh" \
+                  || bad "sintaxis de check-constitution.sh"
+
+# --- 8. los artefactos versionados no llevan datos del operador ------------
+# Regresion. La primera version de este PR publico la ruta del home del
+# operador en el contrato y en el ejemplo. El contrato se publica en un repo
+# publico: no puede llevar la ruta de una maquina concreta. Solo se escanean
+# los ficheros TRACKED: el JSON activo es local y si lleva rutas reales (es
+# su cometido), pero no se versiona.
+tracked="$(git -C "$REPO_ROOT" ls-files governance constitutions 2>/dev/null || true)"
+leaks=""
+for f in $tracked; do
+  case "$f" in *.sh|*.json|*.yaml|*.yml|*.md) ;; *) continue ;; esac
+  if grep -qE '(/home/[a-z]|/Users/[A-Za-z])' "$REPO_ROOT/$f"; then
+    leaks="$leaks $f"
+  fi
+done
+[ -z "$leaks" ] && ok "los artefactos versionados no llevan rutas del home del operador" \
+                || bad "los artefactos versionados no llevan rutas del home del operador" "ficheros:$leaks"
+
+# --- 9. el contrato fija el SHA del ejemplo, no el de una maquina -----------
+# El SHA declarado en el YAML tiene que ser el del JSON de ejemplo. Si fuera
+# el del fichero activo local, el contrato dejaria de ser portable: otro
+# operador, con otras rutas, generaria un SHA distinto.
+declared="$(grep -m1 -E '^sha256:' "$REPO_ROOT/constitutions/dark-agents-workspace-policy.yaml" \
+            | sed -E 's/^sha256:[[:space:]]*//')"
+example_sha="$(sha256sum "$SCRIPT_DIR/workspace-policy.constitution.example.json" | cut -d' ' -f1)"
+[ -n "$declared" ] && [ "$declared" = "$example_sha" ] \
+  && ok "el contrato fija el SHA del ejemplo portable" \
+  || bad "el contrato fija el SHA del ejemplo portable" "declarado: $declared · ejemplo: $example_sha"
+
+# --- 10. la forma canonica usa marcadores, no rutas -------------------------
+grep -q '<workspace_root>' "$SCRIPT_DIR/workspace-policy.constitution.example.json" \
+  && ok "el ejemplo usa marcadores en lugar de rutas" \
+  || bad "el ejemplo usa marcadores en lugar de rutas"
 
 echo
 echo "  $PASS PASS · $FAIL FAIL"

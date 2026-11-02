@@ -65,8 +65,13 @@ opencode.jsonc
 
 
 
-# Operator workspace policy (governance/): the ACTIVE constitution is a
-# per-project operator artifact, not a product file. It lives in the
-# project workspace and is tracked as .example.json instead; see
-# governance/README.md. The watchdog SHA pins the active file.
+# Politica de workspace del operador (governance/): la constitution ACTIVA es
+# un artefacto del operador, por proyecto, no un fichero del producto. Vive
+# en el workspace del proyecto y aqui se versiona su forma canonica
+# (.example.json); ver governance/README.md. El watchdog hace el pin por SHA
+# del fichero activo.
 governance/workspace-policy.constitution.json
+
+# El pin local del SHA del fichero activo: es estado del operador, y cambia
+# en cuanto la politica se instancia en otra maquina.
+governance/workspace-policy.constitution.json.sha256

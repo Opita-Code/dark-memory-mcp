@@ -1,166 +1,166 @@
-# Integrating dark-memory into a development flow
+# Integrar dark-memory en un flujo de desarrollo
 
-> **TL;DR**: dark-memory gives a development flow three things a chat
-> session does not have — a promise written before the work, a judge that
-> reads the delivered bytes, and a durable trail that survives the
-> session. This document describes how those three fit together, what
-> each layer guarantees, and the gaps a caller must know about.
+> **TL;DR**: dark-memory le da a un flujo de desarrollo tres cosas que una
+> sesión de chat no tiene: una promesa escrita **antes** del trabajo, un juez
+> que lee los bytes entregados y un rastro que sobrevive a la sesión. Este
+> documento describe cómo encajan esas tres piezas, qué garantiza cada capa y
+> qué huecos debe conocer quien llama.
 >
-> Everything here was measured against `dark-memory-mcp v4.0.0-alpha.33`
-> (commit `ba1c29e`). Numbers are observations, not recollections.
+> Todo lo de aquí está medido contra `dark-memory-mcp v4.0.0-alpha.33`
+> (commit `ba1c29e`). Los números son observaciones, no recuerdos.
 
-The policy that governs the flow is the workspace constitution
-(`workspace-policy.constitution.json`, kept in the project workspace and
-tracked in this repo as
+La política que gobierna el flujo es la constitution del workspace
+(`workspace-policy.constitution.json`, que vive en el workspace del proyecto y
+aquí se versiona en su forma canónica
 [`workspace-policy.constitution.example.json`](./workspace-policy.constitution.example.json)).
 
 ---
 
-## 1. The flow
+## 1. El flujo
 
 ```
-  ┌─ SESSION (one unit of work) ───────────────────────────────────────┐
-  │                                                                     │
-  │  1. session_start ──► binds project + constitution_id@version        │
-  │  2. recall ────────► what we already know (memory before search)    │
-  │  3. vibe_spec ─────► the PROMISE: intent + tasks + constitution      │
-  │  4. [work] ────────► the agent writes the artifact                  │
-  │  5. vibe_publish ─► DELIVERY to the judge (artifact_ref required)   │
-  │  6. verdict ───────► aligned | drift_detected | needs_human         │
-  │  7. memory_save ──► the durable decision (kind=decision, pinned)    │
-  │  8. session_close ─► the trail is left behind                       │
-  │                                                                     │
-  └─────────────────────────────────────────────────────────────────────┘
+  ┌─ SESIÓN (una unidad de trabajo) ────────────────────────────────────┐
+  │                                                                      │
+  │  1. session_start ──► liga proyecto + constitution_id@version         │
+  │  2. recall ────────► lo que ya sabemos (memoria antes de búsqueda)    │
+  │  3. vibe_spec ─────► la PROMESA: intent + tareas + constitution       │
+  │  4. [trabajo] ─────► el agente escribe el artefacto                   │
+  │  5. vibe_publish ─► ENTREGA al juez (artifact_ref obligatorio)        │
+  │  6. veredicto ─────► aligned | drift_detected | needs_human           │
+  │  7. memory_save ───► la decisión durable (kind=decision, pinned)      │
+  │  8. session_close ─► queda el rastro                                 │
+  │                                                                      │
+  └──────────────────────────────────────────────────────────────────────┘
               │                                    │
-              │ constitution (SHA-pinned)         │ persona frame
-              │                                   │ (injected into
-              ▼                                   ▼ every recall)
-        integrity + provenance          the rule reaches the agent
+              │ constitution (SHA-pineada)         │ frame de persona
+              │                                   │ (inyectado en
+              ▼                                   ▼ cada recall)
+        integridad + procedencia          la regla llega al agente
 ```
 
-Each layer does a different job and **none substitutes for another**.
+Cada capa hace un trabajo distinto y **ninguna sustituye a otra**.
 
 ---
 
-## 2. What each layer guarantees (measured, not assumed)
+## 2. Qué garantiza cada capa (medido, no supuesto)
 
-| Layer | Mechanism | What it guarantees | How it was verified |
+| Capa | Mecanismo | Qué garantiza | Cómo se verificó |
 |---|---|---|---|
-| **Policy integrity** | Watchdog SHA (`internal/store/sqlite/store.go`, `runWatchdog`) | Editing the constitution without bumping the version ⇒ the store **does not open**. Fail closed. | `active_policy` reports `constitution_drift: false`; the file's SHA-256 matches the pinned `bb781d71…`. |
-| **The rule reaches the agent** | `PersonaFrame` in `dark_memory_recall` (`internal/recall/assemble.go`, `parsePersonaFromConstitution`) | The constitution's `voice` and `claims_policy` are injected into **every** recall. | The recall returned the WS-1…WS-6 text in `frames.persona`. |
-| **The promise precedes the work** | `vibe_spec` | An intent exists **before** the artifact does. | Spec 20 and 25 carried intent + tasks + constitution. |
-| **The judge reads the real bytes** | `artifact_ref` + `drift_judge` | The judge scores the **file's bytes**, not the agent's description of them. | `aligned` conf 1.00 for a conforming artifact; `drift_detected` conf 1.0 for a text that pointed at `/tmp/build` — the judge quoted the path. |
-| **Provenance** | `write_audit` + `constitution_id@version` | Every write is attributed to the policy in force. | `session_close` reports a `writes_total` for the session. |
-| **Continuity** | `agent_memory` + `ContextRecap` | The next session starts knowing what was decided. | `session_start` returned a recap containing the open todo. |
-| **Nothing fails silently** | Error Observatory (41 `RecordError` call sites in `internal/orchestration`) | Every error is recorded and queryable. | `error_summary` showed the cluster counts by domain and severity. |
+| **Integridad de la política** | Watchdog de SHA (`internal/store/sqlite/store.go`, `runWatchdog`) | Editar la constitution sin subir la versión ⇒ el store **no abre**. Fail closed. | `active_policy` informa `constitution_drift: false`; el SHA-256 del fichero coincide con el pineado. |
+| **La regla llega al agente** | `PersonaFrame` en `dark_memory_recall` (`internal/recall/assemble.go`, `parsePersonaFromConstitution`) | El `voice` y el `claims_policy` de la constitution se inyectan en **cada** recall. | El recall devolvió el texto WS-1…WS-6 en `frames.persona`. |
+| **La promesa precede al trabajo** | `vibe_spec` | Existe una intención **antes** de que exista el artefacto. | Los specs 20 y 25 llevaban intent + tareas + constitution. |
+| **El juez lee los bytes reales** | `artifact_ref` + `drift_judge` | El juez puntúa los **bytes del fichero**, no la descripción que da el agente. | `aligned` conf 1.00 para un artefacto conforme; `drift_detected` conf 1.0 para un texto que apuntaba a `/tmp/build` — el juez citar la ruta. |
+| **Procedencia** | `write_audit` + `constitution_id@version` | Cada write queda atribuido a la política en vigor. | `session_close` informa de un `writes_total` para la sesión. |
+| **Continuidad** | `agent_memory` + `ContextRecap` | La sesión siguiente arranca sabiendo lo que se decidió. | `session_start` devolvió un recap con el todo abierto. |
+| **Nada falla en silencio** | Error Observatory (41 puntos de llamada a `RecordError` en `internal/orchestration`) | Cada error queda registrado y es consultable. | `error_summary` mostró los recuentos por dominio y severidad. |
 
 ---
 
-## 3. Where the budget is
+## 3. Dónde está el presupuesto
 
-The judge is the expensive part: one LLM call per publication. Everything
-else is a local SQLite read. Practical rules:
+El juez es la parte cara: una llamada al LLM por publicación. Todo lo demás
+es una lectura local de SQLite. Reglas prácticas:
 
-- **Publish evidence, not the binary.** The judge reads bytes; a diff or a
-  verification report costs fewer tokens than the whole artifact.
-- **One spec per deliverable.** Reusing an old intent against a new
-  artifact produces spurious `drift_detected`.
-- **Do not retry `needs_human`.** It means the judge could not decide; the
-  operator decides. Retrying spends tokens to get the same no.
-- **The verdict comes from one judge.** The response says so itself
+- **Publica evidencia, no el binario.** El juez lee bytes; un diff o un
+  informe de verificación cuesta menos tokens que el artefacto entero.
+- **Un spec por entregable.** Reutilizar una intención vieja contra un
+  artefacto nuevo produce `drift_detected` espurios.
+- **No reintentes un `needs_human`.** Significa que el juez no pudo decidir;
+  decide el operador. Reintentar gasta tokens para obtener el mismo no.
+- **El veredicto viene de un solo juez.** La respuesta lo dice ella misma
   (`confidence_caveat: "single-judge measurement … correlated, not
-  independent review"`). For high-stakes calls use `consensus` with n≤7
-  rather than relying on luck.
+  independent review"`). Para decisiones de riesgo, usa `consensus` con n≤7 en
+  vez de confiar en la suerte.
 
 ---
 
-## 4. Where the flow lives
+## 4. Dónde vive el flujo
 
-| Layer | Where | Why |
+| Capa | Dónde | Por qué |
 |---|---|---|
-| Rules | `governance/workspace-policy.constitution.json` (operator workspace; tracked here as the `.example.json`) | Per-project operator policy: SHA-pinned, living in the project workspace (WS-4). Not a product default — see `constitutions/` in [ARCHITECTURE-V4.md](../ARCHITECTURE-V4.md) for what the product ships. |
-| Orchestration | `governance/dm-flow.sh` | Validates the rules before any token is spent, then emits the call plan. |
-| Decisions | the dark-memory SQLite database | Crosses sessions and projects. |
-| Trail | `write_audit` | One write, one row. |
+| Reglas | `governance/workspace-policy.constitution.json` (workspace del operador; aquí versionada como `.example.json`) | Política del operador, por proyecto: SHA-pineada, viviendo en el workspace del proyecto (WS-4). No es un default del producto — mira `constitutions/` en [ARCHITECTURE-V4.md](../ARCHITECTURE-V4.md) para lo que sí shippea el producto. |
+| Orquestación | `governance/dm-flow.sh` | Valida las reglas antes de gastar ningún token y luego emite el plan de llamadas. |
+| Decisiones | la base SQLite de dark-memory | Cruza sesiones y proyectos. |
+| Rastro | `write_audit` | Un write, una fila. |
 
-The script **does not talk to MCP by itself**. The first prototype started
-its own MCP server and spoke to it over FIFOs: it hung whenever a reply
-did not arrive, and a hung script takes the harness session down with it. A
-development gate cannot be the component that hangs the flow.
+El script **no habla MCP por sí mismo**. El primer prototipo levantaba su
+propio servidor MCP y le hablaba por FIFOs: se colgaba cuando la respuesta no
+llegaba, y un script colgado tumba con él la sesión del harness. Un gate de
+desarrollo no puede ser el componente que cuelga el flujo.
 
-So `dm-flow.sh` does two things and only two:
+Así que `dm-flow.sh` hace dos cosas, y solo dos:
 
-1. **Pre-flight** (cheap, before the expensive work): is the constitution in
-   the workspace? Is the artifact inside the workspace? Does it exist?
-2. **Plan**: the exact MCP calls, with the arguments already resolved, for
-   the agent to run with its own tools — where the server-side gate
-   validates them anyway.
+1. **Pre-flight** (barato, antes del trabajo caro): ¿está la constitution en
+   el workspace? ¿está el artefacto dentro del workspace? ¿existe?
+2. **Plan**: las llamadas MCP exactas, con los argumentos ya resueltos, para
+   que las ejecute el agente con sus propias tools — donde el gate del
+   servidor las valida igualmente.
 
 ```bash
-# does this respect the rules? (exit 0 = yes, 65/66 = no, with the reason)
-governance/dm-flow.sh check  dark-memory-mcp 25 --artifact "$PATH"
+# ¿esto respeta las reglas? (exit 0 = sí, 65/66 = no, con el motivo)
+governance/dm-flow.sh check  dark-memory-mcp 25 --artifact "$RUTA"
 
-# the call plan, arguments resolved
-governance/dm-flow.sh plan   dark-memory-mcp 25 --artifact "$PATH"
+# el plan de llamadas, con los argumentos resueltos
+governance/dm-flow.sh plan   dark-memory-mcp 25 --artifact "$RUTA"
 ```
 
 ---
 
-## 5. Gaps the integration must know about
+## 5. Huecos que la integración debe conocer
 
-Verified on this machine, not inferred.
+Verificados en esta máquina, no inferidos.
 
-### 5.1 `vibe_spec` and `vibe_publish` do not share a `spec_id`
+### 5.1 `vibe_spec` y `vibe_publish` no comparten `spec_id`
 
-`vibe_publish` **creates its own row** in `vibe_specs`
-(`internal/orchestration/publish_vibe.go:265` → `SaveSpec`). Publishing an
-artifact with a forwarded `spec.spec` produces a **new** spec (observed:
-the open spec 20 produced specs 21, 22 and 23).
+`vibe_publish` **crea su propia fila** en `vibe_specs`
+(`internal/orchestration/publish_vibe.go:265` → `SaveSpec`). Publicar un
+artefacto con un `spec.spec` reenviado produce un spec **nuevo** (observado:
+el spec 20 abierto produjo los specs 21, 22 y 23).
 
-Consequence: the `todos` that `vibe_spec` creates are **never** archived by
-the publish, because the publish does not point at the original spec.
+Consecuencia: los `todos` que crea `vibe_spec` **nunca** los archiva el
+publish, porque el publish no apunta al spec original.
 
-**Mitigation applied**: `dm-flow.sh` does not depend on the auto-close.
-Step 7 of the plan is an explicit `agent_memory_save`. The auto-close does
-exist (`auto_save_decision: true` works: it created a decision row with
-`prov=judge-minimax`), but it **does not** close the open spec.
+**Mitigación aplicada**: `dm-flow.sh` no depende del auto-cierre. El paso 7
+del plan es un `agent_memory_save` explícito. El auto-cierre sí existe
+(`auto_save_decision: true` funciona: creó una fila de decisión con
+`prov=judge-minimax`), pero **no** cierra el spec abierto.
 
-### 5.2 `auto_save_todos` is not exposed through MCP
+### 5.2 `auto_save_todos` no está expuesto por MCP
 
-The field exists in the orchestrator (`vibe_spec.go:80`) but **not** in the
-schema of the `dark_memory_vibe_spec` tool. Confirmed by searching the
-namespace for the parameter, and by a one-task spec that created no todo.
-Auto-archiving todos is unreachable from MCP.
+El campo existe en el orquestador (`vibe_spec.go:80`) pero **no** en el
+schema de la tool `dark_memory_vibe_spec`. Confirmado buscando el parámetro
+en el namespace y con un spec de una tarea que no creó ningún todo. El
+auto-archivado de todos es inalcanzable desde MCP.
 
-### 5.3 Mods are not loaded at boot
+### 5.3 Los mods no se cargan al arrancar
 
-`mods_total: 0`, an empty `mod_loads`, and `SaveMod` is never called during
-startup. The repo's `lucidez-operator-risk` mod is **not** loaded. A mod
-written today is decorative: the two live enforcement vectors are the
-watchdog SHA and the persona frame.
+`mods_total: 0`, un `mod_loads` vacío, y `SaveMod` no se llama nunca durante
+el arranque. El mod `lucidez-operator-risk` del repo **no** se carga. Un mod
+escrito hoy es decorativo: los dos vectores de enforcement vivos son el
+watchdog de SHA y el frame de persona.
 
-### 5.4 A TOML constitution never reaches the agent
+### 5.4 Una constitution en TOML nunca llega al agente
 
-The watchdog stores the file's raw bytes in `constitutions.parsed_json` and
-the injector parses them with `json.Unmarshal`. The repo's constitutions
-are TOML: they store fine, but their `[persona]` section is **never
-injected**. That is why the workspace policy is JSON.
+El watchdog guarda los bytes crudos del fichero en `constitutions.parsed_json`
+y el inyector los parsea con `json.Unmarshal`. Las constitutions del repo son
+TOML: se guardan bien, pero su sección `[persona]` **nunca** se inyecta. Por
+eso la política del workspace es JSON.
 
-### 5.5 The gate protects memory, not disk
+### 5.5 El gate protege la memoria, no el disco
 
-`ErrFrameStaleTooFar` means "no active session". The gate does **not**
-validate where files were written. What protects the disk is WS-2/WS-3,
-which is why `dm-flow.sh`'s pre-flight validates them explicitly: it is
-the layer the gate does not cover.
+`ErrFrameStaleTooFar` significa "no hay sesión activa". El gate **no**
+valida dónde se escribieron los ficheros. Lo que protege el disco son
+WS-2/WS-3, y por eso el pre-flight de `dm-flow.sh` los valida explícitamente:
+es la capa que el gate no cubre.
 
 ---
 
-## 6. What NOT to automate
+## 6. Qué NO automatizar
 
-- **`needs_human`.** The judge does not know; the operator decides.
-- **Changes of purpose.** If the artifact changed *what* it does and not
-  *how* it does it, write a new spec. Forcing the artifact against an old
-  intent produces a correct drift verdict and a waste of time.
-- **The session close.** It is one line of code and it is what makes the
-  next session start knowing. Without it the work is lost — which is
-  exactly the problem dark-memory exists to solve.
+- **`needs_human`.** El juez no sabe; decide el operador.
+- **Los cambios de propósito.** Si el artefacto cambió *qué* hace y no *cómo*
+  lo hace, escribe un spec nuevo. Forzar el artefacto contra una intención
+  vieja produce un veredicto de drift correcto y tiempo perdido.
+- **El cierre de sesión.** Es una línea de código y es lo que hace que la
+  sesión siguiente arranque sabiendo. Sin él el trabajo se pierde — que es
+  exactamente el problema que dark-memory existe para resolver.

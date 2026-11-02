@@ -15,25 +15,28 @@
 #      trabajo caro.
 #   2. EMITIR el plan de llamadas MCP exactas, con los argumentos ya
 #      resueltos (session_id, constitution_id, artifact_ref con la ruta
-#      canónica). El agente las ejecuta con sus propias tools, donde el
+#      canonica). El agente las ejecuta con sus propias tools, donde el
 #      gate del servidor ya las valida.
 #
 # Es el mismo contrato que vibe_compile genera, pero con un shim HONESTO:
-# no simula que la llamada funcionó, dice qué falta y por qué.
+# no simula que la llamada funciono, dice que falta y por que.
 #
 # Uso:
 #   dm-flow check  <project_id> <spec_id> [--artifact <path>]
 #   dm-flow plan   <project_id> <spec_id> [--artifact <path>]
 #   dm-flow gate   <project_id> <spec_id> [--artifact <path>]
 #
-# Códigos de salida: 0 ok · 64 uso · 65 constitution fuera del workspace
+# Codigos de salida: 0 ok · 64 uso · 65 constitution fuera del workspace
 #                     66 artefacto fuera del workspace · 67 falta el spec
 
 set -euo pipefail
 
-WORKSPACE="${WORKSPACE:-/home/nico/workspace}"
+# La raiz de workspaces por defecto es $HOME/workspace: el valor se puede
+# sobreescribir con WORKSPACE, de modo que el script no lleva la ruta de
+# ninguna maquina concreta dentro.
+WORKSPACE="${WORKSPACE:-${HOME}/workspace}"
 CONSTITUTION_ID="${DARK_CONSTITUTION_ID:-dark-agents/workspace-policy}"
-CONSTITUTION_VER="${DARK_CONSTITUTION_VER:-1.0.0}"
+CONSTITUTION_VER="${DARK_CONSTITUTION_VER:-1.1.0}"
 
 CMD="${1:-}"
 PROJECT_ID="${2:-}"
@@ -60,7 +63,7 @@ CONSTITUTION_FILE="$WORKSPACE_DIR/governance/workspace-policy.constitution.json"
 
 # ---------------------------------------------------------------------------
 # PRE-FLIGHT: cheapest checks first. Un gate caro despues de un fallo barato
-# es un gate mal diseñado.
+# es un gate mal disenado.
 # ---------------------------------------------------------------------------
 fail() { echo "dm-flow: $1" >&2; exit "$2"; }
 
