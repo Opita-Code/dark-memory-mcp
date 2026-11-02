@@ -64,3 +64,14 @@ internal/v4alpha/vibe/testdata/
 opencode.jsonc
 
 
+
+# Politica de workspace del operador (governance/): la constitution ACTIVA es
+# un artefacto del operador, por proyecto, no un fichero del producto. Vive
+# en el workspace del proyecto y aqui se versiona su forma canonica
+# (.example.json); ver governance/README.md. El watchdog hace el pin por SHA
+# del fichero activo.
+governance/workspace-policy.constitution.json
+
+# El pin local del SHA del fichero activo: es estado del operador, y cambia
+# en cuanto la politica se instancia en otra maquina.
+governance/workspace-policy.constitution.json.sha256
