@@ -1,6 +1,6 @@
 # Integrar dark-memory en un flujo de desarrollo
 
-> **TL;DR**: dark-memory le da a un flujo de desarrollo tres cosas que una
+> **TL;DR**: dark-memory da a un flujo de desarrollo tres cosas que una
 > sesión de chat no tiene: una promesa escrita **antes** del trabajo, un juez
 > que lee los bytes entregados y un rastro que sobrevive a la sesión. Este
 > documento describe cómo encajan esas tres piezas, qué garantiza cada capa y
