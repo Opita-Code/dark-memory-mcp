@@ -162,6 +162,17 @@ func (o *Orchestrator) DriftJudge(ctx context.Context, in DriftJudgeInput) (*Dri
 	}
 
 	// 3. Resolve the artifact via artifact.Resolver.
+	//
+	// Window the artifact to the judge's input budget FIRST. The
+	// resolver's default cap (256 KiB) is larger than what the LLM
+	// judge accepts (32 KiB): without this window, any artifact
+	// bigger than the judge's budget could never be judged — the judge
+	// refused it with ErrInputTooLarge and the verdict fell through to
+	// the NLI chain. The resolver truncates and sets
+	// Resolved.Truncated, so the verdict states that it saw a window.
+	if in.ArtifactRef.MaxBytes <= 0 || in.ArtifactRef.MaxBytes > v4judge.DefaultMaxArtifactBytes {
+		in.ArtifactRef.MaxBytes = v4judge.DefaultMaxArtifactBytes
+	}
 	resolver := o.ensureDriftJudgeResolver()
 	resolved, err := resolver.Resolve(ctx, in.ArtifactRef)
 	if err != nil {

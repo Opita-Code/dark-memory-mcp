@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/llm"
+	"github.com/dark-agents/dark-memory-mcp/internal/llm/chatwire"
 )
 
 // Sealed error set. Use errors.Is to classify; do not match strings.
@@ -123,9 +124,9 @@ type ProviderConfig struct {
 
 // DefaultTunables (A14 anti-pattern guard: concrete numbers, no zeros).
 const (
-	DefaultTimeoutMS          = 30_000  // 30s (vs nli.DefaultTTTimeoutMS=10s)
-	DefaultMaxArtifactBytes   = 32_768  // 32 KiB
-	DefaultMaxSpecIntentBytes = 4_096   // 4 KiB
+	DefaultTimeoutMS          = 30_000 // 30s (vs nli.DefaultTTTimeoutMS=10s)
+	DefaultMaxArtifactBytes   = 32_768 // 32 KiB
+	DefaultMaxSpecIntentBytes = 4_096  // 4 KiB
 )
 
 // WithDefaults returns pc with zero-valued tunables replaced. It does
@@ -359,12 +360,12 @@ func (j *LLMJudge) ID() string { return j.providerID }
 // it into the DriftJudgeOutput (which becomes a drift row in
 // projects.drift_reports).
 type Verdict struct {
-	Verdict     string  // aligned | drift_detected | needs_human
-	Confidence  float64 // [0.0, 1.0]
-	Reasoning   string  // non-empty
-	ProviderID  string  // e.g. "judge-minimax-cn"
-	ModelRev    string  // best-effort; empty if unknown
-	LatencyMS   int64   // observed wall-clock for this Judge call
+	Verdict    string  // aligned | drift_detected | needs_human
+	Confidence float64 // [0.0, 1.0]
+	Reasoning  string  // non-empty
+	ProviderID string  // e.g. "judge-minimax-cn"
+	ModelRev   string  // best-effort; empty if unknown
+	LatencyMS  int64   // observed wall-clock for this Judge call
 }
 
 // Judge sends the drift-judge prompt to the bound LLM and returns
@@ -396,7 +397,12 @@ func (j *LLMJudge) Judge(ctx context.Context, specIntent, artifactBody string) (
 	}
 
 	// Build the request payload (manually for stable field order).
-	payload, err := buildJudgePayload(j.modelRev, specIntent, artifactBody)
+	// The token budget is a property of the MODEL, not of this
+	// client: a reasoning model (MiniMax-M3, DeepSeek-R1, Claude with
+	// extended thinking) spends part of it on an internal thinking
+	// block before answering.
+	budget := chatwire.ResolveMaxTokens(j.modelRev, 0)
+	payload, err := buildJudgePayload(j.modelRev, budget, false, specIntent, artifactBody)
 	if err != nil {
 		return Verdict{}, fmt.Errorf("%w: marshal: %w", ErrProviderBadResponse, err)
 	}
@@ -445,17 +451,26 @@ func (j *LLMJudge) Judge(ctx context.Context, specIntent, artifactBody string) (
 	// If the wire shape is absent (some lightweight chat servers
 	// return the verdict JSON directly), unwrapOpenAIShape returns
 	// the body unchanged.
-	body = unwrapOpenAIShape(body)
+	//
+	// The finish reason travels with it: "length" means the model ran
+	// out of budget, which for a reasoning model means it spent
+	// everything thinking and never answered.
+	content, finishReason, unwrapped := chatwire.UnwrapOpenAIShape(body)
+	if unwrapped {
+		body = []byte(content)
+	}
 
 	// Parse the JSON verdict from the response.
 	parsed, parseErr := parseVerdictResponse(body)
-	if parseErr != nil {
-		// Retry once with a reinforced system prompt (see
+	if parseErr != nil || chatwire.Truncated(finishReason) {
+		// Either the answer did not honour the JSON contract, or the
+		// model exhausted its budget while thinking. Retry ONCE with
+		// a bigger budget and a reinforced system prompt (see
 		// retryOnce for the exact wording). If the retry HTTP call
 		// itself fails or returns bad shape, both attempts have
 		// failed → ErrNoLLMBound (NOT ErrProviderBadResponse —
 		// drift_judge maps ErrNoLLMB to NLI fallback).
-		body2, retryErr := j.retryOnce(ctx, payload)
+		body2, retryErr := j.retryOnce(ctx, chatwire.RetryBudget(budget), specIntent, artifactBody)
 		if retryErr != nil {
 			return Verdict{LatencyMS: latency, ProviderID: j.ID()}, ErrNoLLMBound
 		}
@@ -485,17 +500,18 @@ func (j *LLMJudge) Judge(ctx context.Context, specIntent, artifactBody string) (
 // wraps both contract bugs into one terminal error so drift_judge
 // returns needs_human instead of falling through to NLI — see
 // SPEC-alpha-11-phase14-llm-as-judge §3.2.2 step 5).
-func (j *LLMJudge) retryOnce(ctx context.Context, payload []byte) ([]byte, error) {
-	// Reinforce the system prompt by injecting "REPLY WITH ONLY JSON,
-	// NO COMMENTS, NO MARKDOWN" at the start of the system content.
-	reinforced := []byte(strings.Replace(string(payload),
-		`"role":"system"`,
-		`"role":"system","content":"REPLY WITH ONLY JSON, NO COMMENTS, NO MARKDOWN. `,
-		1))
+func (j *LLMJudge) retryOnce(ctx context.Context, maxTokens int, specIntent, artifactBody string) ([]byte, error) {
+	// The retry asks for the JSON shape one more time AND gets a
+	// bigger token budget: a reasoning model that exhausted its
+	// budget thinking needs room for the answer too.
+	payload, err := buildJudgePayload(j.modelRev, maxTokens, true, specIntent, artifactBody)
+	if err != nil {
+		return nil, fmt.Errorf("%w: build retry payload: %v", ErrNoLLMBound, err)
+	}
 
 	reqCtx, cancel := context.WithTimeout(ctx, j.timeout)
 	defer cancel()
-	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, j.endpoint, bytes.NewReader(reinforced))
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, j.endpoint, bytes.NewReader(payload))
 	if err != nil {
 		return nil, fmt.Errorf("%w: build retry request: %w", ErrProviderUnavailable, err)
 	}
@@ -544,14 +560,19 @@ func (v Verdict) Validate() error {
 // buildJudgePayload constructs the OpenAI-compatible request body.
 // Manually marshaled for stable field order (test goldenfiles).
 //
-// We use a fixed temperature of 0 (deterministic drift verdicts) and
-// a max_tokens of 512 (the verdict JSON + one-paragraph reasoning
-// fits comfortably; 512 is enough headroom for verbose models but
-// bounded to prevent the model from "explaining itself" beyond
-// reasoning). response_format={"type":"json_object"} enforces the
-// JSON shape on providers that support it (OpenAI, DeepSeek, vLLM
-// with --guided-decoding).
-func buildJudgePayload(modelRev, specIntent, artifactBody string) ([]byte, error) {
+// We use a fixed temperature of 0 (deterministic drift verdicts).
+//
+// max_tokens comes from the per-model table (chatwire.ResolveMaxTokens)
+// because a REASONING model spends part of its budget on an internal
+// thinking block: MiniMax-M3 needs 1024, a plain chat model 256. The
+// hardcoded 512 this used to send was below the floor of every
+// reasoning model: the answer never arrived (finish_reason="length")
+// and the verdict silently degraded to the NLI fallback.
+//
+// response_format={"type":"json_object"} enforces the JSON shape on
+// providers that support it (OpenAI, DeepSeek, vLLM with
+// --guided-decoding).
+func buildJudgePayload(modelRev string, maxTokens int, reinforce bool, specIntent, artifactBody string) ([]byte, error) {
 	type message struct {
 		Role    string `json:"role"`
 		Content string `json:"content"`
@@ -563,15 +584,24 @@ func buildJudgePayload(modelRev, specIntent, artifactBody string) ([]byte, error
 		ResponseFormat any       `json:"response_format"`
 		Messages       []message `json:"messages"`
 	}
+	if maxTokens <= 0 {
+		maxTokens = chatwire.DefaultFallbackMaxTokens
+	}
+	system := judgeSystemPrompt
+	if reinforce {
+		// The retry asks for the JSON shape one more time, in the
+		// first words the model reads.
+		system = "REPLY WITH ONLY JSON, NO COMMENTS, NO MARKDOWN. " + system
+	}
 	req := request{
 		Model:       modelRev,
 		Temperature: 0,
-		MaxTokens:   512,
+		MaxTokens:   maxTokens,
 		ResponseFormat: map[string]string{
 			"type": "json_object",
 		},
 		Messages: []message{
-			{Role: "system", Content: judgeSystemPrompt},
+			{Role: "system", Content: system},
 			{Role: "user", Content: buildJudgeUserPrompt(specIntent, artifactBody)},
 		},
 	}

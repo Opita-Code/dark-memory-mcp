@@ -4,7 +4,7 @@
 // + llm_provider_probe). 12 tests cover:
 //
 //  1-7. TestLLMProviderBind_0N_*: bind tool
-//    1. HappyPath — persists and returns (auth_token persisted)
+//    1. HappyPath — persists; the credential goes to the keyring
 //    2. AuthTokenNotEchoed — security contract
 //    3. RejectsUnknownPrefix — sealed boundary
 //    4. RejectsEmptyEndpoint
@@ -31,6 +31,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/dark-agents/dark-memory-mcp/internal/llmkeystore"
 	"github.com/dark-agents/dark-memory-mcp/internal/project"
 )
 
@@ -98,6 +99,18 @@ func bindTestSetup(t *testing.T) *stubLLMBindStore {
 	return stub
 }
 
+// bindTestKeyStore installs an in-memory key store for the LLM_BIND
+// tools and returns it. The OS keyring is never touched by a unit
+// test.
+func bindTestKeyStore(t *testing.T) *llmkeystore.MemoryStore {
+	t.Helper()
+	mem := llmkeystore.NewMemoryStore()
+	prev := llmBindKS
+	llmBindKS = mem
+	t.Cleanup(func() { llmBindKS = prev })
+	return mem
+}
+
 func seedDefaultProject(s *stubLLMBindStore) *project.Project {
 	p := &project.Project{
 		ProjectID:   "default",
@@ -112,8 +125,13 @@ func seedDefaultProject(s *stubLLMBindStore) *project.Project {
 // =====================================================================
 
 // 1. Happy path: bind succeeds, returns result, persists to stub.
+//
+// The secret NEVER reaches the project config: it goes to the OS
+// keyring (under the provider's own id when it names no catalog
+// provider), and the config keeps only the provider id.
 func TestLLMProviderBind_01_HappyPath(t *testing.T) {
 	stub := bindTestSetup(t)
+	ks := bindTestKeyStore(t)
 	in := LLMProviderBindInput{
 		ProviderID: "judge-test-1",
 		Endpoint:   "https://example.test/v1/chat/completions",
@@ -158,14 +176,25 @@ func TestLLMProviderBind_01_HappyPath(t *testing.T) {
 	if persisted.NLIConfig.Primary.ProviderID != "judge-test-1" {
 		t.Errorf("Primary.ProviderID: got %q, want judge-test-1", persisted.NLIConfig.Primary.ProviderID)
 	}
-	if persisted.NLIConfig.Primary.AuthToken != "secret-token" {
-		t.Errorf("AuthToken: got %q, want secret-token (persisted)", persisted.NLIConfig.Primary.AuthToken)
+	// The secret must NOT be in the project config — it lives in the
+	// keyring.
+	if persisted.NLIConfig.Primary.AuthToken != "" {
+		t.Errorf("Primary.AuthToken: got %q, want empty (the secret lives in the keyring)", persisted.NLIConfig.Primary.AuthToken)
+	}
+	// ... and it MUST be in the keyring, under the provider's id.
+	stored, err := ks.Get("judge-test-1")
+	if err != nil {
+		t.Fatalf("keyring Get: %v", err)
+	}
+	if stored != "secret-token" {
+		t.Errorf("keyring: got %q, want the bound credential", stored)
 	}
 }
 
 // 2. Auth token is NEVER echoed in the result.
 func TestLLMProviderBind_02_AuthTokenNotEchoed(t *testing.T) {
 	bindTestSetup(t)
+	bindTestKeyStore(t)
 	in := LLMProviderBindInput{
 		ProviderID: "judge-test-2",
 		Endpoint:   "https://example.test/v1/chat/completions",
@@ -238,6 +267,15 @@ func TestLLMProviderBind_05_RequiresActiveProject(t *testing.T) {
 // 6. Bind preserves existing fallback binding.
 func TestLLMProviderBind_06_PreservesFallback(t *testing.T) {
 	stub := bindTestSetup(t)
+	ks := bindTestKeyStore(t)
+	// The bindings carry no token: the credential is resolved from the
+	// keyring, so it must be there.
+	if err := ks.Set("judge-primary", "sk-primary"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ks.Set("judge-new-primary", "sk-new-primary"); err != nil {
+		t.Fatal(err)
+	}
 	in1 := LLMProviderBindInput{
 		ProviderID: "judge-primary",
 		Endpoint:   "https://primary.test/v1/chat/completions",

@@ -43,6 +43,8 @@ import (
 
 	"github.com/dark-agents/dark-memory-mcp/internal/artifact"
 	"github.com/dark-agents/dark-memory-mcp/internal/auditgate"
+	"github.com/dark-agents/dark-memory-mcp/internal/llm"
+	"github.com/dark-agents/dark-memory-mcp/internal/llmkeystore"
 	"github.com/dark-agents/dark-memory-mcp/internal/nli"
 	"github.com/dark-agents/dark-memory-mcp/internal/safety"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
@@ -361,6 +363,65 @@ func (o *Orchestrator) EnsureNLIRouter(ctx context.Context) (nli.Provider, error
 	return p, nil
 }
 
+// llmCredentialKeyStore is the key store used to resolve the CREDENTIAL
+// of a binding at CALL time. The project config never holds the secret:
+// it holds the provider id, and the secret comes from the OS keyring
+// (env vars as the compatibility backend).
+//
+// nil → DefaultKeyStore() (the OS keyring composite). It is a test
+// seam: the orchestration tests inject an in-memory store so that no
+// OS keyring (and no network) is touched.
+var llmCredentialKeyStore llmkeystore.KeyStore
+
+// credentialKeyStore returns the key store the credential resolution
+// reads from: the injected test store when set, the production
+// composite (OS keyring + env vars) otherwise.
+func credentialKeyStore() (llmkeystore.KeyStore, error) {
+	if llmCredentialKeyStore != nil {
+		return llmCredentialKeyStore, nil
+	}
+	return DefaultKeyStore()
+}
+
+// resolveBindingCredential resolves the credential of a binding
+// provider id ("judge-minimax", "chat-minimax", "minimax", ...) from
+// the OS keyring, at CALL time.
+//
+// The lookup covers BOTH ids the credential may live under:
+//
+//   - the EXACT provider id (how llm_provider_bind stores a provider
+//     that names no catalog provider);
+//   - the CATALOG id, i.e. the id with the dispatch prefix stripped
+//     (how llm_key_add stores it, and how ONE key serves both the
+//     "judge-" and the "chat-" path of the same provider).
+//
+// It returns:
+//
+//   - (token, true, nil)   — the credential was found;
+//   - ("", false, nil)     — the provider names no catalog provider
+//     and NO credential exists for it: a self-hosted deployment that
+//     needs no bearer (the previous behaviour is preserved);
+//   - ("", false, err)     — the provider names a catalog provider but
+//     its credential is MISSING: that is a misconfiguration and the
+//     caller must hear about it instead of running a judge that 401s
+//     on every call.
+func resolveBindingCredential(providerID string) (string, bool, error) {
+	ks, err := credentialKeyStore()
+	if err != nil {
+		return "", false, fmt.Errorf("provider %q: key store unavailable: %w", providerID, err)
+	}
+	token, found := llm.CredentialForProvider(ks, providerID)
+	if found {
+		return token, true, nil
+	}
+	if _, mapped := llm.CatalogProviderID(providerID); !mapped {
+		// No catalog provider, no credential: a self-hosted endpoint
+		// that needs no bearer.
+		return "", false, nil
+	}
+	return "", false, fmt.Errorf("provider %q: no credential in the keyring: store it with llm_key_add first", providerID)
+}
+
 // ensureLLMJudge is the lazy fallback for the Phase 14 T-302 dual-path
 // selector. It builds an LLMJudge from the active project's NLIConfig
 // when the primary binding's provider_id has the "judge-" prefix.
@@ -375,6 +436,21 @@ func (o *Orchestrator) EnsureNLIRouter(ctx context.Context) (nli.Provider, error
 //     the primary config (http.DefaultClient for production). Caches
 //     on the orchestrator so the build only runs once per boot.
 //
+// CREDENTIAL RESOLUTION (the secret never lives in the config)
+//
+// The project config stores the PROVIDER ID; the API key lives in the
+// OS keyring and is resolved HERE, at call time:
+//
+//   - a legacy row that still carries a token in the config is honoured
+//     verbatim (compatibility);
+//   - a config without a token is resolved from the keyring through
+//     llm.CredentialForProvider, which maps the dispatch-prefixed id
+//     ("judge-minimax") to the catalog id ("minimax") that owns the
+//     key;
+//   - when no credential can be resolved the call FAILS with an
+//     explicit error (the caller records it in the Error Observatory)
+//     instead of building a judge that would 401 on every call.
+//
 // The wire format is OpenAI-compatible /v1/chat/completions
 // (mirrors internal/nli/chat.go::ChatProvider), so the same endpoint +
 // auth token work for both the NLI chat-* path and the LLMJudge judge-*
@@ -384,8 +460,8 @@ func (o *Orchestrator) EnsureNLIRouter(ctx context.Context) (nli.Provider, error
 //
 // Returns (nil, nil) when no LLM path applies. Returns an error when
 // LLMJudge construction itself fails (provider_id has judge- prefix but
-// endpoint is malformed, etc.) — callers must decide whether to fall
-// through to NLI or surface the error.
+// endpoint is malformed, no credential in the keyring, etc.) — callers
+// must decide whether to fall through to NLI or surface the error.
 func (o *Orchestrator) ensureLLMJudge(ctx context.Context) (*v4judge.LLMJudge, error) {
 	if o.llmJudge != nil {
 		return o.llmJudge, nil
@@ -412,6 +488,23 @@ func (o *Orchestrator) ensureLLMJudge(ctx context.Context) (*v4judge.LLMJudge, e
 		AuthToken:  proj.NLIConfig.Primary.AuthToken,
 		TimeoutMS:  proj.NLIConfig.Primary.TimeoutMS,
 		ModelRev:   proj.NLIConfig.Primary.ModelRev,
+	}
+	// The secret does NOT live in the project config: resolve it from
+	// the keyring when the config carries none. A legacy config token
+	// wins (it is what the operator explicitly stored).
+	if strings.TrimSpace(pc.AuthToken) == "" {
+		token, found, cerr := resolveBindingCredential(pc.ProviderID)
+		if cerr != nil {
+			return nil, fmt.Errorf("ensure llm judge: %w", cerr)
+		}
+		if found {
+			pc.AuthToken = token
+		} else if _, mapped := llm.CatalogProviderID(pc.ProviderID); mapped {
+			// A catalog provider WITHOUT a credential is a
+			// misconfiguration: fail loudly instead of building a
+			// judge that 401s on every call.
+			return nil, fmt.Errorf("ensure llm judge: provider %q: no credential in the keyring: store it with llm_key_add first", pc.ProviderID)
+		}
 	}
 	j, err := v4judge.NewLLMJudgeWithContext(ctx, pc, http.DefaultClient)
 	if err != nil {

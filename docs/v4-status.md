@@ -1300,7 +1300,7 @@ The 8 AutoEmitter helpers + the EventWriter + the 2 observer tools
      its own go.mod. A parent-module `go list` cannot resolve it and
      reports nothing, which is how this section went stale for releases. -->
 
-- **58** internal packages reachable from the shipped binary
+- **59** internal packages reachable from the shipped binary
 - **12 of 14** `internal/v4alpha/` packages reachable
 
 Dead — unreachable from `cmd/dark-mem-mcp`, owned and verdicted:

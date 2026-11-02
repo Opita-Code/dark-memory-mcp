@@ -46,12 +46,44 @@ provider serves — so it failed with HTTP 400 for every provider.
 - **Catalog**: `minimax` declares both regions (global, cn);
   `minimax-cn` stays on the CN region. Single-candidate providers keep
   their previous behaviour (no extra probe).
+- **The artifact fetcher is wired** (`internal/artifact/fetcher.go`,
+  `internal/server/lifecycle.go`): `WithURLFetcher` had ZERO call sites
+  outside tests, so every URL-anchored verdict — the drift_judge of a
+  published artifact, which is how the vibe-loop judges its own outputs
+  — failed with `required dependency not configured: URLFetcher` and
+  degraded to a synthetic verdict. The fetcher routes by scheme:
+  http/https through the SSRF guard (re-classified on every redirect
+  hop), `file://` as a local read with the same byte cap.
+- **The judge gets its budget from the model, not from a constant**
+  (`internal/llm/chatwire`): the LLM judge sent a hardcoded
+  `max_tokens` of 512, which is below the floor of every reasoning
+  model — MiniMax-M3 spends the whole budget on its `<think>` block and
+  answers with `finish_reason="length"` and no verdict at all. The
+  per-model table (shared with the NLI chain, one source of truth) sizes
+  the budget, the `<think>` block is stripped before parsing, and a
+  truncated answer is retried once with a bigger budget.
+- **The artifact is windowed to the judge's budget**
+  (`internal/orchestration/drift_judge.go`): the resolver's default cap
+  (256 KiB) was larger than what the judge accepts (32 KiB), so any
+  artifact over 32 KiB could never be judged.
+- **The NLI fallback accepts a `judge-*` binding**
+  (`internal/orchestration/nli_wiring.go`, `internal/nli/chat.go`): a
+  project configured only with a `judge-*` binding had nowhere to fall
+  back to, and the verdict degraded to `needs_human` with "unknown
+  provider_id".
 
 ### Changed
 
 - The judge, the failover chain and the NLI provider resolve their
   endpoint against the credential they use, instead of reading
   `spec.BaseURL` directly.
+- **The key no longer lives in the project config**
+  (`internal/llm/credential.go`, `internal/tools/llm_bind.go`): the
+  binding stores the `provider_id`; the credential is resolved from the
+  OS keyring at call time (exact id → catalog id → env). `llm_provider_bind`
+  writes the token to the keyring and persists the binding WITHOUT it, so
+  `projects.nli_config_json` no longer holds a secret in plaintext.
+  Legacy configs that still carry a token keep working.
 
 ---
 

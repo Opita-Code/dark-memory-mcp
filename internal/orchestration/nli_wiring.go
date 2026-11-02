@@ -27,9 +27,11 @@
 //   - The Provider's ID is the inner provider's ID (Router /
 //     CachedProvider both pass through ID()). Cache key uses this
 //     id (invariant from T06).
-//   - The AuthToken is read from nliCfg.Primary.AuthToken (and
-//     nliCfg.Fallback.AuthToken), NEVER logged, NEVER echoed in
-//     errors (T05 invariant).
+//   - The AuthToken NEVER comes from the project config alone: the
+//     config stores the PROVIDER ID and the credential is resolved
+//     from the OS keyring at call time (see buildNLIPrimary). A
+//     legacy config token is still honoured verbatim. The token is
+//     NEVER logged, NEVER echoed in errors (T05 invariant).
 //   - Project.NLIConfig.Validate() is the entry gate — invalid
 //     configs are rejected at the project_create surface (T07), not
 //     here. We trust nliCfg here.
@@ -134,6 +136,20 @@ func nliProviderForConfig(ctx context.Context, nliCfg *project.NLIConfig, hc nli
 // against the credential in the config: the endpoint is a property of
 // the CREDENTIAL, not of the provider (see internal/nli/chat.go).
 //
+// CREDENTIAL RESOLUTION (the secret never lives in the config)
+//
+// The project config stores the PROVIDER ID; the API key lives in the
+// OS keyring and is resolved HERE, at call time:
+//
+//   - a legacy row that still carries a token in the config is honoured
+//     verbatim (compatibility);
+//   - a config without a token is resolved from the keyring through
+//     llm.CredentialForProvider, which maps the dispatch-prefixed id
+//     ("chat-minimax") to the catalog id ("minimax") that owns the key;
+//   - when the id maps to a catalog provider but NO credential can be
+//     resolved the call FAILS with an explicit error instead of
+//     building a provider that would 401 on every call.
+//
 // Anything else → ErrInvalidConfig. The operator can extend the
 // dispatch via a project.NLIConfig fixture when new providers land
 // (registry grow path is the same as the nli package's labels).
@@ -151,6 +167,32 @@ func buildNLIPrimary(ctx context.Context, p project.NLIPrimary, hc nli.HFInferen
 	case strings.HasPrefix(p.ProviderID, "minicheck"):
 		return nli.NewMiniCheckProvider(pc, hc, maxPBytes, maxHBytes)
 	case strings.HasPrefix(p.ProviderID, "chat-"):
+		// The secret does NOT live in the project config: resolve it
+		// from the keyring when the config carries none. A legacy
+		// config token wins (it is what the operator explicitly
+		// stored).
+		if strings.TrimSpace(pc.AuthToken) == "" {
+			token, _, cerr := resolveBindingCredential(p.ProviderID)
+			if cerr != nil {
+				return nil, cerr
+			}
+			pc.AuthToken = token
+		}
+		return nli.NewChatProviderWithContext(ctx, pc, hc, maxPBytes, maxHBytes)
+	case strings.HasPrefix(p.ProviderID, "judge-"):
+		// A "judge-*" binding is the SAME OpenAI-compatible chat
+		// endpoint, consumed by the LLM-judge client. The NLI chain
+		// is the judge's fallback, so it must be able to use it: a
+		// project configured only with a "judge-*" binding had
+		// nowhere to fall back to, and the verdict degraded to
+		// needs_human with "unknown provider_id".
+		if strings.TrimSpace(pc.AuthToken) == "" {
+			token, _, cerr := resolveBindingCredential(p.ProviderID)
+			if cerr != nil {
+				return nil, cerr
+			}
+			pc.AuthToken = token
+		}
 		return nli.NewChatProviderWithContext(ctx, pc, hc, maxPBytes, maxHBytes)
 	default:
 		return nil, fmt.Errorf("%w: unknown provider_id %q (supported: deberta*, minicheck*, chat-*)",
