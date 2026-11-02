@@ -64,3 +64,9 @@ internal/v4alpha/vibe/testdata/
 opencode.jsonc
 
 
+
+# Operator workspace policy (governance/): the ACTIVE constitution is a
+# per-project operator artifact, not a product file. It lives in the
+# project workspace and is tracked as .example.json instead; see
+# governance/README.md. The watchdog SHA pins the active file.
+governance/workspace-policy.constitution.json
