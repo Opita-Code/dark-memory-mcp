@@ -66,7 +66,11 @@ func TestProviderCatalog_EndpointsVerified(t *testing.T) {
 		{"openai", "https://api.openai.com/v1", "", "OPENAI_API_KEY", "gpt-5", DialectOpenAI, RegionUS},
 		{"google", "https://generativelanguage.googleapis.com/v1beta/openai/", "", "GEMINI_API_KEY", "gemini-3.6-flash", DialectOpenAI, RegionUS},
 		{"deepseek", "https://api.deepseek.com", "https://api.deepseek.com/anthropic", "DEEPSEEK_API_KEY", "deepseek-v4-flash", DialectOpenAI, RegionChina},
-		{"minimax", "https://api.minimaxi.com/v1", "https://api.minimaxi.com/anthropic", "MINIMAX_API_KEY", "MiniMax-M3", DialectOpenAI, RegionChina},
+		// minimax: the effective endpoint is resolved against the
+		// credential (providers mint region-scoped keys), so the
+		// catalog declares CANDIDATES. The default is the global
+		// region; the CN candidate is asserted separately below.
+		{"minimax", "https://api.minimax.io/v1", "https://api.minimax.io/anthropic", "MINIMAX_API_KEY", "MiniMax-M3", DialectOpenAI, RegionUS},
 		{"minimax-cn", "https://api.minimaxi.com/v1", "https://api.minimaxi.com/anthropic", "MINIMAX_API_KEY_CN", "MiniMax-M3", DialectOpenAI, RegionChina},
 		{"zhipu", "https://open.bigmodel.cn/api/paas/v4/", "", "ZAI_API_KEY", "glm-5.2", DialectOpenAI, RegionChina},
 		{"moonshot", "https://api.moonshot.cn/v1", "", "MOONSHOT_API_KEY", "kimi-k3", DialectOpenAI, RegionChina},
@@ -120,5 +124,33 @@ func TestProviderDialect_AnthropicOverride(t *testing.T) {
 	}
 	if got := providerDialect(zhipu); got != DialectOpenAI {
 		t.Errorf("zhipu with override (no anthropic URL) = %q, want openai", got)
+	}
+}
+
+// TestProviderCatalog_MinimaxDeclaresBothRegions: providers whose keys
+// are region-scoped must expose every candidate endpoint, so the
+// resolver can discover which one accepts the credential in hand.
+// Pinning a single URL is the bug this whole change removes.
+func TestProviderCatalog_MinimaxDeclaresBothRegions(t *testing.T) {
+	p := providerSpecByID("minimax")
+	if p == nil {
+		t.Fatal("minimax missing from catalog")
+	}
+	byID := map[string]string{}
+	for _, e := range p.EndpointCandidates() {
+		byID[e.ID] = e.BaseURL
+	}
+	if got := byID["global"]; got != "https://api.minimax.io/v1" {
+		t.Errorf("minimax global candidate: got %q, want %q", got, "https://api.minimax.io/v1")
+	}
+	if got := byID["cn"]; got != "https://api.minimaxi.com/v1" {
+		t.Errorf("minimax cn candidate: got %q, want %q", got, "https://api.minimaxi.com/v1")
+	}
+	cn := providerSpecByID("minimax-cn")
+	if cn == nil {
+		t.Fatal("minimax-cn missing from catalog")
+	}
+	if got := len(cn.EndpointCandidates()); got != 1 {
+		t.Errorf("minimax-cn candidates: got %d, want 1", got)
 	}
 }

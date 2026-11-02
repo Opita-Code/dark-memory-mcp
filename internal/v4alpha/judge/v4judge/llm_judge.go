@@ -7,9 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/dark-agents/dark-memory-mcp/internal/llm"
 )
 
 // Sealed error set. Use errors.Is to classify; do not match strings.
@@ -208,11 +211,33 @@ type HTTPClient interface {
 // if cfg.ProviderID does not start with "judge-", cfg.Endpoint is
 // empty, the HTTP client is nil, or the size caps are negative.
 //
+// It is the context-free variant of NewLLMJudgeWithContext.
+//
 // The "judge-" prefix is required (not a convention) so the
 // drift_judge selector (orchestration/drift_judge.go::ensureLLMJudge,
 // Phase 14 T-302) can route operator configs unambiguously to
 // LLMJudge vs internal/nli/chat.go::ChatProvider.
 func NewLLMJudge(cfg ProviderConfig, hc HTTPClient) (*LLMJudge, error) {
+	return NewLLMJudgeWithContext(context.Background(), cfg, hc)
+}
+
+// NewLLMJudgeWithContext validates cfg and returns an LLMJudge,
+// resolving the endpoint AGAINST THE CREDENTIAL in cfg.AuthToken.
+//
+// The endpoint is a property of the credential, not of the provider:
+// MiniMax mints region-scoped keys and each key authenticates only
+// against the endpoint it was issued for. So when the configured
+// endpoint is one of the catalog candidates for that provider, it is
+// replaced by the candidate that accepts THIS key (the trailing path —
+// /chat/completions — is preserved).
+//
+// A configured endpoint that is NOT a catalog candidate (self-hosted
+// vLLM, corporate proxy, ...) is left untouched: it is the operator's
+// explicit choice and no catalog candidate describes it.
+//
+// A failed resolution is NOT fatal: the configured endpoint is kept and
+// the failure is logged — the judge keeps running.
+func NewLLMJudgeWithContext(ctx context.Context, cfg ProviderConfig, hc HTTPClient) (*LLMJudge, error) {
 	if hc == nil {
 		return nil, fmt.Errorf("%w: nil HTTP client", ErrInvalidConfig)
 	}
@@ -220,9 +245,19 @@ func NewLLMJudge(cfg ProviderConfig, hc HTTPClient) (*LLMJudge, error) {
 		return nil, err
 	}
 	cfg = cfg.WithDefaults()
+	endpoint := cfg.Endpoint
+	if resolved, err := resolveJudgeEndpoint(ctx, cfg); err != nil {
+		// The credential was not accepted by any candidate endpoint.
+		// Keep the operator's endpoint and report it (no token in the
+		// message — the token is never logged).
+		log.Printf("v4judge: provider %s: no endpoint accepts this credential (%v) — keeping the configured endpoint",
+			cfg.ProviderID, err)
+	} else {
+		endpoint = resolved
+	}
 	return &LLMJudge{
 		client:     hc,
-		endpoint:   cfg.Endpoint,
+		endpoint:   endpoint,
 		authToken:  cfg.AuthToken,
 		timeout:    time.Duration(cfg.TimeoutMS) * time.Millisecond,
 		maxABytes:  cfg.MaxArtifactBytes,
@@ -230,6 +265,83 @@ func NewLLMJudge(cfg ProviderConfig, hc HTTPClient) (*LLMJudge, error) {
 		modelRev:   cfg.ModelRev,
 		providerID: cfg.ProviderID,
 	}, nil
+}
+
+// resolveJudgeEndpoint returns the endpoint the judge must POST to, for
+// the credential carried by cfg.
+//
+//   - No catalog provider behind the provider id → the configured
+//     endpoint (the operator's own deployment) is kept as is.
+//   - No credential → the configured endpoint is kept as is (nothing to
+//     resolve against).
+//   - A provider with ONE endpoint candidate → the configured endpoint
+//     is kept as is (there is nothing to discover).
+//   - A configured endpoint that is NOT one of the candidates → kept as
+//     is (self-hosted deployments, proxies, ...).
+//   - Otherwise the candidate that accepts the credential wins, and the
+//     configured path (/chat/completions) is preserved.
+func resolveJudgeEndpoint(ctx context.Context, cfg ProviderConfig) (string, error) {
+	if cfg.AuthToken == "" {
+		return cfg.Endpoint, nil
+	}
+	id := strings.TrimPrefix(cfg.ProviderID, "judge-")
+	if id == cfg.ProviderID || id == "" {
+		return cfg.Endpoint, nil
+	}
+	canonical, _ := llm.ResolveID(id)
+	spec := llm.SpecByID(canonical)
+	if spec == nil {
+		return cfg.Endpoint, nil
+	}
+	return resolveJudgeEndpointForSpec(ctx, cfg, spec)
+}
+
+// resolveJudgeEndpointForSpec is the testable core of
+// resolveJudgeEndpoint: it resolves the endpoint of spec that accepts
+// the credential in cfg.
+func resolveJudgeEndpointForSpec(ctx context.Context, cfg ProviderConfig, spec *llm.ProviderSpec) (string, error) {
+	if cfg.AuthToken == "" || spec == nil {
+		return cfg.Endpoint, nil
+	}
+	candidates := spec.EndpointCandidates()
+	if len(candidates) <= 1 {
+		return cfg.Endpoint, nil
+	}
+	suffix, matched := candidatePathSuffix(candidates, cfg.Endpoint)
+	if !matched {
+		// The operator's endpoint is not a catalog endpoint: leave it.
+		return cfg.Endpoint, nil
+	}
+	ep, err := llm.ResolveCredentialEndpoint(ctx, spec, cfg.AuthToken)
+	if err != nil {
+		return cfg.Endpoint, err
+	}
+	return strings.TrimRight(ep.BaseURL, "/") + suffix, nil
+}
+
+// candidatePathSuffix returns the path of endpoint relative to the
+// candidate base it belongs to (e.g. "/chat/completions"), and whether
+// endpoint belongs to one of the candidates at all.
+func candidatePathSuffix(candidates []llm.EndpointSpec, endpoint string) (string, bool) {
+	ep := strings.TrimRight(strings.TrimSpace(endpoint), "/")
+	if ep == "" {
+		return "", false
+	}
+	for _, c := range candidates {
+		for _, base := range []string{c.BaseURL, c.AnthropicBaseURL} {
+			base = strings.TrimRight(strings.TrimSpace(base), "/")
+			if base == "" {
+				continue
+			}
+			if ep == base {
+				return "", true
+			}
+			if strings.HasPrefix(ep, base+"/") {
+				return ep[len(base):], true
+			}
+		}
+	}
+	return "", false
 }
 
 // ID returns the provider id verbatim (e.g. "judge-minimax-cn").

@@ -105,36 +105,55 @@ func RegisterLLMConfig(reg *Registry) {	reg.Add(BindSimple("llm_key_add",
 				return nil, fmt.Errorf("llm_key_add: empty key")
 			}
 
-			// Optional hot validation (free probe, never a completion).
+			// Resolve WHICH endpoint of this provider accepts THIS key.
+			// The endpoint is a property of the credential (providers may
+			// mint region-scoped keys), so the key is validated against
+			// every candidate until one authenticates. The resolved
+			// endpoint travels with the key in the credential record, so
+			// the judge never has to guess it again.
+			var resolved *llm.EndpointSpec
 			if in.Validate == nil || *in.Validate {
-				probeCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
-				res := llm.ValidateProvider(probeCtx, spec, in.Key)
+				probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+				ep, rerr := llm.ResolveEndpoint(probeCtx, spec, in.Key)
 				cancel()
-				if res.State == llm.ProbeAuthError {
-					return nil, fmt.Errorf("llm_key_add: %s rejected the key (probe: %s)", spec.ID, res.Error)
+				if rerr != nil {
+					return nil, fmt.Errorf("llm_key_add: %s: %w — key NOT stored", spec.ID, rerr)
 				}
-				if res.State == llm.ProbeUnreachable {
-					return nil, fmt.Errorf("llm_key_add: %s unreachable (probe: %s) — key NOT stored; check network/baseURL", spec.ID, res.Error)
-				}
-				// rate_limited / unknown → store anyway (key likely ok,
-				// provider throttling or probe path unsupported).
+				resolved = &ep
 			}
 
 			ks, err := resolveLLMConfigKS()
 			if err != nil {
 				return nil, fmt.Errorf("llm_key_add: keystore unavailable: %w", err)
 			}
-			if err := ks.Set(spec.ID, in.Key); err != nil {
+			if resolved != nil {
+				if cs, ok := llmkeystore.CredentialStoreOf(ks); ok {
+					if err := cs.StoreCredential(spec.ID, llmkeystore.Credential{
+						Key:        in.Key,
+						EndpointID: resolved.ID,
+						BaseURL:    resolved.BaseURL,
+					}); err != nil {
+						return nil, fmt.Errorf("llm_key_add: store credential: %w", err)
+					}
+				} else if err := ks.Set(spec.ID, in.Key); err != nil {
+					return nil, fmt.Errorf("llm_key_add: store: %w", err)
+				}
+			} else if err := ks.Set(spec.ID, in.Key); err != nil {
 				return nil, fmt.Errorf("llm_key_add: store: %w", err)
 			}
-			return &ToolResponse{Data: map[string]any{
-				"provider":     spec.ID,
-				"stored":       true,
-				"source":       ks.Source(spec.ID),
-				"validated":    in.Validate == nil || *in.Validate,
-				"model":        spec.DefaultModel,
-				"hint":         "The key is now in the OS keyring. Env-var keys still take precedence in the composite only if the keyring read fails.",
-			}}, nil
+			out := map[string]any{
+				"provider":  spec.ID,
+				"stored":    true,
+				"source":    ks.Source(spec.ID),
+				"validated": in.Validate == nil || *in.Validate,
+				"model":     spec.DefaultModel,
+				"hint":      "The key is now in the OS keyring. Env-var keys still take precedence in the composite only if the keyring read fails.",
+			}
+			if resolved != nil {
+				out["endpoint"] = resolved.BaseURL
+				out["endpoint_id"] = resolved.ID
+			}
+			return &ToolResponse{Data: out}, nil
 		}))
 
 	reg.Add(BindSimple("llm_key_list",
@@ -170,13 +189,24 @@ func RegisterLLMConfig(reg *Registry) {	reg.Add(BindSimple("llm_key_add",
 				}
 			}
 			out := make([]map[string]any, 0, len(providers))
+			cs, hasCreds := llmkeystore.CredentialStoreOf(ks)
 			for _, spec := range providers {
-				out = append(out, map[string]any{
+				entry := map[string]any{
 					"provider": spec.ID,
 					"has_key":  ks.Has(spec.ID),
 					"source":   ks.Source(spec.ID),
 					"model":    spec.DefaultModel,
-				})
+				}
+				// The endpoint that was resolved for this credential
+				// (the endpoint travels with the key in the credential
+				// record). Never the key itself.
+				if hasCreds {
+					if cred, ok := cs.LoadCredential(spec.ID); ok && cred.EndpointID != "" {
+						entry["endpoint_id"] = cred.EndpointID
+						entry["endpoint"] = cred.BaseURL
+					}
+				}
+				out = append(out, entry)
 			}
 			return &ToolResponse{Data: map[string]any{
 				"providers": out,

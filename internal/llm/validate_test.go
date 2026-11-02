@@ -132,6 +132,32 @@ func TestValidateProvider_EmptyKey(t *testing.T) {
 	}
 }
 
+// TestValidateProvider_ResolvesEndpointAgainstKey: the probe must hit
+// the endpoint that ACCEPTS the key. A region-scoped key (MiniMax:
+// global vs China) answers 401 on the other endpoint, and a probe of
+// the wrong one would report a healthy provider as dead — the health
+// registry would then cool it down and the failover chain would skip it.
+func TestValidateProvider_ResolvesEndpointAgainstKey(t *testing.T) {
+	good := newProbeServer(t, "validate-key-global", nil)
+	bad := newProbeServer(t, "validate-key-other", nil)
+
+	spec := &ProviderSpec{
+		ID:      "multi-validate",
+		BaseURL: bad.URL + "/v1",
+		Endpoints: []EndpointSpec{
+			{ID: "cn", BaseURL: bad.URL + "/v1", ProbePath: "/models", ProbeAuthMode: ProbeAuthBearer},
+			{ID: "global", BaseURL: good.URL + "/v1", ProbePath: "/models", ProbeAuthMode: ProbeAuthBearer},
+		},
+	}
+	res := ValidateProvider(context.Background(), spec, "validate-key-global")
+	if res.State != ProbeValid {
+		t.Fatalf("State = %q, want valid (err=%s)", res.State, res.Error)
+	}
+	if res.Class != "" {
+		t.Errorf("Class = %q, want empty for a valid provider", res.Class)
+	}
+}
+
 // TestValidateProviderWithBalance verifies the balance bonus endpoint
 // is hit and doesn't flip a valid verdict.
 func TestValidateProviderWithBalance(t *testing.T) {

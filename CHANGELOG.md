@@ -11,6 +11,50 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [4.0.0-alpha.33] — 2026-11-02 — credential-scoped endpoint resolution
+
+The endpoint of a provider is a property of the **credential**, not of
+the provider id. Providers that mint region-scoped keys (MiniMax:
+`api.minimax.io` global vs `api.minimaxi.com` China — each key
+authenticates only against its own endpoint) could not be used with the
+hardcoded base URL the catalog carried: a valid key was rejected with
+HTTP 401 and the failure looked like a bad key. The connectivity probe
+had the same shape of bug, POSTing `"model":"probe"` — a model no
+provider serves — so it failed with HTTP 400 for every provider.
+
+### Fixed
+
+- **Credential-scoped endpoint resolution** (`internal/llm/endpoint.go`):
+  the catalog declares endpoint CANDIDATES (`ProviderSpec.Endpoints`)
+  and the effective endpoint is resolved against the key in hand:
+  operator override (`DARK_LLM_BASE_URL_<PROVIDER>`) → cached
+  resolution for that credential → probe discovery over the candidates.
+  When no candidate accepts the key, the error names every candidate and
+  what each one answered, so a wrong key and a wrong endpoint are no
+  longer indistinguishable. See
+  `docs/CREDENTIAL_SCOPED_ENDPOINT_RESOLUTION.md`.
+- **Credential record in the keyring** (`internal/llmkeystore`): the
+  keyring entry now carries the endpoint that was resolved for the key
+  (`{"key":...,"endpoint_id":...,"base_url":...}`), so the judge never
+  has to guess it again. Legacy entries (bare key) still read back
+  correctly; `llm_key_add` performs the discovery at write time and
+  `llm_key_list` reports the resolved endpoint (never the key).
+- **Connectivity probe sends a real model** (`llm_provider_probe`):
+  the binding's `model_rev` or the catalog `DefaultModel` of the
+  provider owning the endpoint. No more placeholder model names, so a
+  400 for "unknown model" can no longer masquerade as an auth fault.
+- **Catalog**: `minimax` declares both regions (global, cn);
+  `minimax-cn` stays on the CN region. Single-candidate providers keep
+  their previous behaviour (no extra probe).
+
+### Changed
+
+- The judge, the failover chain and the NLI provider resolve their
+  endpoint against the credential they use, instead of reading
+  `spec.BaseURL` directly.
+
+---
+
 ## [4.0.0-alpha.32] — 2026-10-15 — judge OAuth end-to-end, pre-flight R12/R13, 78 tools
 
 9 commits over alpha.31 (`16215c7` → tag). The judge works out-of-the-box

@@ -7,11 +7,18 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/dark-agents/dark-memory-mcp/internal/llm"
 )
 
 // unsetAllLLMKeys clears every LLM-related env var so each detection
 // test starts from a clean slate. t.Setenv with "" restores the
 // original (usually unset) value after the test.
+//
+// The operator endpoint overrides (DARK_LLM_BASE_URL_<PROVIDER> /
+// DARK_LLM_ANTHROPIC_BASE_URL_<PROVIDER>) are cleared too: they are
+// the escape hatch that skips the credential→endpoint discovery, so a
+// leaked one would silently change what a test exercises.
 func unsetAllLLMKeys(t *testing.T) {
 	t.Helper()
 	for _, k := range []string{
@@ -24,6 +31,11 @@ func unsetAllLLMKeys(t *testing.T) {
 		"DARK_JUDGE_MODEL_ANTHROPIC",
 	} {
 		t.Setenv(k, "")
+	}
+	for _, id := range llm.CanonicalIDs() {
+		suffix := strings.ToUpper(strings.ReplaceAll(id, "-", "_"))
+		t.Setenv("DARK_LLM_BASE_URL_"+suffix, "")
+		t.Setenv("DARK_LLM_ANTHROPIC_BASE_URL_"+suffix, "")
 	}
 }
 
@@ -42,24 +54,38 @@ func TestNewSelfHarnessClient_NoKeys(t *testing.T) {
 
 // TestNewSelfHarnessClient_DetectsEveryProvider verifies each catalog
 // env key maps to the right provider + dialect + default model.
+//
+// The endpoint is resolved against the credential in hand. Providers
+// with ONE endpoint candidate resolve without a probe; MiniMax has two
+// (global + China), so its case pins the operator override
+// (DARK_LLM_BASE_URL_MINIMAX) — the override wins outright and keeps
+// the test hermetic (no network, no probe).
 func TestNewSelfHarnessClient_DetectsEveryProvider(t *testing.T) {
 	cases := []struct {
 		envKey, provider, dialect, model string
+		endpointOverride                 string // DARK_LLM_BASE_URL_<PROVIDER>
 	}{
-		{"ANTHROPIC_API_KEY", "anthropic", "anthropic", "claude-sonnet-4-5"},
-		{"OPENAI_API_KEY", "openai", "openai", "gpt-5"},
-		{"GEMINI_API_KEY", "google", "openai", "gemini-3.6-flash"},
-		{"DEEPSEEK_API_KEY", "deepseek", "openai", "deepseek-v4-flash"},
-		{"MINIMAX_API_KEY", "minimax", "openai", "MiniMax-M3"},
-		{"MINIMAX_API_KEY_CN", "minimax-cn", "openai", "MiniMax-M3"},
-		{"MOONSHOT_API_KEY", "moonshot", "openai", "kimi-k3"},
-		{"ZAI_API_KEY", "zhipu", "openai", "glm-5.2"},
-		{"DASHSCOPE_API_KEY", "qwen", "openai", "qwen3.8-max"},
+		{envKey: "ANTHROPIC_API_KEY", provider: "anthropic", dialect: "anthropic", model: "claude-sonnet-4-5"},
+		{envKey: "OPENAI_API_KEY", provider: "openai", dialect: "openai", model: "gpt-5"},
+		{envKey: "GEMINI_API_KEY", provider: "google", dialect: "openai", model: "gemini-3.6-flash"},
+		{envKey: "DEEPSEEK_API_KEY", provider: "deepseek", dialect: "openai", model: "deepseek-v4-flash"},
+		{
+			envKey: "MINIMAX_API_KEY", provider: "minimax", dialect: "openai", model: "MiniMax-M3",
+			endpointOverride: "https://api.minimax.io/v1",
+		},
+		{envKey: "MINIMAX_API_KEY_CN", provider: "minimax-cn", dialect: "openai", model: "MiniMax-M3"},
+		{envKey: "MOONSHOT_API_KEY", provider: "moonshot", dialect: "openai", model: "kimi-k3"},
+		{envKey: "ZAI_API_KEY", provider: "zhipu", dialect: "openai", model: "glm-5.2"},
+		{envKey: "DASHSCOPE_API_KEY", provider: "qwen", dialect: "openai", model: "qwen3.8-max"},
 	}
 	for _, c := range cases {
 		t.Run(c.envKey, func(t *testing.T) {
 			unsetAllLLMKeys(t)
 			t.Setenv(c.envKey, "test-key-123")
+			if c.endpointOverride != "" {
+				suffix := strings.ToUpper(strings.ReplaceAll(c.provider, "-", "_"))
+				t.Setenv("DARK_LLM_BASE_URL_"+suffix, c.endpointOverride)
+			}
 			client, err := NewSelfHarnessClient()
 			if err != nil {
 				t.Fatalf("NewSelfHarnessClient: %v", err)

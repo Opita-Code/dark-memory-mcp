@@ -413,7 +413,7 @@ func (o *Orchestrator) ensureLLMJudge(ctx context.Context) (*v4judge.LLMJudge, e
 		TimeoutMS:  proj.NLIConfig.Primary.TimeoutMS,
 		ModelRev:   proj.NLIConfig.Primary.ModelRev,
 	}
-	j, err := v4judge.NewLLMJudge(pc, http.DefaultClient)
+	j, err := v4judge.NewLLMJudgeWithContext(ctx, pc, http.DefaultClient)
 	if err != nil {
 		return nil, fmt.Errorf("ensure llm judge: %w", err)
 	}

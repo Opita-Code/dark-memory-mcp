@@ -162,8 +162,21 @@ func catalogSpecs() []*llm.ProviderSpec {
 
 // judgeClientFactory builds the concrete SelfHarnessClient for one
 // provider+key (the same client the legacy path used).
+//
+// The endpoint is resolved HERE, against the credential the factory
+// receives: the failover chain is the component that holds a key and
+// knows which provider it belongs to, so this is where the
+// credential→endpoint resolution belongs (the llm.FailoverOptions
+// Factory signature stays untouched — it already carries the key).
+//
+// A provider with a single endpoint candidate keeps its previous
+// behaviour (no probe, no extra request). For a multi-candidate
+// provider the discovery is bounded and never fatal: a failure is
+// logged — the operator must see that no endpoint accepted the key —
+// and the client falls back to the provider's default endpoint so the
+// judge keeps a client.
 func judgeClientFactory(spec *llm.ProviderSpec, key string) (llm.JudgeClient, error) {
-	return newCatalogClient(spec, key), nil
+	return newCatalogClientWithEndpoint(spec, key, resolveEndpointForCredential(spec, key)), nil
 }
 
 // classifyJudgeError maps SelfHarnessClient errors to failover

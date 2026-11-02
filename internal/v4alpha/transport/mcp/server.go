@@ -235,7 +235,14 @@ func NewServer(db *sql.DB) (*Server, error) {
 // ADR-007 §6 backwards compat: v4-alpha.1 callers see the same
 // "errored verdict, no panic" behavior).
 func buildV4JudgeClient() (judge.LLMClient, error) {
-	c, err := judge.NewRealLLMClient()
+	return buildV4JudgeClientWithContext(context.Background())
+}
+
+// buildV4JudgeClientWithContext is the ctx-aware variant: the context
+// bounds the credential→endpoint discovery (the client resolves the
+// endpoint that accepts the key in hand — see judge.NewRealLLMClient).
+func buildV4JudgeClientWithContext(ctx context.Context) (judge.LLMClient, error) {
+	c, err := judge.NewRealLLMClientWithContext(ctx)
 	if err != nil {
 		// No key configured → return nil (EC-002 short-circuit).
 		// Log nothing (the operator may intentionally run without
