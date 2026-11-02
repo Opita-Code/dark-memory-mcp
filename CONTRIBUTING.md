@@ -672,12 +672,18 @@ i++
 
 Follow [MANIFIESTO.md](./docs/MANIFIESTO.md):
 
-- Spanish tuteado for user-facing docs (README, MANIFIESTO).
-- English for technical/architecture docs (this file,
-  ARCHITECTURE-V4.md).
+- Spanish tuteado for all documentation, including technical and
+  architecture docs (this file, ARCHITECTURE-V4.md).
+- The code stays in English: identifiers, exported names, the tool API
+  surface, and commit types (`feat`, `fix`, `docs`).
 - TL;DR at the top of every document.
 - Tables for structured data, not prose.
 - Cross-references as `[text](path.md#anchor)` not bare URLs.
+
+The documents written in English before this rule (this file,
+ARCHITECTURE-V4.md) are legacy from when the primary audience was the
+international open-source community. They are translated progressively:
+every document that is new or touched from now on is written in Spanish.
 
 ### 10.3 Commit messages
 

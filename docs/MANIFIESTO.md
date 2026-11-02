@@ -57,6 +57,14 @@ los dos).
 
 ### 2.1 Tono y registro
 
+- **El idioma de la documentación es el español tuteado**, sin excepción:
+  la de cara al usuario, la técnica y la de arquitectura. El **código**
+  va en inglés: identificadores, nombres exportados, la superficie de
+  la API de las tools y los tipos de commit (`feat`, `fix`, `docs`).
+  Los documentos que hoy están en inglés (`CONTRIBUTING.md`,
+  `ARCHITECTURE-V4.md`) son legado de cuando la audiencia primaria era
+  la comunidad internacional: se traducen a medida que se toquen, y
+  todo documento nuevo o modificado se escribe en español.
 - **Español tuteado de Colombia**: usa **tú** sistemáticamente. No
   uses ustedeo (él/ella hizo...), no uses voseo (vos hiciste...).
 - **Voz activa preferida**: "El servidor escribe la fila" en vez de
