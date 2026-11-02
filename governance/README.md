@@ -40,8 +40,9 @@ Por eso:
 
 | Fichero | Qué es | ¿Versionado? |
 |---|---|---|
-| `workspace-policy.constitution.example.json` | El contenido de la política, reproducible. | Sí. |
-| `workspace-policy.constitution.json` | La copia activa que carga el servidor. | No (está en `.gitignore`). |
+| `constitutions/dark-agents-workspace-policy.yaml` | El artefacto de contrato: la política en YAML, versionada y SHA-pineada (§7). | Sí. |
+| `governance/workspace-policy.constitution.example.json` | La forma que el servidor carga hoy, como ejemplo reproducible. | Sí. |
+| `governance/workspace-policy.constitution.json` | La copia activa que carga el servidor. | No (está en `.gitignore`). |
 
 El archivo activo se crea a partir del ejemplo, y su SHA es el que el watchdog
 vigila:
@@ -50,6 +51,22 @@ vigila:
 cp governance/workspace-policy.constitution.example.json \
    governance/workspace-policy.constitution.json
 ```
+
+### Las dos formas, y por qué
+
+La constitution del contrato es YAML (§7). La que el servidor consume es
+JSON, y no por gusto: el watchdog guarda los **bytes crudos** del fichero en
+`constitutions.parsed_json` y el inyector de persona los parsea con
+`json.Unmarshal`
+(`internal/recall/assemble.go:parsePersonaFromConstitution`). Una
+constitution en YAML o TOML queda guardada pero su sección `persona` **nunca
+llega al agente** — le pasa también a la constitution builtin del repo
+(`vibe-flow/constitution/dark-mem.constitution.toml`, cuya sección `[tone]`
+tiene el mismo destino).
+
+`governance/check-constitution.sh` es el paso de verificación que §7 pide y
+que `dark-mem constitution verify` no implementa en esta build: comprueba que
+las dos formas dicen lo mismo y que el SHA que el watchdog vigila coincide.
 
 ## Cómo se aplica
 
@@ -92,6 +109,12 @@ dark_memory_recall          # frames.persona.voice / .claims_policy
 
 # el pre-flight de las reglas del workspace
 governance/dm-flow.sh check  <project_id> <spec_id> --artifact "$RUTA"
+
+# las dos formas de la constitution dicen lo mismo
+governance/check-constitution.sh
+
+# los codigos de salida del pre-flight (contrato, no detalle)
+governance/test-dm-flow.sh
 ```
 
 ## Componentes
@@ -99,8 +122,11 @@ governance/dm-flow.sh check  <project_id> <spec_id> --artifact "$RUTA"
 | Ruta | Qué es |
 |---|---|
 | `governance/dm-flow.sh` | Pre-flight de las reglas + plan de llamadas MCP. No habla MCP por sí mismo: valida y emite el plan; el agente ejecuta con sus propias tools. |
+| `governance/test-dm-flow.sh` | Tests de los códigos de salida de `dm-flow.sh` (0 / 64 / 65 / 66) y del contenido del plan. |
+| `governance/check-constitution.sh` | Verifica que la constitution YAML de contrato y la copia JSON activa coinciden (id, version, persona, SHA). |
 | `governance/FLOW.md` | Cómo se integra dark-memory en un flujo de desarrollo, qué garantiza cada capa y qué huecos hay. |
-| `governance/workspace-policy.constitution.example.json` | El contenido de la política del workspace (ejemplo reproducible). |
+| `constitutions/dark-agents-workspace-policy.yaml` | La política del workspace como artefacto de contrato (§7): YAML, versionado, SHA-pineado. |
+| `governance/workspace-policy.constitution.example.json` | La forma que el servidor carga hoy (JSON), como ejemplo reproducible. |
 | `governance/workspace-policy.constitution.json` | La copia activa que carga el servidor (no versionada). |
 | `docs/` | Documentación canónica: `tools.md`, `v4-status.md`, `npm-install.md`, `agent-bootstrap.md`. |
 | `CONSTITUTION.md` | Constitution de release-integrity del repo (reglas de release, no de workspace). |
