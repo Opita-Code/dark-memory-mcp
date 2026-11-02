@@ -36,22 +36,24 @@
 // Authorization: Bearer <auth_token>  (omitted when auth_token is empty)
 //
 // Request body:
-//   {
-//     "model": "<ModelRev>",
-//     "temperature": 0,
-//     "max_tokens": 8,
-//     "messages": [
-//       {"role": "system", "content": <System Prompt — see nliChatSystemPrompt>},
-//       {"role": "user",   "content": <User Prompt — see buildNliPrompt>}
-//     ]
-//   }
+//
+//	{
+//	  "model": "<ModelRev>",
+//	  "temperature": 0,
+//	  "max_tokens": 8,
+//	  "messages": [
+//	    {"role": "system", "content": <System Prompt — see nliChatSystemPrompt>},
+//	    {"role": "user",   "content": <User Prompt — see buildNliPrompt>}
+//	  ]
+//	}
 //
 // Response body (success):
-//   {
-//     "choices": [
-//       {"message": {"role": "assistant", "content": "entailment"}}
-//     ]
-//   }
+//
+//	{
+//	  "choices": [
+//	    {"message": {"role": "assistant", "content": "entailment"}}
+//	  ]
+//	}
 //
 // Any deviation → ErrProviderBadResponse (HTTP 200 with wrong shape)
 // or one of the standard HTTP error envelopes (401/403/429/5xx/timeouts)
@@ -114,6 +116,7 @@ import (
 	"time"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/llm"
+	"github.com/dark-agents/dark-memory-mcp/internal/llm/chatwire"
 )
 
 // ChatProvider scores a (premise, hypothesis) pair against an
@@ -139,56 +142,17 @@ var ErrTruncatedResponse = errors.New("nli: chat response truncated — thinking
 // at 8k to stay well below that).
 const MaxRetryBudgetCap = 8192
 
-// reasoningModelMaxTokens is the sealed defaults table for known
-// reasoning + non-reasoning chat models (T-407-c). Lookup is by
-// longest-prefix-match against ModelRev (so "claude-sonnet-4-20260101"
-// matches "claude-sonnet-4").
-//
-// Sizing rationale (sources: T-407-c OSINT row 2501):
-//   - Non-reasoning models: tight budgets (256-1024) to prevent prose.
-//   - Reasoning models: 4× visible output (TokenMix 2026 rule) + P95 safety.
-//   - Last entry (empty pattern) is the catch-all fallback.
-//
-// Adding a new row: append here + add test case in chat_test.go +
-// bump CHANGELOG.
-var reasoningModelMaxTokens = []modelMaxTokensEntry{
-	// === Anthropic Claude (extended thinking + legacy) ===
-	{pattern: "claude-opus-4-5", maxTokens: 2048, family: "reasoning"},
-	{pattern: "claude-opus-4-6", maxTokens: 2048, family: "reasoning"},
-	{pattern: "claude-sonnet-4", maxTokens: 2048, family: "reasoning"},
-	{pattern: "claude-haiku-4-5", maxTokens: 1024, family: "reasoning"},
-	{pattern: "claude-3-7-sonnet", maxTokens: 1024, family: "reasoning"},
-
-	// === DeepSeek (R1 always reasons; V3.x + flash non-reasoning) ===
-	{pattern: "deepseek-r1", maxTokens: 4096, family: "reasoning"},
-	{pattern: "deepseek-reasoner", maxTokens: 4096, family: "reasoning"},
-	{pattern: "deepseek-v3", maxTokens: 1024, family: "non-reasoning"},
-	{pattern: "deepseek-flash", maxTokens: 512, family: "non-reasoning"},
-
-	// === OpenAI o-series (reasoning_effort controls) ===
-	{pattern: "o3-mini", maxTokens: 4096, family: "reasoning"},
-	{pattern: "o4-mini", maxTokens: 4096, family: "reasoning"},
-	{pattern: "o3", maxTokens: 8192, family: "reasoning"},
-	{pattern: "o1", maxTokens: 8192, family: "reasoning"},
-
-	// === OpenAI non-reasoning ===
-	{pattern: "gpt-4o", maxTokens: 256, family: "non-reasoning"},
-	{pattern: "gpt-4o-mini", maxTokens: 256, family: "non-reasoning"},
-	{pattern: "gpt-5", maxTokens: 1024, family: "hybrid"}, // per OpenAI: GPT-5 reasoning is opt-in
-
-	// === MiniMax (our active model + sibling — emits <think> blocks) ===
-	{pattern: "MiniMax-M3", maxTokens: 1024, family: "reasoning"},
-	{pattern: "MiniMax-M2", maxTokens: 1024, family: "reasoning"},
-
-	// === Catch-all (must be last) ===
-	// Conservative for unknown reasoning models per TokenMix P95 ceiling.
-	{pattern: "", maxTokens: 1024, family: "unknown"},
-}
+// reasoningModelMaxTokens lives in internal/llm/chatwire: the table is
+// a property of the MODEL, not of the client, and the LLM judge
+// (internal/v4alpha/judge/v4judge) needs the same budgets. Keeping a
+// second copy here is how the judge ended up with a hardcoded 512 that
+// no reasoning model could satisfy.
+var reasoningModelMaxTokens = chatwire.ModelMaxTokensTable()
 
 // DefaultFallbackMaxTokens is returned by resolveMaxTokens when no
 // pattern matches AND no override is set. Mirrors the last entry of
 // reasoningModelMaxTokens — kept as a named const for testability.
-const DefaultFallbackMaxTokens = 1024
+const DefaultFallbackMaxTokens = chatwire.DefaultFallbackMaxTokens
 
 // modelMaxTokensEntry is one row of the reasoningModelMaxTokens table.
 type modelMaxTokensEntry struct {
@@ -199,38 +163,14 @@ type modelMaxTokensEntry struct {
 
 // resolveMaxTokens returns the max_tokens budget to send to the chat
 // API for the given modelRev, honoring (in order):
-//   1. override > 0 → use it (operator escape hatch)
-//   2. longest-prefix-match in reasoningModelMaxTokens
-//   3. DefaultFallbackMaxTokens (1024)
+//  1. override > 0 → use it (operator escape hatch)
+//  2. longest-prefix-match in reasoningModelMaxTokens
+//  3. DefaultFallbackMaxTokens (1024)
 //
 // This function is pure (no I/O, no allocation beyond lookup). Test
 // cases live in chat_test.go (T-407-c.6).
 func resolveMaxTokens(modelRev string, override int) int {
-	if override > 0 {
-		return override
-	}
-	bestMatch := ""
-	bestTokens := DefaultFallbackMaxTokens
-	for _, entry := range reasoningModelMaxTokens {
-		if entry.pattern == "" {
-			continue // catch-all, only used if nothing else matches
-		}
-		if strings.HasPrefix(modelRev, entry.pattern) {
-			if len(entry.pattern) > len(bestMatch) {
-				bestMatch = entry.pattern
-				bestTokens = entry.maxTokens
-			}
-		}
-	}
-	if bestMatch == "" {
-		// No specific match → fall through to last catch-all entry.
-		for _, entry := range reasoningModelMaxTokens {
-			if entry.pattern == "" {
-				bestTokens = entry.maxTokens
-			}
-		}
-	}
-	return bestTokens
+	return chatwire.ResolveMaxTokens(modelRev, override)
 }
 
 // ChatProvider scores a (premise, hypothesis) pair against an
@@ -281,8 +221,8 @@ func NewChatProvider(cfg ProviderConfig, hc HFInferenceClient, maxP, maxH int) (
 // may well be the right one — e.g. a proxy that only the operator
 // knows about) and the failure is logged. The judge keeps running.
 func NewChatProviderWithContext(ctx context.Context, cfg ProviderConfig, hc HFInferenceClient, maxP, maxH int) (*ChatProvider, error) {
-	if !strings.HasPrefix(cfg.ProviderID, "chat-") {
-		return nil, fmt.Errorf("%w: ChatProvider requires provider_id starting with 'chat-' (got %q)",
+	if !IsChatDispatchID(cfg.ProviderID) {
+		return nil, fmt.Errorf("%w: ChatProvider requires provider_id starting with 'chat-' or 'judge-' (got %q)",
 			ErrInvalidConfig, cfg.ProviderID)
 	}
 	if cfg.Endpoint == "" {
@@ -338,10 +278,47 @@ func chatProviderCatalogID(providerID string) (string, bool) {
 	return canonical, true
 }
 
+// IsChatDispatchID reports whether a provider id selects this
+// provider.
+//
+// Two prefixes do: "chat-" (the NLI chain) and "judge-" (the LLM-judge
+// chain). Both bindings point at the same OpenAI-compatible chat
+// endpoint — the prefix says WHICH CLIENT consumes the binding, not
+// which endpoint it is. A project may therefore configure a single
+// "judge-*" binding and have BOTH the judge and the NLI fallback use
+// it; before this, the NLI fallback rejected "judge-*" ids with
+// "unknown provider_id" and the verdict had nowhere to fall back to.
+func IsChatDispatchID(providerID string) bool {
+	return strings.HasPrefix(providerID, "chat-") || strings.HasPrefix(providerID, "judge-")
+}
+
+// chatDispatchCatalogID maps a dispatch id ("chat-x" / "judge-x") to
+// the catalog provider it talks to, stripping whichever dispatch prefix
+// it carries. False when the id names no catalog provider.
+func chatDispatchCatalogID(providerID string) (string, bool) {
+	id := providerID
+	switch {
+	case strings.HasPrefix(id, "chat-"):
+		id = strings.TrimPrefix(id, "chat-")
+	case strings.HasPrefix(id, "judge-"):
+		id = strings.TrimPrefix(id, "judge-")
+	default:
+		return "", false
+	}
+	if id == "" {
+		return "", false
+	}
+	canonical, _ := llm.ResolveID(id)
+	if llm.SpecByID(canonical) == nil {
+		return "", false
+	}
+	return canonical, true
+}
+
 // chatProviderSpec returns the catalog spec of the provider behind a
 // chat provider id (nil when the id names no catalog provider).
 func chatProviderSpec(providerID string) (*llm.ProviderSpec, bool) {
-	id, ok := chatProviderCatalogID(providerID)
+	id, ok := chatDispatchCatalogID(providerID)
 	if !ok {
 		return nil, false
 	}
@@ -651,7 +628,7 @@ func parseChatCompletionResponse(body []byte) (Label, float64, error) {
 	var openaiShape struct {
 		Choices []struct {
 			FinishReason string `json:"finish_reason"`
-			Message struct {
+			Message      struct {
 				Role    string `json:"role"`
 				Content string `json:"content"`
 			} `json:"message"`
@@ -663,52 +640,52 @@ func parseChatCompletionResponse(body []byte) (Label, float64, error) {
 		if raw == "" {
 			raw = openaiShape.Choices[0].Text
 		}
-	// T-201 (v4.0.0-alpha.24-pre-1): think-only replies. Some 2026
-	// reasoning models (MiniMax-M3, Claude with extended-thinking,
-	// DeepSeek-R1) emit finish_reason="stop" with content == a single
-	// <think>...</think> block and NO visible label. Before this fix
-	// the parser fell through to parseCanonicalLabel(raw) which saw
-	// the thinking text and returned ErrProviderBadResponse — surfacing
-	// to drift_judge as needs_human. We now strip the think block
-	// first; if anything visible remains, parse it as a label.
-	//
-	// Critical distinction:
-	//  * finish_reason=length + think-only → ErrTruncatedResponse (retry
-	//    with 4× budget may surface the label; T-407-c behavior).
-	//  * finish_reason=stop   + think-only → ErrProviderBadResponse
-	//    (the model committed to a final reply with no label; retry
-	//    will not change behavior; T-201 semantics).
-	stripped := stripThinkBlocks(raw)
-	finishReason := openaiShape.Choices[0].FinishReason
-	// 1. Truly empty content (raw == ""). Preserve legacy behavior:
-	//    length → truncated (retry); anything else → bad response.
-	if raw == "" {
-		if finishReason == "length" {
-			return "", 0, fmt.Errorf("%w: content empty, finish_reason=length (thinking tokens exhausted budget)",
-				ErrTruncatedResponse)
+		// T-201 (v4.0.0-alpha.24-pre-1): think-only replies. Some 2026
+		// reasoning models (MiniMax-M3, Claude with extended-thinking,
+		// DeepSeek-R1) emit finish_reason="stop" with content == a single
+		// <think>...</think> block and NO visible label. Before this fix
+		// the parser fell through to parseCanonicalLabel(raw) which saw
+		// the thinking text and returned ErrProviderBadResponse — surfacing
+		// to drift_judge as needs_human. We now strip the think block
+		// first; if anything visible remains, parse it as a label.
+		//
+		// Critical distinction:
+		//  * finish_reason=length + think-only → ErrTruncatedResponse (retry
+		//    with 4× budget may surface the label; T-407-c behavior).
+		//  * finish_reason=stop   + think-only → ErrProviderBadResponse
+		//    (the model committed to a final reply with no label; retry
+		//    will not change behavior; T-201 semantics).
+		stripped := stripThinkBlocks(raw)
+		finishReason := openaiShape.Choices[0].FinishReason
+		// 1. Truly empty content (raw == ""). Preserve legacy behavior:
+		//    length → truncated (retry); anything else → bad response.
+		if raw == "" {
+			if finishReason == "length" {
+				return "", 0, fmt.Errorf("%w: content empty, finish_reason=length (thinking tokens exhausted budget)",
+					ErrTruncatedResponse)
+			}
+			return "", 0, fmt.Errorf("%w: content empty, finish_reason=%s", ErrProviderBadResponse, finishReason)
 		}
-		return "", 0, fmt.Errorf("%w: content empty, finish_reason=%s", ErrProviderBadResponse, finishReason)
-	}
-	// 2. Raw non-empty but stripping ate everything (think-only).
-	//    T-201: length → truncated (retry may surface label with more
-	//    tokens); stop → bad response (model already committed).
-	if stripped == "" {
-		if finishReason == "length" {
-			return "", 0, fmt.Errorf("%w: content is a <think> block with no visible label (finish_reason=length)",
-				ErrTruncatedResponse)
+		// 2. Raw non-empty but stripping ate everything (think-only).
+		//    T-201: length → truncated (retry may surface label with more
+		//    tokens); stop → bad response (model already committed).
+		if stripped == "" {
+			if finishReason == "length" {
+				return "", 0, fmt.Errorf("%w: content is a <think> block with no visible label (finish_reason=length)",
+					ErrTruncatedResponse)
+			}
+			return "", 0, fmt.Errorf("%w: content is a <think> block with no visible label (finish_reason=%s)",
+				ErrProviderBadResponse, finishReason)
 		}
-		return "", 0, fmt.Errorf("%w: content is a <think> block with no visible label (finish_reason=%s)",
-			ErrProviderBadResponse, finishReason)
-	}
-	// 3. Label survived (or there was no think block to begin with).
-	//    T-407-c: length with partial label is still a valid label.
-	if finishReason == "length" {
+		// 3. Label survived (or there was no think block to begin with).
+		//    T-407-c: length with partial label is still a valid label.
+		if finishReason == "length" {
+			return parseCanonicalLabel(stripped)
+		}
+		// T-201: think-only stop was already filtered above. Any remaining
+		// content is the visible label, parse it.
 		return parseCanonicalLabel(stripped)
 	}
-	// T-201: think-only stop was already filtered above. Any remaining
-	// content is the visible label, parse it.
-	return parseCanonicalLabel(stripped)
-}
 
 	// Anthropic-via-adapter shape: {"content": "entailment",
 	// "stop_reason": "end_turn" | "max_tokens" | "stop_sequence"}.
@@ -719,26 +696,26 @@ func parseChatCompletionResponse(body []byte) (Label, float64, error) {
 	// before label parsing (Anthropic extended-thinking emits them as
 	// raw text in the content field).
 	var anthropicShape struct {
-		Content   string `json:"content"`
+		Content    string `json:"content"`
 		StopReason string `json:"stop_reason"`
 	}
 	if err := json.Unmarshal(body, &anthropicShape); err == nil && anthropicShape.Content != "" {
-	stripped := stripThinkBlocks(anthropicShape.Content)
-	if stripped == "" {
-		// Think-only Anthropic reply (e.g. extended-thinking
-		// consumed the whole content field). stop_reason tells
-		// us whether this is a budget problem (retry) or a final
-		// empty reply (bad response). T-201 mirrors the OpenAI
-		// branch's semantics.
-		if anthropicShape.StopReason == "max_tokens" {
-			return "", 0, fmt.Errorf("%w: content is <think> block only, stop_reason=max_tokens",
-				ErrTruncatedResponse)
+		stripped := stripThinkBlocks(anthropicShape.Content)
+		if stripped == "" {
+			// Think-only Anthropic reply (e.g. extended-thinking
+			// consumed the whole content field). stop_reason tells
+			// us whether this is a budget problem (retry) or a final
+			// empty reply (bad response). T-201 mirrors the OpenAI
+			// branch's semantics.
+			if anthropicShape.StopReason == "max_tokens" {
+				return "", 0, fmt.Errorf("%w: content is <think> block only, stop_reason=max_tokens",
+					ErrTruncatedResponse)
+			}
+			return "", 0, fmt.Errorf("%w: content is <think> block only, stop_reason=%s",
+				ErrProviderBadResponse, anthropicShape.StopReason)
 		}
-		return "", 0, fmt.Errorf("%w: content is <think> block only, stop_reason=%s",
-			ErrProviderBadResponse, anthropicShape.StopReason)
+		return parseCanonicalLabel(stripped)
 	}
-	return parseCanonicalLabel(stripped)
-}
 
 	// Plain text body (some lightweight chat servers).
 	if body[0] != '{' && body[0] != '[' {

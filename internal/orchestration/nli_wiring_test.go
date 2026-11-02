@@ -267,6 +267,10 @@ func TestBuildNLIPrimary_DispatchesByPrefix(t *testing.T) {
 	}
 
 	// Phase 13 T-201: chat-* prefix → ChatProvider (closes row 1370).
+	// The chat-* binding carries NO token: the credential is resolved
+	// from the keyring at call time (the secret never lives in the
+	// project config), so the test seeds one.
+	judgeCredentialStore(t, map[string]string{"minimax-cn": "sk-chat-key"})
 	chat, err := buildNLIPrimary(context.Background(), project.NLIPrimary{
 		ProviderID: "chat-minimax-cn",
 		Endpoint:   "http://x/chat",

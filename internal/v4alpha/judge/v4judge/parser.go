@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+
+	"github.com/dark-agents/dark-memory-mcp/internal/llm/chatwire"
 )
 
 // findMatchingBrace locates the byte offset of the closing '}' that
@@ -100,6 +102,16 @@ func parseVerdictResponse(body []byte) (Verdict, error) {
 		return Verdict{}, fmt.Errorf("%w: empty body", ErrProviderBadResponse)
 	}
 
+	// Strip the reasoning block first. A reasoning model (MiniMax-M3,
+	// DeepSeek-R1, Claude with extended thinking) answers as
+	// "<think>...</think>{...}": the block is invisible output that
+	// must not reach the verdict, and the JSON extractor must not
+	// latch onto a brace that the thinking happened to quote.
+	body = []byte(chatwire.StripThinkBlocks(string(body)))
+	if len(bytes.TrimSpace(body)) == 0 {
+		return Verdict{}, fmt.Errorf("%w: reasoning block only, no visible verdict", ErrProviderBadResponse)
+	}
+
 	// Try 1 — direct unmarshal.
 	var v verdictJSON
 	if err := json.Unmarshal(body, &v); err == nil && v.Verdict != "" {
@@ -160,26 +172,8 @@ func normalizeVerdict(v verdictJSON, raw []byte) Verdict {
 // the same dual-shape fallback used in
 // internal/nli/chat.go::parseChatCompletionResponse (lines 296-330).
 func unwrapOpenAIShape(body []byte) []byte {
-	var openaiShape struct {
-		Choices []struct {
-			Message struct {
-				Role    string `json:"role"`
-				Content string `json:"content"`
-			} `json:"message"`
-			Text string `json:"text"` // legacy fallback inside the same struct
-		} `json:"choices"`
-	}
-	if err := json.Unmarshal(body, &openaiShape); err != nil {
-		return body
-	}
-	if len(openaiShape.Choices) == 0 {
-		return body
-	}
-	content := openaiShape.Choices[0].Message.Content
-	if content == "" {
-		content = openaiShape.Choices[0].Text
-	}
-	if content == "" {
+	content, _, ok := chatwire.UnwrapOpenAIShape(body)
+	if !ok {
 		return body
 	}
 	return []byte(content)

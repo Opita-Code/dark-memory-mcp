@@ -51,6 +51,7 @@ import (
 	"sync"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/auditgate"
+	"github.com/dark-agents/dark-memory-mcp/internal/artifact"
 	"github.com/dark-agents/dark-memory-mcp/internal/eventholder"
 	"github.com/dark-agents/dark-memory-mcp/internal/orchestration"
 	"github.com/dark-agents/dark-memory-mcp/internal/safety"
@@ -189,6 +190,16 @@ func Boot(ctx context.Context) (*BootState, error) {
 	// Construct the orchestrator. WithBackends / WithLLMSelector can
 	// be applied by the caller after Boot (e.g. for tests).
 	orch := orchestration.New(st, safe)
+
+	// Wire the artifact fetcher. The drift_judge resolves its
+	// artifact through this dependency (URL and artifact_id kinds);
+	// without it every URL-anchored verdict degraded to a synthetic
+	// "artifact resolution failed" instead of an LLM verdict.
+	//
+	// The fetcher routes by scheme: http/https through the SSRF
+	// guard, file:// as a local read (the vibe-loop publishes local
+	// artifacts, and a network-only fetcher could not judge them).
+	orch = orch.WithURLFetcher(artifact.NewFetcher())
 
 	// C6 dark-cli hookup: configure the audit gate from env vars.
 	// DARK_AUDIT_DIR points at the directory where dark-cli writes

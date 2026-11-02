@@ -25,6 +25,15 @@
 //     matches the expected "pong" payload. Malformed or unexpected
 //     responses are returned as {ok:false, status:...} without the
 //     body content.
+//   - THE SECRET NEVER REACHES THE PROJECT CONFIG. The API key lives
+//     in the OS keyring; projects.nli_config_json keeps only the
+//     provider_id. Bind stores the credential in the keyring (under
+//     the catalog id when the provider id maps to one) and persists
+//     the binding WITHOUT the token; the credential is resolved at
+//     call time (llm.CredentialForProvider). A bind WITHOUT an
+//     auth_token requires a credential to already exist in the
+//     keyring — it fails loudly otherwise, instead of persisting a
+//     binding that could never authenticate.
 //
 // POSITIONING (Phase 14): between LLM_CONFIG (keystore mgmt) and
 // JUDGE (the consumer). Same shape as LLM_CONFIG: pure operator
@@ -48,6 +57,7 @@ import (
 	"time"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/llm"
+	"github.com/dark-agents/dark-memory-mcp/internal/llmkeystore"
 	"github.com/dark-agents/dark-memory-mcp/internal/project"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 )
@@ -85,6 +95,24 @@ func resolveLLMBindStore() (llmBindStore, error) {
 // llmBindStoreOverride is the test seam — tests inject a stub.
 var llmBindStoreOverride llmBindStore
 
+// llmBindKS is the key store the LLM_BIND tools read credentials from
+// and write them to. nil → resolveLLMConfigKS() (the OS keyring
+// composite shared with the LLM_CONFIG tools, so a key stored by
+// llm_key_add under the catalog id is found here under both the
+// catalog id and the dispatch-prefixed id).
+//
+// It is a test seam: tests inject an in-memory store so no OS keyring
+// is touched.
+var llmBindKS llmkeystore.KeyStore
+
+// resolveLLMBindKS returns the key store the LLM_BIND tools use.
+func resolveLLMBindKS() (llmkeystore.KeyStore, error) {
+	if llmBindKS != nil {
+		return llmBindKS, nil
+	}
+	return resolveLLMConfigKS()
+}
+
 // =====================================================================
 // llm_provider_bind
 // =====================================================================
@@ -114,13 +142,16 @@ type LLMProviderBindInput struct {
 // (auth_token NEVER echoed). Mirrors project.NLIPrimary minus the
 // secret.
 type LLMProviderBindResult struct {
-	ProjectID   string `json:"project_id"`
-	ProviderID  string `json:"provider_id"`
-	Endpoint    string `json:"endpoint"`
-	TimeoutMS   int64  `json:"timeout_ms"`
-	ModelRev    string `json:"model_rev,omitempty"`
-	BoundAt     string `json:"bound_at"`     // RFC3339 UTC
-	AuthPresent bool   `json:"auth_present"` // true if a token was stored
+	ProjectID  string `json:"project_id"`
+	ProviderID string `json:"provider_id"`
+	Endpoint   string `json:"endpoint"`
+	TimeoutMS  int64  `json:"timeout_ms"`
+	ModelRev   string `json:"model_rev,omitempty"`
+	BoundAt    string `json:"bound_at"` // RFC3339 UTC
+	// AuthPresent reports that a credential is BOUND for this
+	// provider (in the OS keyring). The secret itself is never in
+	// this result — nor in the project config.
+	AuthPresent bool `json:"auth_present"`
 }
 
 // =====================================================================
@@ -167,7 +198,7 @@ type LLMProviderProbeResult struct {
 // no orchestrator dependency.
 func RegisterLLMBind(reg *Registry) {
 	reg.Add(BindSimple("llm_provider_bind",
-		"Bind an LLM provider to the ACTIVE project's NLIConfig (Phase 14 T-303). provider_id must start with 'judge-' (LLMJudge path) or 'chat-' (NLI path). Persists endpoint + auth_token + timeout_ms + model_rev. auth_token is NEVER echoed in the result.",
+		"Bind an LLM provider to the ACTIVE project's NLIConfig (Phase 14 T-303). provider_id must start with 'judge-' (LLMJudge path) or 'chat-' (NLI path). Persists endpoint + timeout_ms + model_rev (NEVER the secret: the API key lives in the OS keyring and the config keeps only the provider_id). auth_token is optional: when given it is stored in the OS keyring, when omitted a credential must already exist there (use llm_key_add). auth_token is NEVER echoed in the result.",
 		MustJSONSchema(map[string]any{
 			"type":     "object",
 			"required": []string{"provider_id", "endpoint"},
@@ -186,7 +217,7 @@ func RegisterLLMBind(reg *Registry) {
 				"auth_token": map[string]any{
 					"type":        "string",
 					"maxLength":   4096,
-					"description": "Bearer token. Optional for unauthenticated endpoints. NEVER echoed in the result.",
+					"description": "Bearer token. Optional: when omitted, a credential must already exist in the OS keyring for this provider (call llm_key_add). When given it is stored in the OS keyring, NEVER in the project config. NEVER echoed in the result.",
 				},
 				"timeout_ms": map[string]any{
 					"type":        "integer",
@@ -259,6 +290,24 @@ func validateProviderIDPrefix(id string) error {
 }
 
 // runLLMProviderBind persists the binding.
+//
+// SECRET HANDLING (the secret never lands in the project config)
+//
+// The API key lives in the OS keyring, NOT in
+// projects.nli_config_json. The config keeps the PROVIDER ID; the
+// credential is resolved at CALL time from the keyring (see
+// llm.CredentialForProvider). This handler therefore:
+//
+//   - with an auth_token: validates it against the provider's
+//     endpoints, stores it in the KEYRING (under the catalog id when
+//     the provider id maps to one, else under the full provider id),
+//     and persists the binding WITHOUT the token;
+//   - without an auth_token: requires a credential to already exist
+//     for that provider (mapped or exact) and says so explicitly when
+//     it does not.
+//
+// The token is never echoed in the result and never written to the
+// project config.
 func runLLMProviderBind(ctx context.Context, in LLMProviderBindInput) (*ToolResponse, error) {
 	if strings.TrimSpace(in.ProviderID) == "" {
 		return nil, errors.New("llm_provider_bind: provider_id required")
@@ -297,12 +346,57 @@ func runLLMProviderBind(ctx context.Context, in LLMProviderBindInput) (*ToolResp
 	if timeout == 0 {
 		timeout = 30000
 	}
+	token := strings.TrimSpace(in.AuthToken)
+
+	// The credential lives in the KEYRING, never in the config.
+	ks, err := resolveLLMBindKS()
+	if err != nil {
+		return nil, fmt.Errorf("llm_provider_bind: keystore unavailable: %w", err)
+	}
+	switch {
+	case token != "":
+		// Store the credential under the CATALOG id when the provider
+		// id maps to a catalog provider, so ONE key serves both the
+		// "judge-" and the "chat-" dispatch paths of that provider.
+		// Otherwise the full provider id is used (the keyring accepts
+		// any id).
+		storeID := in.ProviderID
+		cred := llmkeystore.Credential{Key: token}
+		if catalogID, mapped := llm.CatalogProviderID(in.ProviderID); mapped {
+			spec := llm.SpecByID(catalogID)
+			// Validate the credential against the provider's endpoints
+			// AND learn which deployment serves THIS key (a
+			// region-scoped key authenticates only against its own
+			// endpoint). The endpoint travels with the key so the
+			// runtime does not have to rediscover it.
+			resolved, rerr := llm.ResolveCredentialEndpoint(ctx, spec, token)
+			if rerr != nil {
+				return nil, fmt.Errorf("llm_provider_bind: %s: %w — credential NOT stored", catalogID, rerr)
+			}
+			storeID = catalogID
+			cred.EndpointID = resolved.ID
+			cred.BaseURL = resolved.BaseURL
+		}
+		if err := storeBindCredential(ks, storeID, cred); err != nil {
+			return nil, fmt.Errorf("llm_provider_bind: %w", err)
+		}
+	default:
+		// No token supplied: a credential must already exist for this
+		// provider (under the catalog id when the provider id maps to
+		// one, else under the full provider id).
+		if _, found := llm.CredentialForProvider(ks, in.ProviderID); !found {
+			return nil, fmt.Errorf("llm_provider_bind: no credential for provider %q: call llm_key_add first (or pass auth_token)", in.ProviderID)
+		}
+	}
+
 	primary := project.NLIPrimary{
 		ProviderID: in.ProviderID,
 		Endpoint:   in.Endpoint,
-		AuthToken:  in.AuthToken,
-		TimeoutMS:  timeout,
-		ModelRev:   in.ModelRev,
+		// The secret NEVER reaches the project config: it lives in the
+		// OS keyring and is resolved at call time.
+		AuthToken: "",
+		TimeoutMS: timeout,
+		ModelRev:  in.ModelRev,
 	}
 
 	// Merge into existing NLIConfig (preserve fallback if any).
@@ -350,9 +444,31 @@ func runLLMProviderBind(ctx context.Context, in LLMProviderBindInput) (*ToolResp
 		TimeoutMS:   primary.TimeoutMS,
 		ModelRev:    primary.ModelRev,
 		BoundAt:     time.Now().UTC().Format(time.RFC3339),
-		AuthPresent: in.AuthToken != "",
+		AuthPresent: true,
 	}
 	return &ToolResponse{Data: result}, nil
+}
+
+// storeBindCredential persists the credential in the key store under
+// storeID and verifies it can be read back.
+//
+// The read-back matters: a read-only backend (the env store is
+// read-only by design) must not report success for a credential it
+// did not keep — the binding would then be persisted with NO
+// credential anywhere.
+func storeBindCredential(ks llmkeystore.KeyStore, storeID string, cred llmkeystore.Credential) error {
+	if cs, ok := llmkeystore.CredentialStoreOf(ks); ok {
+		if err := cs.StoreCredential(storeID, cred); err != nil {
+			return fmt.Errorf("store credential: %w", err)
+		}
+	} else if err := ks.Set(storeID, cred.Key); err != nil {
+		return fmt.Errorf("store credential: %w", err)
+	}
+	got, err := ks.Get(storeID)
+	if err != nil || strings.TrimSpace(got) != cred.Key {
+		return errors.New("the credential could not be persisted: the OS keyring is not writable")
+	}
+	return nil
 }
 
 // runLLMProviderProbe sends a tiny POST and returns the outcome.
@@ -407,6 +523,20 @@ func runLLMProviderProbe(ctx context.Context, in LLMProviderProbeInput) (*ToolRe
 			}
 		} else {
 			return nil, fmt.Errorf("llm_provider_probe: provider_id %q not bound on active project %q", in.ProviderID, active)
+		}
+		// The secret does not live in the project config: when the
+		// binding carries no token, resolve it from the keyring so the
+		// probe authenticates like the real call would.
+		if strings.TrimSpace(authToken) == "" {
+			ks, kerr := resolveLLMBindKS()
+			if kerr != nil {
+				return nil, fmt.Errorf("llm_provider_probe: keystore unavailable: %w", kerr)
+			}
+			token, found := llm.CredentialForProvider(ks, in.ProviderID)
+			if !found {
+				return nil, fmt.Errorf("llm_provider_probe: no credential for provider %q: call llm_key_add first (or pass auth_token)", in.ProviderID)
+			}
+			authToken = token
 		}
 	}
 
