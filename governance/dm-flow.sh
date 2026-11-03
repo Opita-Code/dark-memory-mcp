@@ -36,7 +36,29 @@ set -euo pipefail
 # ninguna maquina concreta dentro.
 WORKSPACE="${WORKSPACE:-${HOME}/workspace}"
 CONSTITUTION_ID="${DARK_CONSTITUTION_ID:-dark-agents/workspace-policy}"
-CONSTITUTION_VER="${DARK_CONSTITUTION_VER:-1.1.0}"
+
+# LA CONSTITUTION SE RESUELVE, NO SE SUPONE (arreglo 2026-11-03).
+#
+# Antes este script suponia que la constitution vivia SIEMPRE en
+# <workspace>/<proyecto>/governance/workspace-policy.constitution.json. Con un
+# solo proyecto eso se cumplia. Con varios, el gate fallaba con 65 para
+# CUALQUIER artefacto de los proyectos que no alojan la constitution: el
+# gate era inservible y por eso no se ejecutaba (tres dossiers se
+# publicaron sin el, desde fuera del workspace).
+#
+# Ahora se resuelve, por este orden:
+#   1. DARK_CONSTITUTION_FILE, si viene (es lo que cablea el MCP).
+#   2. <workspace>/<proyecto>/governance/..., si el proyecto la aloja.
+#   3. El resto de constitutions de <workspace>/*/governance/, si hay una sola
+#      que sirva (la constitution puede ser compartida entre proyectos).
+# Y en cualquier caso: WS-4 se sigue exigiendo (una constitution en un
+# temporal es un defecto), pero ya no se exige que viva DENTRO del proyecto
+# cuando la gobierna desde otro workspace.
+#
+# La version se lee del propio fichero (campo meta.version), no de una
+# constante escrita a mano: la constante 1.1.0 sobrevivio a un bump real.
+CONSTITUTION_FILE="${DARK_CONSTITUTION_FILE:-}"
+CONSTITUTION_VER="${DARK_CONSTITUTION_VER:-}"
 
 CMD="${1:-}"
 PROJECT_ID="${2:-}"
@@ -59,7 +81,6 @@ if [[ -z "$CMD" || -z "$PROJECT_ID" || -z "$SPEC_ID" ]]; then
 fi
 
 WORKSPACE_DIR="$WORKSPACE/$PROJECT_ID"
-CONSTITUTION_FILE="$WORKSPACE_DIR/governance/workspace-policy.constitution.json"
 
 # ---------------------------------------------------------------------------
 # PRE-FLIGHT: cheapest checks first. Un gate caro despues de un fallo barato
@@ -67,12 +88,50 @@ CONSTITUTION_FILE="$WORKSPACE_DIR/governance/workspace-policy.constitution.json"
 # ---------------------------------------------------------------------------
 fail() { echo "dm-flow: $1" >&2; exit "$2"; }
 
-# WS-4: la constitution que gobierna el ciclo debe residir en el workspace.
-[[ -f "$CONSTITUTION_FILE" ]] || fail \
-  "no existe la constitution en el workspace: $CONSTITUTION_FILE
-  la constitution debe residir en el workspace (WS-4), no en un temporal." 65
-[[ "$CONSTITUTION_FILE" == "$WORKSPACE_DIR"/* ]] || fail \
-  "la constitution esta fuera del workspace: $CONSTITUTION_FILE" 65
+# WS-4: la constitution que gobierna el ciclo debe residir en un workspace,
+# no en un temporal. Se resuelve (ver la cabecera) y luego se valida.
+if [[ -z "$CONSTITUTION_FILE" || ! -f "$CONSTITUTION_FILE" ]]; then
+  CANDIDATE="$WORKSPACE_DIR/governance/workspace-policy.constitution.json"
+  if [[ -f "$CANDIDATE" ]]; then
+    CONSTITUTION_FILE="$CANDIDATE"
+  else
+    # Una constitution compartida: se busca en <workspace>/*/governance/ y se
+    # discrimina por meta.id, que es lo unico que significa "la constitution
+    # que gobierna". Con varios candidatos del mismo id, la mas reciente gana
+    # (la constitution activa de un proyecto se regenera al bumpear).
+    FOUND=0
+    SHARED=""
+    SHARED_MTIME=0
+    for c in "$WORKSPACE"/*/governance/workspace-policy.constitution.json; do
+      [[ -f "$c" ]] || continue
+      FOUND=$((FOUND + 1))
+      cid="$(sed -n 's/.*"id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$c" | head -1)"
+      [[ "$cid" == "$CONSTITUTION_ID" ]] || continue
+      mtime="$(stat -c %Y "$c" 2>/dev/null || echo 0)"
+      if [[ "$mtime" -gt "$SHARED_MTIME" ]]; then
+        SHARED_MTIME="$mtime"
+        SHARED="$c"
+      fi
+    done
+    if [[ -n "$SHARED" ]]; then
+      CONSTITUTION_FILE="$SHARED"
+    else
+      fail "no se encuentra la constitution que gobierna el proyecto $PROJECT_ID.
+  Se busca: ${DARK_CONSTITUTION_FILE:-<sin definir>}, o <workspace>/<proyecto>/governance/,
+  o una constitution con meta.id=$CONSTITUTION_ID en <workspace>/*/governance/
+  (ficheros hallados: $FOUND).
+  Sin constitution no hay gate: publicala por otro camino o arregla la
+  instalacion." 65
+    fi
+  fi
+fi
+[[ "$CONSTITUTION_FILE" != /tmp/* && "$CONSTITUTION_FILE" != /var/tmp/* ]] || fail \
+  "la constitution esta en un espacio temporal: $CONSTITUTION_FILE
+  regla WS-4: la constitution vive en un workspace, no en un temporal." 65
+if [[ -z "$CONSTITUTION_VER" ]]; then
+  CONSTITUTION_VER="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+    "$CONSTITUTION_FILE" | head -1)"
+fi
 [[ -d "$WORKSPACE_DIR" ]] || fail \
   "el workspace del proyecto no existe: $WORKSPACE_DIR (WS-1)" 65
 

@@ -45,7 +45,7 @@ def yaml_str(value: str) -> str:
 
 
 head = '''# =============================================================================
-# Constitution de política de workspace — dark-agents/workspace-policy v1.1.0
+# Constitution de política de workspace — dark-agents/workspace-policy v{VERSION}
 # =============================================================================
 #
 # TL;DR: la política del operador que mantiene cada artefacto de proyecto
@@ -92,7 +92,7 @@ head = '''# ====================================================================
 # =============================================================================
 
 id: dark-agents/workspace-policy
-version: 1.1.0
+version: {VERSION}
 '''
 
 sha = hashlib.sha256(EXAMPLE.read_bytes()).hexdigest()
@@ -233,5 +233,5 @@ for field in ("voice", "claims_policy", "tone"):
 
 out.append("\nfooter:\n  text: " + yaml_str(ex["footer"]["text"]) + "\n")
 
-YAML.write_text("".join(out), encoding="utf-8")
+YAML.write_text("".join(out).replace("{VERSION}", ex["meta"]["version"]), encoding="utf-8")
 print(f"escrito: {YAML} ({len(''.join(out).splitlines())} lineas)")
