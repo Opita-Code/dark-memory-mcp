@@ -374,7 +374,7 @@ graph TD
     Q1 -->|No| Q2{Sobre dark-memory?}
     Q2 -->|Sí| UseTools[57 tools MCP]
     Q2 -->|No| Q3{Necesito browser?}
-    Q3 -->|Sí| UseCopilot[dark-copilot 35 tools]
+    Q3 -->|Sí| UseCopilot[[COMPANION-MCP] 35 tools]
     Q3 -->|No| Q4{Necesito OSINT?}
     Q4 -->|Sí| UseResearch[dark-research 13 intents]
     Q4 -->|No| Q5{Es código?}

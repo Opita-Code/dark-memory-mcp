@@ -28,7 +28,7 @@ func contains(s, substr string) bool    { return strings.Contains(s, substr) }
 //   - Empty input returns empty
 //
 // v1.3.0 bug-hunt: previously health_ping emitted the operator's
-// Windows username verbatim (e.g. `C:\Users\Nico\AppData\Local\...`)
+// Windows username verbatim (e.g. `C:\Users\<name>\AppData\Local\...`)
 // in the wire response, which GDPR/CCPA treat as personal data.
 // The fix replaces the home prefix with `<USER>` on the wire
 // surface; the raw path remains on stderr (boot log line 1) for
@@ -41,27 +41,27 @@ func TestRedactHomeInPath_Cases(t *testing.T) {
 	}{
 		{
 			name: "windows_user_profile",
-			in:   `C:\Users\Nico\AppData\Local\Temp\probe.db`,
+			in:   `C:\Users\<name>\AppData\Local\Temp\probe.db`,
 			want: `<USER>\AppData\Local\Temp\probe.db`,
 		},
 		{
 			name: "windows_user_profile_no_trailing",
-			in:   `C:\Users\Nico`,
+			in:   `C:\Users\<name>`,
 			want: `<USER>`,
 		},
 		{
 			name: "windows_lowercase_drive",
-			in:   `c:\users\nico\data\probe.db`,
+			in:   `c:\users\<name>\data\probe.db`,
 			want: `<USER>\data\probe.db`,
 		},
 		{
 			name: "posix_macos",
-			in:   `/Users/nico/Library/Application Support/probe.db`,
+			in:   `/Users/<name>/Library/Application Support/probe.db`,
 			want: `<USER>/Library/Application Support/probe.db`,
 		},
 		{
 			name: "posix_linux",
-			in:   `/home/nico/.local/share/probe.db`,
+			in:   `/home/<name>/.local/share/probe.db`,
 			want: `<USER>/.local/share/probe.db`,
 		},
 		{
@@ -105,7 +105,7 @@ func TestRedactHomeInPath_Cases(t *testing.T) {
 // guard against future code paths that might re-process the field
 // (e.g. if dark-research-mcp forwards health_ping data).
 func TestRedactHomeInPath_NoDoubleRedact(t *testing.T) {
-	in := `C:\Users\Nico\probe.db`
+	in := `C:\Users\<name>\probe.db`
 	once := redactHomeInPath(in)
 	twice := redactHomeInPath(once)
 	if once != twice {

@@ -4,7 +4,11 @@
 #!/usr/bin/env bash
 # e2e test for C2 (text) — checks spec-c2.json has tier-1 source enforcement
 set -e
-MOD_ROOT="C:/Users/Nico/Documents/dark-memory-mcp/mods/vibe-loop-git"
+# El repo se deriva de la ubicacion de este script, no de una ruta
+# fija: asi el script funciona en cualquier maquina, y el repo publico no
+# lleva el nombre de nadie.
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MOD_ROOT="$(cd "$HERE/.." && pwd)"
 echo "=== e2e-c2 (text) ==="
 python3 -c "
 import json

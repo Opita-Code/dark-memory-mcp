@@ -8,7 +8,7 @@
 > dark-research's 18 OSINT capabilities become native tools,
 > replacing the separate `dark-research-mcp`. Auto-update is a
 > first-class citizen. The 95 security controls of dark-research +
-> dark-copilot are preserved; 10 new invariants (INV-11..INV-15)
+> [COMPANION-MCP] are preserved; 10 new invariants (INV-11..INV-15)
 > close gaps the audit surfaced.
 
 | Field | Value |
@@ -348,7 +348,7 @@ backends (see §4 for the 2026 backend list). Every OSINT output
 passes through the security gate (§3.4): `Redact` (INV-13) +
 `text_anonymize` + `dark_ssd_prompt_injection_scan` (INV-15).
 
-`dark-copilot` is **not mentioned** in dark-memory v4 code,
+`[COMPANION-MCP]` is **not mentioned** in dark-memory v4 code,
 docs, comments, or tests. It is a separate product.
 
 ---
@@ -356,7 +356,7 @@ docs, comments, or tests. It is a separate product.
 ## 3. Security preservation — the 23 controls and 10 new invariants
 
 The dark-research security audit (mapping 4 directories:
-`dark-copilot/`, `dark-mem-research-workspace/`, `dark-agents/`,
+`[COMPANION-MCP]/`, `dark-mem-research-workspace/`, `dark-agents/`,
 `dark-agents-colombia-osint/`) inventoried **95 controls** across
 13 categories. Of these, **23 are Tier 1–3 must-preserve** on v4
 integration. The audit also surfaced **10 missing controls** that
@@ -366,11 +366,11 @@ v4 closes while it has the chance.
 
 | # | Control | Origin | Threat addressed |
 |---|---|---|---|
-| 1 | Capability tokens per process, constant-time verify | `dark-copilot/internal/policy/policy.go:186-242` (with regression fix at L235-238) | Token-bypass auth |
-| 2 | HMAC-SHA-256 audit chain, per-process, with F32 seq-after-write fix | `dark-copilot/internal/security/security.go:196-411` | Audit tampering |
-| 3 | Central `Redact` + recursive `RedactWalk` (with B4 nested-Bearer fix) | `dark-copilot/internal/security/security.go:563-815` | Credential leak via logs/CDP |
-| 4 | `NewTrustedPath` (rejects `..`, symlink-replacement, tilde expansion) | `dark-copilot/internal/security/path.go:39-95` | Path traversal |
-| 5 | Default-deny allowlist for tools | `dark-copilot/internal/policy/policy.go:84-120` | Escape from approved surface |
+| 1 | Capability tokens per process, constant-time verify | `[COMPANION-MCP]/internal/policy/policy.go:186-242` (with regression fix at L235-238) | Token-bypass auth |
+| 2 | HMAC-SHA-256 audit chain, per-process, with F32 seq-after-write fix | `[COMPANION-MCP]/internal/security/security.go:196-411` | Audit tampering |
+| 3 | Central `Redact` + recursive `RedactWalk` (with B4 nested-Bearer fix) | `[COMPANION-MCP]/internal/security/security.go:563-815` | Credential leak via logs/CDP |
+| 4 | `NewTrustedPath` (rejects `..`, symlink-replacement, tilde expansion) | `[COMPANION-MCP]/internal/security/path.go:39-95` | Path traversal |
+| 5 | Default-deny allowlist for tools | `[COMPANION-MCP]/internal/policy/policy.go:84-120` | Escape from approved surface |
 | 6 | `text_anonymize` + `extract_api_keys` as mandatory callers of any OSINT output | dark-research-mcp + dark-agents PII discipline | PII to LLM context |
 | 7 | `dark_ssd_prompt_injection_scan` gate on every artifact URL fetched | dark-agents-v2 `.opencode/agent/dark-agents.md:163-167` | Indirect prompt injection |
 
@@ -378,11 +378,11 @@ v4 closes while it has the chance.
 
 | # | Control | Origin |
 |---|---|---|
-| 8 | Per-tool quota with `SessionQuotaPool`-style isolation (500 calls/30 min default + 120 req/min network) | `dark-copilot/internal/quota/quota.go:60-418` |
+| 8 | Per-tool quota with `SessionQuotaPool`-style isolation (500 calls/30 min default + 120 req/min network) | `[COMPANION-MCP]/internal/quota/quota.go:60-418` |
 | 9 | `scrub_pii: true` per-route for `jailbreak_target` and `redteam` buckets | dark-agents provider routing §02 |
-| 10 | OSINT R5 tier-1 primary-source gate with `osint_sources` field in spec_json + commit trailer `[OSINT primary-sourced: ...]` | `dark-copilot/docs/OSINT_PROTOCOL.md:21-79` |
+| 10 | OSINT R5 tier-1 primary-source gate with `osint_sources` field in spec_json + commit trailer `[OSINT primary-sourced: ...]` | `[COMPANION-MCP]/docs/OSINT_PROTOCOL.md:21-79` |
 | 11 | Snake_case JSON tags + regression test | `dark-agents/docs/configuration.md:23-25` |
-| 12 | `BinarySHA256` + `DARK_MEMORY_SHA256` env pin (self-hash check) | `dark-copilot/internal/security/security.go:481-532` |
+| 12 | `BinarySHA256` + `DARK_MEMORY_SHA256` env pin (self-hash check) | `[COMPANION-MCP]/internal/security/security.go:481-532` |
 | 13 | Tilde-expansion + symlink-rejection in every operator-facing path | `path.go` semantics |
 | 14 | Pattern-level hard rules in constitution (`no offensive ops`, `scrub PII`, `respect rate limits`) | `dark-agents/patterns/*.md` |
 
@@ -412,7 +412,7 @@ or a new module in v4.
 | M7 | Per-backend in-process token-bucket with operator-configurable budgets | `adapters/research/<intent>/manifest.yaml` `rate_limit` field. **→ INV-1** (audit on rate-limit hits) |
 | M8 | Sandboxing of the v4 binary with tool allowlist deny-by-default | `constitution.security.tools.default_policy = deny`. **→ INV-13** |
 | M9 | Operator-side observability via MCP tools (`security_status`, `security_rotate_token`, `security_verify_audit`) | `tools/security/` package. **→ INV-12, INV-13** |
-| M10 | Cross-binary identity (one vault namespace, one audit namespace) | `dark-copilot` and `dark-eval` adopt `security/capability/` + `security/audit/` from v4. **Out of scope for v4 release**, documented as migration target. |
+| M10 | Cross-binary identity (one vault namespace, one audit namespace) | `[COMPANION-MCP]` and `dark-eval` adopt `security/capability/` + `security/audit/` from v4. **Out of scope for v4 release**, documented as migration target. |
 
 ### 3.5 Threat model — consolidated
 
@@ -699,7 +699,7 @@ dark-memory-v4/
 │   ├── guards.go                      # Default guard library (HasOperator, HasSpecIntent, ...)
 │   └── property_test.go               # R-24: any modification+transition is replayable
 │
-├── security/                          # Promoted from dark-copilot internal/security
+├── security/                          # Promoted from [COMPANION-MCP] internal/security
 │   ├── redact/                        # Central Redact + RedactWalk + isSensitiveKey (Tier-1 #3)
 │   ├── path/                          # NewTrustedPath (Tier-1 #4)
 │   ├── capability/                    # Token generation + constant-time verify (Tier-1 #1, M6)
@@ -805,7 +805,7 @@ dark-memory-v4/
 │   ├── guards.go                      # Default guard library (HasOperator, HasSpecIntent, ...)
 │   └── property_test.go               # R-24: any modification+transition is replayable
 │
-├── security/                          # Promoted from dark-copilot internal/security
+├── security/                          # Promoted from [COMPANION-MCP] internal/security
 │   ├── redact/                        # Central Redact + RedactWalk + isSensitiveKey (Tier-1 #3)
 │   ├── path/                          # NewTrustedPath (Tier-1 #4)
 │   ├── capability/                    # Token generation + constant-time verify (Tier-1 #1, M6)
@@ -901,7 +901,7 @@ dark-memory-v4/
 | `internal/nli/` | Already abolished in v3.0.0; stays deleted |
 | `internal/embedder/` | Already abolished in v2.22.0; stays deleted |
 | `dark-research-mcp/` (separate repo) | 18 capabilities now in `adapters/research/` |
-| `dark-copilot/` | Not mentioned in dark-memory v4; separate product |
+| `[COMPANION-MCP]/` | Not mentioned in dark-memory v4; separate product |
 
 ---
 
@@ -928,7 +928,7 @@ token minted at boot and persisted to `vault/`. Constant-time
 comparison is mandatory (no early-return).
 
 **Why**: Prevents token-bypass auth via timing attacks. The
-dark-copilot regression at `policy.go:235-238` (a missing
+[COMPANION-MCP] regression at `policy.go:235-238` (a missing
 `return` on early-exit) is the exact failure mode this invariant
 prevents; the constant-time compare path makes that bug class
 impossible.
@@ -2293,7 +2293,7 @@ operator-facing summary of the SOTA-doc workstream.
 | 2026-09-24 | v3.0 is a deliberate void | v3.0-docfix work preserved as research; v4.0 branches clean from v2.20.0. |
 | 2026-09-24 | Go for all of v4 | Stack consistency; v5.0 evaluates Rust for the security auditor. |
 | 2026-09-24 | dark-research is a native tool | 18 capabilities move into `adapters/research/`. |
-| 2026-09-24 | dark-copilot not mentioned in v4 | Separate product; no code, docs, comments, or tests reference it. |
+| 2026-09-24 | [COMPANION-MCP] not mentioned in v4 | Separate product; no code, docs, comments, or tests reference it. |
 | 2026-09-24 | INV-11..INV-15 added | From the dark-research security audit's 10 missing controls. |
 
 ## Appendix C. Open questions

@@ -1121,7 +1121,7 @@ CREATE INDEX IF NOT EXISTS idx_error_events_dedup      ON error_events (domain, 
 	// v26 — research_items coexistence columns (Fase 2, spec 1011).
 	//
 	// dark-memory and dark-research SHARE the same SQLite file
-	// (C:\Users\Nico\AppData\Local\dark-agents\dark.db per
+	// (C:\Users\<name>\AppData\Local\dark-agents\dark.db per
 	// opencode.jsonc). dark-research's mem/migrate.go creates
 	// research_items WITHOUT actor/write_path/content_sha256; when
 	// dark-research boots first (it does — opencode starts both peers

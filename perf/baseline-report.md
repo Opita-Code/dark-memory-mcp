@@ -87,7 +87,7 @@ the baseline already meets the budget. See "Why we stop" below.
 ## Cold-start (operator-visible boot budget)
 
 ```
-Binary path:  /c/Users/Nico/Documents/dark-memory-mcp/bin/dark-mem-mcp.exe
+Binary path:  /c/Users/<name>/Documents/dark-memory-mcp/bin/dark-mem-mcp.exe
 Measurement:  subprocess exec + MCP initialize + tools/list round-trip
 Tool:         Python 3.11 subprocess.communicate + time.perf_counter
 Runs:         5 (per Wilson Mar "median of N=5")

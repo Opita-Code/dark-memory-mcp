@@ -32,7 +32,7 @@
 //
 // Backwards compat (ADR-007 §6): the transport layer (transport/mcp)
 // is the only production caller and always threads a non-nil *Audit
-// (actor = operator id). Future surface (CLI, dark-copilot) follows
+// (actor = operator id). Future surface (CLI, [COMPANION-MCP]) follows
 // the same convention.
 package agent_memory
 

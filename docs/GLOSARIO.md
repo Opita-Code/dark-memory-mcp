@@ -594,7 +594,7 @@ simultáneamente sin lock, una puede perder sus cambios".
 **Inglés**: ready file.
 
 **Definición**: Archivo temporal que un proceso crea cuando está
-listo para aceptar conexiones. Patrón dark-copilot G14. En este
+listo para aceptar conexiones. Patrón [COMPANION-MCP] G14. En este
 proyecto, el daemon crea `~/.dark-agents/daemon.ready` cuando
 termina de inicializar.
 

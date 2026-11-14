@@ -458,11 +458,11 @@ This skill targets **dark-memory-mcp v2.13.0**. dark-memory releases frequently 
 
 | What | Where |
 |---|---|
-| dark-memory-mcp repo | `C:\Users\Nico\Documents\dark-memory-mcp` (main branch, tag `v2.13.0`) |
-| MCP binary (active) | `C:\Users\Nico\Documents\dark-memory-mcp\bin\dark-mem-mcp.exe` (30M, buildVersion=2.13.0) |
-| opencode.jsonc entry | `C:\Users\Nico\.config\opencode\opencode.jsonc` → `mcp.dark-memory` |
-| DB (SQLite) | `C:\Users\Nico\AppData\Local\dark-agents\dark.db` |
-| This skill | `C:\Users\Nico\.config\opencode\skills\dark-memory\SKILL.md` |
+| dark-memory-mcp repo | `C:\Users\<name>\Documents\dark-memory-mcp` (main branch, tag `v2.13.0`) |
+| MCP binary (active) | `C:\Users\<name>\Documents\dark-memory-mcp\bin\dark-mem-mcp.exe` (30M, buildVersion=2.13.0) |
+| opencode.jsonc entry | `C:\Users\<name>\.config\opencode\opencode.jsonc` → `mcp.dark-memory` |
+| DB (SQLite) | `C:\Users\<name>\AppData\Local\dark-agents\dark.db` |
+| This skill | `C:\Users\<name>\.config\opencode\skills\dark-memory\SKILL.md` |
 | SYSTEM_PROMPT.md (embedded) | Read via `dark_memory_agent_bootstrap(surface='system_prompt')` |
 | GitHub releases | https://github.com/Opita-Code/dark-memory-mcp/releases |
 | npm package | `@opitacode/dark-memory-mcp` |

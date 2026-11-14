@@ -320,7 +320,7 @@ implementation as the source of truth and warns on mismatch.
 Research backends are a specialized kind of adapter (kind =
 `research`). They MUST follow the OSINT R5 tier-1 primary-source
 gate (see [ARCHITECTURE-V4.md §3.3](./ARCHITECTURE-V4.md) and
-[dark-copilot OSINT_PROTOCOL.md](./docs/OSINT_PROTOCOL.md)).
+[[COMPANION-MCP] OSINT_PROTOCOL.md](./docs/OSINT_PROTOCOL.md)).
 
 ### 5.1 Step-by-step
 

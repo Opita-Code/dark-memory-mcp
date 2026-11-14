@@ -290,10 +290,10 @@ func TestExample_GoldenWireFormat_DecodesAndVerifies(t *testing.T) {
   "template_version": "0.3.0",
   "vibe_case": "C5",
   "harness": "opencode",
-  "harness_config_dir": "/Users/nico/.config/opencode",
+  "harness_config_dir": "/Users/<name>/.config/opencode",
   "dark_cli_version": "0.1.0-alpha.8",
   "dark_cli_commit": "dbd30b9",
-  "lockfile_path": "/Users/nico/.config/opencode/dark.lock.json",
+  "lockfile_path": "/Users/<name>/.config/opencode/dark.lock.json",
   "lockfile_entry_sha256": "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
   "recorded_at_unix": 1727000000,
   "files_written": [
@@ -310,8 +310,8 @@ func TestExample_GoldenWireFormat_DecodesAndVerifies(t *testing.T) {
 }`
 	// Replace the placeholder publisher_pubkey + sig with valid
 	// base64 of the actual fixture key.
-	rec := NewBundleRecord("opita-market", "0.3.0", "C5", "opencode", "/Users/nico/.config/opencode",
-		"0.1.0-alpha.8", "dbd30b9", "/Users/nico/.config/opencode/dark.lock.json",
+	rec := NewBundleRecord("opita-market", "0.3.0", "C5", "opencode", "/Users/<name>/.config/opencode",
+		"0.1.0-alpha.8", "dbd30b9", "/Users/<name>/.config/opencode/dark.lock.json",
 		"fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
 		"7adfe393cc9d4be2ede891f5ac5ef94c1e0e0ae39e15988c8fe93f35d8418f43",
 		[]string{"skills/foo.md", "skills/bar.md"}, "installed", fixedNow, fixedPub)

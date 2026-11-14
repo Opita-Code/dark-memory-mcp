@@ -876,7 +876,7 @@ type Store interface {
 	// The 3 methods below are the OPERATOR TRIAGE escape hatch from
 	// the project-scoped (INV-7) default. They exist to support the
 	// real operational pattern: a single operator with N projects
-	// (e.g. opita-os-engine, opita-growth, opita-account-ui) needs
+	// (e.g. one product, one growth project, one account UI) needs
 	// to triage the cross-project error backlog without N session
 	// switches. Mirrors the Sentry Org Owner / Datadog Admin
 	// Standard pattern (org-wide visibility for the admin role).

@@ -8,7 +8,12 @@
 
 set -e
 
-MOD_ROOT="C:/Users/Nico/Documents/dark-memory-mcp/mods/vibe-loop-git"
+# El repo se deriva de la ubicacion de este script, no de una ruta
+# fija: asi el script funciona en cualquier maquina, y el repo publico no
+# lleva el nombre de nadie.
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MOD_ROOT="$(cd "$HERE/.." && pwd)"
+REPO="$(cd "$HERE/../../.." && pwd)"
 
 echo "=== vibe-loop-git bootstrap test ==="
 echo "mod root: $MOD_ROOT"
@@ -52,7 +57,7 @@ for f in "${EXPECTED_CORE_LOOPS[@]}"; do
 done
 echo "OK: 6 core/ loop artifacts present (self-contained in v0.1.0)"
 # Loop 1 moved from docs/specs/ to core/loop-1-context-strategies.md in Phase 18
-if [ -f "C:/Users/Nico/Documents/dark-memory-mcp/docs/specs/SPEC-vibe-loop-git-v0.2-loop-1.md" ]; then
+if [ -f "$REPO/docs/specs/SPEC-vibe-loop-git-v0.2-loop-1.md" ]; then
   echo "WARN: Loop 1 spec doc still at docs/specs/ (should have been moved to core/ in Phase 18)"
 fi
 

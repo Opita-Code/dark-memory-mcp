@@ -12,9 +12,22 @@
 set -uo pipefail
 
 # --- Configuration ---
+#
+# Los skills se DESCUBREN por su contenido, no por el nombre de su carpeta.
+# Dos razones, y las dos importan:
+#
+#   1. Este repo es publico y el nombre de un proyecto privado no puede
+#      aparecer aqui. Descubrir por contenido no dice el nombre.
+#   2. Un skill puede cambiar de carpeta sin que este test deje de
+#      encontrarlo. Con el nombre fijo, un renombrado rompia 9 aserciones
+#      sin que nadie supiera por que.
 DARK_MEMORY_SKILL="$HOME/.config/opencode/skills/dark-memory/SKILL.md"
-DARK_COPILOT_SKILL="$HOME/.config/opencode/skills/dark-copilot/SKILL.md"
 DARK_RESEARCH_SKILL="$HOME/.config/opencode/skills/dark-research/SKILL.md"
+
+# El skill del companion de navegador: el unico de la carpeta que menciona
+# la herramienta de vision. Si hay mas de uno, el primero que la tenga.
+DARK_COPILOT_SKILL=$(grep -rlE "analyze_screenshot" "$HOME/.config/opencode/skills" \
+    --include=SKILL.md 2>/dev/null | head -1)
 
 PASS=0
 FAIL=0
@@ -114,14 +127,14 @@ section "Test 5: when NOT to use dark-memory — dark-memory has a section for t
 assert_grep "$DARK_MEMORY_SKILL" "When NOT to use|when not to use|skip dark-memory" \
     "dark-memory has a section for when NOT to use the MCP"
 
-# --- Test 6: dark-copilot tier ladder ---
-section "Test 6: dark-copilot tier ladder — documents T0-T5 escalation triggers"
+# --- Test 6: [COMPANION-MCP] tier ladder ---
+section "Test 6: [COMPANION-MCP] tier ladder — documents T0-T5 escalation triggers"
 assert_grep "$DARK_COPILOT_SKILL" "T0.*Lifecycle|Lifecycle.*T0" \
-    "dark-copilot defines T0 lifecycle tier"
+    "[COMPANION-MCP] defines T0 lifecycle tier"
 assert_grep "$DARK_COPILOT_SKILL" "T5.*Escape|Escape.*T5" \
-    "dark-copilot defines T5 escape-hatch tier"
+    "[COMPANION-MCP] defines T5 escape-hatch tier"
 assert_grep "$DARK_COPILOT_SKILL" "analyze_screenshot" \
-    "dark-copilot mentions analyze_screenshot (vision)"
+    "[COMPANION-MCP] mentions analyze_screenshot (vision)"
 
 # --- Test 7: version awareness ---
 section "Test 7: version awareness — dark-memory header says target_version=2.15.5"
@@ -135,10 +148,10 @@ assert_grep "$DARK_MEMORY_SKILL" "57.*tools|57 canonical" \
 assert_grep "$DARK_MEMORY_SKILL" "17.*namespaces" \
     "dark-memory skill mentions 17 namespaces"
 
-# --- Test 9: dark-copilot cross-ref (dark-memory) ---
-section "Test 9: dark-memory cross-ref dark-copilot (39 tools, not 35)"
+# --- Test 9: [COMPANION-MCP] cross-ref (dark-memory) ---
+section "Test 9: dark-memory cross-ref [COMPANION-MCP] (39 tools, not 35)"
 assert_grep "$DARK_MEMORY_SKILL" "39 tools" \
-    "dark-memory mentions dark-copilot has 39 tools (not 35)"
+    "dark-memory mentions [COMPANION-MCP] has 39 tools (not 35)"
 
 # --- Test 10: dark-research tier-1 source rule ---
 section "Test 10: dark-research enforces tier-1 sourcing (no news-as-authority for CVE/version)"

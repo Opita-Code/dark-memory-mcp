@@ -12,7 +12,7 @@ the `~/.codex/skills/` directory.
 
 ```bash
 # Symlink or copy the mod into codex's skills directory
-ln -s /c/Users/Nico/Documents/dark-memory-mcp/mods/vibe-loop-git/ \
+ln -s /c/Users/<name>/Documents/dark-memory-mcp/mods/vibe-loop-git/ \
       ~/.codex/skills/vibe-loop-git
 ```
 

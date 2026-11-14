@@ -282,7 +282,7 @@ Questions like:
 1. **Refresh-on-access for C2 text**: voice consistency improves with refresh; but voice drift is also real. Need empirical calibration. Phase 5 micro-eval includes this.
 2. **AI/ML decay rate**: 0.3× feels aggressive. Could be 0.5×. Validate against LoCoMo/Mnemosyne results.
 3. **Note evolution scope**: which kinds should trigger evolution? Decision: only `observation` + `finding` for alpha.18; expand in alpha.19.
-4. **LifecycleBench for dark-memory**: who grades? Operator + dark-copilot? Decision: Phase 5 micro-eval is operator-graded; alpha.18 includes 10 questions + 5 auto-graded by Mnemosyne-style refresh check.
+4. **LifecycleBench for dark-memory**: who grades? Operator + [COMPANION-MCP]? Decision: Phase 5 micro-eval is operator-graded; alpha.18 includes 10 questions + 5 auto-graded by Mnemosyne-style refresh check.
 
 ---
 

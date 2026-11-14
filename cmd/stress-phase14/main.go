@@ -190,7 +190,7 @@ func sectionB(key string) {
 	// 1) Open DB.
 	dbPath := os.Getenv("DARK_DB_PATH")
 	if dbPath == "" {
-		dbPath = `C:\Users\Nico\AppData\Local\dark-agents\dark.db`
+		dbPath = `C:\Users\<name>\AppData\Local\dark-agents\dark.db`
 	}
 	st, err := sqlitestore.Open(context.Background(), store.Config{
 		Driver: store.DriverSQLite, DSN: dbPath, WALMode: true, ForeignKeys: true,

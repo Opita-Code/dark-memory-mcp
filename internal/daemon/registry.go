@@ -32,7 +32,7 @@ func DefaultSocketPath() string {
 }
 
 // DefaultReadyPath returns the path to the ready-file (atomic-rename
-// per dark-copilot G14 convention).
+// per [COMPANION-MCP] G14 convention).
 //
 //   - macOS/Linux:  ~/.dark-agents/daemon.ready
 //   - Windows:      %USERPROFILE%\.dark-agents\daemon.ready
@@ -84,7 +84,7 @@ type PIDRecord struct {
 // WritePIDRecord atomically writes pid+metadata to path. On Unix,
 // fsync ensures durability before the function returns.
 //
-// Per row 859 antipattern audit + dark-copilot G14 (atomic rename
+// Per row 859 antipattern audit + [COMPANION-MCP] G14 (atomic rename
 // without pre-Remove), the write uses O_EXCL + os.Rename semantics:
 // 1. Write to a temp file in the same directory
 // 2. fsync the temp file
@@ -156,7 +156,7 @@ func RemovePIDRecord(path string) error {
 }
 
 // WriteReadyFile atomically writes the ready signal (one byte:
-// newline) per dark-copilot G14 convention.
+// newline) per [COMPANION-MCP] G14 convention.
 func WriteReadyFile(path string) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {

@@ -32,13 +32,13 @@ type phase struct {
 func main() {
 	bin := os.Getenv("DARK_MEM_MCP_BIN")
 	if bin == "" {
-		bin = `C:\Users\Nico\Documents\dark-memory-mcp\cmd\dark-mem-mcp\dark-mem-mcp.exe`
+		bin = `C:\Users\<name>\Documents\dark-memory-mcp\cmd\dark-mem-mcp\dark-mem-mcp.exe`
 	}
 	// Hardcode dark-memory's DB; the harness may have DARK_DB=dark.db
 	// in its inherited env (from dark-research-mcp), which would
 	// silently route us to the wrong store. Operators can override
 	// with DARK_E2E_DB.
-	dbPath := `C:\Users\Nico\AppData\Local\dark-agents\dark-memory.db`
+	dbPath := `C:\Users\<name>\AppData\Local\dark-agents\dark-memory.db`
 	if override := os.Getenv("DARK_E2E_DB"); override != "" {
 		dbPath = override
 	}
@@ -66,7 +66,7 @@ func main() {
 		"DARK_DB="+dbPath,
 		"DARK_DB_DRIVER=sqlite",
 		"DARK_REDTEAM=armed",
-		"DARK_REDTEAM_MODS_PATH=C:/Users/Nico/Documents/dark-memory-mcp/mods/redteam",
+		"DARK_REDTEAM_MODS_PATH=C:/Users/<name>/Documents/dark-memory-mcp/mods/redteam",
 		"DARK_MOD_WHITELIST=redteam/prompt-injection-lab,redteam/jailbreak-taxonomy,redteam/llm-refusal-analysis",
 		"DARK_CONSTITUTION_FILE=",
 	)
