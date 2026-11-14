@@ -83,3 +83,4 @@ governance/workspace-policy.constitution.json.sha256
 # no del repo. Un `git add -A` sin cuidado los publicaria.
 pr-*-review-architectural.md
 pr-*-review-artifact.patch
+
