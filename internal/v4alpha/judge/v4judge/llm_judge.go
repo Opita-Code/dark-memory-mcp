@@ -359,6 +359,14 @@ func (j *LLMJudge) ID() string { return j.providerID }
 // ProviderID is the provenance field; drift_judge output propagates
 // it into the DriftJudgeOutput (which becomes a drift row in
 // projects.drift_reports).
+//
+// Usage is what the call cost the PROVIDER: how many requests it made
+// and, when every one of them reported it, the tokens they consumed.
+// It is nil when no request was made at all.
+//
+// The distinction between "no request" and "requests without usage" is
+// the whole point: a provider that says nothing about its tokens is a
+// missing datum, and a missing datum is not a cost of zero.
 type Verdict struct {
 	Verdict    string  // aligned | drift_detected | needs_human
 	Confidence float64 // [0.0, 1.0]
@@ -366,6 +374,7 @@ type Verdict struct {
 	ProviderID string  // e.g. "judge-minimax-cn"
 	ModelRev   string  // best-effort; empty if unknown
 	LatencyMS  int64   // observed wall-clock for this Judge call
+	Usage      *chatwire.ProviderUsage
 }
 
 // Judge sends the drift-judge prompt to the bound LLM and returns
@@ -455,6 +464,12 @@ func (j *LLMJudge) Judge(ctx context.Context, specIntent, artifactBody string) (
 	// The finish reason travels with it: "length" means the model ran
 	// out of budget, which for a reasoning model means it spent
 	// everything thinking and never answered.
+	// The usage is read from the RAW body, BEFORE the OpenAI shape is
+	// unwrapped: the unwrapped content carries no usage, and the
+	// REQUEST is what cost money.
+	var cuenta chatwire.Account
+	cuenta.Add(usageDe(body))
+
 	content, finishReason, unwrapped := chatwire.UnwrapOpenAIShape(body)
 	if unwrapped {
 		body = []byte(content)
@@ -470,25 +485,46 @@ func (j *LLMJudge) Judge(ctx context.Context, specIntent, artifactBody string) (
 		// itself fails or returns bad shape, both attempts have
 		// failed → ErrNoLLMBound (NOT ErrProviderBadResponse —
 		// drift_judge maps ErrNoLLMB to NLI fallback).
-		body2, retryErr := j.retryOnce(ctx, chatwire.RetryBudget(budget), specIntent, artifactBody)
+		retry, retryErr := j.retryOnce(ctx, chatwire.RetryBudget(budget), specIntent, artifactBody)
+		if retry.hecha {
+			// The provider was reached: the request happened. What it
+			// cost is only known if the response carried a usage.
+			cuenta.Add(retry.usage)
+		}
 		if retryErr != nil {
-			return Verdict{LatencyMS: latency, ProviderID: j.ID()}, ErrNoLLMBound
+			verdict := Verdict{LatencyMS: latency, ProviderID: j.ID()}
+			verdict.Usage = cuenta.Result()
+			return verdict, ErrNoLLMBound
 		}
 		// Retry HTTP succeeded: parse the new body.
-		body2 = unwrapOpenAIShape(body2)
+		body2 := unwrapOpenAIShape(retry.body)
 		parsed, parseErr = parseVerdictResponse(body2)
 		if parseErr != nil {
-			return Verdict{LatencyMS: latency, ProviderID: j.ID()}, ErrNoLLMBound
+			verdict := Verdict{LatencyMS: latency, ProviderID: j.ID()}
+			verdict.Usage = cuenta.Result()
+			return verdict, ErrNoLLMBound
 		}
 	}
 
 	parsed.LatencyMS = latency
 	parsed.ProviderID = j.ID()
 	parsed.ModelRev = j.modelRev
+	parsed.Usage = cuenta.Result()
 	if err := parsed.Validate(); err != nil {
 		return Verdict{LatencyMS: latency, ProviderID: j.ID(), ModelRev: j.modelRev}, err
 	}
 	return parsed, nil
+}
+
+// retryOutcome is what the retry request produced.
+//
+// hecha says whether the provider was REACHED: the request happened and
+// it may well have been billed. The usage is only known when the response
+// carried it.
+type retryOutcome struct {
+	body  []byte
+	usage *chatwire.Usage
+	hecha bool
 }
 
 // retryOnce re-issues the request with a reinforced system prompt
@@ -500,20 +536,20 @@ func (j *LLMJudge) Judge(ctx context.Context, specIntent, artifactBody string) (
 // wraps both contract bugs into one terminal error so drift_judge
 // returns needs_human instead of falling through to NLI — see
 // SPEC-alpha-11-phase14-llm-as-judge §3.2.2 step 5).
-func (j *LLMJudge) retryOnce(ctx context.Context, maxTokens int, specIntent, artifactBody string) ([]byte, error) {
+func (j *LLMJudge) retryOnce(ctx context.Context, maxTokens int, specIntent, artifactBody string) (retryOutcome, error) {
 	// The retry asks for the JSON shape one more time AND gets a
 	// bigger token budget: a reasoning model that exhausted its
 	// budget thinking needs room for the answer too.
 	payload, err := buildJudgePayload(j.modelRev, maxTokens, true, specIntent, artifactBody)
 	if err != nil {
-		return nil, fmt.Errorf("%w: build retry payload: %v", ErrNoLLMBound, err)
+		return retryOutcome{}, fmt.Errorf("%w: build retry payload: %v", ErrNoLLMBound, err)
 	}
 
 	reqCtx, cancel := context.WithTimeout(ctx, j.timeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, j.endpoint, bytes.NewReader(payload))
 	if err != nil {
-		return nil, fmt.Errorf("%w: build retry request: %w", ErrProviderUnavailable, err)
+		return retryOutcome{}, fmt.Errorf("%w: build retry request: %w", ErrProviderUnavailable, err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if j.authToken != "" {
@@ -522,21 +558,35 @@ func (j *LLMJudge) retryOnce(ctx context.Context, maxTokens int, specIntent, art
 
 	resp, err := j.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("%w: retry: %v", ErrProviderUnavailable, err)
+		return retryOutcome{}, fmt.Errorf("%w: retry: %v", ErrProviderUnavailable, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, ErrNoLLMBound
+		// The provider was reached and answered: the request happened.
+		return retryOutcome{hecha: true}, ErrNoLLMBound
 	}
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("%w: retry body: %v", ErrProviderUnavailable, err)
+		return retryOutcome{hecha: true}, fmt.Errorf("%w: retry body: %v", ErrProviderUnavailable, err)
 	}
 	if len(body) == 0 {
-		return nil, ErrNoLLMBound
+		return retryOutcome{hecha: true}, ErrNoLLMBound
 	}
-	return body, nil
+	return retryOutcome{body: body, usage: usageDe(body), hecha: true}, nil
+}
+
+// usageDe reads the usage a provider reported for one response.
+//
+// It returns nil when the provider did not report usage: a missing datum,
+// not a usage of zero. The caller adds it to an account, which refuses to
+// publish a partial sum as a total.
+func usageDe(body []byte) *chatwire.Usage {
+	u, ok := chatwire.ExtractUsage(body)
+	if !ok {
+		return nil
+	}
+	return &u
 }
 
 // Validate enforces the canonical Verdict invariants. Used by Judge

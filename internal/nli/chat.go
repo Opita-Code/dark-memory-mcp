@@ -437,10 +437,17 @@ func (p *ChatProvider) Score(ctx context.Context, premise, hypothesis string) (S
 
 	var lastErr error
 	var lastLatency int64
+	// The account spans the attempts: a truncated answer is retried with
+	// a bigger budget, and the retry is a request that was made.
+	var cuenta chatwire.Account
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		score, err := p.scoreOnce(ctx, premise, hypothesis, maxTokens)
 		lastLatency += score.LatencyMS
+		if score.Usage != nil {
+			cuenta.Add(score.Usage.Tokens)
+		}
 		if err == nil {
+			score.Usage = cuenta.Result()
 			return score, nil
 		}
 		lastErr = err
@@ -456,7 +463,7 @@ func (p *ChatProvider) Score(ctx context.Context, premise, hypothesis string) (S
 		}
 	}
 	// Both attempts truncated.
-	return Score{LatencyMS: lastLatency, ProviderID: p.ID()}, fmt.Errorf("%w: %d retries exhausted (final budget %d): %v",
+	return Score{LatencyMS: lastLatency, ProviderID: p.ID(), Usage: cuenta.Result()}, fmt.Errorf("%w: %d retries exhausted (final budget %d): %v",
 		ErrProviderBadResponse, maxRetries, maxTokens, lastErr)
 }
 
@@ -497,27 +504,33 @@ func (p *ChatProvider) scoreOnce(ctx context.Context, premise, hypothesis string
 	defer func() { _, _ = io.Copy(io.Discard, resp.Body); _ = resp.Body.Close() }()
 
 	// HTTP error classification (matches DeBERTaProvider / MiniCheckProvider).
+	// The provider was reached: the request happened. What it cost is
+	// only known when the response carried a usage, and a request whose
+	// cost is unknown still counts as a request.
+	alcanzado := &chatwire.ProviderUsage{Requests: 1}
 	switch {
 	case resp.StatusCode == http.StatusTooManyRequests:
-		return Score{LatencyMS: latency, ProviderID: p.ID()}, ErrProviderRateLimited
+		return Score{LatencyMS: latency, ProviderID: p.ID(), Usage: alcanzado}, ErrProviderRateLimited
 	case resp.StatusCode == http.StatusUnauthorized, resp.StatusCode == http.StatusForbidden:
-		return Score{LatencyMS: latency, ProviderID: p.ID()}, ErrProviderUnavailable
+		return Score{LatencyMS: latency, ProviderID: p.ID(), Usage: alcanzado}, ErrProviderUnavailable
 	case resp.StatusCode >= 500:
-		return Score{LatencyMS: latency, ProviderID: p.ID()}, ErrProviderUnavailable
+		return Score{LatencyMS: latency, ProviderID: p.ID(), Usage: alcanzado}, ErrProviderUnavailable
 	case resp.StatusCode >= 400:
-		return Score{LatencyMS: latency, ProviderID: p.ID()}, fmt.Errorf("%w: HTTP %d", ErrProviderBadResponse, resp.StatusCode)
+		return Score{LatencyMS: latency, ProviderID: p.ID(), Usage: alcanzado}, fmt.Errorf("%w: HTTP %d", ErrProviderBadResponse, resp.StatusCode)
 	case resp.StatusCode != http.StatusOK:
-		return Score{LatencyMS: latency, ProviderID: p.ID()}, fmt.Errorf("%w: unexpected status %d", ErrProviderUnavailable, resp.StatusCode)
+		return Score{LatencyMS: latency, ProviderID: p.ID(), Usage: alcanzado}, fmt.Errorf("%w: unexpected status %d", ErrProviderUnavailable, resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20)) // 1 MiB cap
 	if err != nil {
-		return Score{LatencyMS: latency, ProviderID: p.ID()}, fmt.Errorf("%w: read: %w", ErrProviderBadResponse, err)
+		return Score{LatencyMS: latency, ProviderID: p.ID(), Usage: alcanzado}, fmt.Errorf("%w: read: %w", ErrProviderBadResponse, err)
 	}
 
 	label, confidence, err := parseChatCompletionResponse(body)
 	if err != nil {
-		return Score{LatencyMS: latency, ProviderID: p.ID()}, err
+		// The answer did not come through, but the request did: and the
+		// response may well carry the usage of what it cost.
+		return Score{LatencyMS: latency, ProviderID: p.ID(), Usage: &chatwire.ProviderUsage{Requests: 1, Tokens: usageDe(body)}}, err
 	}
 
 	score := Score{
@@ -526,9 +539,12 @@ func (p *ChatProvider) scoreOnce(ctx context.Context, premise, hypothesis string
 		LatencyMS:  latency,
 		ProviderID: p.ID(),
 		ModelRev:   p.modelRev,
+		// The provider was reached, so the request happened. What it
+		// cost is only known when the response carried a usage.
+		Usage: &chatwire.ProviderUsage{Requests: 1, Tokens: usageDe(body)},
 	}
 	if !score.Valid() {
-		return Score{LatencyMS: latency, ProviderID: p.ID()}, fmt.Errorf("%w: score failed invariant check", ErrProviderBadResponse)
+		return Score{LatencyMS: latency, ProviderID: p.ID(), Usage: score.Usage}, fmt.Errorf("%w: score failed invariant check", ErrProviderBadResponse)
 	}
 	return score, nil
 }
@@ -785,4 +801,18 @@ func parseCanonicalLabel(raw string) (Label, float64, error) {
 		return "", 0, fmt.Errorf("%w: unrecognized reply %q (expected: entailment, contradiction, or neutral)",
 			ErrProviderBadResponse, raw)
 	}
+}
+
+
+// usageDe reads the usage a provider reported for one response.
+//
+// It returns nil when the provider did not report usage: a missing datum,
+// not a usage of zero. The caller adds it to an account, which refuses to
+// publish a partial sum as a total.
+func usageDe(body []byte) *chatwire.Usage {
+	u, ok := chatwire.ExtractUsage(body)
+	if !ok {
+		return nil
+	}
+	return &u
 }

@@ -91,6 +91,7 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/artifact"
 	"github.com/dark-agents/dark-memory-mcp/internal/constitution"
 	"github.com/dark-agents/dark-memory-mcp/internal/errorobs"
+	"github.com/dark-agents/dark-memory-mcp/internal/llm/chatwire"
 	"github.com/dark-agents/dark-memory-mcp/internal/nli"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 	"github.com/dark-agents/dark-memory-mcp/internal/v4alpha/judge/v4judge"
@@ -131,6 +132,16 @@ type DriftJudgeOutput struct {
 	ArtifactTrunc  bool    // true if Range or MaxBytes cut off content
 	Reasoning      string  // human-readable explanation
 	CritiqueReason string  // H6 (spec 1276 T07): reason from SelfCritique if verdict was overridden
+
+	// Usage is what the verdict cost the PROVIDER: how many requests
+	// the judge and the NLI chain made, and, when every one of them
+	// reported it, the tokens they consumed.
+	//
+	// It is nil when no provider was called at all. And its Tokens are
+	// nil when a request happened but the provider did not say what it
+	// cost: the requests are a fact, the cost is not, and a partial sum
+	// written as a total would be a wrong number.
+	Usage *chatwire.ProviderUsage
 }
 
 // DriftJudge is the artifact-anchored drift_judge pipeline. See
@@ -217,6 +228,10 @@ func (o *Orchestrator) DriftJudge(ctx context.Context, in DriftJudgeInput) (*Dri
 	//
 	//    nil LLMJudge (no judge-* binding) → skip entirely, behave
 	//    as 8-step pipeline. Backward compat.
+	// The usage of the judge path, kept even when the judge FAILS: a
+	// request that was made and billed is a cost whether or not the
+	// verdict came out of it.
+	var usageJuez *chatwire.ProviderUsage
 	if llmJudge, err := o.ensureLLMJudge(ctx); err != nil {
 		// LLMJudge construction failed (malformed endpoint, etc.).
 		// Treat as fall-through: log + continue to NLI. The NLI
@@ -227,6 +242,7 @@ func (o *Orchestrator) DriftJudge(ctx context.Context, in DriftJudgeInput) (*Dri
 		scoreStart := time.Now()
 		llmVerdict, llmErr := llmJudge.Judge(ctx, in.SpecIntent, string(resolved.Bytes))
 		llmLatency := time.Since(scoreStart).Milliseconds()
+		usageJuez = llmVerdict.Usage
 		if llmErr != nil {
 			if errors.Is(llmErr, v4judge.ErrProviderBadResponse) {
 				// Contract bug — return immediately. Do NOT fall
@@ -240,6 +256,7 @@ func (o *Orchestrator) DriftJudge(ctx context.Context, in DriftJudgeInput) (*Dri
 					Reasoning:      fmt.Sprintf("llmjudge contract bug: %v", llmErr),
 					CritiqueReason: "",
 					LatencyMS:      llmLatency,
+					Usage:          usageJuez,
 				}
 				out.ArtifactSource = string(resolved.Source)
 				out.ArtifactSHA256 = hexBytes(resolved.ContentSHA256)
@@ -285,6 +302,7 @@ func (o *Orchestrator) DriftJudge(ctx context.Context, in DriftJudgeInput) (*Dri
 					CritiqueReason: critique.Reason,
 					ProviderID:     llmJudge.ID(),
 					LatencyMS:      llmLatency,
+					Usage:          usageJuez,
 				}
 				out.ArtifactSource = string(resolved.Source)
 				out.ArtifactSHA256 = hexBytes(resolved.ContentSHA256)
@@ -306,6 +324,7 @@ func (o *Orchestrator) DriftJudge(ctx context.Context, in DriftJudgeInput) (*Dri
 				ArtifactSize:   int64(len(resolved.Bytes)),
 				ArtifactTrunc:  resolved.Truncated,
 				Reasoning:      llmVerdict.Reasoning,
+				Usage:          usageJuez,
 			}
 			out.VerdictJSON = formatDriftJudgeVerdictJSON(out, resolved)
 			return out, nil
@@ -351,7 +370,7 @@ func (o *Orchestrator) DriftJudge(ctx context.Context, in DriftJudgeInput) (*Dri
 	score, scoreErr := provider.Score(ctx, string(resolved.Bytes), in.SpecIntent)
 	scoreLatency := time.Since(scoreStart).Milliseconds()
 	if scoreErr != nil {
-		return o.handleScoreError(ctx, scoreErr, resolved, scoreLatency)
+		return o.handleScoreError(ctx, scoreErr, resolved, scoreLatency, usageJuez, score.Usage)
 	}
 
 	// 8. Map NLI label → canonical verdict.
@@ -390,6 +409,7 @@ func (o *Orchestrator) DriftJudge(ctx context.Context, in DriftJudgeInput) (*Dri
 		out.NLILabel = string(score.Label)
 		out.NLIConfidence = score.Confidence
 		out.LatencyMS = scoreLatency
+		out.Usage = chatwire.Combine(usageJuez, score.Usage)
 		out.ArtifactSource = string(resolved.Source)
 		out.ArtifactSHA256 = hexBytes(resolved.ContentSHA256)
 		out.ArtifactPath = resolved.Path
@@ -414,6 +434,7 @@ func (o *Orchestrator) DriftJudge(ctx context.Context, in DriftJudgeInput) (*Dri
 		ArtifactTrunc:  resolved.Truncated,
 		Reasoning: fmt.Sprintf("nli=%s conf=%.3f prov=%s sha=%s",
 			score.Label, score.Confidence, score.ProviderID, hexBytes(resolved.ContentSHA256)),
+		Usage: chatwire.Combine(usageJuez, score.Usage),
 	}
 	out.VerdictJSON = formatDriftJudgeVerdictJSON(out, resolved)
 	return out, nil
@@ -430,7 +451,7 @@ func (o *Orchestrator) DriftJudge(ctx context.Context, in DriftJudgeInput) (*Dri
 //	ErrProviderBadResponse → needs_human (model contract bug)
 //	ErrNoProvider          → needs_human (router exhausted)
 //	default                → needs_human (unknown; operator review)
-func (o *Orchestrator) handleScoreError(ctx context.Context, scoreErr error, resolved *artifact.Resolved, latencyMS int64) (*DriftJudgeOutput, error) {
+func (o *Orchestrator) handleScoreError(ctx context.Context, scoreErr error, resolved *artifact.Resolved, latencyMS int64, usageJuez, usageNLI *chatwire.ProviderUsage) (*DriftJudgeOutput, error) {
 	severity := errorobs.SeverityError
 	switch {
 	case errors.Is(scoreErr, nli.ErrInputTooLarge):
@@ -447,6 +468,7 @@ func (o *Orchestrator) handleScoreError(ctx context.Context, scoreErr error, res
 		Verdict:    "needs_human",
 		Confidence: 0,
 		LatencyMS:  latencyMS,
+		Usage:      chatwire.Combine(usageJuez, usageNLI),
 		Reasoning:  fmt.Sprintf("nli score failed: %v", scoreErr),
 	}
 	if resolved != nil {
@@ -607,6 +629,20 @@ func formatDriftJudgeVerdictJSON(out *DriftJudgeOutput, resolved *artifact.Resol
 		b.WriteString(`"nli_confidence":`)
 		b.WriteString(fmt.Sprintf("%.4f", out.NLIConfidence))
 		b.WriteString(",")
+	}
+	if out.Usage != nil {
+		b.WriteString(`"usage":{"requests":`)
+		b.WriteString(fmt.Sprintf("%d", out.Usage.Requests))
+		b.WriteString(`,"tokens":`)
+		if out.Usage.Tokens == nil {
+			b.WriteString("null")
+		} else {
+			t := out.Usage.Tokens
+			b.WriteString(fmt.Sprintf(
+				`{"prompt":%d,"completion":%d,"total":%d,"cached":%d,"reasoning":%d}`,
+				t.PromptTokens, t.CompletionTokens, t.TotalTokens, t.CachedTokens, t.ReasoningTokens))
+		}
+		b.WriteString("},")
 	}
 	if out.LatencyMS > 0 {
 		b.WriteString(`"latency_ms":`)

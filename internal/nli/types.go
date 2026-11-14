@@ -48,6 +48,8 @@ package nli
 import (
 	"context"
 	"errors"
+
+	"github.com/dark-agents/dark-memory-mcp/internal/llm/chatwire"
 )
 
 // Label is the canonical 3-way NLI label that the router and the rest of
@@ -79,6 +81,16 @@ type Score struct {
 	ProviderID string   // e.g. "deberta-v3-large-mnli", "minicheck-flan-t5-large"
 	LatencyMS  int64    // observed wall-clock for this Score call
 	ModelRev   string   // model version / commit sha (best-effort; empty if unknown)
+
+	// Usage is what the call cost the PROVIDER: how many requests it
+	// made and, when every one of them reported it, the tokens they
+	// consumed.
+	//
+	// It is nil for a provider that runs on the machine (DeBERTa,
+	// MiniCheck): there is no provider to bill. And for a chat provider
+	// whose response did not carry a usage, the REQUESTS are known and
+	// the tokens are not: a missing datum is not a cost of zero.
+	Usage *chatwire.ProviderUsage
 }
 
 // Valid reports whether s is a well-formed Score (no zero-value surprises).
