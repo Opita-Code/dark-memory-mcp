@@ -90,6 +90,21 @@ jobs:
           DARK_MEM_MCP_BIN: ${{ github.workspace }}/cmd/dark-mem-mcp/dark-mem-mcp
         run: go test ./tests/wire/... -count=1 -timeout 90s -v
 
+  governance:
+    name: governance (constitution + gate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+      - name: el verificador de la constitution
+        run: bash governance/check-constitution.sh
+      - name: el test de regresion del gate
+        run: bash governance/test-dm-flow.sh
+      - name: el generador reproduce el contrato versionado
+        run: |
+          python3 governance/gen-constitution-yaml.py
+          git diff --exit-code constitutions/dark-agents-workspace-policy.yaml
   lint:
     name: lint (no private project names)
     runs-on: ubuntu-latest

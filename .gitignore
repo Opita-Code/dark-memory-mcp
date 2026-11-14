@@ -64,3 +64,22 @@ internal/v4alpha/vibe/testdata/
 opencode.jsonc
 
 
+
+# Politica de workspace del operador (governance/): la constitution ACTIVA es
+# un artefacto del operador, por proyecto, no un fichero del producto. No
+# vive en este checkout: vive en un workspace de politica FUERA de git,
+# porque de ella depende el arranque del servidor y un checkout a otra rama
+# se la llevaria (ver governance/README.md y governance/FLOW.md 5.6). Aqui se
+# versiona su forma canonica (.example.json) y el watchdog hace el pin por
+# SHA del fichero activo. En un proyecto, este nombre es un ENLACE a esa
+# copia: el enlace lleva la ruta del operador, asi que tampoco se versiona.
+governance/workspace-policy.constitution.json
+
+# El pin local del SHA del fichero activo: es estado del operador, y cambia
+# en cuanto la politica se instancia en otra maquina.
+governance/workspace-policy.constitution.json.sha256
+
+# Artefactos locales de revision para el gate del juez: son de esta maquina,
+# no del repo. Un `git add -A` sin cuidado los publicaria.
+pr-*-review-architectural.md
+pr-*-review-artifact.patch
