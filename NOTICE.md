@@ -16,7 +16,7 @@ carry their own LICENSE files that take precedence.
 | `internal/`, `cmd/`, `tests/`, `bench/`, `docs/`, `core/` (Go code) | MIT | `MIT` | Inherited from parent repo |
 | `mods/vibe-loop-git/` | CC BY-NC 4.0 | `CC-BY-NC-4.0` | **Dual-licensing exception** (operator decision 2026-10-14). Non-commercial use only. See `mods/vibe-loop-git/LICENSE`. |
 | `mods/dark-research/` (if present) | MIT | `MIT` | Inherited from parent repo unless its own LICENSE declares otherwise |
-| `mods/dark-copilot/` (if present) | MIT | `MIT` | Inherited from parent repo unless its own LICENSE declares otherwise |
+| `mods/[COMPANION-MCP]/` (if present) | MIT | `MIT` | Inherited from parent repo unless its own LICENSE declares otherwise |
 
 ## Why dual-licensing?
 

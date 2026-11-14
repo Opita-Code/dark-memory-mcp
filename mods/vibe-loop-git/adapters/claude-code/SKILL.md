@@ -13,7 +13,7 @@ you mount the `mods/vibe-loop-git/` directory as a skills source.
 ```bash
 # Add to your claude-code config (~/.config/claude-code/skills/ or
 # via the `claude-code skills add` command):
-claude-code skills add /c/Users/Nico/Documents/dark-memory-mcp/mods/vibe-loop-git/
+claude-code skills add /c/Users/<name>/Documents/dark-memory-mcp/mods/vibe-loop-git/
 ```
 
 ### Quick start

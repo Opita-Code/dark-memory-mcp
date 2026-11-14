@@ -82,7 +82,7 @@ If you pick (a), say so and I'll write it before the merge command in §6.
 **Options**:
 | Option | Effort | Outcome |
 |---|---|---|
-| (a) Start daemon now (run `bun --watch 'run src/cli.ts daemon'` from `C:\Users\Nico\[drift-judge-daemon]`) | 10-15 min | dark_ssd_drift_judge works end-to-end with real LLM verdicts; future drift logs use real judge instead of R9 |
+| (a) Start daemon now (run `bun --watch 'run src/cli.ts daemon'` from `C:\Users\<name>\[drift-judge-daemon]`) | 10-15 min | dark_ssd_drift_judge works end-to-end with real LLM verdicts; future drift logs use real judge instead of R9 |
 | (b) Defer to next session | 0 min | Continue using R9; spec 180 stays deferred per master plan |
 | (c) Ignore | 0 min | Drift_judge always falls back to R9; future specs must accept R9 verdicts |
 

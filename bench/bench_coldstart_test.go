@@ -31,7 +31,7 @@ import (
 //
 // Production path (Windows):
 //
-//	C:\Users\Nico\Documents\dark-memory-mcp\bin\dark-mem-mcp.exe
+//	C:\Users\<name>\Documents\dark-memory-mcp\bin\dark-mem-mcp.exe
 //
 // Tests that need a different binary (e.g., a CI-built one) can
 // set BENCH_DARK_MEM_MCP_BIN to override.

@@ -19,7 +19,7 @@
 // SaveArtifact, etc.) are stubs that return store.ErrNotConfigured.
 //
 // Production runs SQLite today (see dark.db at
-// C:\Users\Nico\AppData\Local\dark-agents\dark.db). The Postgres path
+// C:\Users\<name>\AppData\Local\dark-agents\dark.db). The Postgres path
 // is research-only until the missing methods are implemented and
 // tests are run live with DARK_TEST_POSTGRES_DSN set.
 //

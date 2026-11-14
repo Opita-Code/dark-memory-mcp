@@ -7,7 +7,11 @@
 
 set -e
 
-REPO="C:/Users/Nico/Documents/dark-memory-mcp"
+# El repo se deriva de la ubicacion de este script, no de una ruta
+# fija: asi el script funciona en cualquier maquina, y el repo publico no
+# lleva el nombre de nadie.
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO="$(cd "$HERE/../../.." && pwd)"
 BRANCH=$(git -C "$REPO" rev-parse --abbrev-ref HEAD 2>/dev/null)
 
 echo "=== vibe-loop-git audit-trail verify ==="
@@ -64,7 +68,7 @@ fi
 SECRETS_HITS=$(grep -rE "(sk-ant-api03-|x-api-key|sk-[a-zA-Z0-9_-]{20,})" \
   --include="*.md" --include="*.json" --include="*.toml" --include="*.yaml" --include="*.yml" --include="*.txt" \
   --exclude-dir="tests" \
-  "C:/Users/Nico/Documents/dark-memory-mcp/mods/vibe-loop-git/" 2>/dev/null) || true
+  "$REPO/mods/vibe-loop-git/" 2>/dev/null) || true
 if [ -n "$SECRETS_HITS" ]; then
   echo "FAIL: possible secret in mod files:"
   echo "$SECRETS_HITS"
@@ -74,7 +78,7 @@ echo "OK: no secrets found in mod files (tests/ excluded because it contains the
 
 # 7. dark-memory-mcp is gitignored (the dark-mem-mcp.exe binary etc.)
 # This is informational only — the dark-mem-mcp binary should NOT be in the mod
-if ls "C:/Users/Nico/Documents/dark-memory-mcp/mods/vibe-loop-git/bin/" 2>/dev/null; then
+if ls "$REPO/mods/vibe-loop-git/bin/" 2>/dev/null; then
   echo "WARN: mod has a bin/ directory (should not be there)"
 fi
 

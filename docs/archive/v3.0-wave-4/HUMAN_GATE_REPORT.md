@@ -289,7 +289,7 @@ The 6 docs in `docs/` are operator-facing (audience: operator). There is **no RE
 **Suggested merge commands** (operator decision):
 
 ```bash
-cd "C:\Users\Nico\Documents\dark-memory-mcp"
+cd "C:\Users\<name>\Documents\dark-memory-mcp"
 git checkout main
 git merge --no-ff review/w3p1 -m "wave 4: MCP server + CLI + runbooks + bridge conformance + review fixes (specs 158/159/162/164/182 + human gate 184)"
 git push origin main

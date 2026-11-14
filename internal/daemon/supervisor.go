@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// Supervisor is the bridge-side supervisor (mirror dark-copilot
+// Supervisor is the bridge-side supervisor (mirror [COMPANION-MCP]
 // spec 861). It dials the daemon socket, and on N consecutive dial
 // failures, spawns a fresh daemon. The supervisor gives up (surfaces
 // a connection error) after MaxRetries unsuccessful dial attempts.

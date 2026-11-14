@@ -74,5 +74,5 @@ The MIT license of the parent repository does NOT extend to this
 directory. Files in this directory are governed by the terms above
 and the full CC BY-NC 4.0 Legal Code at the URL above. Other
 directories in the parent repository (`mods/dark-research/`,
-`mods/dark-copilot/`, `internal/`, `cmd/`, etc.) remain under the
+`mods/[COMPANION-MCP]/`, `internal/`, `cmd/`, etc.) remain under the
 MIT License unless they carry their own LICENSE file.

@@ -55,7 +55,7 @@ remains the harness's responsibility.
 The deploy procedure below assumes opencode v2+. If you must
 target v1, see §6.5 (retired) for the supervisor pattern.
 
-`dark-copilot` has its own respawn policy
+`[COMPANION-MCP]` has its own respawn policy
 (`auto_relaunch_on_browser_death`) — it retries indefinitely on
 all harness versions. `dark-memory` does not need that flag on v2.
 

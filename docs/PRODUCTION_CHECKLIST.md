@@ -207,8 +207,8 @@ actual DB state. Most common causes:
 Get-Process dark-mem-mcp | Stop-Process -Force
 
 # Archive the corrupted DB.
-Move-Item "C:\Users\Nico\AppData\Local\dark-agents\dark-memory.db" \
-          "C:\Users\Nico\AppData\Local\dark-agents\dark-memory.db.bak-$(Get-Date -Format yyyyMMdd)"
+Move-Item "C:\Users\<name>\AppData\Local\dark-agents\dark-memory.db" \
+          "C:\Users\<name>\AppData\Local\dark-agents\dark-memory.db.bak-$(Get-Date -Format yyyyMMdd)"
 
 # Restart the daemon. It creates a fresh DB at the configured DSN.
 dark-mem-mcp.exe

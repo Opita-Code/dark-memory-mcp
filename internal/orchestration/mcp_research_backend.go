@@ -73,7 +73,7 @@ type MCPResearchBackend struct {
 // Resolution order:
 //  1. DARK_RESEARCH_MCP_BIN env var (explicit override).
 //  2. Canonical install location
-//     C:/Users/Nico/dark-research-mcp/dark-research-mcp.exe (dev box).
+//     C:/Users/<name>/dark-research-mcp/dark-research-mcp.exe (dev box).
 //  3. "dark-research-mcp.exe" on PATH.
 func NewMCPResearchBackend() *MCPResearchBackend {
 	b := &MCPResearchBackend{
@@ -81,8 +81,8 @@ func NewMCPResearchBackend() *MCPResearchBackend {
 	}
 	if v := os.Getenv("DARK_RESEARCH_MCP_BIN"); v != "" {
 		b.BinPath = v
-	} else if _, err := os.Stat("C:/Users/Nico/dark-research-mcp/dark-research-mcp.exe"); err == nil {
-		b.BinPath = "C:/Users/Nico/dark-research-mcp/dark-research-mcp.exe"
+	} else if _, err := os.Stat("C:/Users/<name>/dark-research-mcp/dark-research-mcp.exe"); err == nil {
+		b.BinPath = "C:/Users/<name>/dark-research-mcp/dark-research-mcp.exe"
 	} else if _, err := exec.LookPath("dark-research-mcp.exe"); err == nil {
 		b.BinPath = "dark-research-mcp.exe"
 	}
@@ -116,7 +116,7 @@ func (b *MCPResearchBackend) Research(ctx context.Context, query, intent string)
 	cmd := exec.CommandContext(ctx, b.BinPath)
 	// Isolate the peer's DB from the SHARED dark.db. When opencode runs
 	// dark-research as a peer MCP, an instance already holds
-	// C:\Users\Nico\AppData\Local\dark-agents\dark.db. If our spawned
+	// C:\Users\<name>\AppData\Local\dark-agents\dark.db. If our spawned
 	// peer inherits DARK_DB (os.Environ) it opens the SAME file →
 	// SQLite lock contention on Windows → SaveRun fails ErrInternal.
 	// Point the spawned peer at its OWN temp DB: the research items we

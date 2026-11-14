@@ -14,7 +14,7 @@ the `claude_desktop_config.json` file.
 {
   "skills": [
     {
-      "path": "C:/Users/Nico/Documents/dark-memory-mcp/mods/vibe-loop-git/",
+      "path": "C:/Users/<name>/Documents/dark-memory-mcp/mods/vibe-loop-git/",
       "name": "vibe-loop-git",
       "autoLoad": true
     }
@@ -32,11 +32,11 @@ the `claude_desktop_config.json` file.
 ### claude-desktop env vars
 
 claude-desktop runs in a sandbox without filesystem access to
-`/c/Users/Nico/Documents/...`. For atomic-mirror, the mod provides
+`/c/Users/<name>/Documents/...`. For atomic-mirror, the mod provides
 a clipboard-based fallback:
 
 1. After each loop, copy the result to clipboard
-2. Paste into a file at `C:/Users/Nico/Documents/dark-memory-mcp/atomic-mirrors/`
+2. Paste into a file at `C:/Users/<name>/Documents/dark-memory-mcp/atomic-mirrors/`
 3. Manually run `dark-mem-cli agent_memory_save` from a terminal
 
 OR, run dark-memory-mcp inside claude-desktop's MCP server config

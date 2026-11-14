@@ -272,7 +272,7 @@ func RegisterHealth(reg *Registry, st storeBridge) {
 			}
 			if v := serverDSNPath.Load(); v != nil {
 				// Redact PII (operator's home directory on POSIX/Windows,
-				// e.g. C:\Users\Nico\.../probe.db → <USER>/probe.db).
+				// e.g. C:\Users\<name>\.../probe.db → <USER>/probe.db).
 				// The raw path is preserved in stderr boot logs for
 				// operators who need it; the MCP wire surface is what
 				// travels to harnesses that may persist to disk.

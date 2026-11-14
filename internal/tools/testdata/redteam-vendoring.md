@@ -38,7 +38,7 @@ To run the redteam tests locally, point at the dark-research-mcp
 sibling via:
 
 ```
-DARK_REDTEAM_MODS_PATH=C:\Users\Nico\dark-research-mcp\mods-examples
+DARK_REDTEAM_MODS_PATH=C:\Users\<name>\dark-research-mcp\mods-examples
 ```
 
 The two mods under that path are:
@@ -59,7 +59,7 @@ The tests now point at the dark-research-mcp sibling directly via
 `DARK_REDTEAM_MODS_PATH`. No local vendoring required.
 
 ```
-C:\Users\Nico\dark-research-mcp\mods-examples\
+C:\Users\<name>\dark-research-mcp\mods-examples\
   red-team-jailbreak-arsenal\
     mod.toml
     directives\
