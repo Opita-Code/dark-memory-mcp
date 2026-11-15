@@ -102,16 +102,29 @@ echo "memoria     : #${MEM%%|*} (cita el artefacto $ARTIFACT)"
 
 # ── (d) el commit local ───────────────────────────────────────────────────
 # El commit se busca por la RUTA del artefacto (lo durable) o por su id.
+#
+# MEDIDO 2026-11-15: la busqueda por el numero del artefacto SUELTO ("179")
+# casa con cualquier commit que contenga ese numero en su mensaje (un
+# contador, una fecha, un id). Para el artefacto 179 devolvio un commit que
+# no era el suyo, y el guard daba por bueno un cierre que no estaba.
+# Por eso: `--fixed-strings` (sin regex) y marcadores con PALABRA.
 REPO_ROOT="${DS_REPO_ROOT:-$HOME/workspace/dark-scrapper-ts}"
 ART_PATH="${ART_URL#file://}"
 if [[ -d "$REPO_ROOT/.git" ]]; then
-  HIT="$(git -C "$REPO_ROOT" log --oneline -1 --grep="$ART_PATH" 2>/dev/null)"
-  [[ -z "$HIT" ]] && HIT="$(git -C "$REPO_ROOT" log --oneline -1 --grep="$ARTIFACT" 2>/dev/null)"
-  [[ -z "$HIT" ]] && HIT="$(git -C "$REPO_ROOT" log --oneline -1 --grep="artefacto $ARTIFACT" 2>/dev/null)"
+  HIT=""
+  # 1) la ruta del artefacto: absoluta, relativa al repo, o solo el nombre.
+  for needle in "$ART_PATH" "${ART_PATH#"$REPO_ROOT"/}" "$(basename "$ART_PATH")"; do
+    HIT="$(git -C "$REPO_ROOT" log --oneline -1 --fixed-strings --grep="$needle" 2>/dev/null)"
+    [[ -n "$HIT" ]] && break
+  done
+  # 2) el marcador explicito: "artefacto <id>". Nunca el numero suelto.
+  if [[ -z "$HIT" ]]; then
+    HIT="$(git -C "$REPO_ROOT" log --oneline -1 --fixed-strings --grep="artefacto $ARTIFACT" 2>/dev/null)"
+  fi
   if [[ -n "$HIT" ]]; then
     echo "commit      : $HIT"
   else
-    echo "commit      : (ninguno cita $ART_PATH ni el artefacto $ARTIFACT)" >&2
+    echo "commit      : (ninguno cita $ART_PATH ni 'artefacto $ARTIFACT')" >&2
     fail "el artefacto esta publicado y con rastro en memoria, pero ningun commit lo cita: el cierre del loop exige el commit" 67
   fi
 else

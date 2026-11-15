@@ -61,6 +61,7 @@ art.run(900, "s", "C1", 1, "file:///tmp/x.diff", "code", now, "p");
 art.run(901, "s", "C1", 1, "file:///tmp/y.diff", "code", now, "p");
 art.run(902, "s", "C1", 1, "file:///tmp/z.diff", "code", now, "p");
 art.run(903, "s", "C1", 1, "file:///tmp/w.diff", "code", now, "p");
+art.run(904, "s", "C1", 1, "file:///tmp/v.diff", "code", now, "p");
 const drift = db.query(`INSERT INTO vibe_drift_reports
   (id, artifact_id, spec_id, verdict, judge_reasoning, created_at, project_id)
   VALUES (?, ?, ?, ?, ?, ?, ?)`);
@@ -78,6 +79,10 @@ db.query(`INSERT INTO agent_memory
   (id, project_id, operator, kind, title, content, tags, created_at)
   VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
   .run(702, "p", "opencode", "finding", "t", "el hallazgo cita el artefacto 902", "902", now);
+db.query(`INSERT INTO agent_memory
+  (id, project_id, operator, kind, title, content, tags, created_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+  .run(704, "p", "opencode", "finding", "t", "el hallazgo cita el artefacto 904", "904", now);
 ' || { echo "test-cierre-loop-guard: no se pudo crear la base de pruebas" >&2; exit 1; }
 
 # ── un repo con commits que citan las rutas ───────────────────────────────
@@ -89,6 +94,12 @@ for f in y.diff z.diff w.diff; do
   git -C "$REPO" add "$f" >/dev/null 2>&1
   git -C "$REPO" commit -q -m "cambio que cita /tmp/$f" >/dev/null 2>&1
 done
+# MEDIDO 2026-11-15: un commit que menciona el NUMERO del artefacto (904)
+# sin citar su ruta no es el commit del artefacto. Antes el guard lo daba
+# por bueno (buscaba el numero suelto) y daba por cerrado un loop que no
+# estaba. Este commit es el que reproduces ese fallo.
+git -C "$REPO" commit -q --allow-empty -m "contador 904 en el mensaje" >/dev/null 2>&1
+git -C "$REPO" commit -q --allow-empty -m "contador 900 en el mensaje" >/dev/null 2>&1
 
 run() {
   # run <artifact_id> <expected_rc>
@@ -100,6 +111,7 @@ run() {
 
 run 999 65 "artefacto sin publicar -> 65"
 run 900 67 "publicado con memoria pero sin commit -> 67"
+run 904 67 "un commit con el numero suelto NO cuenta como commit del artefacto -> 67"
 run 903 66 "publicado y con commit pero SIN memoria -> 66"
 run 902 68 "las tres partes sin veredicto -> 68 (ausencia, no fallo)"
 run 901 0  "las tres partes con veredicto aligned -> 0"
@@ -109,4 +121,4 @@ if [[ "$fails" -ne 0 ]]; then
   exit 1
 fi
 
-echo "test-cierre-loop-guard: 5/5"
+echo "test-cierre-loop-guard: 6/6"
