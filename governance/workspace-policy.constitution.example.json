@@ -62,11 +62,21 @@
     "POR QUÉ SE EXIGE EL GATE: la regla WS-3 ya se verificaba (dm-flow.sh sale 66 si el",
     "artefacto está fuera del workspace), pero tres dossiers se publicaron desde fuera del",
     "workspace sin pasar el gate. El fallo fue no ejecutar la comprobación, no un hueco del",
-    "diseño: por eso la regla pasa a ser parte de la política y no solo del script."
+    "diseño: por eso la regla pasa a ser parte de la política y no solo del script.",
+    "",
+    "v1.4.1 (2026-11-15) NO cambia ninguna regla: sube la versión porque el FICHERO",
+    "cambió sin que la versión se moviera, que es exactamente lo que el watchdog",
+    "rechaza (fail closed). MEDIDO: al unificar la fuente (este canonico es ahora la",
+    "única fuente y la instancia se genera de el), los BYTES de la instancia cambiaron",
+    "con la versión todavía en 1.4.0, y el servidor MCP dejó de arrancar en un proceso",
+    "nuevo: 'constitution file SHA256 drifted from stored value (same-version tamper is",
+    "refused unconditionally)'. La propia politica dice lo que hay que hacer: si el",
+    "fichero de política cambia, sube la versión. Aqui se sube y el watchdog acepta el",
+    "upgrade con DARK_CONSTITUTION_ACCEPT_BUMPS=1."
   ],
   "meta": {
     "id": "dark-agents/workspace-policy",
-    "version": "1.4.0",
+    "version": "1.4.1",
     "label": "disciplina de workspace y de cierre - los artefactos viven en el workspace del proyecto, la politica se aplica en codigo, y el hallazgo se cablea al juez y a opencode antes de darse por terminado",
     "source": "operator:workspace-governance"
   },

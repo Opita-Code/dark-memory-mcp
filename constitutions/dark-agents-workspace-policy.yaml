@@ -1,5 +1,5 @@
 # =============================================================================
-# Constitution de política de workspace — dark-agents/workspace-policy v1.4.0
+# Constitution de política de workspace — dark-agents/workspace-policy v1.4.1
 # =============================================================================
 #
 # TL;DR: la política del operador que mantiene cada artefacto de proyecto
@@ -46,8 +46,8 @@
 # =============================================================================
 
 id: dark-agents/workspace-policy
-version: 1.4.0
-sha256: 7a20da2f591265fe90ba78350d40c7e9fde0eda0265ba36f7462a1da3c1aae79
+version: 1.4.1
+sha256: e93d0abba96d0c9e04863f602fe5e3c7ad13a4ff3ebe477c7560c38fe331051c
 invariants: [INV-1, INV-2, INV-3, INV-4, INV-5, INV-6, INV-7, INV-8, INV-9, INV-10, INV-11, INV-12, INV-13, INV-14, INV-15]
 
 # M4.1 — política de auto-actualización. Una política local de operador no se
@@ -148,7 +148,7 @@ refusal:
 
 meta:
   id: "dark-agents/workspace-policy"
-  version: 1.4.0
+  version: 1.4.1
   label: "disciplina de workspace y de cierre - los artefactos viven en el workspace del proyecto, la politica se aplica en codigo, y el hallazgo se cablea al juez y a opencode antes de darse por terminado"
   source: "operator:workspace-governance"
 
