@@ -232,6 +232,68 @@ governance/check-constitution.sh --exige-activo "$POLITICA/governance/workspace-
 governance/test-dm-flow.sh
 ```
 
+## El cierre del loop (WS-7)
+
+Un hallazgo medido no está entregado hasta que están **las tres cosas**: el
+artefacto publicado para que el juez lo evalúe, el rastro durable en la
+memoria y el commit que lo deja en el historial. Eso no es una frase: es un
+check, y el check es `governance/check-cierre-loop.sh`.
+
+```bash
+governance/check-cierre-loop.sh <project_id> <artefacto> [drift_id] [--ruta <ruta>]
+```
+
+**Hay dos rutas, y dejan el rastro en tablas distintas.** MEDIDO el
+2026-11-16: hay dos formas de pedir un veredicto al juez.
+
+| Ruta | Cómo se pide | Dónde queda el rastro |
+|---|---|---|
+| `vibe_publish` | `vibe_publish` | `vibe_artifacts` + `vibe_drift_reports` |
+| `dark_memory_judge` | el juez directo, una afirmación por parte | `sdd_evaluations` |
+
+Antes el guard solo conocía la primera. MEDIDO el 2026-11-16: en el repo
+el repositorio privado del operador la ruta de juicio es `dark_memory_judge` (que es lo que hace
+falta para juzgar un artefacto partido por conceptos), así que **un juicio
+hecho y con veredicto daba 65 («no se publicó») al pasarle el guard**. Un
+guard que miente es peor que no tener guard.
+
+**El ancla de la segunda ruta es el SHA de los bytes juzgados**, no el id de
+la evaluación: el sha es lo que hace *válido* un veredicto (si el fichero
+cambia, el sha cambia y el veredicto caduca), y el id identifica una llamada
+del juez, no el artefacto (con consenso 3 hay tres ids para la misma parte).
+
+```bash
+# la ruta vibe, como hasta ahora
+governance/check-cierre-loop.sh <proyecto> 293 298
+
+# la ruta del juez directo: el sha de los bytes y la ruta del documento
+governance/check-cierre-loop.sh <proyecto> sha:07c4a222... --ruta vibe-tools/src/juez/conjunto.ts
+```
+
+`--ruta` es obligatoria en la ruta sha: es lo que se busca en los commits. Si
+no se dice, la raíz del repo se deduce de la propia ruta del artefacto.
+
+**Códigos de salida:** `0` cerrado · `64` uso · `65` sin artefacto publicado ·
+`66` sin rastro en memoria · `67` sin commit · `68` veredicto ausente (no es
+un fallo del cierre: se declara, no se disimula).
+
+**El veredicto vigente es el último**, y el histórico se imprime entero.
+MEDIDO el 2026-11-16: un mismo sha puede tener muchas evaluaciones a lo largo
+del día (el mismo contenido se rejuzga). Si se agregaran todas, un veredicto
+viejo envenenaría al nuevo para siempre, y un documento rejuzgado no podría
+cambiar nunca de veredicto. La ruta vibe hace lo mismo: el último drift
+report del artefacto.
+
+**Un número suelto no cuenta.** Ni en la memoria ni en el commit: MEDIDO el
+2026-11-15, buscar el número del artefacto sin marca daba por bueno un cierre
+que no estaba. En la ruta sha, la memoria puede citar el sha o el id de la
+evaluación **con su marca `#`**, y el commit cita la ruta del documento o
+«evaluacion &lt;id&gt;».
+
+Las pruebas son `governance/test-cierre-loop-guard.sh`: usan una base y un
+repo temporales, no tocan la base real, y **prueban que el guard falla cuando
+debe** (un guard que nunca falla no es un guard).
+
 ## Idioma
 
 Toda la documentación de este repositorio va en **español tuteado**: los
@@ -246,6 +308,8 @@ comentarios de los scripts, las notas de la constitution, este README y
 | `governance/dm-flow.sh` | Pre-flight de las reglas + plan de llamadas MCP. No habla MCP por sí mismo: valida y emite el plan; el agente ejecuta con sus propias tools. |
 | `governance/test-dm-flow.sh` | Tests de los códigos de salida de `dm-flow.sh` (0 / 64 / 65 / 66), del contenido del plan, de que los artefactos versionados no lleven datos del operador y del comportamiento del verificador. |
 | `governance/check-constitution.sh` | Verifica que el YAML de contrato, el ejemplo y la copia activa coinciden (id, version, persona, SHA del ejemplo, instanciación) y que la activa no resida en un árbol de git. |
+| `governance/check-cierre-loop.sh` | El cierre del loop (WS-7): comprueba que el artefacto está publicado, que la memoria lo cita y que un commit lo cita. Conoce las dos rutas de juicio (`vibe_publish` y el juez directo). |
+| `governance/test-cierre-loop-guard.sh` | Tests del guard de cierre: cada ruta, cada código de salida, y que el guard **falla** cuando debe. Base y repo temporales: no toca la base real. |
 | `governance/FLOW.md` | Cómo se integra dark-memory en un flujo de desarrollo, qué garantiza cada capa y qué huecos hay. |
 | `constitutions/dark-agents-workspace-policy.yaml` | La política del workspace como artefacto de contrato (§7): YAML, versionado, SHA-pineado sobre el ejemplo. |
 | `governance/workspace-policy.constitution.example.json` | La forma canónica que el servidor carga (JSON), con marcadores y sin datos personales. |
