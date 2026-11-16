@@ -748,6 +748,23 @@ type AgentMemoryDelegateInput struct {
 	// &N = explicit budget (clamp [0, 8000]).
 	MaxTokens  *int `json:"max_tokens,omitempty"`
 	TTLSeconds int  `json:"ttl_seconds,omitempty"`
+	// RegisterSubagent controls whether the C2 binding is created.
+	//
+	// *bool so "unset" is distinguishable from an explicit false:
+	// nil = schema default (true, the historical behavior — the
+	// binding is registered so the sub-agent's writes are tagged
+	// with subagent_id); &false = register NO binding and only
+	// return the curated context.
+	//
+	// Why the escape hatch exists: the binding is resolved by
+	// OPERATOR (GetActiveSubagent), not by caller, so while it is
+	// alive it captures the principal's own agent_memory writes
+	// too — not just the sub-agent's. A principal that wants the
+	// context but not the ambient capture (e.g. it passes an
+	// explicit agent_id on every write, or it runs the sub-agent
+	// out of band) sets this to false and calls
+	// subagent_register explicitly when it is ready.
+	RegisterSubagent *bool `json:"register_subagent,omitempty"`
 }
 
 // AgentMemoryDelegateOutput is the delegation package: the
@@ -763,6 +780,12 @@ type AgentMemoryDelegateOutput struct {
 	SessionID         string `json:"session_id"`
 	ProjectID         string `json:"project_id"`
 	RegisteredAt      string `json:"registered_at"`
+	// BindingRegistered tells the caller whether the C2 binding was
+	// actually created. False when the caller passed
+	// register_subagent=false (context-only handoff) or when the
+	// registration failed (best-effort). The principal needs this to
+	// know whether it must call subagent_unregister afterwards.
+	BindingRegistered bool `json:"binding_registered"`
 }
 
 // AgentMemoryDelegate prepares the delegation context for a sub-agent
@@ -824,18 +847,29 @@ func (o *Orchestrator) AgentMemoryDelegate(ctx context.Context, in AgentMemoryDe
 	}
 
 	// Register the subagent binding (C2 active_subagents).
-	wc := store.WriteContext{
-		Actor:     in.Operator,
-		WritePath: "AgentMemoryDelegate",
-	}
-	row := &store.ActiveSubagent{
-		Operator:      in.Operator,
-		SubagentID:    in.SubagentID,
-		ParentAgentID: parentAgentID,
-		TTLSeconds:    ttl,
-	}
-	if _, err := o.Store.SetActiveSubagent(ctx, wc, row); err != nil {
-		return nil, fmt.Errorf("agent_memory_delegate: %w", err)
+	//
+	// Skip it when the caller explicitly asked for a context-only
+	// handoff (register_subagent=false). The binding is resolved by
+	// operator, so an ambient binding also captures the principal's
+	// own writes; the escape hatch keeps the handoff available
+	// without that side effect.
+	registerBinding := in.RegisterSubagent == nil || *in.RegisterSubagent
+	bindingRegistered := false
+	if registerBinding {
+		wc := store.WriteContext{
+			Actor:     in.Operator,
+			WritePath: "AgentMemoryDelegate",
+		}
+		row := &store.ActiveSubagent{
+			Operator:      in.Operator,
+			SubagentID:    in.SubagentID,
+			ParentAgentID: parentAgentID,
+			TTLSeconds:    ttl,
+		}
+		if _, err := o.Store.SetActiveSubagent(ctx, wc, row); err != nil {
+			return nil, fmt.Errorf("agent_memory_delegate: %w", err)
+		}
+		bindingRegistered = true
 	}
 
 	// Build the curated delegation context.
@@ -851,6 +885,7 @@ func (o *Orchestrator) AgentMemoryDelegate(ctx context.Context, in AgentMemoryDe
 		SessionID:         sessID,
 		ProjectID:         projID,
 		RegisteredAt:      time.Now().UTC().Format(time.RFC3339),
+		BindingRegistered: bindingRegistered,
 	}, nil
 }
 

@@ -4084,6 +4084,60 @@ func (s *Store) GetActiveSubagent(ctx context.Context, operator string) (*store.
 	return &row, nil
 }
 
+// ListActiveSubagents returns every live (non-expired) subagent
+// binding for (project_id, operator), newest first. Unlike
+// GetActiveSubagent (LIMIT 1), this enumerates ALL of them so the
+// operator can discover orphaned bindings left open by a finished
+// delegation.
+//
+// Expired rows are filtered out Go-side (same defense-in-depth as
+// GetActiveSubagent): if the sweeper has not run yet, an expired
+// binding is still reported as dead.
+func (s *Store) ListActiveSubagents(ctx context.Context, operator string) ([]store.ActiveSubagent, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(operator) == "" {
+		return nil, nil
+	}
+	activeProject := s.ActiveProject()
+
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, project_id, operator, subagent_id, parent_agent_id,
+		        spawned_at, ttl_seconds
+		   FROM active_subagents
+		  WHERE project_id = $1 AND operator = $2
+		  ORDER BY spawned_at DESC`, activeProject, operator)
+	if err != nil {
+		return nil, fmt.Errorf("active_subagents: list: %w", err)
+	}
+	defer rows.Close()
+
+	var out []store.ActiveSubagent
+	for rows.Next() {
+		var row store.ActiveSubagent
+		var spawnedAt time.Time
+		var ttl int
+		if err := rows.Scan(&row.ID, &row.ProjectID, &row.Operator, &row.SubagentID,
+			&row.ParentAgentID, &spawnedAt, &ttl); err != nil {
+			return nil, fmt.Errorf("active_subagents: scan: %w", err)
+		}
+		// spawned_at is TIMESTAMP WITH TIME ZONE on Postgres; rendered
+		// as RFC3339Nano in the Go struct (json contract preserved).
+		row.SpawnedAt = spawnedAt.UTC().Format(time.RFC3339Nano)
+		row.TTLSeconds = ttl
+
+		if isExpired(row.SpawnedAt, row.TTLSeconds) {
+			continue
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("active_subagents: list rows: %w", err)
+	}
+	return out, nil
+}
+
 func (s *Store) ClearActiveSubagent(ctx context.Context, wc store.WriteContext, operator, subagentID string) error {
 	if err := s.requireProject(); err != nil {
 		return err

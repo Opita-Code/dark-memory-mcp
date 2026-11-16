@@ -1003,6 +1003,18 @@ type Store interface {
 	// no matching row.
 	ClearActiveSubagent(ctx context.Context, wc WriteContext, operator, subagentID string) error
 
+	// ListActiveSubagents returns EVERY live (non-expired) subagent
+	// binding for (project_id, operator), newest first.
+	//
+	// GetActiveSubagent returns only the most-recent one (LIMIT 1),
+	// which is enough for the agent_id resolution chain but NOT
+	// enough for an operator to discover orphaned bindings. The C2
+	// trap is precisely that a binding left open by a finished
+	// delegation keeps capturing the principal's writes, and it is
+	// invisible unless you can enumerate them. Returns an empty slice
+	// (not nil error) when there are none.
+	ListActiveSubagents(ctx context.Context, operator string) ([]ActiveSubagent, error)
+
 	// SweepExpiredSubagents deletes active_subagents rows where
 	// spawned_at + ttl_seconds < now. Returns the count of deleted
 	// rows. Called at session_start (orchestrator-level). Idempotent.

@@ -203,7 +203,7 @@ func RegisterAgentMemory(reg *Registry, orch *orchestration.Orchestrator, st sto
 	// the sub-agent inherits dark-memory context instead of starting
 	// blind. Gated by DARK_MEMORY_V280=1 (same as subagent_register).
 	reg.Add(BindOrchestrator("agent_memory_delegate",
-		"Prepare a delegation context for a sub-agent spawn (v2.9.3). Registers the subagent binding (C2) and returns a ready-to-inject markdown block — session metadata + curated pinned memories + open todos — that the parent embeds in the sub-agent's task prompt so the sub-agent inherits dark-memory context instead of starting blind. Gated by DARK_MEMORY_V280=1.",
+		"Prepare a delegation context for a sub-agent spawn (v2.9.3). Registers the subagent binding (C2) and returns a ready-to-inject markdown block — session metadata + curated pinned memories + open todos — that the parent embeds in the sub-agent's task prompt so the sub-agent inherits dark-memory context instead of starting blind. Gated by DARK_MEMORY_V280=1. The binding is resolved by OPERATOR, so while it is alive it also captures the parent's own agent_memory writes; pass register_subagent=false for a context-only handoff (the parent then calls subagent_register itself if it wants the isolation). The response echoes binding_registered so the parent knows whether it must call subagent_unregister afterwards.",
 		MustJSONSchema(map[string]any{
 			"type":     "object",
 			"required": []string{"operator", "subagent_id", "task_description"},
@@ -215,6 +215,7 @@ func RegisterAgentMemory(reg *Registry, orch *orchestration.Orchestrator, st sto
 				"include_todos":    map[string]any{"type": "boolean", "default": true, "description": "Include open todos in the delegation context."},
 				"max_tokens":       map[string]any{"type": "integer", "default": 2000, "minimum": 0, "maximum": 8000, "description": "Context recap token budget. 0 = no context, just session metadata."},
 				"ttl_seconds":      map[string]any{"type": "integer", "default": 3600, "minimum": 60, "maximum": 86400, "description": "Subagent binding TTL (clamp 60..86400; default 3600 = 1h)."},
+				"register_subagent": map[string]any{"type": "boolean", "default": true, "description": "Register the C2 subagent binding so the sub-agent's agent_memory writes are tagged with subagent_id. Default true. Set false for a CONTEXT-ONLY handoff: the binding is resolved by operator (not by caller), so while it is alive it also captures the principal's own writes. With false, the principal must call subagent_register itself if it wants the isolation."},
 			},
 		}),
 		func(ctx context.Context, in orchestration.AgentMemoryDelegateInput) (*orchestration.AgentMemoryDelegateOutput, error) {

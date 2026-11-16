@@ -88,6 +88,13 @@ type SessionStartOutput struct {
 	// (caller input > projects.default_agent_id > ""). Empty when
 	// no agent_id is configured (v2.4.0 project-wide behavior).
 	ActiveAgentID string `json:"active_agent_id,omitempty"`
+	// ActiveSubagentIDs (v2.8.0-alpha C2, visibility) lists the
+	// LIVE subagent bindings still open for this operator when the
+	// session started. A binding that outlives its delegation keeps
+	// capturing the principal's agent_memory writes, so reporting
+	// them here makes the trap observable instead of silent. Empty
+	// (omitted from JSON) when there are none.
+	ActiveSubagentIDs []string `json:"active_subagent_ids,omitempty"`
 }
 
 // ContextRecap is the v2.4.0 agent_memory-derived context prepended
@@ -232,6 +239,27 @@ func (o *Orchestrator) SessionStart(ctx context.Context, in SessionStartInput) (
 		}
 	}
 
+	// v2.8.0-alpha C2 (visibility): surface the LIVE subagent bindings
+	// left open for this operator. A binding that outlives its
+	// delegation keeps capturing the principal's agent_memory writes
+	// (the resolution chain consults active_subagents BEFORE the
+	// project default), so an invisible orphan binding silently
+	// mis-attributes the principal's memory. Reporting it at session
+	// start makes the trap observable instead of silent. The sweep
+	// above has already reaped the expired ones, so what is left
+	// here is genuinely live. Best-effort: must not block session
+	// creation.
+	var liveBindings []string
+	if v280Enabled() {
+		if bindings, err := o.Store.ListActiveSubagents(ctx, in.Operator); err != nil {
+			log.Printf("dark-mem-mcp: session_start list_active_subagents err=%v", err)
+		} else {
+			for _, b := range bindings {
+				liveBindings = append(liveBindings, b.SubagentID)
+			}
+		}
+	}
+
 	// v2.8.0-alpha B1: ColdStart + ContextRecapTokens. When
 	// DARK_MEMORY_V280=1, apply the token budget + skip-on-cold-start.
 	// When the flag is off, the recap fires unconditionally as in
@@ -248,6 +276,8 @@ func (o *Orchestrator) SessionStart(ctx context.Context, in SessionStartInput) (
 		ConstitutionID: in.ConstitutionID,
 		ContextRecap:   recap,
 		ActiveAgentID:  activeAgentID,
+
+		ActiveSubagentIDs: liveBindings,
 	}, nil
 }
 

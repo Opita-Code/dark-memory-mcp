@@ -108,9 +108,17 @@ echo "$plan" | grep -q "agent_memory_save" \
   && ok "el plan incluye el guardado de la decision" \
   || bad "el plan incluye el guardado de la decision"
 
-# Las aserciones sobre agent_id explicito y active_subagent_ids viven en el
-# PR que anade el escape hatch del binding C2 (fix/c2-binding-trap): el plan
-# solo las emite cuando la constitution y el servidor ya exponen esos campos.
+# --- el escape hatch del binding C2 (este PR) --------------------------------
+# El plan emite agent_id explicito y avisa de los bindings C2 vivos; sin esas
+# dos lineas una delegacion abierta puede etiquetar las escrituras del
+# principal como si fueran del subagente.
+echo "$plan" | grep -q "agent_id : opencode" \
+  && ok "el plan exige agent_id explicito en el guardado" \
+  || bad "el plan exige agent_id explicito en el guardado"
+
+echo "$plan" | grep -q "active_subagent_ids" \
+  && ok "el plan avisa de los bindings C2 vivos" \
+  || bad "el plan avisa de los bindings C2 vivos"
 
 # --- 7. sintaxis -------------------------------------------------------------
 bash -n "$FLOW" && ok "sintaxis de dm-flow.sh" || bad "sintaxis de dm-flow.sh"
