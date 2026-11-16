@@ -4,7 +4,7 @@
 # POR QUE EXISTE
 #
 # MEDIDO 2026-11-15: se implemento y se verifico con tests duros el arreglo del
-# bug de cuota por region de dark-scrapper-ts, y NO se cableo al juez ni a
+# bug de cuota por region de [NEIGHBORING-SCRAPER], y NO se cableo al juez ni a
 # opencode. Se cerro el trabajo de codigo y se dejo el hallazgo sin veredicto
 # ni rastro durable. El trabajo propio con sus propios tests NO es la
 # verificacion: el juez es quien valida el artefacto, y opencode es quien se
@@ -108,7 +108,9 @@ echo "memoria     : #${MEM%%|*} (cita el artefacto $ARTIFACT)"
 # contador, una fecha, un id). Para el artefacto 179 devolvio un commit que
 # no era el suyo, y el guard daba por bueno un cierre que no estaba.
 # Por eso: `--fixed-strings` (sin regex) y marcadores con PALABRA.
-REPO_ROOT="${DS_REPO_ROOT:-$HOME/workspace/dark-scrapper-ts}"
+# El repo donde se busca el commit. Si no lo dice el llamante, se deduce mas
+# abajo (de la ruta del artefacto, o de la raiz de git de aqui).
+REPO_ROOT="${DS_REPO_ROOT:-}"
 ART_PATH="${ART_URL#file://}"
 if [[ -d "$REPO_ROOT/.git" ]]; then
   HIT=""
