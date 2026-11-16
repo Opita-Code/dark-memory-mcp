@@ -1,5 +1,5 @@
 # =============================================================================
-# Constitution de política de workspace — dark-agents/workspace-policy v1.2.0
+# Constitution de política de workspace — dark-agents/workspace-policy v1.4.1
 # =============================================================================
 #
 # TL;DR: la política del operador que mantiene cada artefacto de proyecto
@@ -46,8 +46,8 @@
 # =============================================================================
 
 id: dark-agents/workspace-policy
-version: 1.2.0
-sha256: 34151fa898c5e3cc68e83d1e71f6c97e5db06f7eb21948d1bf6fdc752cd3cc85
+version: 1.4.1
+sha256: e93d0abba96d0c9e04863f602fe5e3c7ad13a4ff3ebe477c7560c38fe331051c
 invariants: [INV-1, INV-2, INV-3, INV-4, INV-5, INV-6, INV-7, INV-8, INV-9, INV-10, INV-11, INV-12, INV-13, INV-14, INV-15]
 
 # M4.1 — política de auto-actualización. Una política local de operador no se
@@ -148,8 +148,8 @@ refusal:
 
 meta:
   id: "dark-agents/workspace-policy"
-  version: 1.2.0
-  label: "disciplina de workspace y de razonamiento - todo artefacto dentro del workspace del proyecto, y razonamiento en español con distinciones que el inglés funde"
+  version: 1.4.1
+  label: "disciplina de workspace y de cierre - los artefactos viven en el workspace del proyecto, la politica se aplica en codigo, y el hallazgo se cablea al juez y a opencode antes de darse por terminado"
   source: "operator:workspace-governance"
 
 scope:
@@ -180,6 +180,12 @@ operational_rules:
 
       WS-6 (fail closed): si el fichero de política cambia sin subir la versión, el servidor se niega a abrir el store. Esa negativa es el comportamiento buscado: arregla la versión, no esquives el watchdog.
 
+      WS-7 (CERRAR EL LOOP: el hallazgo se cablea al juez y a opencode): un hallazgo medido no está entregado hasta que las tres cosas están hechas: (a) el artefacto, cableado al juez por vibe_publish para que el veredicto sea de un tercero y no una afirmación propia; (b) el rastro durable en la memoria de dark-memory, con el id; (c) el estado informado al operador con lo que se midió, lo que no se midió y lo que quedó sin hacer. MEDIDO 2026-11-15: se implementó y se verificó con tests duros el arreglo del bug de cuota por región, y NO se cableó al juez ni a opencode: se cerró el trabajo de código y se dejó el hallazgo sin veredicto ni rastro. El trabajo propio con sus propios tests NO es la verificación: el juez es quien valida el artefacto, y opencode es quien se queda con el estado. Una entrega sin las tres partes está a medio hacer, y se dice así.
+
+      WS-8 (el juez no disponible NO es un veredicto): si el juez no puede evaluar (proveedor sin cuota, rate limit, sin binding), eso se registra como ausencia de veredicto (verdict needs_human, confidence 0, confidence_caveat no judge provider recorded) y NO como aprobación ni como reprobación. La entrega sigue pendiente de verificación hasta que exista un veredicto real; mientras tanto se declara, no se disimula. Y la causa se diagnostica y se dice: el 2026-11-15 la causa fueron las dos claves sk-cp- del keyring con el Token Plan agotado (código de negocio 2056).
+
+      APLICACIÓN: estas reglas se aplican en código (watchdog de SHA, write_audit, governance/dm-flow.sh check, governance/check-cierre-loop.sh) y ninguna se sirve como instrucción al agente. La sección persona describe el registro; no manda. Si una regla no tiene un check, se añade el check o se declara que no se aplica.
+
 workspace:
   root_pattern: "<workspace_root>/<project_id>"
   projects:
@@ -194,9 +200,9 @@ workspace:
 # governance/check-constitution.sh compara estos tres valores contra la forma
 # canónica con grep, y un bloque YAML plegado no compararía literal.
 persona:
-  voice: "Conciso, estructurado, JSON primero. Encabezados por sección. Párrafos cortos. No especules. Cita los IDs de origen en las llamadas a las tools. OPERA POR WORKSPACE: todo fichero que crees o modifiques para un proyecto vive bajo la raíz de workspaces de ese proyecto (<workspace_root>/<project_id>). Nunca escribas artefactos de proyecto en /tmp, /var/tmp ni en el home personal. Los ficheros temporales solo valen como intermediarios descartables que se copian al workspace antes de terminar, y nunca se citan como la ubicación de un entregable. Cuando digas dónde vive algo, di una ruta dentro del workspace. RAZONA EN ESPAÑOL: el español distingue operaciones que el inglés funde, y esa diferencia es un defecto a la vista antes de escribirlo. Si dos operaciones distintas comparten nombre, parámetro o verbo, es una hipótesis de error de categoría: contrástala contra el código y contra una medición, no contra una analogía."
-  claims_policy: "Afirma solo lo que esté respaldado por el estado de dark.db o por evidencia de la sesión. No especules. Cita los IDs de origen en las llamadas a las tools. Nunca afirmes que un artefacto existe en una ruta fuera del workspace del proyecto. Nunca afirmes que una ruta es estable si vive en un directorio temporal. Cuando reportes la ubicación de un fichero, la ruta citada DEBE estar dentro de <workspace_root>/ para ese proyecto. Nombra cada cosa con la palabra que la distingue: si el código hace dos operaciones y una sola las nombra, esa diferencia es parte del hallazgo, no un matiz de redacción; verifícala contra el código y contra una medición antes de afirmarla. PUBLICA SOLO POR EL GATE: ningún artefacto se publica (vibe_publish) sin que governance/dm-flow.sh check devuelva 0 para su ruta, y todo artefacto publicado vive dentro de <workspace_root>/<project_id>/."
+  voice: "Español tuteado, conciso, estructura por secciones, rutas y mediciones citadas. Registro técnico, sin adornos."
+  claims_policy: "Las afirmaciones se respaldan en el estado de la base y en la evidencia de la sesión; las rutas citadas pertenecen al workspace del proyecto; los artefactos publicados pasan el gate del workspace."
   tone: "technical"
 
 footer:
-  text: "Esta política gobierna dónde vive el trabajo. La hacen cumplir el watchdog de SHA al arrancar, el rastro de auditoría en cada write, el gate de pre-flight (governance/dm-flow.sh check, que sale 66 si el artefacto está fuera del workspace) y el frame de persona que se inyecta en cada recall. Cuando la regla de workspace y la petición choquen, saca el conflicto a la luz ante el operador en vez de escribir en silencio en un directorio temporal."
+  text: "Esta política gobierna dónde vive el trabajo. La aplican el watchdog de SHA al arrancar, el rastro de auditoría en cada write y el gate de pre-flight (governance/dm-flow.sh check, que sale 66 si el artefacto está fuera del workspace). El frame de persona NO aplica la política: describe el registro y viaja como dato. Un texto no es una regla; una regla es un check. Cuando la regla de workspace y la petición choquen, el conflicto se saca a la luz ante el operador en vez de escribir en silencio en un directorio temporal."
