@@ -281,27 +281,42 @@ fi
 
 if [[ -d "$REPO_ROOT/.git" ]]; then
   HIT=""
-  # 1) la ruta del artefacto: absoluta, relativa al repo, o solo el nombre.
-  for needle in "$ART_PATH" "${ART_PATH#"$REPO_ROOT"/}" "$(basename "$ART_PATH")"; do
-    [[ -z "$needle" ]] && continue
-    HIT="$(git -C "$REPO_ROOT" log --oneline -1 --fixed-strings --grep="$needle" 2>/dev/null)"
-    [[ -n "$HIT" ]] && break
-  done
-  # 2) el marcador explicito: "artefacto <id>" o "evaluacion <id>". Nunca el
-  #    numero suelto.
+  COMO=""
+  # 1) EL MARCADOR EXPLICITO, PRIMERO: "artefacto <id>" o "evaluacion <id>".
+  #    Nunca el numero suelto.
+  #
+  # MEDIDO el 2026-11-17: el orden era al reves. Se buscaba primero la RUTA
+  # en el mensaje del commit, y eso casa con cualquier commit que MENCIONE el
+  # fichero: el cuerpo de un commit con diff lista las rutas. Para el
+  # artefacto 322 devolvio un commit del 2026-10-23 que tocaba el plan
+  # maestro pero NO citaba el artefacto, y el guard dio por bueno un cierre
+  # con un commit que no era el del cierre.
+  #
+  # El marcador va primero porque es la prueba fuerte: un commit que dice
+  # "artefacto 322" es un commit que entrega ese artefacto.
+  if [[ "$ROUTE" == "vibe" ]]; then
+    HIT="$(git -C "$REPO_ROOT" log --oneline -1 --fixed-strings --grep="artefacto $ARTIFACT" 2>/dev/null)"
+  else
+    for eid in "${EVAL_IDS[@]:-}"; do
+      [[ -z "$eid" ]] && continue
+      HIT="$(git -C "$REPO_ROOT" log --oneline -1 --fixed-strings --grep="evaluacion $eid" 2>/dev/null)"
+      [[ -n "$HIT" ]] && break
+    done
+  fi
+  [[ -n "$HIT" ]] && COMO="por marcador"
+  # 2) La RUTA, como ultimo recurso: por el HISTORIAL DEL FICHERO, no por el
+  #    mensaje del commit. "El fichero esta en el historial" es la prueba de
+  #    que el cambio esta en un commit; "alguien menciono el nombre" no lo es.
   if [[ -z "$HIT" ]]; then
-    if [[ "$ROUTE" == "vibe" ]]; then
-      HIT="$(git -C "$REPO_ROOT" log --oneline -1 --fixed-strings --grep="artefacto $ARTIFACT" 2>/dev/null)"
-    else
-      for eid in "${EVAL_IDS[@]:-}"; do
-        [[ -z "$eid" ]] && continue
-        HIT="$(git -C "$REPO_ROOT" log --oneline -1 --fixed-strings --grep="evaluacion $eid" 2>/dev/null)"
-        [[ -n "$HIT" ]] && break
-      done
-    fi
+    for needle in "$ART_PATH" "${ART_PATH#"$REPO_ROOT"/}" "$(basename "$ART_PATH")"; do
+      [[ -z "$needle" ]] && continue
+      HIT="$(git -C "$REPO_ROOT" log --oneline -1 -- "$needle" 2>/dev/null)"
+      [[ -n "$HIT" ]] && break
+    done
+    [[ -n "$HIT" ]] && COMO="por ruta (el commit NO cita el artefacto)"
   fi
   if [[ -n "$HIT" ]]; then
-    echo "commit      : $HIT"
+    echo "commit      : $HIT${COMO:+  [$COMO]}"
   else
     echo "commit      : (ninguno cita $ART_PATH${ARTIFACT:+ ni 'artefacto $ARTIFACT'})" >&2
     fail "el artefacto esta publicado y con rastro en memoria, pero ningun commit lo cita: el cierre del loop exige el commit" 67
