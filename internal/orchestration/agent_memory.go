@@ -89,13 +89,28 @@ type AgentMemorySaveOutput struct {
 // active slot); the orchestrator asks it so that the write and the
 // read-back that follows it agree on the same project.
 //
-// Falls back to the active project when the store cannot answer,
-// which is the legacy behaviour.
-func (o *Orchestrator) resolveCallProject(ctx context.Context, projectID, sessionID string) string {
-	if pid, err := o.Store.ResolveProjectForCall(ctx, projectID, sessionID); err == nil && pid != "" {
-		return pid
+// SPEC-204 §4: a resolution FAILURE is an error and is NEVER degraded
+// to the active slot. The store already fails closed (see
+// store.scopeProject: "degrading would reintroduce the bug this chain
+// exists to remove, and would do it silently"); this function used to
+// undo that by swallowing the error and returning the global slot —
+// which is exactly the silent path SPEC-204 declares unacceptable, and
+// the worst place for it, because it leaves no error behind.
+//
+// The failure is an I/O error (the session lookup failed). A write
+// that cannot resolve its project must not land in whatever project
+// the slot happens to point at: that project may belong to another
+// client sharing this MCP process. So the error propagates and the
+// call fails.
+//
+// The empty project is NOT an error: the store returns ("", nil) when
+// nothing resolves, and the caller keeps that as before.
+func (o *Orchestrator) resolveCallProject(ctx context.Context, projectID, sessionID string) (string, error) {
+	pid, err := o.Store.ResolveProjectForCall(ctx, projectID, sessionID)
+	if err != nil {
+		return "", fmt.Errorf("resolve call project: %w", err)
 	}
-	return o.Store.ActiveProject()
+	return pid, nil
 }
 
 // AgentMemorySave inserts one row into the active project.
@@ -144,7 +159,10 @@ func (o *Orchestrator) AgentMemorySave(ctx context.Context, in AgentMemorySaveIn
 	// authority) and put it in the WriteContext, so the write lands in
 	// the project of the session that asked for it — not in whatever
 	// project the global slot happens to point at.
-	projectID := o.resolveCallProject(ctx, in.ProjectID, in.SessionID)
+	projectID, err := o.resolveCallProject(ctx, in.ProjectID, in.SessionID)
+	if err != nil {
+		return nil, fmt.Errorf("agent_memory_save: %w", err)
+	}
 
 	wc := store.WriteContext{
 		Actor:     in.Operator,
@@ -538,7 +556,10 @@ func (o *Orchestrator) AgentMemoryGet(ctx context.Context, in AgentMemoryGetInpu
 	}
 	// SPEC-203: read the row from the resolved project (the session's
 	// project when the caller names one), not from the active slot.
-	projectID := o.resolveCallProject(ctx, in.ProjectID, in.SessionID)
+	projectID, err := o.resolveCallProject(ctx, in.ProjectID, in.SessionID)
+	if err != nil {
+		return nil, fmt.Errorf("agent_memory_get: %w", err)
+	}
 	row, err := o.Store.GetAgentMemoryInProject(ctx, in.ID, projectID)
 	if err != nil {
 		// v2.8.0-alpha D5: when the flag is on, propagate the typed
@@ -607,11 +628,15 @@ func (o *Orchestrator) AgentMemoryUpdate(ctx context.Context, in AgentMemoryUpda
 
 	// SPEC-203: the update targets the row in the project of the
 	// named session, not the one in the active slot.
+	projectID, err := o.resolveCallProject(ctx, in.ProjectID, in.SessionID)
+	if err != nil {
+		return nil, fmt.Errorf("agent_memory_update: %w", err)
+	}
 	wc := store.WriteContext{
 		Actor:     in.Operator,
 		WritePath: "AgentMemoryUpdate",
 		SessionID: in.SessionID,
-		ProjectID: o.resolveCallProject(ctx, in.ProjectID, in.SessionID),
+		ProjectID: projectID,
 	}
 	u := &agentmemory.AgentMemoryUpdate{
 		Title:     in.Title,
@@ -664,7 +689,10 @@ func (o *Orchestrator) AgentMemoryArchive(ctx context.Context, in AgentMemoryArc
 
 	// SPEC-203: the archive targets the row in the project of the
 	// named session, not the one in the active slot.
-	projectID := o.resolveCallProject(ctx, in.ProjectID, in.SessionID)
+	projectID, err := o.resolveCallProject(ctx, in.ProjectID, in.SessionID)
+	if err != nil {
+		return nil, fmt.Errorf("agent_memory_archive: %w", err)
+	}
 	wc := store.WriteContext{
 		Actor:     in.Operator,
 		WritePath: "AgentMemoryArchive",
