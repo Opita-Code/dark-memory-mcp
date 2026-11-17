@@ -843,6 +843,84 @@ func (s *Store) SaveSession(ctx context.Context, wc store.WriteContext, sess *se
 	return id, err
 }
 
+// GetSessionByID returns the session row by id WITHOUT filtering by the
+// active project (SPEC-203).
+//
+// The session id is globally unique. GetSession keeps its project filter
+// (the project-scoped reads rely on it); this one exists for the frame
+// source, which resolves the frames of the session a call NAMES — and
+// that session may well live in another project than the active slot.
+func (s *Store) GetSessionByID(ctx context.Context, sessionID string) (*session.Session, error) {
+	if strings.TrimSpace(sessionID) == "" {
+		return nil, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	row := s.db.QueryRowContext(ctx,
+		`SELECT id, session_id, status, constitution_id, constitution_ver, active_mods,
+		        operator, started_at, closed_at, last_heartbeat_at,
+		        parent_session_id, resurrected_from, notes
+		 FROM sessions WHERE session_id = ?`, sessionID)
+	var sess session.Session
+	var notes, closedAt, heartbeat, parent, rescFrom sql.NullString
+	if err := row.Scan(&sess.ID, &sess.SessionID, &sess.Status, &sess.ConstitutionID, &sess.ConstitutionVer, &sess.ActiveMods,
+		&sess.Operator, &sess.StartedAt, &closedAt, &heartbeat, &parent, &rescFrom, &notes); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("sqlite: get_session_by_id: %w", err)
+	}
+	if closedAt.Valid {
+		sess.ClosedAt = closedAt.String
+	}
+	if heartbeat.Valid {
+		sess.LastHeartbeatAt = heartbeat.String
+	}
+	if parent.Valid {
+		sess.ParentSessionID = parent.String
+	}
+	if rescFrom.Valid {
+		sess.ResurrectedFrom = rescFrom.String
+	}
+	if notes.Valid {
+		sess.Notes = notes.String
+	}
+	return &sess, nil
+}
+
+// GetVLPStateByID returns the vlp_state row by session id WITHOUT
+// filtering by the active project (SPEC-203). Same reasoning as
+// GetSessionByID: the frame source reads the state of the session the
+// call names.
+func (s *Store) GetVLPStateByID(ctx context.Context, sessionID string) (*store.VLPStateRow, error) {
+	if strings.TrimSpace(sessionID) == "" {
+		return nil, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	row := s.db.QueryRowContext(ctx, `
+		SELECT id, session_id, state, last_event, last_verdict, turn_count,
+		       minset_current, constitution_id, constitution_ver,
+		       created_at, updated_at, project_id, open_spec_id
+		FROM vlp_state WHERE session_id = ?`, sessionID)
+	var r store.VLPStateRow
+	var le, lv, mc, ci, cv, pid sql.NullString
+	if err := row.Scan(&r.ID, &r.SessionID, &r.State, &le, &lv, &r.TurnCount,
+		&mc, &ci, &cv, &r.CreatedAt, &r.UpdatedAt, &pid, &r.OpenSpecID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("sqlite: get_vlp_state_by_id: %w", err)
+	}
+	r.LastEvent = le.String
+	r.LastVerdict = lv.String
+	r.MinsetCurrent = mc.String
+	r.ConstitutionID = ci.String
+	r.ConstitutionVer = cv.String
+	r.ProjectID = pid.String
+	return &r, nil
+}
+
 func (s *Store) GetSession(ctx context.Context, sessionID string) (*session.Session, error) {
 	if err := s.requireProject(); err != nil {
 		return nil, err

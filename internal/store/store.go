@@ -380,6 +380,22 @@ type Store interface {
 	// SaveSession requires sess.ProjectID != "" (project isolation).
 	SaveSession(ctx context.Context, wc WriteContext, s *session.Session) (int64, error)
 	GetSession(ctx context.Context, sessionID string) (*session.Session, error)
+	// GetSessionByID returns the session row by id WITHOUT filtering by
+	// the active project (SPEC-203).
+	//
+	// The session id is globally unique, and the session row is the key
+	// that identifies WHICH scope a call belongs to: the project filter
+	// of GetSession is a convenience for the project-scoped reads, not
+	// an isolation boundary for the session itself. The frame source
+	// needs it — it resolves the frames of the session the call names,
+	// and it must be able to do that for a session that is NOT in the
+	// active project (that is the whole point of naming it).
+	GetSessionByID(ctx context.Context, sessionID string) (*session.Session, error)
+	// GetVLPStateByID returns the vlp_state row by session id WITHOUT
+	// filtering by the active project (SPEC-203). Same reasoning as
+	// GetSessionByID: it is the frame source's read of the state of the
+	// session the call names.
+	GetVLPStateByID(ctx context.Context, sessionID string) (*VLPStateRow, error)
 	// CloseSession closes a session with the given operator reason.
 	// reason ∈ {clean, aborted, archived} — see session.CloseReason.
 	// Maps to {closed_clean, closed_aborted, archived} per INV-8.

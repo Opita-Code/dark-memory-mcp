@@ -149,6 +149,25 @@ func NewStoreSource(st store.Store, now func() time.Time) *StoreSource {
 	return &StoreSource{Store: st, Now: now}
 }
 
+// sessionProject returns the project that owns the given session
+// (SPEC-203). The session is the authority for its own scope: the
+// active project slot is a mutable global that any client of the
+// server process can move, so it cannot answer "which project is this
+// session in".
+//
+// Empty when the session is unknown; the caller falls back to the
+// active project.
+func (s *StoreSource) sessionProject(ctx context.Context, sessionID string) string {
+	if s.Store == nil || sessionID == "" {
+		return ""
+	}
+	pid, err := s.Store.ProjectIDForSession(ctx, sessionID)
+	if err != nil {
+		return ""
+	}
+	return pid
+}
+
 // IdentityFrame composes from the sessions row. Returns (nil, nil)
 // if no session exists for sessionID (cache miss; gate refuses).
 //
@@ -163,7 +182,12 @@ func NewStoreSource(st store.Store, now func() time.Time) *StoreSource {
 // check (INV-3) is effectively unverified. Operators testing the
 // gate pre-5A.ii.b.2.b should treat this as a dev-only posture.
 func (s *StoreSource) IdentityFrame(ctx context.Context, sessionID string) (*atomic.IdentityFrame, error) {
-	sess, err := s.Store.GetSession(ctx, sessionID)
+	// SPEC-203: the session is resolved BY ID, not through the active
+	// project slot. A call that names its session must get the frames
+	// of THAT session even when another client has moved the slot —
+	// otherwise the gate refuses the call with "identity unavailable
+	// for this session" and the caller cannot name its scope at all.
+	sess, err := s.Store.GetSessionByID(ctx, sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -201,7 +225,7 @@ func (s *StoreSource) IdentityFrame(ctx context.Context, sessionID string) (*ato
 // Tasks and evidence-pointers are populated as empty slices. A future
 // wave can layer on full task/evidence fetching.
 func (s *StoreSource) ScopeFrame(ctx context.Context, sessionID string) (*atomic.ScopeFrame, error) {
-	state, err := s.Store.GetVLPState(ctx, sessionID)
+	state, err := s.Store.GetVLPStateByID(ctx, sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -244,14 +268,19 @@ func (s *StoreSource) ScopeFrame(ctx context.Context, sessionID string) (*atomic
 // Source label is "default:<project>" so operators can grep
 // write_audit rows for sessions using default grants.
 func (s *StoreSource) CapabilitiesFrame(ctx context.Context, sessionID string) (*atomic.CapabilitiesFrame, error) {
-	sess, err := s.Store.GetSession(ctx, sessionID)
+	sess, err := s.Store.GetSessionByID(ctx, sessionID)
 	if err != nil {
 		return nil, err
 	}
 	if sess == nil {
 		return nil, nil
 	}
-	projectID := s.Store.ActiveProject()
+	// SPEC-203: the scope grant is the SESSION's project, not the
+	// active slot: the frames belong to the session the call names.
+	projectID := s.sessionProject(ctx, sessionID)
+	if projectID == "" {
+		projectID = s.Store.ActiveProject()
+	}
 	grantedAt := s.Now()
 	tools := make([]atomic.ToolGrant, 0, 24)
 	for _, name := range strings.Split(DefaultToolGrants, ",") {
@@ -290,7 +319,7 @@ func (s *StoreSource) CapabilitiesFrame(ctx context.Context, sessionID string) (
 // is captured in pendingItems as a single string (truncated to 200
 // chars); full reasoning is in the source sdd_evaluations row.
 func (s *StoreSource) DriftFrame(ctx context.Context, sessionID string) (*atomic.DriftFrame, error) {
-	state, err := s.Store.GetVLPState(ctx, sessionID)
+	state, err := s.Store.GetVLPStateByID(ctx, sessionID)
 	if err != nil {
 		return nil, err
 	}
@@ -343,7 +372,7 @@ func (s *StoreSource) DriftFrame(ctx context.Context, sessionID string) (*atomic
 // there. Tracked as a known gap, not a blocker (sqlite is the
 // canonical driver).
 func (s *StoreSource) PersonaFrame(ctx context.Context, sessionID string) (*atomic.PersonaFrame, error) {
-	sess, err := s.Store.GetSession(ctx, sessionID)
+	sess, err := s.Store.GetSessionByID(ctx, sessionID)
 	if err != nil {
 		return nil, err
 	}

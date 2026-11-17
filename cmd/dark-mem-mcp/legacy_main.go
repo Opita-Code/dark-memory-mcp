@@ -252,6 +252,14 @@ func legacyMain() {
 		DriftChecker:       driftChecker,
 		ActiveSession:      activeSessionResolver,
 		ActiveProject:      bootState.Store.ActiveProject,
+		SessionProject: func(ctx context.Context, sessionID string) string {
+			// SPEC-203: the session is the authority for its own scope.
+			pid, err := bootState.Store.ProjectIDForSession(ctx, sessionID)
+			if err != nil {
+				return ""
+			}
+			return pid
+		},
 		ActiveConstitution: func() (string, string) { return bootState.Config.ConstitutionID, bootState.Config.ConstitutionVer },
 		RecordRefusal: func(ctx context.Context, toolName, sessionID, code, message string) {
 			bootState.Orchestrator.RecordError(ctx, toolName, sessionID,

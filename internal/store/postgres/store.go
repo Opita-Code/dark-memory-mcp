@@ -1410,6 +1410,50 @@ func (s *Store) SaveSession(ctx context.Context, wc store.WriteContext, sess *se
 	return id, err
 }
 
+// GetSessionByID returns the session row by id WITHOUT filtering by the
+// active project (SPEC-203). Mirror of the SQLite impl.
+func (s *Store) GetSessionByID(ctx context.Context, sessionID string) (*session.Session, error) {
+	if strings.TrimSpace(sessionID) == "" {
+		return nil, nil
+	}
+	var sess session.Session
+	var notes, closedAt, heartbeat, parent, rescFrom sql.NullString
+	row := s.pool.QueryRow(ctx,
+		`SELECT id, session_id, status, constitution_id, constitution_ver, active_mods,
+		        operator, started_at, closed_at, last_heartbeat_at,
+		        parent_session_id, resurrected_from, notes
+		 FROM sessions WHERE session_id = $1`, sessionID)
+	if err := row.Scan(&sess.ID, &sess.SessionID, &sess.Status, &sess.ConstitutionID, &sess.ConstitutionVer, &sess.ActiveMods,
+		&sess.Operator, &sess.StartedAt, &closedAt, &heartbeat, &parent, &rescFrom, &notes); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("postgres: get_session_by_id: %w", err)
+	}
+	if closedAt.Valid {
+		sess.ClosedAt = closedAt.String
+	}
+	if heartbeat.Valid {
+		sess.LastHeartbeatAt = heartbeat.String
+	}
+	if parent.Valid {
+		sess.ParentSessionID = parent.String
+	}
+	if rescFrom.Valid {
+		sess.ResurrectedFrom = rescFrom.String
+	}
+	if notes.Valid {
+		sess.Notes = notes.String
+	}
+	return &sess, nil
+}
+
+// GetVLPStateByID returns the vlp_state row by session id WITHOUT
+// filtering by the active project (SPEC-203). Mirror of the SQLite impl.
+func (s *Store) GetVLPStateByID(ctx context.Context, sessionID string) (*store.VLPStateRow, error) {
+	return nil, notImpl("GetVLPStateByID")
+}
+
 func (s *Store) GetSession(ctx context.Context, sessionID string) (*session.Session, error) {
 	if err := s.requireProject(); err != nil {
 		return nil, err
