@@ -303,6 +303,38 @@ type Store interface {
 	SetActiveProject(ctx context.Context, projectID string) error
 	// ActiveProject returns the currently installed project_id.
 	ActiveProject() string
+	// ProjectIDForSession returns the project_id that owns the given
+	// session_id, or "" when the session is unknown.
+	//
+	// SPEC-203: the lookup is by session_id ALONE. Unlike GetSession,
+	// it does NOT filter by the active project — the active project is
+	// a mutable global slot shared by every client of the server
+	// process, so it cannot answer "which project owns THIS session".
+	// Returns ("", nil) for an unknown session; the caller falls back
+	// to the legacy slot.
+	ProjectIDForSession(ctx context.Context, sessionID string) (string, error)
+	// ResolveProjectForCall resolves the project a call belongs to
+	// (SPEC-203). The chain, in order:
+	//
+	//  1. The project of the named session — it is the authority. If
+	//     an explicit projectID contradicts it, the session wins: the
+	//     write lands where the caller is working, not where a stale
+	//     argument says.
+	//  2. The explicit projectID, when the session names none (the
+	//     administrative flows set it deliberately; session_start
+	//     names the session it is about to create, which does not
+	//     exist yet).
+	//  3. The active project slot — the legacy fallback.
+	//
+	// Reads use a stricter variant (the store refuses a project that
+	// contradicts the session with ErrCrossProjectAccess instead of
+	// silently choosing one): a read must never widen.
+	ResolveProjectForCall(ctx context.Context, projectID, sessionID string) (string, error)
+	// GetAgentMemoryInProject returns the row by id scoped to an
+	// explicit project (SPEC-203). GetAgentMemory keeps its meaning
+	// (the active project); this one is what a caller uses when it
+	// already resolved the project and must read back exactly that.
+	GetAgentMemoryInProject(ctx context.Context, id int64, projectID string) (*agentmemory.AgentMemory, error)
 	// CreateProject inserts a new project. Idempotent on (project_id).
 	CreateProject(ctx context.Context, p *project.Project) error
 	// GetProject returns a project by id, or nil if missing, with
@@ -348,6 +380,22 @@ type Store interface {
 	// SaveSession requires sess.ProjectID != "" (project isolation).
 	SaveSession(ctx context.Context, wc WriteContext, s *session.Session) (int64, error)
 	GetSession(ctx context.Context, sessionID string) (*session.Session, error)
+	// GetSessionByID returns the session row by id WITHOUT filtering by
+	// the active project (SPEC-203).
+	//
+	// The session id is globally unique, and the session row is the key
+	// that identifies WHICH scope a call belongs to: the project filter
+	// of GetSession is a convenience for the project-scoped reads, not
+	// an isolation boundary for the session itself. The frame source
+	// needs it — it resolves the frames of the session the call names,
+	// and it must be able to do that for a session that is NOT in the
+	// active project (that is the whole point of naming it).
+	GetSessionByID(ctx context.Context, sessionID string) (*session.Session, error)
+	// GetVLPStateByID returns the vlp_state row by session id WITHOUT
+	// filtering by the active project (SPEC-203). Same reasoning as
+	// GetSessionByID: it is the frame source's read of the state of the
+	// session the call names.
+	GetVLPStateByID(ctx context.Context, sessionID string) (*VLPStateRow, error)
 	// CloseSession closes a session with the given operator reason.
 	// reason ∈ {clean, aborted, archived} — see session.CloseReason.
 	// Maps to {closed_clean, closed_aborted, archived} per INV-8.
@@ -954,6 +1002,18 @@ type Store interface {
 	// (project_id, operator, subagent_id). Returns ErrNotFound if
 	// no matching row.
 	ClearActiveSubagent(ctx context.Context, wc WriteContext, operator, subagentID string) error
+
+	// ListActiveSubagents returns EVERY live (non-expired) subagent
+	// binding for (project_id, operator), newest first.
+	//
+	// GetActiveSubagent returns only the most-recent one (LIMIT 1),
+	// which is enough for the agent_id resolution chain but NOT
+	// enough for an operator to discover orphaned bindings. The C2
+	// trap is precisely that a binding left open by a finished
+	// delegation keeps capturing the principal's writes, and it is
+	// invisible unless you can enumerate them. Returns an empty slice
+	// (not nil error) when there are none.
+	ListActiveSubagents(ctx context.Context, operator string) ([]ActiveSubagent, error)
 
 	// SweepExpiredSubagents deletes active_subagents rows where
 	// spawned_at + ttl_seconds < now. Returns the count of deleted

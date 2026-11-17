@@ -1,6 +1,6 @@
 {
   "name": "@opitacode/dark-memory-mcp-darwin-arm64",
-  "version": "4.0.0-alpha.33",
+  "version": "4.0.0-alpha.34",
   "description": "dark-memory-mcp binary for macOS (Apple Silicon)",
   "license": "MIT",
   "main": "index.js",

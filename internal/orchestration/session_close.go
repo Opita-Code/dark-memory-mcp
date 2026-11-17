@@ -47,6 +47,18 @@ type SessionCloseOutput struct {
 	// best-effort (0 when the summary read fails).
 	ErrorsTotal      int `json:"errors_total,omitempty"`
 	ErrorOccurrences int `json:"error_occurrences,omitempty"`
+	// ActiveSubagentIDs (v2.8.0-alpha C2, visibility) lists the
+	// LIVE subagent bindings still open for this operator when the
+	// session closed. A binding left open captures the principal's
+	// agent_memory writes, so reporting it here tells the operator
+	// exactly what to clean up (subagent_unregister) instead of
+	// leaving a silent mis-attribution behind.
+	//
+	// NOTE: the bindings are NOT closed automatically. A background
+	// subagent may still be running and writing; dropping its
+	// binding here would break its C2 isolation. The TTL (default
+	// 1h) remains the backstop.
+	ActiveSubagentIDs []string `json:"active_subagent_ids,omitempty"`
 }
 
 // SessionClose closes a session and returns a summary of activity.
@@ -148,6 +160,24 @@ func (o *Orchestrator) SessionClose(ctx context.Context, in SessionCloseInput) (
 		// (shouldn't happen, but fall back to "now").
 		closedAt = o.now()
 	}
+
+	// v2.8.0-alpha C2 (visibility): report the live subagent bindings
+	// this operator is leaving behind. Best-effort: a broken read must
+	// not fail the close. We deliberately do NOT clear them here — a
+	// background subagent may still be writing and its C2 isolation
+	// depends on the binding staying alive. The operator (or the TTL
+	// sweeper) closes them.
+	var liveBindings []string
+	if v280Enabled() && closedSess.Operator != "" {
+		if bindings, err := o.Store.ListActiveSubagents(ctx, closedSess.Operator); err != nil {
+			o.RecordError(ctx, "session_close", in.SessionID, err, errorobs.SeverityWarn)
+		} else {
+			for _, b := range bindings {
+				liveBindings = append(liveBindings, b.SubagentID)
+			}
+		}
+	}
+
 	return &SessionCloseOutput{
 		SessionID:        in.SessionID,
 		ClosedAt:         closedAt,
@@ -156,5 +186,7 @@ func (o *Orchestrator) SessionClose(ctx context.Context, in SessionCloseInput) (
 		ItemsTotal:       itemsTotal,
 		ErrorsTotal:      errorsTotal,
 		ErrorOccurrences: errorOccurrences,
+
+		ActiveSubagentIDs: liveBindings,
 	}, nil
 }

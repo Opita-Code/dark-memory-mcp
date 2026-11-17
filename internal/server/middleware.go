@@ -51,6 +51,7 @@ import (
 
 	"github.com/dark-agents/dark-memory-mcp/internal/drift"
 	"github.com/dark-agents/dark-memory-mcp/internal/policy"
+	"github.com/dark-agents/dark-memory-mcp/internal/session"
 	"github.com/dark-agents/dark-memory-mcp/internal/tools"
 )
 
@@ -97,7 +98,14 @@ type GateMiddleware struct {
 	// regression where these tools refused with ErrFrameStaleTooFar
 	// because buildGateInput was passing projectID="" to the resolver,
 	// which short-circuited without consulting the store.
-	ActiveProject      func() string
+	ActiveProject func() string
+	// SessionProject returns the project that owns the given session_id
+	// (SPEC-203). It is how the gate resolves the scope of a call that
+	// names its session: the session is the authority, and the global
+	// slot cannot answer for it.
+	//
+	// Optional: when nil, the project falls back to ActiveProject.
+	SessionProject     func(ctx context.Context, sessionID string) string
 	ActiveConstitution func() (id, ver string)
 	Now                func() time.Time
 	// RecordRefusal (v2.11.0, spec 757) is the optional error-telemetry
@@ -169,6 +177,27 @@ func (m *GateMiddleware) Wrap(
 	}
 
 	// --- Inner ---
+	//
+	// SPEC-204: the identity resolved above travels with the call.
+	//
+	// The middleware is where the session is resolved (buildGateInput
+	// already did it for the gate). Until now that answer died here:
+	// the store resolved the same question again, on its own, and the
+	// two answers could disagree — which is how a row written in the
+	// project of the session became invisible to a later read.
+	//
+	// The scope carries the project OF THE SESSION (the authority),
+	// not the explicit project_id of the call: an explicit project may
+	// contradict the session and is a narrowing, never a widening.
+	//
+	// From here on, NO tool has to declare session_id for its write to
+	// land in the project of the session that asked for it.
+	scope := session.Scope{SessionID: gateIn.SessionID}
+	if gateIn.SessionID != "" && m.SessionProject != nil {
+		scope.ProjectID = m.SessionProject(ctx, gateIn.SessionID)
+	}
+	ctx = session.WithScope(ctx, scope)
+
 	resp, err := inner(ctx, args)
 	if err != nil {
 		// Inner returned a Go error. wrapHandler maps this to
@@ -240,23 +269,33 @@ func (m *GateMiddleware) buildGateInput(ctx context.Context, toolName string, ar
 		Args:     decodeArgsMap(args),
 	}
 
-	// 1. Resolve project_id (args wins, ActiveProject fallback, else "").
-	projectID := ""
-	if pid, ok := in.Args["project_id"].(string); ok && pid != "" {
-		projectID = pid
-	} else if m.ActiveProject != nil {
-		projectID = m.ActiveProject()
-	}
-	in.ProjectID = projectID
-
-	// 2. Resolve session_id (args wins, then resolver using the
-	//    resolved project_id so the resolver doesn't short-circuit
-	//    on an empty projectID).
+	// 1. Resolve session_id FIRST (args wins, then the resolver).
+	//
+	// SPEC-203: the order matters. The session is the authority for
+	// its own scope, so it has to be known before the project: the
+	// project of a call that names its session is the project that
+	// owns it, not whatever the global slot points at (the slot is
+	// moved by every client of the server process).
 	if id, ok := in.Args["session_id"].(string); ok && id != "" {
 		in.SessionID = id
 	} else if m.ActiveSession != nil {
-		in.SessionID = m.ActiveSession.ActiveSessionID(ctx, projectID)
+		// The resolver needs a project to ask about; the active one
+		// is the only sensible guess when the caller named none.
+		in.SessionID = m.ActiveSession.ActiveSessionID(ctx, m.activeProject())
 	}
+
+	// 2. Resolve project_id: args wins; then the project of the named
+	// session; then the active project.
+	projectID := ""
+	if pid, ok := in.Args["project_id"].(string); ok && pid != "" {
+		projectID = pid
+	} else if in.SessionID != "" && m.SessionProject != nil {
+		projectID = m.SessionProject(ctx, in.SessionID)
+	}
+	if projectID == "" {
+		projectID = m.activeProject()
+	}
+	in.ProjectID = projectID
 
 	// constitution_id/ver come from the active constitution at the
 	// server level. The gate doesn't read env directly; the caller
@@ -279,6 +318,14 @@ func (m *GateMiddleware) now() time.Time {
 		return m.Now()
 	}
 	return time.Now().UTC()
+}
+
+// activeProject returns the active project id, tolerating a nil hook.
+func (m *GateMiddleware) activeProject() string {
+	if m.ActiveProject == nil {
+		return ""
+	}
+	return m.ActiveProject()
 }
 
 // recordRefusal forwards a gate refusal to the Error Observatory

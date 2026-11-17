@@ -84,3 +84,8 @@ governance/workspace-policy.constitution.json.sha256
 pr-*-review-architectural.md
 pr-*-review-artifact.patch
 
+
+# El binario que construye el CI en cmd/dark-mem-mcp/ (34 MB): no es un
+# artefacto del repo, y un `git add -A` lo publicaria. El gate de wire
+# (tests/wire) lo construye en local con el mismo nombre.
+cmd/dark-mem-mcp/dark-mem-mcp

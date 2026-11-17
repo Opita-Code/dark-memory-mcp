@@ -203,6 +203,9 @@ cat <<EOF
     notes           : dm-flow spec ${SPEC_ID}
     -> el gate exige sesion activa; sin esto, todo lo demas devuelve
        ErrFrameStaleTooFar.
+    -> REVISA active_subagent_ids en la respuesta: si hay bindings C2
+       vivos de una delegacion anterior, cierralos con
+       dark_memory_subagent_unregister antes de seguir.
 
 [2] dark_memory_spec_context
     spec_id : ${SPEC_ID}
@@ -239,15 +242,23 @@ cat <<EOF
 
 [7] dark_memory_agent_memory_save
     operator : opencode
+    agent_id : opencode
     kind     : decision
     pinned   : true
     title    : "Spec ${SPEC_ID} en ${PROJECT_ID}"
     content  : "<que se entrego, el veredicto y la ruta del artefacto>"
     tags     : "vibe-loop,spec:${SPEC_ID},${PROJECT_ID}"
+    -> agent_id EXPLICITO, siempre: es prioridad 1 en la cadena de
+       resolucion y evita que un binding C2 vivo de un subagente
+       etiquete tu escritura como si fuera suya.
 
 [8] dark_memory_session_close
     session_id : <el de [1]>
     -> cierra limpio y deja el rastro.
+    -> REVISA active_subagent_ids en la respuesta: son los bindings C2
+       que dejas vivos. Cierralos si la delegacion ya termino; si un
+       subagente sigue corriendo en background, dejalo (el TTL de 1h
+       es la red de seguridad).
 
 EOF
 

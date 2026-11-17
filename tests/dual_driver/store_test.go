@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dark-agents/dark-memory-mcp/internal/agentmemory"
 	"github.com/dark-agents/dark-memory-mcp/internal/atomic"
 	"github.com/dark-agents/dark-memory-mcp/internal/audit"
 	"github.com/dark-agents/dark-memory-mcp/internal/project"
@@ -1241,6 +1242,102 @@ func runContract(t *testing.T, ctx context.Context, s store.Store, label string)
 		defer cancel()
 		if err := rawDB.PingContext(pingCtx); err != nil {
 			t.Errorf("%s: Store.RawDB().Ping failed: %v", label, err)
+		}
+	})
+
+	// SPEC-203: the project of a call is resolved from the session it
+	// names, not from the global active-project slot. Both drivers
+	// implement the resolution (the lookup is by session_id alone).
+	t.Run(fmt.Sprintf("%s/session_project_resolution", label), func(t *testing.T) {
+		const projID = "dual-spec203"
+		const sessID = "dual-spec203-sess"
+		if err := s.CreateProject(ctx, &project.Project{ProjectID: projID, DisplayName: "SPEC-203"}); err != nil {
+			t.Fatalf("%s: create project %s: %v", label, projID, err)
+		}
+		if err := s.SetActiveProject(ctx, projID); err != nil {
+			t.Fatalf("%s: set active project: %v", label, err)
+		}
+		if _, err := s.SaveSession(ctx, store.WriteContext{
+			Actor: "contract", SessionID: sessID, WritePath: "contract", ProjectID: projID,
+		}, &session.Session{SessionID: sessID, Status: string(session.StatusOpen)}); err != nil {
+			t.Fatalf("%s: save session: %v", label, err)
+		}
+
+		// The lookup ignores the active project on purpose.
+		got, err := s.ProjectIDForSession(ctx, sessID)
+		if err != nil {
+			t.Fatalf("%s: ProjectIDForSession: %v", label, err)
+		}
+		if got != projID {
+			t.Errorf("%s: ProjectIDForSession(%s) = %q, want %q", label, sessID, got, projID)
+		}
+
+		// An unknown session is empty, not an error.
+		got, err = s.ProjectIDForSession(ctx, "no-such-session")
+		if err != nil {
+			t.Fatalf("%s: ProjectIDForSession (unknown): %v", label, err)
+		}
+		if got != "" {
+			t.Errorf("%s: ProjectIDForSession(unknown) = %q, want empty", label, got)
+		}
+
+		// The session is the authority; the explicit project is the
+		// fallback; the slot is the last resort.
+		resolved, err := s.ResolveProjectForCall(ctx, "", sessID)
+		if err != nil {
+			t.Fatalf("%s: ResolveProjectForCall (session): %v", label, err)
+		}
+		if resolved != projID {
+			t.Errorf("%s: ResolveProjectForCall(session) = %q, want %q", label, resolved, projID)
+		}
+		resolved, err = s.ResolveProjectForCall(ctx, projID, "")
+		if err != nil {
+			t.Fatalf("%s: ResolveProjectForCall (explicit): %v", label, err)
+		}
+		if resolved != projID {
+			t.Errorf("%s: ResolveProjectForCall(explicit) = %q, want %q", label, resolved, projID)
+		}
+		resolved, err = s.ResolveProjectForCall(ctx, "", "")
+		if err != nil {
+			t.Fatalf("%s: ResolveProjectForCall (slot): %v", label, err)
+		}
+		if resolved != projID {
+			t.Errorf("%s: ResolveProjectForCall(no session) = %q, want the active %q", label, resolved, projID)
+		}
+
+		// GetAgentMemoryInProject is the project-scoped read. Postgres
+		// skipped: the postgres agent_memory backplane is not built
+		// yet (GetAgentMemory itself returns notImpl there), so the
+		// sqlite path is the canonical coverage.
+		if s.DriverName() == "sqlite" {
+			memID, err := s.SaveAgentMemory(ctx, store.WriteContext{
+				Actor: "contract", SessionID: sessID, WritePath: "contract",
+			}, &agentmemory.AgentMemory{Operator: "contract", Kind: "note", Content: "spec203 contract row"})
+			if err != nil {
+				t.Fatalf("%s: SaveAgentMemory: %v", label, err)
+			}
+			got, err := s.GetAgentMemoryInProject(ctx, memID, projID)
+			if err != nil {
+				t.Fatalf("%s: GetAgentMemoryInProject: %v", label, err)
+			}
+			if got == nil || got.ProjectID != projID {
+				t.Errorf("%s: GetAgentMemoryInProject returned %+v, want a row of %q", label, got, projID)
+			}
+			// The row is not visible from another project.
+			if err := s.CreateProject(ctx, &project.Project{ProjectID: "dual-spec203-other", DisplayName: "Other"}); err != nil {
+				t.Fatalf("%s: create other project: %v", label, err)
+			}
+			if err := s.SetActiveProject(ctx, "dual-spec203-other"); err != nil {
+				t.Fatalf("%s: set active project (other): %v", label, err)
+			}
+			got, err = s.GetAgentMemoryInProject(ctx, memID, "dual-spec203-other")
+			if err == nil {
+				t.Errorf("%s: GetAgentMemoryInProject from another project returned %+v, want a cross-project error", label, got)
+			}
+			// Restore the active project for the blocks that follow.
+			if err := s.SetActiveProject(ctx, projID); err != nil {
+				t.Fatalf("%s: restore active project: %v", label, err)
+			}
 		}
 	})
 }

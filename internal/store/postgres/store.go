@@ -53,8 +53,8 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/audit"
 	"github.com/dark-agents/dark-memory-mcp/internal/constitution"
 	"github.com/dark-agents/dark-memory-mcp/internal/embedder"
-	"github.com/dark-agents/dark-memory-mcp/internal/eventholder"
 	"github.com/dark-agents/dark-memory-mcp/internal/errorobs"
+	"github.com/dark-agents/dark-memory-mcp/internal/eventholder"
 	"github.com/dark-agents/dark-memory-mcp/internal/merkle"
 	"github.com/dark-agents/dark-memory-mcp/internal/migrate"
 	migratepostgres "github.com/dark-agents/dark-memory-mcp/internal/migrate/postgres"
@@ -67,8 +67,8 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 	"github.com/dark-agents/dark-memory-mcp/internal/vibeflow"
 	"github.com/jackc/pgx/v5"
-	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/jackc/pgx/v5/pgxpool"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 // openPostgres opens a Postgres
@@ -186,11 +186,117 @@ func (s *Store) requireProject() error {
 // store.Store's active project. The Store refuses to write with no
 // project at all (requireProject runs at the top of every Save*). Mirror
 // of the same helper in the SQLite impl.
+//
+// DEPRECATED (SPEC-203): use resolveWriteProject instead — it adds the
+// session as the authoritative source of the project.
 func projectIDOrActive(wcProjectID, activeProject string) string {
 	if wcProjectID != "" {
 		return wcProjectID
 	}
 	return activeProject
+}
+
+// ProjectIDForSession returns the project_id that owns the given
+// session_id, or "" when the session is unknown.
+//
+// SPEC-203: the lookup is by session_id ALONE — it does NOT filter by
+// the active project, unlike GetSession. The active project is a
+// mutable global slot shared by every client of the server process, so
+// it cannot answer "which project owns THIS session". Mirror of the
+// same method in the SQLite impl.
+//
+// MEASURED with process identity (2026-11-17): the server exposes
+// runtime.pid and runtime.booted_at in health_ping. One process
+// (pid 1209767, booted 14:11:05Z) served two clients of two different
+// projects: its slot moved from dark-memory-mcp to <proyecto-vecino>,
+// and health_ping reported the second one for that very process. The
+// slot is per-PROCESS state and processes are shared.
+func (s *Store) ProjectIDForSession(ctx context.Context, sessionID string) (string, error) {
+	if strings.TrimSpace(sessionID) == "" {
+		return "", nil
+	}
+	var projectID string
+	err := s.pool.QueryRow(ctx,
+		`SELECT project_id FROM sessions WHERE session_id = $1`, sessionID).Scan(&projectID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("postgres: project_id_for_session: %w", err)
+	}
+	return projectID, nil
+}
+
+// resolveWriteProject resolves the project_id a write belongs to.
+//
+// SPEC-204 chain, in this order:
+//
+//  1. The project that owns the session — the session is the
+//     authority. The session is the one the caller named, or the one
+//     the server resolved and injected into the context.
+//  2. wc.ProjectID — the explicit project, used by the flows that name
+//     no session (session_start and the administrative paths).
+//  3. The active project slot — the legacy fallback, DEPRECATED as a
+//     source of resolution (SPEC-204 §8).
+//
+// A resolution failure is an ERROR (SPEC-204 §4): degrading to the slot
+// would reintroduce the bug this chain exists to remove, silently.
+func (s *Store) resolveWriteProject(ctx context.Context, wc store.WriteContext) (string, error) {
+	sid := session.ResolveCallSession(ctx, wc.SessionID)
+	if sid != "" {
+		pid, err := s.scopeProject(ctx, sid)
+		if err != nil {
+			return "", err
+		}
+		if pid != "" {
+			return pid, nil
+		}
+	}
+	if wc.ProjectID != "" {
+		return wc.ProjectID, nil
+	}
+	return s.ActiveProject(), nil
+}
+
+// scopeProject returns the project that owns the given session.
+//
+// When the context carries that same session, the project it carries is
+// reused (the server already resolved it for the gate). Otherwise the
+// session is looked up by id.
+//
+// A lookup FAILURE is an error and is never degraded to the global slot
+// (SPEC-204 §4).
+func (s *Store) scopeProject(ctx context.Context, sessionID string) (string, error) {
+	if strings.TrimSpace(sessionID) == "" {
+		return "", nil
+	}
+	if sc, ok := session.ScopeFromContext(ctx); ok && sc.SessionID == sessionID && sc.ProjectID != "" {
+		return sc.ProjectID, nil
+	}
+	return s.ProjectIDForSession(ctx, sessionID)
+}
+
+// ResolveProjectForCall resolves the project a call belongs to
+// (SPEC-203): the session is the authority, then the explicit
+// project, then the active project slot.
+//
+// SPEC-204: the session may come from the context (the server resolved
+// it once, for the gate), and a resolution failure is an error.
+func (s *Store) ResolveProjectForCall(ctx context.Context, projectID, sessionID string) (string, error) {
+	sid := session.ResolveCallSession(ctx, sessionID)
+	if sid != "" {
+		pid, err := s.scopeProject(ctx, sid)
+		if err != nil {
+			return "", err
+		}
+		if pid != "" {
+			return pid, nil
+		}
+	}
+	if projectID != "" {
+		return projectID, nil
+	}
+	return s.ActiveProject(), nil
 }
 
 // withProjectTx was REMOVED in spec 171 T5 (option b).
@@ -496,8 +602,8 @@ func (s *Store) ListAgentMemoryByAnyEntity(ctx context.Context, entityValues []s
 //     RFC3339Nano) when empty.
 //  3. runInTx with pgx.Tx:
 //     UPDATE agent_memory SET decision_state='superseded',
-//                              supersedes_id=newMemID,
-//                              valid_to=validTime
+//     supersedes_id=newMemID,
+//     valid_to=validTime
 //     WHERE id=oldMemID AND project_id=active.
 //     INSERT INTO decision_transitions (...).
 //     recordWriteTx for INV-1 audit row.
@@ -1166,6 +1272,14 @@ func (s *Store) recordWriteTx(ctx context.Context, tx pgx.Tx, ev audit.WriteEven
 	if contentHash != "" && ev.ContentSHA256 == "" {
 		ev.ContentSHA256 = contentHash
 	}
+	if ev.SessionID == "" {
+		// SPEC-204: the server resolved the session once (for the gate)
+		// and injected it into the context. EVERY write leaves the trace
+		// of the session that made it.
+		if sc, ok := session.ScopeFromContext(ctx); ok {
+			ev.SessionID = sc.SessionID
+		}
+	}
 	if ev.ProjectID == "" {
 		ev.ProjectID = s.activeProject
 	}
@@ -1208,6 +1322,14 @@ func (s *Store) recordWrite(ctx context.Context, ev audit.WriteEvent, contentHas
 	}
 	if contentHash != "" && ev.ContentSHA256 == "" {
 		ev.ContentSHA256 = contentHash
+	}
+	if ev.SessionID == "" {
+		// SPEC-204: the server resolved the session once (for the gate)
+		// and injected it into the context. EVERY write leaves the trace
+		// of the session that made it.
+		if sc, ok := session.ScopeFromContext(ctx); ok {
+			ev.SessionID = sc.SessionID
+		}
 	}
 	if ev.ProjectID == "" {
 		ev.ProjectID = s.activeProject
@@ -1301,7 +1423,10 @@ func (s *Store) SaveSession(ctx context.Context, wc store.WriteContext, sess *se
 	if err := s.requireProject(); err != nil {
 		return 0, err
 	}
-	projectID := projectIDOrActive(wc.ProjectID, s.activeProject) // capture before locking
+	projectID, projErr := s.resolveWriteProject(ctx, wc)
+	if projErr != nil {
+		return 0, projErr
+	}
 	if sess.StartedAt == "" {
 		sess.StartedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
@@ -1346,6 +1471,125 @@ func (s *Store) SaveSession(ctx context.Context, wc store.WriteContext, sess *se
 		}, "")
 	})
 	return id, err
+}
+
+// GetSessionByID returns the session row by id WITHOUT filtering by the
+// active project (SPEC-203). Mirror of the SQLite impl.
+func (s *Store) GetSessionByID(ctx context.Context, sessionID string) (*session.Session, error) {
+	if strings.TrimSpace(sessionID) == "" {
+		return nil, nil
+	}
+	var sess session.Session
+	var notes, closedAt, heartbeat, parent, rescFrom sql.NullString
+	row := s.pool.QueryRow(ctx,
+		`SELECT id, session_id, status, constitution_id, constitution_ver, active_mods,
+		        operator, started_at, closed_at, last_heartbeat_at,
+		        parent_session_id, resurrected_from, notes
+		 FROM sessions WHERE session_id = $1`, sessionID)
+	if err := row.Scan(&sess.ID, &sess.SessionID, &sess.Status, &sess.ConstitutionID, &sess.ConstitutionVer, &sess.ActiveMods,
+		&sess.Operator, &sess.StartedAt, &closedAt, &heartbeat, &parent, &rescFrom, &notes); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("postgres: get_session_by_id: %w", err)
+	}
+	if closedAt.Valid {
+		sess.ClosedAt = closedAt.String
+	}
+	if heartbeat.Valid {
+		sess.LastHeartbeatAt = heartbeat.String
+	}
+	if parent.Valid {
+		sess.ParentSessionID = parent.String
+	}
+	if rescFrom.Valid {
+		sess.ResurrectedFrom = rescFrom.String
+	}
+	if notes.Valid {
+		sess.Notes = notes.String
+	}
+	return &sess, nil
+}
+
+// GetVLPStateByID returns the vlp_state row by session id, scoped to
+// the project that owns the session (SPEC-203 + SPEC-204). Mirror of
+// the SQLite impl.
+//
+// SPEC-204 (M2): this was notImpl, so in postgres the frame source lost
+// the ScopeFrame and the DriftFrame — and with them the scope
+// validation and the drift check on the write path. The postgres smoke
+// test in CI does not exercise the gate, which is why it passed in
+// green.
+//
+// SPEC-204 (A2): vlp_state is UNIQUE(project_id, session_id), so the
+// same session_id can live in two projects. The read is scoped to the
+// project of the session: otherwise it can return another tenant's
+// state into the gate's frames.
+func (s *Store) GetVLPStateByID(ctx context.Context, sessionID string) (*store.VLPStateRow, error) {
+	if strings.TrimSpace(sessionID) == "" {
+		return nil, nil
+	}
+	projectID, err := s.scopeProject(ctx, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: get_vlp_state_by_id: %w", err)
+	}
+	if projectID == "" {
+		return nil, nil
+	}
+	var (
+		id          int64
+		sid         string
+		state       int
+		lastEvent   *string
+		lastVerdict *string
+		turnCount   int
+		minset      *string
+		consID      *string
+		consVer     *string
+		createdAt   string
+		updatedAt   string
+		rowProject  string
+		openSpecID  int64
+	)
+	err = s.pool.QueryRow(ctx, `
+		SELECT id, session_id, state, last_event, last_verdict, turn_count,
+		       minset_current, constitution_id, constitution_ver,
+		       created_at, updated_at, project_id, open_spec_id
+		FROM vlp_state WHERE session_id = $1 AND project_id = $2`,
+		sessionID, projectID).Scan(&id, &sid, &state, &lastEvent, &lastVerdict,
+		&turnCount, &minset, &consID, &consVer, &createdAt, &updatedAt, &rowProject, &openSpecID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("postgres: get_vlp_state_by_id: %w", err)
+	}
+	r := &store.VLPStateRow{
+		ID:         id,
+		SessionID:  sid,
+		State:      state,
+		TurnCount:  turnCount,
+		CreatedAt:  createdAt,
+		UpdatedAt:  updatedAt,
+		ProjectID:  rowProject,
+		OpenSpecID: openSpecID,
+	}
+	if lastEvent != nil {
+		r.LastEvent = *lastEvent
+	}
+	if lastVerdict != nil {
+		r.LastVerdict = *lastVerdict
+	}
+	if minset != nil {
+		r.MinsetCurrent = *minset
+	}
+	if consID != nil {
+		r.ConstitutionID = *consID
+	}
+	if consVer != nil {
+		r.ConstitutionVer = *consVer
+	}
+	return r, nil
 }
 
 func (s *Store) GetSession(ctx context.Context, sessionID string) (*session.Session, error) {
@@ -1741,7 +1985,10 @@ func (s *Store) SaveRun(ctx context.Context, wc store.WriteContext, run *researc
 	if err := s.requireProject(); err != nil {
 		return 0, err
 	}
-	projectID := projectIDOrActive(wc.ProjectID, s.activeProject) // capture before locking
+	projectID, projErr := s.resolveWriteProject(ctx, wc)
+	if projErr != nil {
+		return 0, projErr
+	}
 	if run.CreatedAt == "" {
 		run.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
@@ -2066,7 +2313,10 @@ func (s *Store) LinkResearch(ctx context.Context, wc store.WriteContext, link *r
 	if err := s.requireProject(); err != nil {
 		return err
 	}
-	projectID := projectIDOrActive(wc.ProjectID, s.activeProject) // capture before locking
+	projectID, projErr := s.resolveWriteProject(ctx, wc)
+	if projErr != nil {
+		return projErr
+	}
 	if link.CreatedAt == "" {
 		link.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
@@ -2132,7 +2382,10 @@ func (s *Store) SaveBrandGuide(ctx context.Context, wc store.WriteContext, b *vi
 	if err := s.requireProject(); err != nil {
 		return err
 	}
-	projectID := projectIDOrActive(wc.ProjectID, s.activeProject)
+	projectID, projErr := s.resolveWriteProject(ctx, wc)
+	if projErr != nil {
+		return projErr
+	}
 	if b.CreatedAt == "" {
 		b.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
@@ -3310,7 +3563,10 @@ func (s *Store) SaveVLPStateWithTransition(ctx context.Context, wc store.WriteCo
 // SaveVLPStateWithTransition. transitionNotes empty = skip transition-level
 // audit. Postgres impl uses pgx.Tx via s.runInTx.
 func (s *Store) saveVLPStateTx(ctx context.Context, wc store.WriteContext, row *store.VLPStateRow, transitionNotes string) (int64, error) {
-	projectID := projectIDOrActive(wc.ProjectID, s.activeProject)
+	projectID, projErr := s.resolveWriteProject(ctx, wc)
+	if projErr != nil {
+		return 0, projErr
+	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if row.CreatedAt == "" {
 		row.CreatedAt = now
@@ -3601,13 +3857,13 @@ func (s *Store) SetActiveSession(ctx context.Context, projectID, sessionID strin
 	// Best-effort audit row (INV-1). Same "log + carry on" policy as
 	// SQLite — failing the audit must not fail the pointer flip.
 	_ = s.recordWrite(ctx, audit.WriteEvent{
-		Actor:          activeProject,
-		ProjectID:      projectID,
-		WritePath:      "SetActiveSession",
-		SessionID:      sessionID,
-		ConstitutionID: "",
+		Actor:           activeProject,
+		ProjectID:       projectID,
+		WritePath:       "SetActiveSession",
+		SessionID:       sessionID,
+		ConstitutionID:  "",
 		ConstitutionVer: "",
-		CreatedAt:      now,
+		CreatedAt:       now,
 	}, "")
 	return nil
 }
@@ -3658,13 +3914,13 @@ func (s *Store) ClearActiveSession(ctx context.Context, projectID, expectedSessi
 		// shouldn't be double-counted (mirror of SQLite at
 		// sqlite/store.go:4312).
 		_ = s.recordWrite(ctx, audit.WriteEvent{
-			Actor:          activeProject,
-			ProjectID:      projectID,
-			WritePath:      "ClearActiveSession",
-			SessionID:      expectedSessionID,
-			ConstitutionID: "",
+			Actor:           activeProject,
+			ProjectID:       projectID,
+			WritePath:       "ClearActiveSession",
+			SessionID:       expectedSessionID,
+			ConstitutionID:  "",
 			ConstitutionVer: "",
-			CreatedAt:      now,
+			CreatedAt:       now,
 		}, "")
 	}
 	return nil
@@ -3685,6 +3941,13 @@ func (s *Store) SaveAgentMemory(ctx context.Context, wc store.WriteContext, m *a
 
 func (s *Store) GetAgentMemory(ctx context.Context, id int64) (*agentmemory.AgentMemory, error) {
 	return nil, notImpl("GetAgentMemory")
+}
+
+// GetAgentMemoryInProject is the project-scoped read (SPEC-203). The
+// Postgres agent_memory backplane is not built yet (see the
+// notImpl siblings), so this is the same stub.
+func (s *Store) GetAgentMemoryInProject(ctx context.Context, id int64, projectID string) (*agentmemory.AgentMemory, error) {
+	return nil, notImpl("GetAgentMemoryInProject")
 }
 
 func (s *Store) UpdateAgentMemory(ctx context.Context, wc store.WriteContext, id int64, u *agentmemory.AgentMemoryUpdate) (*agentmemory.AgentMemory, error) {
@@ -3721,7 +3984,10 @@ func (s *Store) SetActiveSubagent(ctx context.Context, wc store.WriteContext, ro
 	if err := s.requireProject(); err != nil {
 		return 0, err
 	}
-	projectID := projectIDOrActive(wc.ProjectID, s.activeProject)
+	projectID, projErr := s.resolveWriteProject(ctx, wc)
+	if projErr != nil {
+		return 0, projErr
+	}
 	ttl := row.TTLSeconds
 	if ttl <= 0 {
 		ttl = 3600
@@ -3818,6 +4084,60 @@ func (s *Store) GetActiveSubagent(ctx context.Context, operator string) (*store.
 	return &row, nil
 }
 
+// ListActiveSubagents returns every live (non-expired) subagent
+// binding for (project_id, operator), newest first. Unlike
+// GetActiveSubagent (LIMIT 1), this enumerates ALL of them so the
+// operator can discover orphaned bindings left open by a finished
+// delegation.
+//
+// Expired rows are filtered out Go-side (same defense-in-depth as
+// GetActiveSubagent): if the sweeper has not run yet, an expired
+// binding is still reported as dead.
+func (s *Store) ListActiveSubagents(ctx context.Context, operator string) ([]store.ActiveSubagent, error) {
+	if err := s.requireProject(); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(operator) == "" {
+		return nil, nil
+	}
+	activeProject := s.ActiveProject()
+
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, project_id, operator, subagent_id, parent_agent_id,
+		        spawned_at, ttl_seconds
+		   FROM active_subagents
+		  WHERE project_id = $1 AND operator = $2
+		  ORDER BY spawned_at DESC`, activeProject, operator)
+	if err != nil {
+		return nil, fmt.Errorf("active_subagents: list: %w", err)
+	}
+	defer rows.Close()
+
+	var out []store.ActiveSubagent
+	for rows.Next() {
+		var row store.ActiveSubagent
+		var spawnedAt time.Time
+		var ttl int
+		if err := rows.Scan(&row.ID, &row.ProjectID, &row.Operator, &row.SubagentID,
+			&row.ParentAgentID, &spawnedAt, &ttl); err != nil {
+			return nil, fmt.Errorf("active_subagents: scan: %w", err)
+		}
+		// spawned_at is TIMESTAMP WITH TIME ZONE on Postgres; rendered
+		// as RFC3339Nano in the Go struct (json contract preserved).
+		row.SpawnedAt = spawnedAt.UTC().Format(time.RFC3339Nano)
+		row.TTLSeconds = ttl
+
+		if isExpired(row.SpawnedAt, row.TTLSeconds) {
+			continue
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("active_subagents: list rows: %w", err)
+	}
+	return out, nil
+}
+
 func (s *Store) ClearActiveSubagent(ctx context.Context, wc store.WriteContext, operator, subagentID string) error {
 	if err := s.requireProject(); err != nil {
 		return err
@@ -3828,7 +4148,10 @@ func (s *Store) ClearActiveSubagent(ctx context.Context, wc store.WriteContext, 
 	if strings.TrimSpace(subagentID) == "" {
 		return fmt.Errorf("postgres: ClearActiveSubagent: subagent_id required")
 	}
-	projectID := projectIDOrActive(wc.ProjectID, s.activeProject)
+	projectID, projErr := s.resolveWriteProject(ctx, wc)
+	if projErr != nil {
+		return projErr
+	}
 
 	return s.runInTx(ctx, func(tx pgx.Tx) error {
 		var rowID int64
