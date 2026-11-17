@@ -29,11 +29,12 @@ pediste. Sin servidor remoto, sin telemetría, sin costo.
 
 [Qué es](#el-problema-que-resuelve) · [Quickstart](#quickstart) · [Las 78 herramientas](docs/tools.md) · [Vibe-cases](docs/tools.md#vibe-cases) · [Ayuda](docs/npm-install.md) · [Estado real](docs/v4-status.md) · [Contribuir](CONTRIBUTING.md)
 
-> **STATUS: v4-alpha.33** — pre-release. 78 herramientas canónicas, schema 32,
+> **STATUS: v4-alpha.34** — pre-release. 78 herramientas canónicas, schema 32,
 > MIT. Lo que funciona y lo que no está medido en
 > **[`docs/v4-status.md`](docs/v4-status.md)** — léelo antes de apostar
-> producción por esto. (Corte alpha.33: endpoint por credencial, juez LLM
-> operativo y clave en el keyring del SO; tag → HEAD, CI publica npm +
+> producción por esto. (Corte alpha.34: la identidad de la escritura
+> viene de la sesión que la pidió — el rastro ya lleva `session_id`; y el
+> keyring del SO no cuelga el arranque; tag → HEAD, CI publica npm +
 > registry.)
 
 </div>
