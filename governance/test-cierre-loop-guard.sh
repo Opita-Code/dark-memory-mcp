@@ -111,11 +111,22 @@ art.run(901, "s", "C1", 1, "file:///tmp/y.diff", "code", now, "p");
 art.run(902, "s", "C1", 1, "file:///tmp/z.diff", "code", now, "p");
 art.run(903, "s", "C1", 1, "file:///tmp/w.diff", "code", now, "p");
 art.run(904, "s", "C1", 1, "file:///tmp/v.diff", "code", now, "p");
+// MEDIDO el 2026-11-17: el guard buscaba el commit por la RUTA en el MENSAJE
+// del commit, y eso casa con cualquier commit que mencione el fichero. Para
+// el artefacto 322 devolvio un commit del 2026-10-23 que tocaba el fichero
+// pero no citaba el artefacto, y dio por bueno un cierre con un commit que
+// no era el del cierre. Estos tres artefactos reproducen ese fallo.
+art.run(905, "s", "C1", 1, "file:///tmp/vecino.md", "code", now, "p");
+art.run(906, "s", "C1", 1, "file:///tmp/marcado.md", "code", now, "p");
+art.run(907, "s", "C1", 1, "file:///tmp/ambos.md", "code", now, "p");
 const drift = db.query(`INSERT INTO vibe_drift_reports
   (id, artifact_id, spec_id, verdict, judge_reasoning, created_at, project_id)
   VALUES (?, ?, ?, ?, ?, ?, ?)`);
 drift.run(901, 901, 1, "aligned", "el arreglo cumple la promesa", now, "p");
 drift.run(902, 902, 1, "needs_human", "nli: provider rate limited", now, "p");
+drift.run(905, 905, 1, "aligned", "el arreglo cumple la promesa", now, "p");
+drift.run(906, 906, 1, "aligned", "el arreglo cumple la promesa", now, "p");
+drift.run(907, 907, 1, "aligned", "el arreglo cumple la promesa", now, "p");
 
 // ── la ruta sha: el juez directo ──
 // El layout es el de opita-code: el artefacto juzgado esta en
@@ -155,6 +166,9 @@ mem.run(700, "p", "opencode", "finding", "t", "el hallazgo cita el artefacto 900
 mem.run(701, "p", "opencode", "finding", "t", "el hallazgo cita el artefacto 901", "901", now);
 mem.run(702, "p", "opencode", "finding", "t", "el hallazgo cita el artefacto 902", "902", now);
 mem.run(704, "p", "opencode", "finding", "t", "el hallazgo cita el artefacto 904", "904", now);
+mem.run(705, "p", "opencode", "finding", "t", "el hallazgo cita el artefacto 905", "905", now);
+mem.run(706, "p", "opencode", "finding", "t", "el hallazgo cita el artefacto 906", "906", now);
+mem.run(707, "p", "opencode", "finding", "t", "el hallazgo cita el artefacto 907", "907", now);
 // La memoria puede citar el sha o el id de la evaluacion con su marca "#".
 mem.run(710, "p", "opencode", "finding", "t", `el hallazgo cita el sha ${process.env.SHA_A}`, "", now);
 mem.run(711, "p", "opencode", "finding", "t", "el hallazgo cita la evaluacion #953 y #954", "", now);
@@ -191,6 +205,20 @@ git -C "$REPO" commit -q --allow-empty -m "contador 900 en el mensaje" >/dev/nul
 # evaluacion NO es el commit de esa evaluacion.
 git -C "$REPO" commit -q --allow-empty -m "contador 957 en el mensaje" >/dev/null 2>&1
 git -C "$REPO" commit -q --allow-empty -m "contador 956 en el mensaje" >/dev/null 2>&1
+# MEDIDO el 2026-11-17: un commit que MENCIONA la ruta del artefacto en su
+# cuerpo, sin tocar el fichero, NO es el commit del artefacto. El cuerpo de
+# un commit con diff lista las rutas, asi que este caso es el everyday: sin
+# el, el guard daba por bueno un cierre con un commit que no era del cierre.
+git -C "$REPO" commit -q --allow-empty -m "menciona /tmp/vecino.md sin tocarlo" >/dev/null 2>&1
+# Y el marcador explicito: un commit que dice "artefacto 906" entrega ese
+# artefacto, aunque no toque ningun fichero del repo.
+git -C "$REPO" commit -q --allow-empty -m "cierra el artefacto 906" >/dev/null 2>&1
+# Y el caso con las dos pruebas: el fichero tiene su commit, y ademas hay un
+# commit con el marcador. El marcador manda: es el commit del artefacto.
+echo "doc" > "$REPO/ambos.md"
+git -C "$REPO" add ambos.md >/dev/null 2>&1
+git -C "$REPO" commit -q -m "toca ambos.md" >/dev/null 2>&1
+git -C "$REPO" commit -q --allow-empty -m "cierra el artefacto 907" >/dev/null 2>&1
 
 run() {
   # run <artefacto> <expected_rc> <nombre>
@@ -221,6 +249,12 @@ run 904 67 "un commit con el numero suelto NO cuenta como commit del artefacto -
 run 903 66 "publicado y con commit pero SIN memoria -> 66"
 run 902 68 "las tres partes sin veredicto -> 68 (ausencia, no fallo)"
 run 901 0  "las tres partes con veredicto aligned -> 0"
+# MEDIDO el 2026-11-17: el falso positivo del guard.
+run 905 67 "un commit que solo MENCIONA la ruta NO cuenta como commit del artefacto -> 67"
+run 906 0  "un commit con el MARCADOR 'artefacto 906' si cuenta -> 0"
+check_out "el guard dice que lo encontro por el marcador" 0 "por marcador" "$LAST_OUT"
+run 907 0  "con las dos pruebas, manda el marcador -> 0"
+check_out "el commit citado es el del marcador, no el que toca el fichero" 0 "cierra el artefacto 907" "$LAST_OUT"
 
 # ── la ruta sha ──
 run_sha "$SHA_F" "docs_canal.md" 65 "un sha sin juzgar -> 65"
