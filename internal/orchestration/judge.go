@@ -302,6 +302,9 @@ func (o *Orchestrator) Judge(ctx context.Context, in JudgeInput) (*JudgeOutput, 
 		ConstitutionID: wc.ConstitutionID,
 		CreatedAt:      now,
 		PersonaID:      resolvedPersonaID,
+		// The QUESTION this verdict answers, as a digest. See promptVersionOf.
+		// Empty (NULL) when no question was asked.
+		PromptVersion: promptVersionOf(in.SpecIntent),
 	}
 	evalID, err := o.Store.SaveSDDEvaluation(ctx, wc, eval)
 	if err != nil {
@@ -392,6 +395,11 @@ func (o *Orchestrator) driftToJudge(ctx context.Context, in JudgeInput) (*JudgeO
 		ArtifactPath:   driftOut.ArtifactPath,
 		ArtifactSize:   driftOut.ArtifactSize,
 		NLIProviderID:  driftOut.ProviderID,
+		// The QUESTION this verdict answers, as a digest. See promptVersionOf.
+		// This is the path the repo's own judge runner uses (a single
+		// drift_judge per artifact), so without it the store would keep
+		// saying WHAT was judged and not WHAT WAS ASKED.
+		PromptVersion: promptVersionOf(in.SpecIntent),
 	}
 	evalID, err := o.Store.SaveSDDEvaluation(ctx, wc, eval)
 	if err != nil {

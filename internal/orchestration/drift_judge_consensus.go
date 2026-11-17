@@ -702,6 +702,7 @@ func mostCommonProviderID(samples []DriftJudgeConsensusSample) string {
 	return best
 }
 
+
 // persistDriftChunkRow persists one chunk's score as an
 // SDDEvaluation row. TargetID is suffixed with ":chunk:N" so
 // callers can filter the audit trail by chunk index. The v29 (T10)
@@ -743,6 +744,8 @@ func (o *Orchestrator) persistDriftChunkRow(
 		ChunkIndex:     chunkIndex,
 		ChunkTotal:     chunkTotal,
 		NLIProviderID:  providerID,
+		// The QUESTION this chunk was asked, as a digest. See promptVersionOf.
+		PromptVersion: promptVersionOf(in.SpecIntent),
 	}
 	if scoreErr != nil {
 		// failure path: lower confidence, provenance in the JSON
@@ -788,6 +791,8 @@ func (o *Orchestrator) persistDriftConsensusRow(
 		ChunkIndex:     0,                         // consensus row is not a chunk
 		ChunkTotal:     result.NumChunks,          // 0 if no chunks were scored
 		NLIProviderID:  result.ProviderID,
+		// The QUESTION this consensus was asked, as a digest. See promptVersionOf.
+		PromptVersion: promptVersionOf(in.SpecIntent),
 	}
 	return o.Store.SaveSDDEvaluation(ctx, wc, eval)
 }

@@ -334,6 +334,8 @@ func (o *Orchestrator) JudgeConsensus(ctx context.Context, in JudgeConsensusInpu
 		Model:          "",
 		ConstitutionID: wc.ConstitutionID,
 		CreatedAt:      now,
+		// The QUESTION this consensus answers, as a digest. See promptVersionOf.
+		PromptVersion: promptVersionOf(in.SpecIntent),
 	}
 	consensusID, err := o.Store.SaveSDDEvaluation(ctx, wc, consensusEval)
 	if err != nil {
