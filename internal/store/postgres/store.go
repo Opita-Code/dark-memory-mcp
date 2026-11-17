@@ -53,8 +53,8 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/audit"
 	"github.com/dark-agents/dark-memory-mcp/internal/constitution"
 	"github.com/dark-agents/dark-memory-mcp/internal/embedder"
-	"github.com/dark-agents/dark-memory-mcp/internal/eventholder"
 	"github.com/dark-agents/dark-memory-mcp/internal/errorobs"
+	"github.com/dark-agents/dark-memory-mcp/internal/eventholder"
 	"github.com/dark-agents/dark-memory-mcp/internal/merkle"
 	"github.com/dark-agents/dark-memory-mcp/internal/migrate"
 	migratepostgres "github.com/dark-agents/dark-memory-mcp/internal/migrate/postgres"
@@ -67,8 +67,8 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 	"github.com/dark-agents/dark-memory-mcp/internal/vibeflow"
 	"github.com/jackc/pgx/v5"
-	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/jackc/pgx/v5/pgxpool"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 // openPostgres opens a Postgres
@@ -186,11 +186,73 @@ func (s *Store) requireProject() error {
 // store.Store's active project. The Store refuses to write with no
 // project at all (requireProject runs at the top of every Save*). Mirror
 // of the same helper in the SQLite impl.
+//
+// DEPRECATED (SPEC-203): use resolveWriteProject instead — it adds the
+// session as the authoritative source of the project.
 func projectIDOrActive(wcProjectID, activeProject string) string {
 	if wcProjectID != "" {
 		return wcProjectID
 	}
 	return activeProject
+}
+
+// ProjectIDForSession returns the project_id that owns the given
+// session_id, or "" when the session is unknown.
+//
+// SPEC-203: the lookup is by session_id ALONE — it does NOT filter by
+// the active project, unlike GetSession. The active project is a
+// mutable global slot shared by every client of the server process, so
+// it cannot answer "which project owns THIS session". Mirror of the
+// same method in the SQLite impl.
+func (s *Store) ProjectIDForSession(ctx context.Context, sessionID string) (string, error) {
+	if strings.TrimSpace(sessionID) == "" {
+		return "", nil
+	}
+	var projectID string
+	err := s.pool.QueryRow(ctx,
+		`SELECT project_id FROM sessions WHERE session_id = $1`, sessionID).Scan(&projectID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("postgres: project_id_for_session: %w", err)
+	}
+	return projectID, nil
+}
+
+// resolveWriteProject resolves the project_id a write belongs to.
+// SPEC-203 chain: the project of wc.SessionID (the session is the
+// authority) > wc.ProjectID (the explicit project) > the active
+// project slot (legacy fallback).
+func (s *Store) resolveWriteProject(ctx context.Context, wc store.WriteContext) string {
+	if wc.SessionID != "" {
+		if pid, err := s.ProjectIDForSession(ctx, wc.SessionID); err == nil && pid != "" {
+			return pid
+		}
+	}
+	if wc.ProjectID != "" {
+		return wc.ProjectID
+	}
+	return s.ActiveProject()
+}
+
+// ResolveProjectForCall resolves the project a call belongs to
+// (SPEC-203): the session is the authority, then the explicit
+// project, then the active project slot.
+func (s *Store) ResolveProjectForCall(ctx context.Context, projectID, sessionID string) (string, error) {
+	sessionProject := ""
+	if sessionID != "" {
+		if pid, err := s.ProjectIDForSession(ctx, sessionID); err == nil {
+			sessionProject = pid
+		}
+	}
+	if sessionProject != "" {
+		return sessionProject, nil
+	}
+	if projectID != "" {
+		return projectID, nil
+	}
+	return s.ActiveProject(), nil
 }
 
 // withProjectTx was REMOVED in spec 171 T5 (option b).
@@ -496,8 +558,8 @@ func (s *Store) ListAgentMemoryByAnyEntity(ctx context.Context, entityValues []s
 //     RFC3339Nano) when empty.
 //  3. runInTx with pgx.Tx:
 //     UPDATE agent_memory SET decision_state='superseded',
-//                              supersedes_id=newMemID,
-//                              valid_to=validTime
+//     supersedes_id=newMemID,
+//     valid_to=validTime
 //     WHERE id=oldMemID AND project_id=active.
 //     INSERT INTO decision_transitions (...).
 //     recordWriteTx for INV-1 audit row.
@@ -1301,7 +1363,7 @@ func (s *Store) SaveSession(ctx context.Context, wc store.WriteContext, sess *se
 	if err := s.requireProject(); err != nil {
 		return 0, err
 	}
-	projectID := projectIDOrActive(wc.ProjectID, s.activeProject) // capture before locking
+	projectID := s.resolveWriteProject(ctx, wc)
 	if sess.StartedAt == "" {
 		sess.StartedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
@@ -1741,7 +1803,7 @@ func (s *Store) SaveRun(ctx context.Context, wc store.WriteContext, run *researc
 	if err := s.requireProject(); err != nil {
 		return 0, err
 	}
-	projectID := projectIDOrActive(wc.ProjectID, s.activeProject) // capture before locking
+	projectID := s.resolveWriteProject(ctx, wc)
 	if run.CreatedAt == "" {
 		run.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
@@ -2066,7 +2128,7 @@ func (s *Store) LinkResearch(ctx context.Context, wc store.WriteContext, link *r
 	if err := s.requireProject(); err != nil {
 		return err
 	}
-	projectID := projectIDOrActive(wc.ProjectID, s.activeProject) // capture before locking
+	projectID := s.resolveWriteProject(ctx, wc)
 	if link.CreatedAt == "" {
 		link.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
@@ -2132,7 +2194,7 @@ func (s *Store) SaveBrandGuide(ctx context.Context, wc store.WriteContext, b *vi
 	if err := s.requireProject(); err != nil {
 		return err
 	}
-	projectID := projectIDOrActive(wc.ProjectID, s.activeProject)
+	projectID := s.resolveWriteProject(ctx, wc) // SPEC-203: explicit project > session's project > active slot
 	if b.CreatedAt == "" {
 		b.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
@@ -3310,7 +3372,7 @@ func (s *Store) SaveVLPStateWithTransition(ctx context.Context, wc store.WriteCo
 // SaveVLPStateWithTransition. transitionNotes empty = skip transition-level
 // audit. Postgres impl uses pgx.Tx via s.runInTx.
 func (s *Store) saveVLPStateTx(ctx context.Context, wc store.WriteContext, row *store.VLPStateRow, transitionNotes string) (int64, error) {
-	projectID := projectIDOrActive(wc.ProjectID, s.activeProject)
+	projectID := s.resolveWriteProject(ctx, wc) // SPEC-203: explicit project > session's project > active slot
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if row.CreatedAt == "" {
 		row.CreatedAt = now
@@ -3601,13 +3663,13 @@ func (s *Store) SetActiveSession(ctx context.Context, projectID, sessionID strin
 	// Best-effort audit row (INV-1). Same "log + carry on" policy as
 	// SQLite — failing the audit must not fail the pointer flip.
 	_ = s.recordWrite(ctx, audit.WriteEvent{
-		Actor:          activeProject,
-		ProjectID:      projectID,
-		WritePath:      "SetActiveSession",
-		SessionID:      sessionID,
-		ConstitutionID: "",
+		Actor:           activeProject,
+		ProjectID:       projectID,
+		WritePath:       "SetActiveSession",
+		SessionID:       sessionID,
+		ConstitutionID:  "",
 		ConstitutionVer: "",
-		CreatedAt:      now,
+		CreatedAt:       now,
 	}, "")
 	return nil
 }
@@ -3658,13 +3720,13 @@ func (s *Store) ClearActiveSession(ctx context.Context, projectID, expectedSessi
 		// shouldn't be double-counted (mirror of SQLite at
 		// sqlite/store.go:4312).
 		_ = s.recordWrite(ctx, audit.WriteEvent{
-			Actor:          activeProject,
-			ProjectID:      projectID,
-			WritePath:      "ClearActiveSession",
-			SessionID:      expectedSessionID,
-			ConstitutionID: "",
+			Actor:           activeProject,
+			ProjectID:       projectID,
+			WritePath:       "ClearActiveSession",
+			SessionID:       expectedSessionID,
+			ConstitutionID:  "",
 			ConstitutionVer: "",
-			CreatedAt:      now,
+			CreatedAt:       now,
 		}, "")
 	}
 	return nil
@@ -3685,6 +3747,13 @@ func (s *Store) SaveAgentMemory(ctx context.Context, wc store.WriteContext, m *a
 
 func (s *Store) GetAgentMemory(ctx context.Context, id int64) (*agentmemory.AgentMemory, error) {
 	return nil, notImpl("GetAgentMemory")
+}
+
+// GetAgentMemoryInProject is the project-scoped read (SPEC-203). The
+// Postgres agent_memory backplane is not built yet (see the
+// notImpl siblings), so this is the same stub.
+func (s *Store) GetAgentMemoryInProject(ctx context.Context, id int64, projectID string) (*agentmemory.AgentMemory, error) {
+	return nil, notImpl("GetAgentMemoryInProject")
 }
 
 func (s *Store) UpdateAgentMemory(ctx context.Context, wc store.WriteContext, id int64, u *agentmemory.AgentMemoryUpdate) (*agentmemory.AgentMemory, error) {
@@ -3721,7 +3790,7 @@ func (s *Store) SetActiveSubagent(ctx context.Context, wc store.WriteContext, ro
 	if err := s.requireProject(); err != nil {
 		return 0, err
 	}
-	projectID := projectIDOrActive(wc.ProjectID, s.activeProject)
+	projectID := s.resolveWriteProject(ctx, wc) // SPEC-203: explicit project > session's project > active slot
 	ttl := row.TTLSeconds
 	if ttl <= 0 {
 		ttl = 3600
@@ -3828,7 +3897,7 @@ func (s *Store) ClearActiveSubagent(ctx context.Context, wc store.WriteContext, 
 	if strings.TrimSpace(subagentID) == "" {
 		return fmt.Errorf("postgres: ClearActiveSubagent: subagent_id required")
 	}
-	projectID := projectIDOrActive(wc.ProjectID, s.activeProject)
+	projectID := s.resolveWriteProject(ctx, wc) // SPEC-203: explicit project > session's project > active slot
 
 	return s.runInTx(ctx, func(tx pgx.Tx) error {
 		var rowID int64

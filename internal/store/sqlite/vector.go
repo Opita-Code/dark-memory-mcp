@@ -254,7 +254,12 @@ func (s *Store) searchByVector(ctx context.Context, f agentmemory.SearchFilters)
 	}
 	qvec := qvecs[0]
 
-	activeProject := s.ActiveProject()
+	// SPEC-203: the caller may name the session/project; a project that
+	// does not match the session is refused, never widened.
+	activeProject, err := s.resolveReadProject(ctx, f.ProjectID, f.SessionID)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.loadAgentMemoryWithEmbedding(ctx, f, activeProject)
 	if err != nil {
 		return nil, err
@@ -338,7 +343,12 @@ func (s *Store) searchByRRF(ctx context.Context, f agentmemory.SearchFilters) ([
 	// rank map before the limit-cap so the RRF fusion sees every
 	// rank the embedder gave us (capping BEFORE fusion would
 	// silently bias results toward the dominant arm).
-	rows, err := s.loadAgentMemoryWithEmbedding(ctx, f, s.ActiveProject())
+	// SPEC-203: same resolution as searchByVector.
+	activeProject, err := s.resolveReadProject(ctx, f.ProjectID, f.SessionID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.loadAgentMemoryWithEmbedding(ctx, f, activeProject)
 	if err != nil {
 		return nil, err
 	}
@@ -380,7 +390,7 @@ func (s *Store) searchByRRF(ctx context.Context, f agentmemory.SearchFilters) ([
 	for _, h := range fused {
 		ids = append(ids, h.ID)
 	}
-	rowMap, err := s.loadAgentMemoryByIDs(ctx, ids)
+	rowMap, err := s.loadAgentMemoryByIDs(ctx, ids, activeProject)
 	if err != nil {
 		return nil, err
 	}
@@ -500,7 +510,11 @@ func (s *Store) loadAgentMemoryWithEmbedding(ctx context.Context, f agentmemory.
 // loadAgentMemoryByIDs pulls AgentMemory rows by primary key. Used
 // by the RRF fusion path to assemble the final SearchHit list from
 // the (perhaps BM25-only, perhaps vector-only) id set.
-func (s *Store) loadAgentMemoryByIDs(ctx context.Context, ids []int64) (map[int64]agentmemory.AgentMemory, error) {
+//
+// projectID is the already-resolved project (SPEC-203): the rows must
+// come from the same project the search was scoped to, not from
+// whatever the global slot points at now.
+func (s *Store) loadAgentMemoryByIDs(ctx context.Context, ids []int64, projectID string) (map[int64]agentmemory.AgentMemory, error) {
 	if len(ids) == 0 {
 		return map[int64]agentmemory.AgentMemory{}, nil
 	}
@@ -517,7 +531,7 @@ func (s *Store) loadAgentMemoryByIDs(ctx context.Context, ids []int64) (map[int6
 		chunk := ids[start:end]
 		ph := strings.TrimSuffix(strings.Repeat("?,", len(chunk)), ",")
 		args := make([]any, 0, len(chunk)+1)
-		args = append(args, s.ActiveProject())
+		args = append(args, projectID)
 		q := `
 			SELECT id, project_id, COALESCE(session_id, ''), operator,
 			       COALESCE(agent_id, ''), kind, COALESCE(memory_type, ''),

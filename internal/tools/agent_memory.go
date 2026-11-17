@@ -67,6 +67,8 @@ func RegisterAgentMemory(reg *Registry, orch *orchestration.Orchestrator, st sto
 				"pinned":       map[string]any{"type": "boolean", "default": false},
 				"expires_at":   map[string]any{"type": "string", "description": "RFC3339. Optional TTL hint (sweeper follow-up)."},
 				"bind_session": map[string]any{"type": "boolean", "default": false, "description": "If true, tag the row with the active session id. Default false (v2.3.0 change; pre-v2.3.0 was implicitly true)."},
+				"session_id":   map[string]any{"type": "string", "description": "Session id (from session_start). SPEC-203: the project of the write/read is resolved from this session, so the row lands in the project of the session that asked for it even when another client moved the global project slot. Optional."},
+				"project_id":   map[string]any{"type": "string", "description": "Explicit project id. SPEC-203: a narrowing, never a widening. If it contradicts the session project, the session wins on writes and the read is refused with ErrCrossProjectAccess. Optional."},
 			},
 		}),
 		func(ctx context.Context, in orchestration.AgentMemorySaveInput) (*orchestration.AgentMemorySaveOutput, error) {
@@ -87,6 +89,8 @@ func RegisterAgentMemory(reg *Registry, orch *orchestration.Orchestrator, st sto
 				"pinned_only":      map[string]any{"type": "boolean", "default": false},
 				"include_archived": map[string]any{"type": "boolean", "default": false},
 				"limit":            map[string]any{"type": "integer", "default": 50, "maximum": 200},
+				"session_id":       map[string]any{"type": "string", "description": "Session id (from session_start). SPEC-203: the project of the write/read is resolved from this session, so the row lands in the project of the session that asked for it even when another client moved the global project slot. Optional."},
+				"project_id":       map[string]any{"type": "string", "description": "Explicit project id. SPEC-203: a narrowing, never a widening. If it contradicts the session project, the session wins on writes and the read is refused with ErrCrossProjectAccess. Optional."},
 			},
 		}),
 		func(ctx context.Context, in orchestration.AgentMemoryListInput) (*orchestration.AgentMemoryListOutput, error) {
@@ -106,6 +110,8 @@ func RegisterAgentMemory(reg *Registry, orch *orchestration.Orchestrator, st sto
 				"kind":        map[string]any{"type": "string", "description": "Optional. Filter to one operator-kind (note, observation, decision, ...)."},
 				"memory_type": map[string]any{"type": "string", "enum": []string{"episodic", "semantic", "procedural"}, "description": "Optional. Mem0 three-class taxonomy filter. v2.3.0."},
 				"limit":       map[string]any{"type": "integer", "default": 10, "maximum": 50},
+				"session_id":  map[string]any{"type": "string", "description": "Session id (from session_start). SPEC-203: the project of the write/read is resolved from this session, so the row lands in the project of the session that asked for it even when another client moved the global project slot. Optional."},
+				"project_id":  map[string]any{"type": "string", "description": "Explicit project id. SPEC-203: a narrowing, never a widening. If it contradicts the session project, the session wins on writes and the read is refused with ErrCrossProjectAccess. Optional."},
 			},
 		}),
 		func(ctx context.Context, in orchestration.AgentMemoryRecallInput) (*orchestration.AgentMemoryRecallOutput, error) {
@@ -130,7 +136,9 @@ func RegisterAgentMemory(reg *Registry, orch *orchestration.Orchestrator, st sto
 			"type":     "object",
 			"required": []string{"id"},
 			"properties": map[string]any{
-				"id": map[string]any{"type": "integer", "description": "Row id."},
+				"id":         map[string]any{"type": "integer", "description": "Row id."},
+				"session_id": map[string]any{"type": "string", "description": "Session id (from session_start). SPEC-203: the project of the write/read is resolved from this session, so the row lands in the project of the session that asked for it even when another client moved the global project slot. Optional."},
+				"project_id": map[string]any{"type": "string", "description": "Explicit project id. SPEC-203: a narrowing, never a widening. If it contradicts the session project, the session wins on writes and the read is refused with ErrCrossProjectAccess. Optional."},
 			},
 		}),
 		func(ctx context.Context, in orchestration.AgentMemoryGetInput) (*orchestration.AgentMemoryGetOutput, error) {
@@ -159,6 +167,8 @@ func RegisterAgentMemory(reg *Registry, orch *orchestration.Orchestrator, st sto
 				"pinned":      map[string]any{"type": "boolean"},
 				"expires_at":  map[string]any{"type": "string"},
 				"memory_type": map[string]any{"type": "string", "enum": []string{"episodic", "semantic", "procedural", ""}, "description": "Mem0 three-class taxonomy. Empty string clears. v2.3.0."},
+				"session_id":  map[string]any{"type": "string", "description": "Session id (from session_start). SPEC-203: the project of the write/read is resolved from this session, so the row lands in the project of the session that asked for it even when another client moved the global project slot. Optional."},
+				"project_id":  map[string]any{"type": "string", "description": "Explicit project id. SPEC-203: a narrowing, never a widening. If it contradicts the session project, the session wins on writes and the read is refused with ErrCrossProjectAccess. Optional."},
 			},
 		}),
 		func(ctx context.Context, in orchestration.AgentMemoryUpdateInput) (*orchestration.AgentMemoryUpdateOutput, error) {
@@ -175,8 +185,10 @@ func RegisterAgentMemory(reg *Registry, orch *orchestration.Orchestrator, st sto
 			// harness validation catches the omission up-front.
 			"required": []string{"id", "operator"},
 			"properties": map[string]any{
-				"id":       map[string]any{"type": "integer"},
-				"operator": map[string]any{"type": "string", "description": "Operator id (INV-1 audit). Required."},
+				"id":         map[string]any{"type": "integer"},
+				"operator":   map[string]any{"type": "string", "description": "Operator id (INV-1 audit). Required."},
+				"session_id": map[string]any{"type": "string", "description": "Session id (from session_start). SPEC-203: the project of the write/read is resolved from this session, so the row lands in the project of the session that asked for it even when another client moved the global project slot. Optional."},
+				"project_id": map[string]any{"type": "string", "description": "Explicit project id. SPEC-203: a narrowing, never a widening. If it contradicts the session project, the session wins on writes and the read is refused with ErrCrossProjectAccess. Optional."},
 			},
 		}),
 		func(ctx context.Context, in orchestration.AgentMemoryArchiveInput) (*orchestration.AgentMemoryArchiveOutput, error) {

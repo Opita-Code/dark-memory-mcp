@@ -1,4 +1,4 @@
-// Package sqlite is the SQLite implementation of 
+// Package sqlite is the SQLite implementation of
 // Backed by modernc.org/sqlite (pure-Go, no cgo).
 //
 // Concurrency: SQLite is single-writer. s.mu serializes every write.
@@ -22,7 +22,7 @@ import (
 	"sync"
 	"time"
 
-_ "modernc.org/sqlite"
+	_ "modernc.org/sqlite"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/agentmemory"
 	"github.com/dark-agents/dark-memory-mcp/internal/atomic"
@@ -34,11 +34,11 @@ _ "modernc.org/sqlite"
 	migratesqlite "github.com/dark-agents/dark-memory-mcp/internal/migrate/sqlite"
 	"github.com/dark-agents/dark-memory-mcp/internal/mods"
 	"github.com/dark-agents/dark-memory-mcp/internal/project"
-	"github.com/dark-agents/dark-memory-mcp/internal/store"
 	"github.com/dark-agents/dark-memory-mcp/internal/research"
 	"github.com/dark-agents/dark-memory-mcp/internal/safety"
 	"github.com/dark-agents/dark-memory-mcp/internal/session"
 	"github.com/dark-agents/dark-memory-mcp/internal/ssd"
+	"github.com/dark-agents/dark-memory-mcp/internal/store"
 	"github.com/dark-agents/dark-memory-mcp/internal/vibeflow"
 )
 
@@ -209,11 +209,156 @@ func (s *Store) requireProject() error {
 // store.Store's active project. The Store refuses to write with no
 // project at all (requireProject runs at the top of every Save*). This
 // is the last-mile enforcement of INV-7.
+//
+// DEPRECATED (SPEC-203): this helper resolves against the GLOBAL slot
+// only, so a write lands in whatever project the last session_start
+// happened to set. Use resolveWriteProject (or resolveWriteProjectLocked
+// when the caller already holds s.mu) instead: they add the session as
+// the authoritative source of the project.
 func projectIDOrActive(wcProjectID, activeProject string) string {
 	if wcProjectID != "" {
 		return wcProjectID
 	}
 	return activeProject
+}
+
+// ProjectIDForSession returns the project_id that owns the given
+// session_id, or "" when the session is unknown.
+//
+// SPEC-203: the lookup is by session_id ALONE — it does NOT filter by
+// the active project, unlike GetSession. That difference is the whole
+// point: the active project is a mutable global slot, and the MCP
+// server process is shared between several clients (measured on this
+// machine: three connections to one server=dark-memory process, with
+// their session_start calls interleaved seconds apart). A lookup that
+// filters by the slot cannot answer "which project owns THIS session",
+// and that is the only question that makes the write path safe.
+//
+// Returns ("", nil) for an unknown session: the caller decides whether
+// that is fatal (it is not — an unknown session falls back to the
+// legacy slot).
+func (s *Store) ProjectIDForSession(ctx context.Context, sessionID string) (string, error) {
+	if strings.TrimSpace(sessionID) == "" {
+		return "", nil
+	}
+	var projectID string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT project_id FROM sessions WHERE session_id = ?`, sessionID).Scan(&projectID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("sqlite: project_id_for_session: %w", err)
+	}
+	return projectID, nil
+}
+
+// ResolveProjectForCall resolves the project a call belongs to.
+// SPEC-203: the session is the authority. See the interface doc for
+// the full chain.
+func (s *Store) ResolveProjectForCall(ctx context.Context, projectID, sessionID string) (string, error) {
+	sessionProject := ""
+	if sessionID != "" {
+		if pid, err := s.ProjectIDForSession(ctx, sessionID); err == nil {
+			sessionProject = pid
+		}
+	}
+	if sessionProject != "" {
+		return sessionProject, nil
+	}
+	if projectID != "" {
+		return projectID, nil
+	}
+	return s.ActiveProject(), nil
+}
+
+// resolveWriteProject resolves the project_id a write belongs to.
+// SPEC-203 chain, in this order:
+//
+//  1. The project that owns wc.SessionID — the session is the
+//     authority. This is what makes a write land in the project of the
+//     session that asked for it, even when another client has moved
+//     the global slot in between.
+//  2. wc.ProjectID — the explicit project, used by the flows that
+//     name no session (session_start and the administrative paths).
+//  3. The active project slot — the legacy fallback.
+//
+// Not lock-safe to call with s.mu held: it reads the slot through
+// ActiveProject(), which takes the lock. Use resolveWriteProjectLocked
+// in that case.
+func (s *Store) resolveWriteProject(ctx context.Context, wc store.WriteContext) string {
+	if wc.SessionID != "" {
+		if pid, err := s.ProjectIDForSession(ctx, wc.SessionID); err == nil && pid != "" {
+			return pid
+		}
+	}
+	if wc.ProjectID != "" {
+		return wc.ProjectID
+	}
+	return s.ActiveProject()
+}
+
+// resolveWriteProjectLocked is resolveWriteProject for callers that
+// already hold s.mu: the slot is read WITHOUT re-locking (the same
+// care the existing code takes when it reads s.activeProject directly).
+// The session lookup goes to the DB, which is safe inside the lock —
+// the Save* methods already run their transactions inside it.
+func (s *Store) resolveWriteProjectLocked(ctx context.Context, wc store.WriteContext) string {
+	if wc.SessionID != "" {
+		if pid, err := s.ProjectIDForSession(ctx, wc.SessionID); err == nil && pid != "" {
+			return pid
+		}
+	}
+	if wc.ProjectID != "" {
+		return wc.ProjectID
+	}
+	return s.activeProject
+}
+
+// resolveReadProject decides which project a READ is scoped to.
+// SPEC-203: the caller may name a project (f.ProjectID) and the
+// session it belongs to (f.SessionID). The rules are:
+//
+//  1. The session names a project -> THAT is the scope, always. If
+//     the explicit project contradicts it, the read is refused with
+//     ErrCrossProjectAccess. The session is the authority even when
+//     the explicit project happens to match the global slot: the
+//     slot is exactly the thing this spec is about.
+//  2. No session, no explicit project -> the active project (legacy).
+//  3. No session, explicit project -> it, when it IS the active
+//     project; otherwise refused (a read never widens).
+//
+// A read never widens: the empty result would be indistinguishable
+// from "there is no memory", which is exactly the ambiguity
+// GetAgentMemory already had to fix.
+//
+// The store is the boundary that enforces this, not the orchestrator:
+// the orchestrator forwards what the caller said, and the store is
+// what says no.
+func (s *Store) resolveReadProject(ctx context.Context, projectID, sessionID string) (string, error) {
+	active := s.ActiveProject()
+	if sessionID != "" {
+		sessionProject, err := s.ProjectIDForSession(ctx, sessionID)
+		if err == nil && sessionProject != "" {
+			if projectID == "" || projectID == sessionProject {
+				return sessionProject, nil
+			}
+			return "", &store.CrossProjectAccessError{
+				RequestedProject: sessionProject,
+				RowProject:       projectID,
+			}
+		}
+	}
+	if projectID == "" {
+		return active, nil
+	}
+	if projectID == active {
+		return projectID, nil
+	}
+	return "", &store.CrossProjectAccessError{
+		RequestedProject: active,
+		RowProject:       projectID,
+	}
 }
 
 // ActiveConstitution is GLOBAL by design (see spec 171 T4g).
@@ -642,7 +787,7 @@ func (s *Store) SaveSession(ctx context.Context, wc store.WriteContext, sess *se
 	if err := s.requireProject(); err != nil {
 		return 0, err
 	}
-	projectID := projectIDOrActive(wc.ProjectID, s.ActiveProject()) // capture before locking
+	projectID := s.resolveWriteProject(ctx, wc) // SPEC-203: explicit project > session's project > active slot
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if sess.StartedAt == "" {
@@ -1175,7 +1320,7 @@ func (s *Store) SaveRun(ctx context.Context, wc store.WriteContext, run *researc
 	if err := s.requireProject(); err != nil {
 		return 0, err
 	}
-	projectID := projectIDOrActive(wc.ProjectID, s.ActiveProject())
+	projectID := s.resolveWriteProject(ctx, wc) // SPEC-203: explicit project > session's project > active slot
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1608,7 +1753,7 @@ func (s *Store) SaveSpec(ctx context.Context, wc store.WriteContext, sp *vibeflo
 	if err := s.requireProject(); err != nil {
 		return 0, err
 	}
-	projectID := projectIDOrActive(wc.ProjectID, s.ActiveProject()) // capture before locking
+	projectID := s.resolveWriteProject(ctx, wc) // SPEC-203: explicit project > session's project > active slot
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if sp.CreatedAt == "" {
@@ -1809,7 +1954,7 @@ func (s *Store) SaveBrandGuide(ctx context.Context, wc store.WriteContext, b *vi
 	if err := s.requireProject(); err != nil {
 		return err
 	}
-	projectID := projectIDOrActive(wc.ProjectID, s.ActiveProject()) // capture before locking
+	projectID := s.resolveWriteProject(ctx, wc) // SPEC-203: explicit project > session's project > active slot
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if b.CreatedAt == "" {
@@ -2068,7 +2213,7 @@ func (s *Store) SaveArtifact(ctx context.Context, wc store.WriteContext, a *vibe
 	if err := s.requireProject(); err != nil {
 		return 0, err
 	}
-	projectID := projectIDOrActive(wc.ProjectID, s.ActiveProject()) // capture before locking
+	projectID := s.resolveWriteProject(ctx, wc) // SPEC-203: explicit project > session's project > active slot
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if a.CreatedAt == "" {
@@ -2349,7 +2494,7 @@ func (s *Store) SaveDriftReport(ctx context.Context, wc store.WriteContext, d *v
 	if err := s.requireProject(); err != nil {
 		return 0, err
 	}
-	projectID := projectIDOrActive(wc.ProjectID, s.ActiveProject()) // capture before locking
+	projectID := s.resolveWriteProject(ctx, wc) // SPEC-203: explicit project > session's project > active slot
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if d.CreatedAt == "" {
@@ -2418,7 +2563,7 @@ func (s *Store) UpdateDriftReportVerdict(ctx context.Context, wc store.WriteCont
 	if err := s.requireProject(); err != nil {
 		return err
 	}
-	projectID := projectIDOrActive(wc.ProjectID, s.ActiveProject()) // capture before locking
+	projectID := s.resolveWriteProject(ctx, wc) // SPEC-203: explicit project > session's project > active slot
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now().UTC().Format(time.RFC3339Nano)
@@ -2479,7 +2624,7 @@ func (s *Store) VerifyDriftChain(ctx context.Context, wc store.WriteContext) (me
 	if err := s.requireProject(); err != nil {
 		return merkle.VerifyResult{}, err
 	}
-	projectID := projectIDOrActive(wc.ProjectID, s.ActiveProject()) // capture before locking
+	projectID := s.resolveWriteProject(ctx, wc) // SPEC-203: explicit project > session's project > active slot
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rows, err := s.db.QueryContext(ctx,
@@ -2595,7 +2740,7 @@ func (s *Store) SaveSDDEvaluation(ctx context.Context, wc store.WriteContext, e 
 	if err := s.requireProject(); err != nil {
 		return 0, err
 	}
-	projectID := projectIDOrActive(wc.ProjectID, s.ActiveProject()) // capture before locking
+	projectID := s.resolveWriteProject(ctx, wc) // SPEC-203: explicit project > session's project > active slot
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if e.CreatedAt == "" {
@@ -3135,7 +3280,7 @@ func (s *Store) RecordModLoad(ctx context.Context, wc store.WriteContext, load *
 	if err := s.requireProject(); err != nil {
 		return 0, err
 	}
-	projectID := projectIDOrActive(wc.ProjectID, s.ActiveProject()) // capture before locking
+	projectID := s.resolveWriteProject(ctx, wc) // SPEC-203: explicit project > session's project > active slot
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if load.LoadedAt == "" {
@@ -4021,7 +4166,7 @@ func (s *Store) SaveVLPStateWithTransition(ctx context.Context, wc store.WriteCo
 // SaveVLPStateWithTransition. Caller MUST hold s.mu. transitionNotes
 // empty = skip transition-level audit.
 func (s *Store) saveVLPStateTx(ctx context.Context, wc store.WriteContext, row *store.VLPStateRow, transitionNotes string) (int64, error) {
-	projectID := projectIDOrActive(wc.ProjectID, s.activeProject)
+	projectID := s.resolveWriteProjectLocked(ctx, wc)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if row.CreatedAt == "" {
 		row.CreatedAt = now
@@ -4214,7 +4359,6 @@ func (s *Store) ListVLPStates(ctx context.Context, stateFilter string, limit int
 	return out, rows.Err()
 }
 
-
 func (s *Store) SetActiveSession(ctx context.Context, projectID, sessionID string) error {
 	if strings.TrimSpace(projectID) == "" || strings.TrimSpace(sessionID) == "" {
 		return fmt.Errorf("sqlite: SetActiveSession: projectID and sessionID required")
@@ -4252,13 +4396,13 @@ func (s *Store) SetActiveSession(ctx context.Context, projectID, sessionID strin
 	// flip is a write event even though the row that "lost" the
 	// active pointer isn't a new row.
 	if err := s.recordWriteLocked(ctx, audit.WriteEvent{
-		Actor:          activeProject,
-		ProjectID:      projectID,
-		WritePath:      "SetActiveSession",
-		SessionID:      sessionID,
-		ConstitutionID: "",
+		Actor:           activeProject,
+		ProjectID:       projectID,
+		WritePath:       "SetActiveSession",
+		SessionID:       sessionID,
+		ConstitutionID:  "",
 		ConstitutionVer: "",
-		CreatedAt:      now,
+		CreatedAt:       now,
 	}, ""); err != nil {
 		// Best-effort. Don't fail the caller — the pointer is set.
 		// (Same policy as SaveDriftReport "log + carry on".)
@@ -4315,14 +4459,14 @@ func (s *Store) ClearActiveSession(ctx context.Context, projectID, expectedSessi
 		// newer session is the live one and shouldn't be
 		// double-counted.
 		_ = s.recordWriteLocked(ctx, audit.WriteEvent{
-			Actor:          activeProject,
-			ProjectID:      projectID,
-			WritePath:      "ClearActiveSession",
-			SessionID:      expectedSessionID,
-			ConstitutionID: "",
+			Actor:           activeProject,
+			ProjectID:       projectID,
+			WritePath:       "ClearActiveSession",
+			SessionID:       expectedSessionID,
+			ConstitutionID:  "",
 			ConstitutionVer: "",
-			CreatedAt:      now,
-}, "")
+			CreatedAt:       now,
+		}, "")
 	}
 	return nil
 }
@@ -4384,7 +4528,7 @@ func (s *Store) SaveAgentMemory(ctx context.Context, wc store.WriteContext, m *a
 	if !agentmemory.ValidMemoryType(m.MemoryType) {
 		return 0, fmt.Errorf("sqlite: SaveAgentMemory: invalid memory_type %q", m.MemoryType)
 	}
-	projectID := projectIDOrActive(wc.ProjectID, s.activeProject)
+	projectID := s.resolveWriteProject(ctx, wc)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 
 	// v2.3.0: NO auto-bind. session_id is optional metadata. See
@@ -4443,12 +4587,22 @@ func (s *Store) SaveAgentMemory(ctx context.Context, wc store.WriteContext, m *a
 		if wc.WritePath == "" {
 			wc.WritePath = "SaveAgentMemory"
 		}
+		// SPEC-203: the audit row attributes the write to the session
+		// that asked for it. The row's own session binding (m.SessionID)
+		// wins when it exists (bind_session=true); otherwise the
+		// session named in the call is the attribution. Before this,
+		// every agent_memory write landed in write_audit with a NULL
+		// session_id.
+		auditSession := m.SessionID
+		if auditSession == "" {
+			auditSession = wc.SessionID
+		}
 		if err := s.recordWriteLockedTx(ctx, tx, audit.WriteEvent{
 			TableName:       "agent_memory",
 			RowID:           id,
 			ProjectID:       projectID,
 			Actor:           wc.Actor,
-			SessionID:       m.SessionID,
+			SessionID:       auditSession,
 			WritePath:       wc.WritePath,
 			ConstitutionID:  wc.ConstitutionID,
 			ConstitutionVer: wc.ConstitutionVer,
@@ -4490,13 +4644,33 @@ func (s *Store) SaveAgentMemory(ctx context.Context, wc store.WriteContext, m *a
 // when OFF, the orchestrator catches *CrossProjectAccessError and
 // converts to (nil, nil) for v2.7.x compat.
 func (s *Store) GetAgentMemory(ctx context.Context, id int64) (*agentmemory.AgentMemory, error) {
+	return s.GetAgentMemoryInProject(ctx, id, s.ActiveProject())
+}
+
+// GetAgentMemoryInProject returns the row by id scoped to an explicit
+// project (SPEC-203). GetAgentMemory keeps its meaning (the active
+// project); this one is what a caller uses when it already resolved
+// the project and must read back exactly that — for example, after a
+// write that landed in the project of a session while the global slot
+// pointed somewhere else.
+//
+// Same behavior matrix as GetAgentMemory, with the requested project
+// replacing the active one:
+//
+//   - Row in the requested project      → (*AgentMemory, nil)
+//   - Row in a different project         → (nil, *CrossProjectAccessError)
+//   - Row does not exist                 → (nil, nil)
+//   - id <= 0                            → (nil, nil)
+func (s *Store) GetAgentMemoryInProject(ctx context.Context, id int64, projectID string) (*agentmemory.AgentMemory, error) {
 	if err := s.requireProject(); err != nil {
 		return nil, err
 	}
 	if id <= 0 {
 		return nil, nil
 	}
-	activeProject := s.ActiveProject()
+	if projectID == "" {
+		projectID = s.ActiveProject()
+	}
 
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, project_id, COALESCE(session_id, ''), operator,
@@ -4505,7 +4679,7 @@ func (s *Store) GetAgentMemory(ctx context.Context, id int64) (*agentmemory.Agen
 		       pinned, created_at, updated_at, COALESCE(archived_at, ''),
 		       COALESCE(expires_at, '')
 		  FROM agent_memory
-		 WHERE id = ? AND project_id = ?`, id, activeProject)
+		 WHERE id = ? AND project_id = ?`, id, projectID)
 
 	var m agentmemory.AgentMemory
 	var pinned int
@@ -4516,7 +4690,7 @@ func (s *Store) GetAgentMemory(ctx context.Context, id int64) (*agentmemory.Agen
 		if !errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("agent_memory: get: %w", err)
 		}
-		// Row not in active project. Check if it exists elsewhere
+		// Row not in the requested project. Check if it exists elsewhere
 		// (v2.8.0-alpha: distinguish cross-project from non-existent).
 		var rowProject string
 		err := s.db.QueryRowContext(ctx,
@@ -4528,7 +4702,7 @@ func (s *Store) GetAgentMemory(ctx context.Context, id int64) (*agentmemory.Agen
 			return nil, fmt.Errorf("agent_memory: cross-project probe: %w", err)
 		}
 		return nil, &store.CrossProjectAccessError{
-			RequestedProject: activeProject,
+			RequestedProject: projectID,
 			RowProject:       rowProject,
 			RowID:            id,
 		}
@@ -4555,7 +4729,9 @@ func (s *Store) UpdateAgentMemory(ctx context.Context, wc store.WriteContext, id
 	if u == nil {
 		return nil, fmt.Errorf("sqlite: UpdateAgentMemory: nil update")
 	}
-	activeProject := s.ActiveProject()
+	// SPEC-203: the row targeted is the one in the project of the
+	// session the write names, not the one in the active slot.
+	activeProject := s.resolveWriteProject(ctx, wc)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 
 	s.mu.Lock()
@@ -4669,7 +4845,9 @@ func (s *Store) ArchiveAgentMemory(ctx context.Context, wc store.WriteContext, i
 	if id <= 0 {
 		return store.ErrNotFound
 	}
-	activeProject := s.ActiveProject()
+	// SPEC-203: the row archived is the one in the project of the
+	// session the write names, not the one in the active slot.
+	activeProject := s.resolveWriteProject(ctx, wc)
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 
 	s.mu.Lock()
@@ -4761,7 +4939,13 @@ func (s *Store) ListAgentMemory(ctx context.Context, f agentmemory.AgentMemoryLi
 	if err := s.requireProject(); err != nil {
 		return nil, err
 	}
-	activeProject := s.ActiveProject()
+	// SPEC-203: the read no longer depends on the global slot when the
+	// caller names its session/project. A project that does not match
+	// the session is refused (ErrCrossProjectAccess), never widened.
+	activeProject, err := s.resolveReadProject(ctx, f.ProjectID, f.SessionID)
+	if err != nil {
+		return nil, err
+	}
 
 	// Resolve scope. "current" defers to project (v2.3.0 change).
 	scope := f.Scope
@@ -4809,7 +4993,12 @@ func (s *Store) ListAgentMemory(ctx context.Context, f agentmemory.AgentMemoryLi
 	}
 	switch scope {
 	case agentmemory.ScopeSession:
-		sid, _ := s.resolveActiveSessionID(ctx)
+		// SPEC-203: when the caller named its session, that session IS
+		// the scope (it may not be the active one of the project).
+		sid := f.SessionID
+		if sid == "" {
+			sid, _ = s.resolveActiveSessionID(ctx)
+		}
 		if sid == "" {
 			// No active session — return empty rather than
 			// silently widening. This is the safer default for
@@ -4992,7 +5181,6 @@ func recallQueryTerms(raw string) []string {
 	return terms
 }
 
-
 // Extracted from the original SearchAgentMemory body when the Mode
 // dispatch landed in PR-2. Behavior unchanged: returns hits in rank
 // ASCENDING order (FTS5 bm25 is monotonic; -bm25() is negated in the
@@ -5131,7 +5319,12 @@ func splitQueryTokens(raw string) []string {
 // rewriteFTSQuery so multi-word natural-language queries return hits
 // (raw AND semantics returned zero for anything past ~3 tokens).
 func (s *Store) searchByBM25(ctx context.Context, f agentmemory.SearchFilters) ([]agentmemory.SearchHit, error) {
-	activeProject := s.ActiveProject()
+	// SPEC-203: the caller may name the session/project; a project that
+	// does not match the session is refused, never widened.
+	activeProject, err := s.resolveReadProject(ctx, f.ProjectID, f.SessionID)
+	if err != nil {
+		return nil, err
+	}
 
 	limit := f.Limit
 	if limit <= 0 {
@@ -5300,7 +5493,7 @@ func (s *Store) SetActiveSubagent(ctx context.Context, wc store.WriteContext, ro
 	if strings.TrimSpace(row.Operator) == "" {
 		return 0, fmt.Errorf("sqlite: SetActiveSubagent: operator required")
 	}
-	projectID := projectIDOrActive(wc.ProjectID, s.activeProject)
+	projectID := s.resolveWriteProject(ctx, wc)
 	ttl := row.TTLSeconds
 	if ttl <= 0 {
 		ttl = 3600
@@ -5420,7 +5613,7 @@ func (s *Store) ClearActiveSubagent(ctx context.Context, wc store.WriteContext, 
 	if strings.TrimSpace(subagentID) == "" {
 		return fmt.Errorf("sqlite: ClearActiveSubagent: subagent_id required")
 	}
-	projectID := projectIDOrActive(wc.ProjectID, s.activeProject)
+	projectID := s.resolveWriteProject(ctx, wc)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()

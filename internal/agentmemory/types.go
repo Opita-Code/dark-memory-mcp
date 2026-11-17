@@ -275,6 +275,22 @@ type AgentMemoryUpdate struct {
 // scope=agent resolutions work from caller intent (NOT from the
 // unreliable write_audit.actor lookup that v2.1.x used). See INV-10.
 type AgentMemoryListFilters struct {
+	// ProjectID scopes the read to one project (SPEC-203). Empty =
+	// the store's active project (legacy behaviour).
+	//
+	// It is a NARROWING, never a widening: the store refuses a
+	// project_id that is not the one the caller's session resolves to
+	// (ErrCrossProjectAccess). The point of the field is that the
+	// read no longer depends on the mutable global slot: the caller
+	// names the project, and the store checks it against the session.
+	ProjectID string
+
+	// SessionID names the session the read belongs to (SPEC-203). It is
+	// the authority for ProjectID: a project_id that does not match
+	// this session's project is refused with ErrCrossProjectAccess
+	// instead of silently returning another project's rows.
+	SessionID string
+
 	// Scope narrows the result set. Empty = ScopeProject (v2.3.0
 	// change; pre-v2.3.0 default was ScopeSession when bound).
 	// Allowed: current|session|project|operator|agent|all.
@@ -334,6 +350,16 @@ type AgentMemoryListFilters struct {
 // pre-PR-2 behavior (BM25 only).
 type SearchFilters struct {
 	Query string
+
+	// ProjectID scopes the search to one project (SPEC-203). Empty =
+	// the store's active project (legacy behaviour). It is a
+	// narrowing, never a widening: a project_id that does not match
+	// the caller's session is refused with ErrCrossProjectAccess.
+	ProjectID string
+
+	// SessionID names the session the search belongs to (SPEC-203). It
+	// is the authority for ProjectID.
+	SessionID string
 
 	// Kind narrows the result set. Empty = any.
 	Kind string

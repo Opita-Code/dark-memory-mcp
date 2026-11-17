@@ -55,6 +55,20 @@ type AgentMemorySaveInput struct {
 	ExpiresAt   string `json:"expires_at,omitempty"`
 	BindSession bool   `json:"bind_session,omitempty"`
 
+	// SessionID names the session the write belongs to (SPEC-203).
+	// The project of the write is resolved from it, so the row lands
+	// in the project of the session that asked for it even when
+	// another client has moved the global project slot. It also
+	// attributes the write_audit row (INV-1): today that column comes
+	// out NULL for agent_memory writes.
+	SessionID string `json:"session_id,omitempty"`
+
+	// ProjectID is the explicit project. It is a NARROWING: when
+	// SessionID names a session of another project, the session wins
+	// (see store.ResolveProjectForCall) and the write still lands in
+	// the right place.
+	ProjectID string `json:"project_id,omitempty"`
+
 	// ExtractEntities (v2.9.0 PR-3, agent_memory row 160) runs the
 	// deterministic extractor (internal/entity) on
 	// content+title+tags and writes the result to
@@ -68,6 +82,20 @@ type AgentMemorySaveInput struct {
 type AgentMemorySaveOutput struct {
 	Row     agentmemory.AgentMemory `json:"row"`
 	AuditID int64                   `json:"audit_id"`
+}
+
+// resolveCallProject resolves the project a call belongs to
+// (SPEC-203). The store owns the chain (session > explicit project >
+// active slot); the orchestrator asks it so that the write and the
+// read-back that follows it agree on the same project.
+//
+// Falls back to the active project when the store cannot answer,
+// which is the legacy behaviour.
+func (o *Orchestrator) resolveCallProject(ctx context.Context, projectID, sessionID string) string {
+	if pid, err := o.Store.ResolveProjectForCall(ctx, projectID, sessionID); err == nil && pid != "" {
+		return pid
+	}
+	return o.Store.ActiveProject()
 }
 
 // AgentMemorySave inserts one row into the active project.
@@ -112,9 +140,17 @@ func (o *Orchestrator) AgentMemorySave(ctx context.Context, in AgentMemorySaveIn
 		}
 	}
 
+	// SPEC-203: resolve the project from the named session (the
+	// authority) and put it in the WriteContext, so the write lands in
+	// the project of the session that asked for it — not in whatever
+	// project the global slot happens to point at.
+	projectID := o.resolveCallProject(ctx, in.ProjectID, in.SessionID)
+
 	wc := store.WriteContext{
 		Actor:     in.Operator,
 		WritePath: "AgentMemorySave",
+		SessionID: in.SessionID,
+		ProjectID: projectID,
 	}
 	m := &agentmemory.AgentMemory{
 		Operator:   in.Operator,
@@ -133,8 +169,18 @@ func (o *Orchestrator) AgentMemorySave(ctx context.Context, in AgentMemorySaveIn
 	// honors BindSession explicitly. If the caller wants the row
 	// tied to the session lifecycle, they MUST set BindSession=true
 	// AND have an active session at save time.
+	//
+	// SPEC-203: when the caller names its session, THAT is the session
+	// the row binds to. The fallback (the active session of the
+	// resolved project) is only for the callers that name none.
 	if in.BindSession {
-		if sid, err := o.Store.GetActiveSession(ctx, o.Store.ActiveProject()); err == nil && sid != "" {
+		sid := in.SessionID
+		if sid == "" {
+			if active, err := o.Store.GetActiveSession(ctx, projectID); err == nil {
+				sid = active
+			}
+		}
+		if sid != "" {
 			m.SessionID = sid
 		}
 	}
@@ -155,7 +201,11 @@ func (o *Orchestrator) AgentMemorySave(ctx context.Context, in AgentMemorySaveIn
 	// The Store mutates m to fill ProjectID/CreatedAt/UpdatedAt.
 	// Re-fetch to also surface SessionID (the Store knows it but
 	// doesn't mutate m.SessionID in our impl — keep it consistent).
-	got, err := o.Store.GetAgentMemory(ctx, id)
+	//
+	// SPEC-203: read back from the RESOLVED project, not from the
+	// active slot: the write may have landed in the project of the
+	// named session while the slot points elsewhere.
+	got, err := o.Store.GetAgentMemoryInProject(ctx, id, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -187,6 +237,15 @@ func (o *Orchestrator) AgentMemorySave(ctx context.Context, in AgentMemorySaveIn
 // is required when Scope=operator; AgentID is required when
 // Scope=agent. MemoryType added as a Mem0-class filter.
 type AgentMemoryListInput struct {
+	// SessionID names the session the read belongs to (SPEC-203). It
+	// is the authority for ProjectID, and it makes the read
+	// independent of the mutable global project slot.
+	SessionID string `json:"session_id,omitempty"`
+	// ProjectID is the explicit project. A project that contradicts
+	// the session is refused with ErrCrossProjectAccess — a read
+	// never widens.
+	ProjectID string `json:"project_id,omitempty"`
+
 	Scope           string `json:"scope,omitempty"`
 	Operator        string `json:"operator,omitempty"`
 	AgentID         string `json:"agent_id,omitempty"`
@@ -215,6 +274,8 @@ type AgentMemoryListOutput struct {
 // can request rows by their own identity, not by an audit side-channel.
 func (o *Orchestrator) AgentMemoryList(ctx context.Context, in AgentMemoryListInput) (*AgentMemoryListOutput, error) {
 	f := agentmemory.AgentMemoryListFilters{
+		SessionID:       in.SessionID,
+		ProjectID:       in.ProjectID,
 		Scope:           in.Scope,
 		Operator:        in.Operator,
 		AgentID:         in.AgentID,
@@ -246,6 +307,13 @@ func (o *Orchestrator) AgentMemoryList(ctx context.Context, in AgentMemoryListIn
 // MemoryType scopes by Mem0 three-class taxonomy, Kind scopes by
 // operator's 10-kind taxonomy. All filters are AND-combined.
 type AgentMemoryRecallInput struct {
+	// SessionID names the session the search belongs to (SPEC-203).
+	// It is the authority for ProjectID.
+	SessionID string `json:"session_id,omitempty"`
+	// ProjectID is the explicit project. A project that contradicts
+	// the session is refused with ErrCrossProjectAccess.
+	ProjectID string `json:"project_id,omitempty"`
+
 	Scope      string `json:"scope,omitempty"`
 	Operator   string `json:"operator,omitempty"`
 	AgentID    string `json:"agent_id,omitempty"`
@@ -277,6 +345,8 @@ func (o *Orchestrator) AgentMemoryRecall(ctx context.Context, in AgentMemoryReca
 		return nil, fmt.Errorf("agent_memory_recall: invalid memory_type %q", in.MemoryType)
 	}
 	hits, err := o.Store.SearchAgentMemory(ctx, agentmemory.SearchFilters{
+		SessionID:  in.SessionID,
+		ProjectID:  in.ProjectID,
 		Query:      in.Query,
 		Scope:      in.Scope,
 		Operator:   in.Operator,
@@ -440,6 +510,14 @@ func firstLine(s string, maxChars int) string {
 // AgentMemoryGetInput is the request for one row by id.
 type AgentMemoryGetInput struct {
 	ID int64 `json:"id"`
+
+	// SessionID names the session the read belongs to (SPEC-203). The
+	// row is looked up in that session's project, so the read does
+	// not depend on the mutable global project slot.
+	SessionID string `json:"session_id,omitempty"`
+	// ProjectID is the explicit project. A project that contradicts
+	// the session is refused with ErrCrossProjectAccess.
+	ProjectID string `json:"project_id,omitempty"`
 }
 
 // AgentMemoryGetOutput is the row.
@@ -458,7 +536,10 @@ func (o *Orchestrator) AgentMemoryGet(ctx context.Context, in AgentMemoryGetInpu
 	if in.ID <= 0 {
 		return nil, errMissingField("id")
 	}
-	row, err := o.Store.GetAgentMemory(ctx, in.ID)
+	// SPEC-203: read the row from the resolved project (the session's
+	// project when the caller names one), not from the active slot.
+	projectID := o.resolveCallProject(ctx, in.ProjectID, in.SessionID)
+	row, err := o.Store.GetAgentMemoryInProject(ctx, in.ID, projectID)
 	if err != nil {
 		// v2.8.0-alpha D5: when the flag is on, propagate the typed
 		// CrossProjectAccessError directly — it implements Is(target)
@@ -498,6 +579,13 @@ type AgentMemoryUpdateInput struct {
 	Tags      *string `json:"tags,omitempty"`
 	Pinned    *bool   `json:"pinned,omitempty"`
 	ExpiresAt *string `json:"expires_at,omitempty"`
+
+	// SessionID names the session the write belongs to (SPEC-203):
+	// the row updated is the one in that session's project.
+	SessionID string `json:"session_id,omitempty"`
+	// ProjectID is the explicit project (the session wins if they
+	// disagree).
+	ProjectID string `json:"project_id,omitempty"`
 }
 
 // AgentMemoryUpdateOutput is the refreshed row + audit id.
@@ -517,9 +605,13 @@ func (o *Orchestrator) AgentMemoryUpdate(ctx context.Context, in AgentMemoryUpda
 		return nil, errMissingField("operator")
 	}
 
+	// SPEC-203: the update targets the row in the project of the
+	// named session, not the one in the active slot.
 	wc := store.WriteContext{
 		Actor:     in.Operator,
 		WritePath: "AgentMemoryUpdate",
+		SessionID: in.SessionID,
+		ProjectID: o.resolveCallProject(ctx, in.ProjectID, in.SessionID),
 	}
 	u := &agentmemory.AgentMemoryUpdate{
 		Title:     in.Title,
@@ -542,6 +634,13 @@ func (o *Orchestrator) AgentMemoryUpdate(ctx context.Context, in AgentMemoryUpda
 type AgentMemoryArchiveInput struct {
 	ID       int64  `json:"id"`
 	Operator string `json:"operator,omitempty"`
+
+	// SessionID names the session the write belongs to (SPEC-203):
+	// the row archived is the one in that session's project.
+	SessionID string `json:"session_id,omitempty"`
+	// ProjectID is the explicit project (the session wins if they
+	// disagree).
+	ProjectID string `json:"project_id,omitempty"`
 }
 
 // AgentMemoryArchiveOutput is a small confirmation shape: the id +
@@ -563,15 +662,20 @@ func (o *Orchestrator) AgentMemoryArchive(ctx context.Context, in AgentMemoryArc
 		return nil, errMissingField("operator")
 	}
 
+	// SPEC-203: the archive targets the row in the project of the
+	// named session, not the one in the active slot.
+	projectID := o.resolveCallProject(ctx, in.ProjectID, in.SessionID)
 	wc := store.WriteContext{
 		Actor:     in.Operator,
 		WritePath: "AgentMemoryArchive",
+		SessionID: in.SessionID,
+		ProjectID: projectID,
 	}
 	if err := o.Store.ArchiveAgentMemory(ctx, wc, in.ID); err != nil {
 		return nil, err
 	}
 	// Re-fetch to surface the canonical archived_at timestamp.
-	got, err := o.Store.GetAgentMemory(ctx, in.ID)
+	got, err := o.Store.GetAgentMemoryInProject(ctx, in.ID, projectID)
 	if err != nil {
 		return nil, err
 	}
