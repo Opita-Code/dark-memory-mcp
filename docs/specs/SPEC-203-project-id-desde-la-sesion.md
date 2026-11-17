@@ -81,6 +81,34 @@ memoria del agente se resuelve por sesion y el resto no, el fallo se esconde en
 la parte que nadie prueba. Los testes existentes son el mapa de esa dependencia:
 si alguno depende del slot, se rompe, y ahi se pasa el `project_id` explicito.
 
+### 3.1 La capa del gate (descubierta por la sonda A/B)
+
+El store no basta: **el gate resolvia la sesion por el slot tambien**, y por eso
+una llamada que nombraba su sesion era rechazada con «identity unavailable for
+this session» (medido contra el binario instalado, en vivo).
+
+El frame source (`internal/recall/assemble.go`) resolvia la sesion con
+`Store.GetSession`, que filtra por el proyecto activo. Con el slot en otro
+proyecto, la sesion nombrada no se encontraba. El gate resolvia, otra vez, por
+el slot global: **el mismo defecto, en la capa de arriba**.
+
+Lo que lo cierra:
+
+1. **`GetSessionByID` y `GetVLPStateByID`**: lecturas por id de sesion, sin el
+   filtro por proyecto activo. El id de sesion es globalmente unico y la fila
+   de sesion es la clave que dice **de que ambito** es una llamada: el filtro de
+   `GetSession` es una comodidad de las lecturas por proyecto, no una frontera
+   de aislamiento de la sesion. **`GetSession` conserva su filtro y su test.**
+2. **El frame source** usa esas lecturas, y el ambito que concede
+   `CapabilitiesFrame` es el proyecto **de la sesion**, no el del slot.
+3. **El middleware resuelve primero la sesion y despues el proyecto**: si la
+   llamada nombra sesion, el proyecto es el de esa sesion. Con el orden viejo
+   (proyecto primero) la pareja (proyecto, sesion) nunca cuadraba.
+
+La regla de seguridad se mantiene: una lectura que pide un proyecto que no es
+el de la sesion sigue siendo `ErrCrossProjectAccess`, y `GetSession` sigue
+devolviendo nil para una sesion de otro proyecto.
+
 ## 4. El contrato de las tools
 
 Las tools de `agent_memory` no aceptan hoy ni `session_id` ni `project_id` (el
