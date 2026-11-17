@@ -18,7 +18,26 @@ cada lectura filtra por el (`ListAgentMemory` :4764, `searchByBM25` :5134).
 servidor MCP de stdio **comparte ese proceso entre varios clientes**, cada uno
 con su proyecto, y sus `session_start` se entrelazan: medido en la maquina del
 operador, tres conexiones al mismo proceso servidor, con llamadas separadas por
-menos de diez segundos. Cada una mueve el slot, y a partir de ahi:
+menos de diez segundos.
+
+**Medido con pruebas de proceso (2026-11-17, T9 de SPEC-204).** El servidor
+expone `runtime.pid` y `runtime.booted_at` en `health_ping`, asi que la
+topologia se puede MEDIR y no interpretar:
+
+- mi proceso (`pid 1209767`, arrancado a las `14:11:05Z`) atendio a la vez a
+  dos clientes de dos proyectos distintos: mis escrituras en `dark-memory-mcp`
+  (`14:32:18Z`) y el `session_start` de `<proyecto-vecino>` de las `14:44:03Z`,
+  que movio **mi** slot (a las `14:45:38Z`, `health_ping` informed
+  `active_project=<proyecto-vecino>` en ese mismo proceso);
+- el `session_start` de `opita-code` de las `14:45:25Z` **no** movio ese slot:
+  estaba en otro proceso.
+
+Es decir: el proceso se comparte (y hay varios procesos), y el *slot* es estado
+en memoria **por proceso**. Por eso un id de sesion no se puede resolver por el
+slot, y por eso el *slot* queda deprecado como fuente de resolucion
+(SPEC-204 §8).
+
+Cada `session_start` mueve el slot, y a partir de ahi:
 
 - las escrituras de `agent_memory` caen en el proyecto del slot, no en el de la
   sesion que las pidio;

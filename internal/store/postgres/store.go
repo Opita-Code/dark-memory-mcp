@@ -204,6 +204,13 @@ func projectIDOrActive(wcProjectID, activeProject string) string {
 // mutable global slot shared by every client of the server process, so
 // it cannot answer "which project owns THIS session". Mirror of the
 // same method in the SQLite impl.
+//
+// MEASURED with process identity (2026-11-17): the server exposes
+// runtime.pid and runtime.booted_at in health_ping. One process
+// (pid 1209767, booted 14:11:05Z) served two clients of two different
+// projects: its slot moved from dark-memory-mcp to <proyecto-vecino>,
+// and health_ping reported the second one for that very process. The
+// slot is per-PROCESS state and processes are shared.
 func (s *Store) ProjectIDForSession(ctx context.Context, sessionID string) (string, error) {
 	if strings.TrimSpace(sessionID) == "" {
 		return "", nil
@@ -221,33 +228,70 @@ func (s *Store) ProjectIDForSession(ctx context.Context, sessionID string) (stri
 }
 
 // resolveWriteProject resolves the project_id a write belongs to.
-// SPEC-203 chain: the project of wc.SessionID (the session is the
-// authority) > wc.ProjectID (the explicit project) > the active
-// project slot (legacy fallback).
-func (s *Store) resolveWriteProject(ctx context.Context, wc store.WriteContext) string {
-	if wc.SessionID != "" {
-		if pid, err := s.ProjectIDForSession(ctx, wc.SessionID); err == nil && pid != "" {
-			return pid
+//
+// SPEC-204 chain, in this order:
+//
+//  1. The project that owns the session — the session is the
+//     authority. The session is the one the caller named, or the one
+//     the server resolved and injected into the context.
+//  2. wc.ProjectID — the explicit project, used by the flows that name
+//     no session (session_start and the administrative paths).
+//  3. The active project slot — the legacy fallback, DEPRECATED as a
+//     source of resolution (SPEC-204 §8).
+//
+// A resolution failure is an ERROR (SPEC-204 §4): degrading to the slot
+// would reintroduce the bug this chain exists to remove, silently.
+func (s *Store) resolveWriteProject(ctx context.Context, wc store.WriteContext) (string, error) {
+	sid := session.ResolveCallSession(ctx, wc.SessionID)
+	if sid != "" {
+		pid, err := s.scopeProject(ctx, sid)
+		if err != nil {
+			return "", err
+		}
+		if pid != "" {
+			return pid, nil
 		}
 	}
 	if wc.ProjectID != "" {
-		return wc.ProjectID
+		return wc.ProjectID, nil
 	}
-	return s.ActiveProject()
+	return s.ActiveProject(), nil
+}
+
+// scopeProject returns the project that owns the given session.
+//
+// When the context carries that same session, the project it carries is
+// reused (the server already resolved it for the gate). Otherwise the
+// session is looked up by id.
+//
+// A lookup FAILURE is an error and is never degraded to the global slot
+// (SPEC-204 §4).
+func (s *Store) scopeProject(ctx context.Context, sessionID string) (string, error) {
+	if strings.TrimSpace(sessionID) == "" {
+		return "", nil
+	}
+	if sc, ok := session.ScopeFromContext(ctx); ok && sc.SessionID == sessionID && sc.ProjectID != "" {
+		return sc.ProjectID, nil
+	}
+	return s.ProjectIDForSession(ctx, sessionID)
 }
 
 // ResolveProjectForCall resolves the project a call belongs to
 // (SPEC-203): the session is the authority, then the explicit
 // project, then the active project slot.
+//
+// SPEC-204: the session may come from the context (the server resolved
+// it once, for the gate), and a resolution failure is an error.
 func (s *Store) ResolveProjectForCall(ctx context.Context, projectID, sessionID string) (string, error) {
-	sessionProject := ""
-	if sessionID != "" {
-		if pid, err := s.ProjectIDForSession(ctx, sessionID); err == nil {
-			sessionProject = pid
+	sid := session.ResolveCallSession(ctx, sessionID)
+	if sid != "" {
+		pid, err := s.scopeProject(ctx, sid)
+		if err != nil {
+			return "", err
 		}
-	}
-	if sessionProject != "" {
-		return sessionProject, nil
+		if pid != "" {
+			return pid, nil
+		}
 	}
 	if projectID != "" {
 		return projectID, nil
@@ -1228,6 +1272,14 @@ func (s *Store) recordWriteTx(ctx context.Context, tx pgx.Tx, ev audit.WriteEven
 	if contentHash != "" && ev.ContentSHA256 == "" {
 		ev.ContentSHA256 = contentHash
 	}
+	if ev.SessionID == "" {
+		// SPEC-204: the server resolved the session once (for the gate)
+		// and injected it into the context. EVERY write leaves the trace
+		// of the session that made it.
+		if sc, ok := session.ScopeFromContext(ctx); ok {
+			ev.SessionID = sc.SessionID
+		}
+	}
 	if ev.ProjectID == "" {
 		ev.ProjectID = s.activeProject
 	}
@@ -1270,6 +1322,14 @@ func (s *Store) recordWrite(ctx context.Context, ev audit.WriteEvent, contentHas
 	}
 	if contentHash != "" && ev.ContentSHA256 == "" {
 		ev.ContentSHA256 = contentHash
+	}
+	if ev.SessionID == "" {
+		// SPEC-204: the server resolved the session once (for the gate)
+		// and injected it into the context. EVERY write leaves the trace
+		// of the session that made it.
+		if sc, ok := session.ScopeFromContext(ctx); ok {
+			ev.SessionID = sc.SessionID
+		}
 	}
 	if ev.ProjectID == "" {
 		ev.ProjectID = s.activeProject
@@ -1363,7 +1423,10 @@ func (s *Store) SaveSession(ctx context.Context, wc store.WriteContext, sess *se
 	if err := s.requireProject(); err != nil {
 		return 0, err
 	}
-	projectID := s.resolveWriteProject(ctx, wc)
+	projectID, projErr := s.resolveWriteProject(ctx, wc)
+	if projErr != nil {
+		return 0, projErr
+	}
 	if sess.StartedAt == "" {
 		sess.StartedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
@@ -1448,10 +1511,85 @@ func (s *Store) GetSessionByID(ctx context.Context, sessionID string) (*session.
 	return &sess, nil
 }
 
-// GetVLPStateByID returns the vlp_state row by session id WITHOUT
-// filtering by the active project (SPEC-203). Mirror of the SQLite impl.
+// GetVLPStateByID returns the vlp_state row by session id, scoped to
+// the project that owns the session (SPEC-203 + SPEC-204). Mirror of
+// the SQLite impl.
+//
+// SPEC-204 (M2): this was notImpl, so in postgres the frame source lost
+// the ScopeFrame and the DriftFrame — and with them the scope
+// validation and the drift check on the write path. The postgres smoke
+// test in CI does not exercise the gate, which is why it passed in
+// green.
+//
+// SPEC-204 (A2): vlp_state is UNIQUE(project_id, session_id), so the
+// same session_id can live in two projects. The read is scoped to the
+// project of the session: otherwise it can return another tenant's
+// state into the gate's frames.
 func (s *Store) GetVLPStateByID(ctx context.Context, sessionID string) (*store.VLPStateRow, error) {
-	return nil, notImpl("GetVLPStateByID")
+	if strings.TrimSpace(sessionID) == "" {
+		return nil, nil
+	}
+	projectID, err := s.scopeProject(ctx, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: get_vlp_state_by_id: %w", err)
+	}
+	if projectID == "" {
+		return nil, nil
+	}
+	var (
+		id          int64
+		sid         string
+		state       int
+		lastEvent   *string
+		lastVerdict *string
+		turnCount   int
+		minset      *string
+		consID      *string
+		consVer     *string
+		createdAt   string
+		updatedAt   string
+		rowProject  string
+		openSpecID  int64
+	)
+	err = s.pool.QueryRow(ctx, `
+		SELECT id, session_id, state, last_event, last_verdict, turn_count,
+		       minset_current, constitution_id, constitution_ver,
+		       created_at, updated_at, project_id, open_spec_id
+		FROM vlp_state WHERE session_id = $1 AND project_id = $2`,
+		sessionID, projectID).Scan(&id, &sid, &state, &lastEvent, &lastVerdict,
+		&turnCount, &minset, &consID, &consVer, &createdAt, &updatedAt, &rowProject, &openSpecID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("postgres: get_vlp_state_by_id: %w", err)
+	}
+	r := &store.VLPStateRow{
+		ID:         id,
+		SessionID:  sid,
+		State:      state,
+		TurnCount:  turnCount,
+		CreatedAt:  createdAt,
+		UpdatedAt:  updatedAt,
+		ProjectID:  rowProject,
+		OpenSpecID: openSpecID,
+	}
+	if lastEvent != nil {
+		r.LastEvent = *lastEvent
+	}
+	if lastVerdict != nil {
+		r.LastVerdict = *lastVerdict
+	}
+	if minset != nil {
+		r.MinsetCurrent = *minset
+	}
+	if consID != nil {
+		r.ConstitutionID = *consID
+	}
+	if consVer != nil {
+		r.ConstitutionVer = *consVer
+	}
+	return r, nil
 }
 
 func (s *Store) GetSession(ctx context.Context, sessionID string) (*session.Session, error) {
@@ -1847,7 +1985,10 @@ func (s *Store) SaveRun(ctx context.Context, wc store.WriteContext, run *researc
 	if err := s.requireProject(); err != nil {
 		return 0, err
 	}
-	projectID := s.resolveWriteProject(ctx, wc)
+	projectID, projErr := s.resolveWriteProject(ctx, wc)
+	if projErr != nil {
+		return 0, projErr
+	}
 	if run.CreatedAt == "" {
 		run.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
@@ -2172,7 +2313,10 @@ func (s *Store) LinkResearch(ctx context.Context, wc store.WriteContext, link *r
 	if err := s.requireProject(); err != nil {
 		return err
 	}
-	projectID := s.resolveWriteProject(ctx, wc)
+	projectID, projErr := s.resolveWriteProject(ctx, wc)
+	if projErr != nil {
+		return projErr
+	}
 	if link.CreatedAt == "" {
 		link.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
@@ -2238,7 +2382,10 @@ func (s *Store) SaveBrandGuide(ctx context.Context, wc store.WriteContext, b *vi
 	if err := s.requireProject(); err != nil {
 		return err
 	}
-	projectID := s.resolveWriteProject(ctx, wc) // SPEC-203: explicit project > session's project > active slot
+	projectID, projErr := s.resolveWriteProject(ctx, wc)
+	if projErr != nil {
+		return projErr
+	}
 	if b.CreatedAt == "" {
 		b.CreatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
@@ -3416,7 +3563,10 @@ func (s *Store) SaveVLPStateWithTransition(ctx context.Context, wc store.WriteCo
 // SaveVLPStateWithTransition. transitionNotes empty = skip transition-level
 // audit. Postgres impl uses pgx.Tx via s.runInTx.
 func (s *Store) saveVLPStateTx(ctx context.Context, wc store.WriteContext, row *store.VLPStateRow, transitionNotes string) (int64, error) {
-	projectID := s.resolveWriteProject(ctx, wc) // SPEC-203: explicit project > session's project > active slot
+	projectID, projErr := s.resolveWriteProject(ctx, wc)
+	if projErr != nil {
+		return 0, projErr
+	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if row.CreatedAt == "" {
 		row.CreatedAt = now
@@ -3834,7 +3984,10 @@ func (s *Store) SetActiveSubagent(ctx context.Context, wc store.WriteContext, ro
 	if err := s.requireProject(); err != nil {
 		return 0, err
 	}
-	projectID := s.resolveWriteProject(ctx, wc) // SPEC-203: explicit project > session's project > active slot
+	projectID, projErr := s.resolveWriteProject(ctx, wc)
+	if projErr != nil {
+		return 0, projErr
+	}
 	ttl := row.TTLSeconds
 	if ttl <= 0 {
 		ttl = 3600
@@ -3941,7 +4094,10 @@ func (s *Store) ClearActiveSubagent(ctx context.Context, wc store.WriteContext, 
 	if strings.TrimSpace(subagentID) == "" {
 		return fmt.Errorf("postgres: ClearActiveSubagent: subagent_id required")
 	}
-	projectID := s.resolveWriteProject(ctx, wc) // SPEC-203: explicit project > session's project > active slot
+	projectID, projErr := s.resolveWriteProject(ctx, wc)
+	if projErr != nil {
+		return projErr
+	}
 
 	return s.runInTx(ctx, func(tx pgx.Tx) error {
 		var rowID int64
