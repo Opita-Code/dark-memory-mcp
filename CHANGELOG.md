@@ -11,6 +11,88 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [4.0.0-alpha.34] — 2026-11-17 — the identity of a write comes from the session that asked for it
+
+The MCP server process is shared between several clients. Each client
+works in its own project, and whoever started a session last owns the
+global "active project" slot — a mutable global that a write that does
+not name its session lands in. Measured on the operator's machine: 1041
+of 1144 `agent_memory` writes (91%) and 1600 of 1600 `sdd_evaluations`
+carried no `session_id` at all, and the `opencode` operator had 603 rows
+across 18 projects, 599 of them without a session. You could tell WHO
+wrote; you could not tell WHERE or in which unit of work.
+
+The identity of a call is now resolved once, in the middleware, and
+travels in the `context.Context` down to the store, which applies it on
+every write path and on the vibe-loop reads. No tool has to declare
+`session_id`.
+
+### Added
+
+- **Session-scoped identity** (`internal/session/scope.go`,
+  `internal/server/middleware.go`): the middleware resolves the session
+  and the project once and injects them into the context. The store
+  reads the scope from there, so the write and the read-back that
+  follows it always agree on the same project.
+- **`GetAgentMemoryInProject`** (`internal/store/store.go`): a read
+  scoped to one project. The cross-project refusal is explicit
+  (`ErrCrossProjectAccess`) instead of an empty result that is
+  indistinguishable from "there is no memory".
+- **`GetVLPStateByID`** in the postgres driver (it was `notImpl`, and
+  the frame source was losing `ScopeFrame` and `DriftFrame`).
+- **The audit row carries the session** (AC7): `write_audit` gets the
+  `session_id` of the call, so a write can be traced to the unit of
+  work that produced it.
+
+### Fixed
+
+- **A resolution failure no longer degrades to the global slot**
+  (`internal/orchestration/agent_memory.go`): the store fails closed
+  when the session lookup fails — a lookup failure is an error and is
+  never degraded to the global slot. The orchestrator used to undo
+  that one layer up: `resolveCallProject` swallowed the error and
+  returned the active project, which is the worst place for it,
+  because the write landed in whatever project the slot pointed at
+  (possibly another client's) and the caller never learned that
+  anything had gone wrong. `resolveCallProject` now returns
+  `(string, error)` and the four call sites — Save, Get, Update and
+  Archive — propagate it.
+- **`vlp_state` is read by `(session_id, project_id)`**: the schema
+  allows the same `session_id` in two projects, so a read by id alone
+  could return another tenant's state.
+- **The project is resolved before the mutex is taken**: the
+  resolution no longer happens under the store's lock.
+
+### Changed
+
+- **The active-project slot is deprecated as a source of resolution**
+  (SPEC-204 §8). It remains as the legacy fallback for the flows that
+  name no session, and every such flow now says so.
+- **The gate resolves the session by id, not by the slot**
+  (`internal/server/middleware.go`): the gate and the store now agree
+  on the project. Before, the gate judged one project while the write
+  landed in another.
+
+### Notes
+
+- **The postgres driver is partial** and this release does not change
+  that: it carries 42 `notImpl` stubs, and `SaveAgentMemory` was
+  already one of them. `GetAgentMemoryInProject` adds a 36th. The
+  postgres smoke test does not exercise the orchestrator, so the CI
+  cannot see the incoherence.
+- **The frontier of trust moved** (SPEC-204 §10): naming a session of
+  another project is now a valid identity for the 78 tools. With 128
+  bits of entropy in the session id and `ListSessions` filtered by
+  project, the practical risk is low, but it is a product decision,
+  not a bugfix.
+- **This release does not change the behaviour of a server that has
+  not been rebuilt from it.** The gate of the production server
+  remains the version it was serving until the binary is rebuilt,
+  installed and the new `runtime.pid` is observed in `health_ping`.
+
+See `docs/specs/SPEC-203-project-id-desde-la-sesion.md` and
+`docs/specs/SPEC-204-resolucion-central-de-la-identidad.md`.
+
 ## [4.0.0-alpha.33] — 2026-11-02 — credential-scoped endpoint resolution
 
 The endpoint of a provider is a property of the **credential**, not of

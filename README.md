@@ -136,7 +136,7 @@ Necesitas **Node.js 18+** (wrapper npm) o **Go 1.25+** (desde source).
 
 ```json
 {
-  "server": { "version": "4.0.0-alpha.33", "name": "dark-memory-mcp" },
+  "server": { "version": "4.0.0-alpha.34", "name": "dark-memory-mcp" },
   "db": { "live": true, "schema_version": 32 },
   "registry": { "canonical_tools": 78 }
 }
