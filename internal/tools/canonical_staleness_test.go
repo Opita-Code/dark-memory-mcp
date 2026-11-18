@@ -160,11 +160,25 @@ func TestCanonicalOrder_WirePrefixConsistent(t *testing.T) {
 // Surface advances 73 → 78 tools, 20 → 21 namespaces. Schema stays
 // v32. Suffix 28 unchanged (meaning per SPEC 1276; not re-derived
 // here — declared unknown per LUCIDEZ R6).
-func TestCanonicalOrder_Frozen_78_21_28(t *testing.T) {
+//
+// SPEC-194 (2026-11-17) bumps the freeze: 78 → 81 tools, 21 → 22
+// namespaces, schema v32 → v33.
+//
+//   - The 3 new tools are the PLAN surface (plan_create, plan_get,
+//     plan_decide) in a new PLAN namespace. They are the first half
+//     of SPEC-194 (the second half, the gate, is PR B).
+//   - The schema bump is v33 = plan_columns: the plan lives on
+//     vibe_specs with seven new columns. No table is added and no
+//     existing table changes shape, so the bump is additive.
+//
+// The same bump pattern was used before, twice, and both times the
+// freeze was red on HEAD until the bump landed: c3b0a51 (vibe_compile)
+// and 8ed967a (the OAUTH namespace).
+func TestCanonicalOrder_Frozen_81_22_33(t *testing.T) {
 	const (
-		frozenToolCount      = 78 // 73 (alpha.25 Phase 14 T-303) + 1 vibe_compile (Sesión 5bis c3b0a51) + 4 OAUTH (Sesión 6 8ed967a)
-		frozenNamespaceCount = 21 // 20 (alpha.25) + 1 new namespace (OAUTH)
-		frozenSchemaVersion  = 32 // v31 = bitemporal_lite; v32 = events_polymorphic (Phase 12 T-101); unchanged since
+		frozenToolCount      = 81 // 78 (SPEC 1276 + alpha.25/5bis/6) + 3 PLAN (SPEC-194: plan_create, plan_get, plan_decide)
+		frozenNamespaceCount = 22 // 21 + 1 new namespace (PLAN)
+		frozenSchemaVersion  = 33 // v32 = events_polymorphic (Phase 12 T-101); v33 = plan_columns (SPEC-194 T5)
 	)
 
 	if got := len(CanonicalOrder()); got != frozenToolCount {

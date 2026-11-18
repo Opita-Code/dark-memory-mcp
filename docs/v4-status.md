@@ -138,7 +138,7 @@
 | Local-only policy | RETIRED 2026-10-08 — repo is public (`github.com/Opita-Code/dark-memory-mcp`, MIT + CC-BY-NC-4.0 for `mods/vibe-loop-git/`), releases published (npm + MCP Registry). Pushes and remote tags happen only by operator decision, not by default. |
 
 ---
-## 1. Tools inventory (78 canonical, 21 namespaces, schema v32)
+## 1. Tools inventory (81 canonical, 22 namespaces, schema v33)
 
 **Measured, not declared** (2026-10-15, verified by an in-package probe
 over `tools.NamespaceGroups()` and `tools.NamespaceCount()`, and live
@@ -1300,7 +1300,7 @@ The 8 AutoEmitter helpers + the EventWriter + the 2 observer tools
      its own go.mod. A parent-module `go list` cannot resolve it and
      reports nothing, which is how this section went stale for releases. -->
 
-- **59** internal packages reachable from the shipped binary
+- **60** internal packages reachable from the shipped binary
 - **12 of 14** `internal/v4alpha/` packages reachable
 
 Dead — unreachable from `cmd/dark-mem-mcp`, owned and verdicted:

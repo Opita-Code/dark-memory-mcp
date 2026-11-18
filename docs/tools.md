@@ -1,4 +1,4 @@
-# Las 78 herramientas
+# Las 81 herramientas
 
 > **Este archivo no se lee para decidir si instalas.** Se lee para
 > confirmar, *después* de instalar, que lo que tenías delante existe.
@@ -13,7 +13,7 @@ Las 78 son la superficie **canónica medida** en el código (fijada por el
 freeze test `TestCanonicalOrder_Frozen_78_21_28`; cualquier alta o baja
 mueve ese test en el mismo commit). La fuente de verdad con el conteo por
 oficio está en [`v4-status.md §1`](v4-status.md#1-tools-inventory-78-canonical-21-namespaces-schema-v32).
-Estructura agrupada por 21 oficios (57 + 21 que antes faltaban aquí):
+Estructura agrupada por 22 oficios (57 + 21 que antes faltaban aquí):
 
 ### Sesión (7 tools)
 `session_start` · `session_resume` · `session_heartbeat` · `session_status` · `session_close` · `session_recover` · `session_resurrect`
@@ -38,6 +38,22 @@ Crear promesas, entregar artefactos, verificar drift, aceptar o rechazar.
 las 6 fases del protocolo con gates de aprobación del operador.
 
 > **Nuevo en v2.13.0:** `vibe_publish` y `vibe_spec` ahora avanzan automáticamente la máquina de estados del VLP. El agente ya no necesita llamar `vlp_handle_event` manualmente después de cada entrega.
+
+### Plan (3 tools)
+`plan_create` · `plan_get` · `plan_decide`
+
+El plan es el artefacto que dice, ANTES de hacer trabajo, qué tools se van a
+llamar, con qué profundidad y con qué presupuesto. `plan_create` propone los
+candidatos (BM25 sobre el registro de tools con la doc completa), el tier y el
+presupuesto; el juez valida el shortlist sin elegirlo; `plan_decide` registra la
+decisión humana (`execute` | `edit` | `cancel`) con su fila en `write_audit`.
+
+Las tres están **exentas** del gate del plan: `plan_decide` es la tool que
+registra la aprobación, así que exigirle un plan aprobado para aprobar el
+primer plan sería un deadlock.
+
+> **Nuevo en la serie SPEC-194:** la primera mitad de la SPEC-194 (las tools del
+> plan). La segunda mitad —el gate que hace el plan obligatorio— es el PR B.
 
 ### OAuth self-auth (4 tools)
 `judge_options` · `oauth_connect` · `oauth_status` · `oauth_disconnect`

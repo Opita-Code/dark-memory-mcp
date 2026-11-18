@@ -152,6 +152,11 @@ var (
 	// reconciled). Distinct from ErrAlreadyExists (which is about
 	// row creation) and ErrNotFound (which is about row absence).
 	ErrInvalidState = errors.New("store: invalid state for requested operation")
+	// ErrBudgetExceeded (SPEC-194): the plan's budget is exhausted.
+	// Distinct from ErrInvalidState: the budget being spent is not
+	// an invalid state, it is a consumed allowance. The caller
+	// (the gate) maps it to the ReasonBudgetExceeded refusal.
+	ErrBudgetExceeded = errors.New("store: plan budget exceeded")
 )
 
 // FieldError carries the offending JSON field name AND the sentinel
@@ -514,6 +519,37 @@ type Store interface {
 	UpdateSpec(ctx context.Context, wc WriteContext, id int64, sp *vibeflow.Spec) error
 	DeleteSpec(ctx context.Context, wc WriteContext, id int64) error
 	ListSpecs(ctx context.Context, f vibeflow.SpecListFilters) ([]vibeflow.Spec, error)
+
+	// --- Vibeflow: the plan (SPEC-194) ---
+	//
+	// The plan is a spec with a plan on it: there is no separate
+	// plan identity. These four methods are the whole persistence
+	// surface of the plan.
+	//
+	// SavePlan writes the plan document and its gate state onto an
+	// existing spec row. The spec must already exist (the plan
+	// describes how a spec will be carried out).
+	SavePlan(ctx context.Context, wc WriteContext, specID int64, row *vibeflow.PlanRow) error
+
+	// GetPlan reads the plan of a spec. It returns (nil, nil) when
+	// the spec exists but has no plan: "no plan" is a normal state,
+	// not an error.
+	GetPlan(ctx context.Context, specID int64) (*vibeflow.PlanRow, error)
+
+	// GetOpenPlan reads the plan of the OPEN spec of a session (the
+	// one the session is currently working on). Returns (nil, nil)
+	// when the session has no open spec or its spec has no plan.
+	GetOpenPlan(ctx context.Context, sessionID string) (*vibeflow.PlanRow, error)
+
+	// ChargePlanCall atomically charges ONE call to the plan's budget
+	// and returns the row as it is AFTER the charge. It refuses with
+	// store.ErrBudgetExceeded when the budget is exhausted.
+	//
+	// ATOMICITY: the check and the increment happen in ONE
+	// transaction with a conditional UPDATE, so two concurrent calls
+	// cannot both spend the last unit of budget (SPEC-194 AC11). A
+	// read-then-write pair would be a race.
+	ChargePlanCall(ctx context.Context, wc WriteContext, specID int64, judgeCall bool) (*vibeflow.PlanRow, error)
 
 	// --- Vibeflow: brand guides ---
 	SaveBrandGuide(ctx context.Context, wc WriteContext, b *vibeflow.BrandGuide) error

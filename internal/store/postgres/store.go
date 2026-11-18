@@ -2378,6 +2378,34 @@ func (s *Store) DeleteSpec(ctx context.Context, wc store.WriteContext, id int64)
 func (s *Store) ListSpecs(ctx context.Context, f vibeflow.SpecListFilters) ([]vibeflow.Spec, error) {
 	return nil, notImpl("ListSpecs")
 }
+
+// SPEC-194: the plan. Same posture as the spec methods above —
+// the Postgres driver is configured-but-unused on this host (the
+// production store is SQLite), so these are stubs that keep the
+// interface satisfied.
+//
+// They are NOT half-implementations on purpose: a method that stored
+// the plan but did not charge the budget atomically would be worse
+// than one that refuses, because the caller would believe the budget
+// was enforced. notImpl says "this driver does not do plans", which
+// is TRUE.
+//
+// The migration that adds the columns (v35, plan_columns) IS present
+// in this driver, so porting the four methods is a mechanical port of
+// the SQLite ones with the usual dialect differences ($1 placeholders,
+// pgx.Tx, TIMESTAMP WITH TIME ZONE).
+func (s *Store) SavePlan(ctx context.Context, wc store.WriteContext, specID int64, row *vibeflow.PlanRow) error {
+	return notImpl("SavePlan")
+}
+func (s *Store) GetPlan(ctx context.Context, specID int64) (*vibeflow.PlanRow, error) {
+	return nil, notImpl("GetPlan")
+}
+func (s *Store) GetOpenPlan(ctx context.Context, sessionID string) (*vibeflow.PlanRow, error) {
+	return nil, notImpl("GetOpenPlan")
+}
+func (s *Store) ChargePlanCall(ctx context.Context, wc store.WriteContext, specID int64, judgeCall bool) (*vibeflow.PlanRow, error) {
+	return nil, notImpl("ChargePlanCall")
+}
 func (s *Store) SaveBrandGuide(ctx context.Context, wc store.WriteContext, b *vibeflow.BrandGuide) error {
 	if err := s.requireProject(); err != nil {
 		return err

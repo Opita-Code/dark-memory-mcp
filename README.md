@@ -23,8 +23,8 @@ pediste. Sin servidor remoto, sin telemetría, sin costo.
 
 [![MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Go 1.25+](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go&logoColor=white)](go.mod)
-[![MCP tools](https://img.shields.io/badge/MCP-78%20canonical%20tools-blueviolet)](docs/tools.md)
-[![Schema](https://img.shields.io/badge/schema-v32-blueviolet)](docs/v4-status.md)
+[![MCP tools](https://img.shields.io/badge/MCP-81%20canonical%20tools-blueviolet)](docs/tools.md)
+[![Schema](https://img.shields.io/badge/schema-v33-blueviolet)](docs/v4-status.md)
 [![Install](https://img.shields.io/badge/install-npx%20%40opita--code%2Fdark--memory--mcp-cc3534)](docs/npm-install.md)
 
 [Qué es](#el-problema-que-resuelve) · [Quickstart](#quickstart) · [Las 78 herramientas](docs/tools.md) · [Vibe-cases](docs/tools.md#vibe-cases) · [Ayuda](docs/npm-install.md) · [Estado real](docs/v4-status.md) · [Contribuir](CONTRIBUTING.md)

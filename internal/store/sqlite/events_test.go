@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	migrate_sqlite "github.com/dark-agents/dark-memory-mcp/internal/migrate/sqlite"
 	"github.com/dark-agents/dark-memory-mcp/internal/project"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 )
@@ -105,7 +106,7 @@ func TestInsertEvent_RoundTrip(t *testing.T) {
 	modID, err := st.InsertEvent(ctx, &Event{
 		Kind:           "modification",
 		Actor:          "system",
-		SessionID: strPtr("sess-test-1"),
+		SessionID:      strPtr("sess-test-1"),
 		TargetTable:    strPtr("agent_memory"),
 		TargetRowID:    int64Ptr(42),
 		Operation:      strPtr("update"),
@@ -319,12 +320,12 @@ func TestListEvents_FilterByKind(t *testing.T) {
 	// Seed 3 mods + 2 progs.
 	for i := 0; i < 3; i++ {
 		if _, err := st.InsertEvent(ctx, &Event{
-			Kind:    "modification",
-			Actor:   "system",
+			Kind:        "modification",
+			Actor:       "system",
 			TargetTable: strPtr("agent_memory"),
 			TargetRowID: int64Ptr(int64(i + 1)),
-			Source:  strPtr("test"),
-			Rationale: strPtr("test rationale"),
+			Source:      strPtr("test"),
+			Rationale:   strPtr("test rationale"),
 		}); err != nil {
 			t.Fatalf("seed mod %d: %v", i, err)
 		}
@@ -645,8 +646,8 @@ func TestMigrationIdempotency_V32(t *testing.T) {
 
 	// Insert one event so the second-open sees a populated table.
 	if _, err := st1.InsertEvent(ctx, &Event{
-		Kind:    "modification",
-		Actor:   "system",
+		Kind:        "modification",
+		Actor:       "system",
 		TargetTable: strPtr("agent_memory"),
 		TargetRowID: int64Ptr(1),
 		Rationale:   strPtr("test"),
@@ -665,13 +666,18 @@ func TestMigrationIdempotency_V32(t *testing.T) {
 	st2 := iface2.(*Store)
 	defer st2.Close()
 
-	// Schema version should still be v32.
+	// Schema version should still be the latest (v33 = plan_columns,
+	// SPEC-194 T5). The point of this assertion is IDEMPOTENCY: opening
+	// the DB a second time must not migrate it again.
 	sv, err := st2.SchemaVersion(ctx)
 	if err != nil {
 		t.Fatalf("SchemaVersion: %v", err)
 	}
-	if sv != 32 {
-		t.Errorf("SchemaVersion = %d; want 32", sv)
+	// The schema version is the driver's own current version. The
+	// constant lives in internal/migrate/sqlite; the store reports
+	// what it actually migrated to, so they must agree.
+	if want := migrate_sqlite.CurrentVersion(); sv != want {
+		t.Errorf("SchemaVersion = %d; want %d (migrate_sqlite.CurrentVersion)", sv, want)
 	}
 
 	// Events table should still exist with the row from #1.

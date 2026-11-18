@@ -723,7 +723,7 @@ CREATE INDEX IF NOT EXISTS idx_error_events_dedup      ON error_events (domain, 
 `,
 	},
 	{
-// v27 — Merkle chain for vibe_drift_reports (spec 1276, T04).
+		// v27 — Merkle chain for vibe_drift_reports (spec 1276, T04).
 		// Mirror of sqlite v27. Postgres parity with IF NOT EXISTS
 		// so a pre-existing column on legacy DBs doesn't fail.
 		Version: 27,
@@ -988,6 +988,43 @@ BEGIN
   END IF;
 END$$;
 CREATE INDEX IF NOT EXISTS idx_vibe_brands_project ON vibe_brands(project_id);
+`,
+	},
+	{
+		// v35 — SPEC-194: the PLAN columns on vibe_specs.
+		//
+		// Mirror of the sqlite v33 migration (plan_columns). The two
+		// drivers keep INDEPENDENT version counters and are currently
+		// desynchronised: sqlite was at v32 and postgres at v34 before
+		// this pair (postgres has two migrations sqlite does not:
+		// v33 active_subagents_synthetic_id and v34
+		// vibe_brands_project_id). So the same change lands as v33 on
+		// sqlite and v35 on postgres. The version number is a LOCAL
+		// sequence per driver, not a shared contract.
+		//
+		// WHY THE COLUMNS: see the sqlite v33 comment — the plan lives
+		// on vibe_specs (not a new table, because vlp_state is UNIQUE
+		// per session and the plan is per spec), the gate state is in
+		// columns (queried on every mutating tool call), the Plan
+		// document is JSON, and the budget counter is a column (it has
+		// to be incremented atomically, which a JSON document cannot
+		// do without a read-modify-write race).
+		//
+		// IF NOT EXISTS makes this idempotent, which is the house
+		// style for postgres migrations in this repo.
+		//
+		// Reference: docs/specs/SPEC-194-el-plan-y-el-gate.md §3.2 (T5).
+		Version: 35,
+		Name:    "plan_columns",
+		Up: `
+ALTER TABLE vibe_specs ADD COLUMN IF NOT EXISTS plan_json        TEXT;
+ALTER TABLE vibe_specs ADD COLUMN IF NOT EXISTS plan_status      TEXT NOT NULL DEFAULT 'draft';
+ALTER TABLE vibe_specs ADD COLUMN IF NOT EXISTS plan_decision    TEXT;
+ALTER TABLE vibe_specs ADD COLUMN IF NOT EXISTS plan_decided_by  TEXT;
+ALTER TABLE vibe_specs ADD COLUMN IF NOT EXISTS plan_decided_at  TEXT;
+ALTER TABLE vibe_specs ADD COLUMN IF NOT EXISTS plan_tier        TEXT;
+ALTER TABLE vibe_specs ADD COLUMN IF NOT EXISTS plan_budget_used INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE vibe_specs ADD COLUMN IF NOT EXISTS plan_judge_used  INTEGER NOT NULL DEFAULT 0;
 `,
 	},
 }
