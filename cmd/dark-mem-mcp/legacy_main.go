@@ -27,6 +27,16 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/cmd/dark-mem-mcp/internal/oauth"
 	"github.com/dark-agents/dark-memory-mcp/internal/drift"
 	"github.com/dark-agents/dark-memory-mcp/internal/embedder"
+	// Blank import: registers the embedder adapters in this binary.
+	//
+	// Each adapter calls embedder.RegisterAdapter in its init(), and an
+	// init() only runs if the package is imported. Without this import
+	// the shipped binary contained NO adapter at all (measured: strings
+	// on the released binary found 0 hits for "onnx", "openai" and
+	// "voyage"), so tryKind() could never find a factory and the
+	// server always booted with the disabled stub, whatever
+	// DARK_MEMORY_EMBEDDER said.
+	_ "github.com/dark-agents/dark-memory-mcp/internal/embedder/adapters"
 	"github.com/dark-agents/dark-memory-mcp/internal/errorobs"
 	"github.com/dark-agents/dark-memory-mcp/internal/federation"
 	"github.com/dark-agents/dark-memory-mcp/internal/orchestration"
@@ -155,7 +165,7 @@ func legacyMain() {
 				"EXTRACT will surface needs_human. Set DARK_DELEGATION_BACKEND=v2 "+
 				"for the deterministic router.\n", v4LLMErr)
 	}
-	_ = audit.Writer{}     // referenced for compile-time dep (CURATE follow-up)
+	_ = audit.Writer{}       // referenced for compile-time dep (CURATE follow-up)
 	_ = agent_memory.Store{} // ditto.
 	v4DelegateBackend := &tools.DelegateIntentBackend{
 		LLMClient:    v4LLM,
@@ -248,10 +258,10 @@ func legacyMain() {
 	driftChecker := drift.NewChecker(bootState.Store, server.DriftJudgeFromOrchestrator(bootState.Orchestrator), strictness)
 
 	bootState.Gate = &server.GateMiddleware{
-		FrameSource:        frameSrc,
-		DriftChecker:       driftChecker,
-		ActiveSession:      activeSessionResolver,
-		ActiveProject:      bootState.Store.ActiveProject,
+		FrameSource:   frameSrc,
+		DriftChecker:  driftChecker,
+		ActiveSession: activeSessionResolver,
+		ActiveProject: bootState.Store.ActiveProject,
 		SessionProject: func(ctx context.Context, sessionID string) string {
 			// SPEC-203: the session is the authority for its own scope.
 			pid, err := bootState.Store.ProjectIDForSession(ctx, sessionID)

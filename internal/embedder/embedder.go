@@ -121,15 +121,25 @@ var ErrKeyMissing = errors.New("embedder: required API key env var not set")
 // comparison; whitespace trimmed. The function is pure (no I/O), safe
 // to call from hot paths if needed.
 //
-// Recognized values: "none", "openai", "onnx". Case-insensitive.
+// Recognized values: "none", "openai", "onnx", "ollama". Case-insensitive.
 // Anything else → none (fail safe: never silently upgrade to a paid
 // or network-dependent adapter on a typo).
+//
+// "ollama" was missing from this switch, and that was a real bug: the
+// Ollama adapter existed, was written, had its own tests, and its
+// init() registered the factory... but DefaultKind() could never ask
+// for it, so the ONLY way to reach it was the harness detector
+// (detect.PreferredEmbedder), which reaches Ollama LAST — after
+// claude-code, opencode and codex. An operator running opencode with a
+// local Ollama daemon could not select it at all.
 func DefaultKind() string {
 	switch normalize(os.Getenv("DARK_MEMORY_EMBEDDER")) {
 	case "openai":
 		return KindOpenAI
 	case "onnx", "onnx-local", "local":
 		return KindONNX
+	case "ollama":
+		return KindOllama
 	default:
 		return KindNone
 	}
@@ -283,8 +293,53 @@ func FactoryAuto() Embedder {
 		}
 	}
 
-	// 5. Stub (always succeeds).
+	// 5. Local Ollama, if a daemon is reachable.
+	//
+	// It is HERE and not in the harness rung on purpose. The harness
+	// rung maps opencode -> openai and codex -> openai, so an operator
+	// with a local Ollama daemon and no cloud key never reached it:
+	// the openai rung failed with ErrKeyMissing, the ONNX rung was not
+	// registered (it needs cgo), and the server fell to the stub.
+	//
+	// Ollama is local and offline: it needs no key, no egress and no
+	// paid plan, so it is the right fallback BEFORE the stub and not
+	// after it.
+	//
+	// The reachability check is NOT optional. The adapter's
+	// constructor never fails (it builds the client without talking to
+	// the daemon), so without this check this rung would always
+	// "succeed" — on a machine with no Ollama at all — and the server
+	// would boot with an embedder that fails on every call instead of
+	// the disabled stub that degrades cleanly. detect.OllamaAvailable()
+	// is the exported form of the probe the detector already does:
+	// one TCP dial, 500ms ceiling, no HTTP.
+	if detect.OllamaAvailable() {
+		if e, err := tryKind(KindOllama); err == nil {
+			return NewSync(e)
+		}
+	}
+
+	// 6. Stub (always succeeds).
 	return NewSync(None())
+}
+
+// AdapterRegistered reports whether an adapter for the given kind is
+// registered in this process.
+//
+// It exists because the registration is a SIDE EFFECT of an import
+// (each adapter calls RegisterAdapter in its init()), and a side
+// effect of an import is invisible until you look for it: the
+// embedder shipped with NO adapter compiled in, and every server
+// booted with the disabled stub because tryKind() could never find a
+// factory. This function makes the state observable, and the test in
+// internal/embedder/adapters uses it to pin that the import is there.
+//
+// Read-only and cheap: it takes the same read lock the factory uses.
+func AdapterRegistered(kind string) bool {
+	adapterMu.RLock()
+	_, ok := adapters[kind]
+	adapterMu.RUnlock()
+	return ok
 }
 
 // tryKind attempts to instantiate the registered adapter for kind.

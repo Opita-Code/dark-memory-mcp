@@ -20,10 +20,31 @@ func TestProbe_NoSignals(t *testing.T) {
 	// Ensure no opencode/claude/codex config files in test env.
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", "")
+	// Point the reachability probe at a port nobody listens on, so
+	// the test checks the DETECTOR and not whatever happens to run
+	// on this machine. The old version relied on 11434 being
+	// unbound ("CI usually is"), and it failed on any developer
+	// machine with Ollama running — a perfectly normal setup.
+	t.Setenv(OllamaProbeHostEnv, closedLocalAddr(t))
 	r := Probe()
 	if r.IsKnown() {
 		t.Fatalf("Probe with no signals: expected HarnessUnknown, got %s (source=%s)", r.Kind, r.Source)
 	}
+}
+
+// closedLocalAddr returns a 127.0.0.1 address whose port is bound and
+// then released, so nothing is listening on it. It is the honest way
+// to say "a port with no listener" without guessing a port number
+// that might be in use.
+func closedLocalAddr(t *testing.T) string {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	addr := l.Addr().String()
+	_ = l.Close()
+	return addr
 }
 
 func TestProbe_ClaudeCode_Env(t *testing.T) {
@@ -107,11 +128,17 @@ func TestProbe_Ollama_Probe(t *testing.T) {
 }
 
 // TestProbe_Ollama_NoListener confirms Probe returns HarnessUnknown
-// when OLLAMA_HOST is unset AND nothing is listening on 11434.
-// We rely on 11434 being unbound in the test env; CI usually is.
+// when OLLAMA_HOST is unset AND nothing is listening on the probed
+// address.
+//
+// The probed address is one the test controls (a port it bound and
+// released), not the real 11434. The old version relied on 11434
+// being unbound in the test env, which is an assumption about the
+// machine, not about the code.
 func TestProbe_Ollama_NoListener(t *testing.T) {
 	clearAllEnv(t)
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv(OllamaProbeHostEnv, closedLocalAddr(t))
 	r := Probe()
 	if r.Kind == HarnessOllama {
 		t.Fatalf("expected HarnessUnknown (no Ollama), got HarnessOllama")
@@ -174,6 +201,7 @@ func clearAllEnv(t *testing.T) {
 		"CODEX_HOME", "CODEX_RUNTIME", "CODEX_CONFIG", "CODEX_VERSION",
 		"OPENAI_API_KEY",
 		"OLLAMA_HOST",
+		OllamaProbeHostEnv,
 		"XDG_CONFIG_HOME",
 	} {
 		t.Setenv(ev, "")
