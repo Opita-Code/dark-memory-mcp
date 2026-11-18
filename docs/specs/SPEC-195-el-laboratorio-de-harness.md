@@ -9,8 +9,9 @@
 > infraestructura.
 >
 > **Cierre WS-7 (las tres partes), con sus identificadores:**
-> - **Artefacto:** el fichero que sigue, en este mismo workspace
->   (`/home/nico/workspace/dark-memory-mcp/docs/specs/SPEC-195-el-laboratorio-de-harness.md`).
+> - **Artefacto:** el fichero que sigue, dentro del workspace del proyecto:
+>   `docs/specs/SPEC-195-el-laboratorio-de-harness.md` (relativo a la raíz del
+>   workspace).
 > - **Veredicto:** la primera corrida dio **`needs_human` con confianza 0.96**, y el
 >   juez **no certificó** por dos motivos concretos: (a) que no podía
 >   comprobar las citas `file:line` sin el repositorio, y (b) que el documento
