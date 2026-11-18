@@ -2757,6 +2757,50 @@ The summary below points to the upstream sources cited in this doc.
 
 ---
 
+## 7.1 The gate of the plan (SPEC-194 PR B) — measured state
+
+**What it is.** The gate watches the tools that MUTATE the kernel and asks
+the plan whether the call is authorised. It is wired in the middleware
+(`internal/server/middleware.go`), between the resolution of the scope and the
+call itself, and it is optional: a server that does not wire it behaves
+exactly as before.
+
+**Where it reads the plan from.** `vlp_state.open_spec_id`, with a fallback
+to the most recent spec of the session that has a plan. That fallback exists
+because MEASURED on 2026-11-18: nothing in production ever wrote
+`open_spec_id`, so the gate would have found no plan at all. The root fix is
+that `vibe_spec` records the spec the session opens.
+
+**Its hardness: `DARK_PLAN_STRICTNESS`.**
+
+| Mode | Effect | Default? |
+|---|---|---|
+| `off` | The plan is not checked. No store read, no charge. | |
+| `warn` | Checked; the refusal is RECORDED (`write_audit` with `write_path=plan_gate_refusal`, and the Error Observatory with its own `code`) and the call goes through. | **yes** |
+| `strict` | The call is refused with `ErrPlanRequired` / `ErrNotApproved` / `ErrBudgetExceeded`. | |
+
+The default is `warn` and not `strict` on purpose: the gate is born
+measuring, not born blocking. The real work calls mutating tools without an
+approved plan, and a gate that stops the work is a gate that gets disabled on
+day one.
+
+**Three things it does NOT do, so nobody expects them:**
+
+- It does not decide anything about the CONTENT of the call. It checks the
+  plan, not the artefact: the drift judge is still the one that judges.
+- It does not make the judge validate the shortlist. The judge that validates
+  a shortlist is an INTERNAL call of the orchestrator, and it is still not
+  wired (`plan_create` returns `judged=false`).
+- It does not charge a REFUSED call. The refusal is free: a call the plan did
+  not authorise does not consume the plan's allowance.
+
+**What it charges, and when.** The charge happens in the gate, BEFORE the
+call runs, and only when the gate lets the call through. A call that is
+allowed and then fails inside HAS consumed its unit: the budget measures
+authorised ATTEMPTS, not successes (the cost of a failed call is not zero).
+
+---
+
 ## 8. Where to read next
 
 - `ARCHITECTURE-V4.md §5 (revised)` — current package layout

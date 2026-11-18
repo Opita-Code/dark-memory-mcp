@@ -51,14 +51,30 @@ decisión humana (`execute` | `edit` | `cancel`) con su fila en `write_audit`
 
 Dos cosas que esta superficie **todavía no hace**, y que no hay que
 prometer: el juez **no está cableado** todavía, así que `plan_create`
-devuelve `judged=false` (el shortlist se propone, sin validar); y el gate
-**no existe** todavía, así que no hay nada que eximir. Las tres tools
-**estarán exentas** del gate cuando llegue: `plan_decide` es la tool que
-registra la aprobación, así que exigirle un plan aprobado para aprobar el
-primer plan sería un deadlock.
+devuelve `judged=false` (el shortlist se propone, sin validar).
+
+El gate **sí existe** (SPEC-194 PR B) y su dureza la decide
+`DARK_PLAN_STRICTNESS`:
+
+| Modo | Efecto |
+|---|---|
+| `off` | El plan no se comprueba. Sin lectura del store, sin cargo. |
+| `warn` | Se comprueba; la negativa se **registra** (en `write_audit` con `write_path=plan_gate_refusal`, y en el Error Observatory con su propio `code`) y la llamada **pasa**. **Default.** |
+| `strict` | La llamada se **rechaza** con `ErrPlanRequired`, `ErrNotApproved` o `ErrBudgetExceeded`. |
+
+El default es `warn` y no `strict` a propósito: el gate **nace midiendo, no
+nace bloqueando**. El trabajo real llama tools mutantes sin plan aprobado, y
+un gate que para el trabajo es un gate que se desactiva el primer día.
+
+Las tools del ciclo de vida del plan están **exentas** del gate:
+`plan_create`, `plan_get`, `plan_decide` y `vibe_spec`. Sin esa exención el
+gate no arranca: el plan cuelga de una fila de `vibe_specs`, así que crear el
+primer plan necesita un spec, y crear el spec necesita un plan aprobado.
+`session_close` tampoco exige plan: si lo exigiera, una sesión con el plan
+en `draft` no podría cerrarse nunca, y el plan no podría aprobarse tampoco.
 
 > **Nuevo en la serie SPEC-194:** la primera mitad de la SPEC-194 (las tools del
-> plan). La segunda mitad —el gate que hace el plan obligatorio— es el PR B.
+> plan) y la segunda mitad (el gate).
 
 ### OAuth self-auth (4 tools)
 `judge_options` · `oauth_connect` · `oauth_status` · `oauth_disconnect`
