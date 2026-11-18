@@ -1,19 +1,19 @@
-# Las 78 herramientas
+# Las 81 herramientas
 
 > **Este archivo no se lee para decidir si instalas.** Se lee para
 > confirmar, *después* de instalar, que lo que tenías delante existe.
 > Para la lista completa con namespaces, tabla compacta y qué herramienta
 > usar en cada momento, sigue aquí.
 
-Dark Memory expone **78 herramientas canónicas** (más 3 extras armadas por
+Dark Memory expone **81 herramientas canónicas** (más 3 extras armadas por
 variable de entorno, 81 en total) agrupadas en **21 namespaces**. El agente
 las invoca con el prefijo `dark_memory_`.
 
-Las 78 son la superficie **canónica medida** en el código (fijada por el
-freeze test `TestCanonicalOrder_Frozen_78_21_28`; cualquier alta o baja
+Las 81 son la superficie **canónica medida** en el código (fijada por el
+freeze test `TestCanonicalOrder_Frozen_81_22_33`; cualquier alta o baja
 mueve ese test en el mismo commit). La fuente de verdad con el conteo por
-oficio está en [`v4-status.md §1`](v4-status.md#1-tools-inventory-78-canonical-21-namespaces-schema-v32).
-Estructura agrupada por 21 oficios (57 + 21 que antes faltaban aquí):
+oficio está en [`v4-status.md §1`](v4-status.md#1-tools-inventory-81-canonical-22-namespaces-schema-v33).
+Estructura agrupada por 22 oficios (57 + 24 que antes faltaban aquí):
 
 ### Sesión (7 tools)
 `session_start` · `session_resume` · `session_heartbeat` · `session_status` · `session_close` · `session_recover` · `session_resurrect`
@@ -38,6 +38,43 @@ Crear promesas, entregar artefactos, verificar drift, aceptar o rechazar.
 las 6 fases del protocolo con gates de aprobación del operador.
 
 > **Nuevo en v2.13.0:** `vibe_publish` y `vibe_spec` ahora avanzan automáticamente la máquina de estados del VLP. El agente ya no necesita llamar `vlp_handle_event` manualmente después de cada entrega.
+
+### Plan (3 tools)
+`plan_create` · `plan_get` · `plan_decide`
+
+El plan es el artefacto que dice, ANTES de hacer trabajo, qué tools se van a
+llamar, con qué profundidad y con qué presupuesto. `plan_create` propone los
+candidatos (BM25 sobre el registro de tools con la doc completa), el tier y el
+presupuesto; el juez valida el shortlist sin elegirlo; `plan_decide` registra la
+decisión humana (`execute` | `edit` | `cancel`) con su fila en `write_audit`
+(con quién decidió, qué se decidió y cómo era el plan antes).
+
+Dos cosas que esta superficie **todavía no hace**, y que no hay que
+prometer: el juez **no está cableado** todavía, así que `plan_create`
+devuelve `judged=false` (el shortlist se propone, sin validar).
+
+El gate **sí existe** (SPEC-194 PR B) y su dureza la decide
+`DARK_PLAN_STRICTNESS`:
+
+| Modo | Efecto |
+|---|---|
+| `off` | El plan no se comprueba. Sin lectura del store, sin cargo. |
+| `warn` | Se comprueba; la negativa se **registra** (en `write_audit` con `write_path=plan_gate_refusal`, y en el Error Observatory con su propio `code`) y la llamada **pasa**. **Default.** |
+| `strict` | La llamada se **rechaza** con `ErrPlanRequired`, `ErrNotApproved` o `ErrBudgetExceeded`. |
+
+El default es `warn` y no `strict` a propósito: el gate **nace midiendo, no
+nace bloqueando**. El trabajo real llama tools mutantes sin plan aprobado, y
+un gate que para el trabajo es un gate que se desactiva el primer día.
+
+Las tools del ciclo de vida del plan están **exentas** del gate:
+`plan_create`, `plan_get`, `plan_decide` y `vibe_spec`. Sin esa exención el
+gate no arranca: el plan cuelga de una fila de `vibe_specs`, así que crear el
+primer plan necesita un spec, y crear el spec necesita un plan aprobado.
+`session_close` tampoco exige plan: si lo exigiera, una sesión con el plan
+en `draft` no podría cerrarse nunca, y el plan no podría aprobarse tampoco.
+
+> **Nuevo en la serie SPEC-194:** la primera mitad de la SPEC-194 (las tools del
+> plan) y la segunda mitad (el gate).
 
 ### OAuth self-auth (4 tools)
 `judge_options` · `oauth_connect` · `oauth_status` · `oauth_disconnect`

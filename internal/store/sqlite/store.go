@@ -4494,6 +4494,45 @@ func (s *Store) GetVLPState(ctx context.Context, sessionID string) (*store.VLPSt
 	return &r, nil
 }
 
+// SetOpenSpecID records which vibe_specs row the session is working
+// on, touching ONE column.
+//
+// It is an UPDATE and not a SaveVLPState upsert on purpose: the
+// upsert would write the whole row back, and a read-modify-write of
+// the whole row can lose a state transition that happened in
+// between. This statement cannot clobber the state machine, because
+// it never mentions the state column.
+//
+// It returns false (and no error) when there is no vlp_state row for
+// the session: the caller decides whether the absence matters, and
+// the absence is not a failure.
+func (s *Store) SetOpenSpecID(ctx context.Context, wc store.WriteContext, sessionID string, specID int64) (bool, error) {
+	if err := s.requireProject(); err != nil {
+		return false, err
+	}
+	if strings.TrimSpace(sessionID) == "" || specID <= 0 {
+		return false, nil
+	}
+	projectID, err := s.resolveWriteProject(ctx, wc)
+	if err != nil {
+		return false, err
+	}
+	if projectID == "" {
+		return false, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE vlp_state SET open_spec_id = ?, updated_at = ?
+		 WHERE session_id = ? AND project_id = ?`,
+		specID, time.Now().UTC().Format(time.RFC3339Nano), sessionID, projectID)
+	if err != nil {
+		return false, fmt.Errorf("sqlite: set_open_spec_id: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
+}
+
 // ListVLPStates returns rows filtered by stateFilter (NUMERIC — the int
 // value of internal/vlp.State; empty = all states), newest-first. Limit
 // <= 0 means no limit.

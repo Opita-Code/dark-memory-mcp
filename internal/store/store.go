@@ -152,6 +152,11 @@ var (
 	// reconciled). Distinct from ErrAlreadyExists (which is about
 	// row creation) and ErrNotFound (which is about row absence).
 	ErrInvalidState = errors.New("store: invalid state for requested operation")
+	// ErrBudgetExceeded (SPEC-194): the plan's budget is exhausted.
+	// Distinct from ErrInvalidState: the budget being spent is not
+	// an invalid state, it is a consumed allowance. The caller
+	// (the gate) maps it to the ReasonBudgetExceeded refusal.
+	ErrBudgetExceeded = errors.New("store: plan budget exceeded")
 )
 
 // FieldError carries the offending JSON field name AND the sentinel
@@ -515,6 +520,37 @@ type Store interface {
 	DeleteSpec(ctx context.Context, wc WriteContext, id int64) error
 	ListSpecs(ctx context.Context, f vibeflow.SpecListFilters) ([]vibeflow.Spec, error)
 
+	// --- Vibeflow: the plan (SPEC-194) ---
+	//
+	// The plan is a spec with a plan on it: there is no separate
+	// plan identity. These four methods are the whole persistence
+	// surface of the plan.
+	//
+	// SavePlan writes the plan document and its gate state onto an
+	// existing spec row. The spec must already exist (the plan
+	// describes how a spec will be carried out).
+	SavePlan(ctx context.Context, wc WriteContext, specID int64, row *vibeflow.PlanRow) error
+
+	// GetPlan reads the plan of a spec. It returns (nil, nil) when
+	// the spec exists but has no plan: "no plan" is a normal state,
+	// not an error.
+	GetPlan(ctx context.Context, specID int64) (*vibeflow.PlanRow, error)
+
+	// GetOpenPlan reads the plan of the OPEN spec of a session (the
+	// one the session is currently working on). Returns (nil, nil)
+	// when the session has no open spec or its spec has no plan.
+	GetOpenPlan(ctx context.Context, sessionID string) (*vibeflow.PlanRow, error)
+
+	// ChargePlanCall atomically charges ONE call to the plan's budget
+	// and returns the row as it is AFTER the charge. It refuses with
+	// store.ErrBudgetExceeded when the budget is exhausted.
+	//
+	// ATOMICITY: the check and the increment happen in ONE
+	// transaction with a conditional UPDATE, so two concurrent calls
+	// cannot both spend the last unit of budget (SPEC-194 AC11). A
+	// read-then-write pair would be a race.
+	ChargePlanCall(ctx context.Context, wc WriteContext, specID int64, judgeCall bool) (*vibeflow.PlanRow, error)
+
 	// --- Vibeflow: brand guides ---
 	SaveBrandGuide(ctx context.Context, wc WriteContext, b *vibeflow.BrandGuide) error
 	GetBrandGuide(ctx context.Context, brandID string) (*vibeflow.BrandGuide, error)
@@ -703,6 +739,28 @@ type Store interface {
 	// GetVLPState returns the row for sessionID under the active project,
 	// or nil if not found. Cross-project reads are denied (INV-7).
 	GetVLPState(ctx context.Context, sessionID string) (*VLPStateRow, error)
+	// SetOpenSpecID records which vibe_specs row the session is
+	// currently working on, WITHOUT touching the rest of the VLP row.
+	//
+	// Why a surgical setter and not SaveVLPState: SaveVLPState is
+	// an UPSERT of the WHOLE row, so setting the open spec through
+	// it would mean reading the row, changing one field and writing
+	// it back — a read-modify-write that can lose a state transition
+	// that happened in between. This method touches ONE column, so it
+	// cannot clobber the state machine.
+	//
+	// Why it exists (SPEC-194, PR B): the plan gate finds the plan of
+	// a session through this column (GetOpenPlan reads it). MEASURED
+	// on 2026-11-18: nothing in production ever WROTE it — the two
+	// constructors of VLPStateRow left it at 0 — so the gate would
+	// have found no plan at all and would have refused every mutating
+	// call in strict mode. The spec is what opens the spec, so the
+	// spec is what records it.
+	//
+	// It is NOT an error when there is no vlp_state row for the
+	// session: the setter creates nothing and reports it, so the
+	// caller can decide whether the absence matters.
+	SetOpenSpecID(ctx context.Context, wc WriteContext, sessionID string, specID int64) (bool, error)
 	// ListVLPStates returns rows filtered by stateFilter (NUMERIC — int
 	// value of internal/vlp.State as a string; empty = all states),
 	// newest-first. Limit <= 0 means no limit (caller is responsible
@@ -1135,6 +1193,16 @@ type WriteContext struct {
 	// the INSERT statements. Adding this field + threading through
 	// the INSERT closes the round-trip gap.
 	SessionEvent string
+
+	// Notes is a free-text annotation for the write_audit row. It
+	// exists for the writes whose CONTENT is the trail: a human
+	// decision on a plan, for instance, is only a trail if the row
+	// says what was decided and what the state was before. Empty
+	// string means "no annotation" (NULL in the DB).
+	//
+	// It is additive: no existing caller sets it, so no existing
+	// write_audit row changes.
+	Notes string
 }
 
 // VacuumPolicy controls what Vacuum deletes.

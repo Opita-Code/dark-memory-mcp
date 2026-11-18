@@ -60,6 +60,32 @@ const (
 	ReasonPersonaMissing   Reason = "persona_not_resolvable"
 	ReasonFrameStale       Reason = "frame_stale_too_far"
 	ReasonDriftAtWrite     Reason = "drift_at_write"
+
+	// --- SPEC-194 (T3): the three reasons of the plan gate ---
+	//
+	// They live next to the other five because they ARE gate
+	// refusals: same enum, same ErrorKind() mapping, same envelope.
+	// A second enum would mean a second error shape on the wire, and
+	// the harness would have to learn two dialects to tell a plan
+	// refusal from any other refusal.
+	//
+	// The three are DISTINCT and each names a different fix:
+	//
+	//	ReasonPlanRequired   -> there is no plan at all. The fix is
+	//	                        to create one (plan_create).
+	//	ReasonNotApproved    -> there is a plan but nobody approved
+	//	                        it. The fix is to approve it
+	//	                        (plan_decide).
+	//	ReasonBudgetExceeded -> the plan was approved and the
+	//	                        allowance is spent. The fix is to
+	//	                        change the plan, not to retry.
+	//
+	// That last distinction matters: a caller that retries on
+	// ErrBudgetExceeded will retry forever, because the budget does
+	// not come back on its own.
+	ReasonPlanRequired   Reason = "plan_required"
+	ReasonNotApproved    Reason = "not_approved"
+	ReasonBudgetExceeded Reason = "budget_exceeded"
 )
 
 // RequiresActiveSession lists tools that REQUIRE an active session
@@ -116,6 +142,13 @@ func (r Reason) ErrorKind() string {
 		return "ErrFrameStaleTooFar"
 	case ReasonDriftAtWrite:
 		return "ErrDriftAtWrite"
+	// SPEC-194 (T3): the three reasons of the plan gate.
+	case ReasonPlanRequired:
+		return "ErrPlanRequired"
+	case ReasonNotApproved:
+		return "ErrNotApproved"
+	case ReasonBudgetExceeded:
+		return "ErrBudgetExceeded"
 	default:
 		return "ErrGateOK"
 	}

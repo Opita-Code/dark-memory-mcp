@@ -76,6 +76,21 @@ type Orchestrator struct {
 	// at boot so dark_memory_judge_list_personas returns 14 instead of 8.
 	includeV4AlphaPersonas bool
 
+	// SPEC-194 (T7): the plan's candidate source and its validator.
+	//
+	// Both are optional and both are interfaces: the tool registry
+	// lives in internal/tools, which IMPORTS the orchestrator, so the
+	// dependency cannot be inverted at the package level. The
+	// orchestrator therefore takes the ranker and the judge as
+	// injected collaborators.
+	//
+	// A nil ranker means "no candidates proposed" and a nil judge
+	// means "the shortlist is not validated". Neither blocks plan
+	// creation: the plan is a proposal, and the human still has to
+	// approve it.
+	planRanker ToolRanker
+	planJudge  PlanJudge
+
 	// v2.20.0 T08 (spec 1276): NLI Router for drift_judge artifact
 	// pipeline. Lazy-initialized via EnsureNLIRouter from
 	// Project.NLIConfig (added in T07). When nil, DriftJudge uses the
@@ -620,19 +635,19 @@ func (o *Orchestrator) materializeForPublish(ctx context.Context, text, sourceTa
 //  2. If OAuthResolver is non-nil, iterate orderedOAuthProviders
 //     (Google first, then HuggingFace). For each provider:
 //
-//		a. Construct an OAuthNLIProvider wrapper.
-//		b. Probe the resolver for a live connection
-//		   (LoadActiveToken). On ErrNoConnection the user has not
-//		   authenticated with this provider — skip to the next.
-//		c. On success, return the wrapper. The first connected
-//		   provider wins (Google is preferred for chat-style
-//		   latency; HuggingFace is the higher-precision fallback).
-//		d. On ErrConnectionExpired, surface an actionable hint to
-//		   the operator via errMissingField — the user must
-//		   reconnect via dark_memory_oauth_connect. This is sticky:
-//		   we don't fall through because the user has not given
-//		   consent to a different provider, and silently switching
-//		   would surprise them.
+//     a. Construct an OAuthNLIProvider wrapper.
+//     b. Probe the resolver for a live connection
+//     (LoadActiveToken). On ErrNoConnection the user has not
+//     authenticated with this provider — skip to the next.
+//     c. On success, return the wrapper. The first connected
+//     provider wins (Google is preferred for chat-style
+//     latency; HuggingFace is the higher-precision fallback).
+//     d. On ErrConnectionExpired, surface an actionable hint to
+//     the operator via errMissingField — the user must
+//     reconnect via dark_memory_oauth_connect. This is sticky:
+//     we don't fall through because the user has not given
+//     consent to a different provider, and silently switching
+//     would surprise them.
 //
 //  3. If every provider returned ErrNoConnection (user has not
 //     connected any of them), return errMissingField with an
@@ -732,7 +747,7 @@ func (o *Orchestrator) ensurePersonaRegistry() (*PersonaRegistry, error) {
 	}
 	r, err := NewPersonaRegistry(RegistryOptions{
 		IncludeMarkdownOverrides: true,
-		IncludeV4Alpha:          o.includeV4AlphaPersonas,
+		IncludeV4Alpha:           o.includeV4AlphaPersonas,
 	})
 	if err != nil {
 		return nil, err

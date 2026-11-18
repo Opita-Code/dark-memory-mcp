@@ -625,9 +625,9 @@ snapshot from 2026-09-27, already stale when written, and the "97+"
 target cited elsewhere in later docs never had an enumeration behind
 it (`ARCHITECTURE-V4.md §6.3` is an invariant-to-module table, not a
 tool list). **Do not quote any number from this section.** The measured
-surface lives in [`docs/v4-status.md §1`](docs/v4-status.md) (78
-canonical / 21 namespaces at HEAD, pinned by
-`TestCanonicalOrder_Frozen_78_21_28`), enforced at boot by the
+surface lives in [`docs/v4-status.md §1`](docs/v4-status.md) (81
+canonical / 22 namespaces at HEAD, pinned by
+`TestCanonicalOrder_Frozen_81_22_33`), enforced at boot by the
 completeness check in `internal/tools/register.go` and at doc level by
 `internal/tools/v4_status_consistency_test.go`.
 
@@ -1506,7 +1506,7 @@ steps:
   - mcp_handshake_mock --tools 75
   - assert: handshake returns 75 tools
   # NOTE (2026-10-15): sketch values from the 75-tool era; the live
-  # registry serves 78 canonical (+3 armed). A mock that asserts a stale
+  # registry serves 81 canonical (+3 armed). A mock that asserts a stale
   # count teaches the wrong lesson — update these numbers when copying
   # this sketch into real CI.
 ```

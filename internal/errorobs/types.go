@@ -224,6 +224,19 @@ func Classify(err error) (Domain, string, Severity) {
 		strings.Contains(lower, "llm:"),
 		strings.Contains(lower, "judge error"):
 		return DomainLLM, "ErrNoLLMAvailable", SeverityError
+	case strings.Contains(lower, "errplanrequired"):
+		// SPEC-194: the three reasons of the plan gate keep their
+		// OWN code, so that the KPI of T10 ("negatives by reason")
+		// is a GROUP BY and not a LIKE. They have to be checked
+		// BEFORE the generic gate branch below: the message of a
+		// plan refusal is "gate refusal ErrPlanRequired: ...", and
+		// the generic branch would collapse the three of them into
+		// one "ErrGateRefusal".
+		return DomainGate, "ErrPlanRequired", SeverityWarn
+	case strings.Contains(lower, "errnotapproved"):
+		return DomainGate, "ErrNotApproved", SeverityWarn
+	case strings.Contains(lower, "errbudgetexceeded"):
+		return DomainGate, "ErrBudgetExceeded", SeverityWarn
 	case strings.Contains(lower, "gate:"),
 		strings.Contains(lower, "gate refusal"),
 		strings.Contains(lower, "errframestale"),

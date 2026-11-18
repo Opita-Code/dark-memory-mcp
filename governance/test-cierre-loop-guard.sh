@@ -22,6 +22,13 @@
 #      NO cuenta como el commit del artefacto -> rc 67.
 #  13. La ruta sha sin --ruta -> rc 64 (uso): el commit se busca por la ruta.
 #  14. Sin DS_REPO_ROOT, la raiz del repo se deduce de la ruta del artefacto.
+#  15. Un repo que es un WORKTREE (su `.git` es un fichero, no un directorio)
+#      -> el guard lo reconoce y encuentra el commit -> rc 0. MEDIDO el
+#      2026-11-18: antes el guard se saltaba la comprobacion entera.
+#  16. Un DS_REPO_ROOT que NO es un repo -> rc 69 (sin comprobar): antes se
+#      imprimia "se omite esta comprobacion" y el guard acababa diciendo
+#      "CIERRE: completo" sin haber comprobado el commit. Un check que no se
+#      puede hacer no es un check que pasa.
 #
 # La prueba usa una base y un repo TEMPORALES: no toca la base real ni el
 # repo real, y no depende de red.
@@ -255,6 +262,26 @@ run 906 0  "un commit con el MARCADOR 'artefacto 906' si cuenta -> 0"
 check_out "el guard dice que lo encontro por el marcador" 0 "por marcador" "$LAST_OUT"
 run 907 0  "con las dos pruebas, manda el marcador -> 0"
 check_out "el commit citado es el del marcador, no el que toca el fichero" 0 "cierra el artefacto 907" "$LAST_OUT"
+
+# ── el repo que es un worktree, y el repo que no existe ──
+# MEDIDO el 2026-11-18: un worktree de git tiene `.git` como FICHERO. El
+# guard lo comprobaba con `-d`, o sea que en un worktree se saltaba la parte
+# (c) entera y aun asi decia "CIERRE: completo".
+git -C "$REPO" worktree add -q "$TMP/wt" -b wt-carga >/dev/null 2>&1
+if [[ -d "$TMP/wt" ]]; then
+  out="$(DARK_DB="$DB" DS_REPO_ROOT="$TMP/wt" "$GUARD" p 906 2>&1)"; rc=$?
+  check "un repo que es un WORKTREE -> 0 (el guard lo reconoce)" 0 "$rc"
+  check_out "el worktree encuentra el commit por el marcador" 0 "por marcador" "$out"
+else
+  echo "FAIL no se pudo crear el worktree de la prueba" >&2
+  fails=$((fails + 1))
+fi
+
+# Y el repo que no existe: la parte (c) no se puede comprobar, y eso NO es un
+# cierre. Antes este caso daba 0 ("CIERRE: completo") sin comprobar nada.
+out="$(DARK_DB="$DB" DS_REPO_ROOT="$TMP/no-es-un-repo" "$GUARD" p 906 2>&1)"; rc=$?
+check "un repo que NO existe -> 69 (sin comprobar, no un cierre)" 69 "$rc"
+check_out "el guard dice que no pudo comprobar" 0 "NO se pudo comprobar" "$out"
 
 # ── la ruta sha ──
 run_sha "$SHA_F" "docs_canal.md" 65 "un sha sin juzgar -> 65"

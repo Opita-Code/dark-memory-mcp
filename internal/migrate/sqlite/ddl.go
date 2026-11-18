@@ -1586,4 +1586,72 @@ ALTER TABLE agent_memory ADD COLUMN last_modified_by_event_id INTEGER;
 CREATE INDEX IF NOT EXISTS idx_last_modified_by_event_id ON agent_memory(last_modified_by_event_id);
 `,
 	},
+	{
+		// v33 — SPEC-194: the PLAN columns on vibe_specs.
+		//
+		// The plan is the artifact that says, BEFORE any work happens,
+		// which tools are going to be called, at what depth and with what
+		// budget. Until now the kernel judged the RESULT (drift-at-write)
+		// and the CALL (policy gate), but nobody judged the PATH.
+		//
+		// WHY THESE COLUMNS LIVE ON vibe_specs AND NOT ON A NEW TABLE:
+		//
+		//   - A separate `plans` table would duplicate vibe_specs and
+		//     break the SPEC-204 rule ("resolve one thing in one place"),
+		//     and it would need read/write migrations in BOTH drivers.
+		//   - vlp_state cannot hold it: its index is UNIQUE on
+		//     (project_id, session_id) — one row per SESSION — while the
+		//     plan is PER SPEC. A session opens and closes several specs,
+		//     each with its own plan and its own human decision.
+		//
+		// WHY EIGHT COLUMNS AND NOT ONE JSON BLOB:
+		//
+		//   - plan_status, plan_decision, plan_decided_by and
+		//     plan_decided_at are QUERIED (the gate reads the status on
+		//     every mutating tool call; the audit trail reads the rest).
+		//     Keeping them as columns keeps those reads cheap and
+		//     indexable.
+		//   - plan_json holds the Plan itself (intent, candidates with
+		//     their weights, tier, budget). It is a document that
+		//     evolves with the spec, so it stays JSON — the same
+		//     posture as spec_json and tasks_json on this table.
+		//   - plan_budget_used and plan_judge_used are the COUNTERS,
+		//     and they are columns rather than part of plan_json on
+		//     purpose: they have to be incremented atomically with
+		//     the check that reads them (SPEC-194 AC11). A counter
+		//     that lives inside a JSON document cannot be incremented
+		//     atomically without rewriting the whole document, which
+		//     would be a read-modify-write race.
+		//
+		//     There are TWO counters, not one, because the plan's
+		//     budget has two resources that are distinct and
+		//     differently scarce: tool calls and judge calls. A
+		//     single counter would make them indistinguishable and
+		//     could not enforce the two ceilings separately. This was
+		//     found by the store test (TestChargePlanCall_JudgeBudget-
+		//     IsSeparate), which failed against a one-counter
+		//     implementation: the judge budget could not be charged
+		//     without also spending the tool budget, so the second
+		//     judge call sailed past its own ceiling.
+		//
+		// DEFAULTS: plan_status defaults to 'draft' and plan_budget_used
+		// to 0, so every PRE-EXISTING spec row lands in the safest
+		// possible state: a plan exists but nobody approved it. The
+		// gate reads 'draft' as "not approved", so an old row cannot
+		// accidentally authorise anything.
+		//
+		// Reference: docs/specs/SPEC-194-el-plan-y-el-gate.md §3.2 (T5).
+		Version: 33,
+		Name:    "plan_columns",
+		Up: `
+ALTER TABLE vibe_specs ADD COLUMN plan_json       TEXT;
+ALTER TABLE vibe_specs ADD COLUMN plan_status     TEXT NOT NULL DEFAULT 'draft';
+ALTER TABLE vibe_specs ADD COLUMN plan_decision   TEXT;
+ALTER TABLE vibe_specs ADD COLUMN plan_decided_by TEXT;
+ALTER TABLE vibe_specs ADD COLUMN plan_decided_at TEXT;
+ALTER TABLE vibe_specs ADD COLUMN plan_tier       TEXT;
+ALTER TABLE vibe_specs ADD COLUMN plan_budget_used INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE vibe_specs ADD COLUMN plan_judge_used  INTEGER NOT NULL DEFAULT 0;
+`,
+	},
 }

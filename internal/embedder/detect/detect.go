@@ -208,6 +208,21 @@ func isCodexMarkerPresent() bool {
 	return false
 }
 
+// DefaultOllamaHost is the address the Ollama daemon listens on by
+// default.
+const DefaultOllamaHost = "127.0.0.1:11434"
+
+// OllamaProbeHostEnv overrides the address the reachability probe dials.
+//
+// It exists so the tests can point the probe at a port they control
+// instead of relying on 11434 being unbound. The old test said it
+// out loud: "We rely on 11434 being unbound in the test env; CI usually
+// is" — and it failed on a developer machine that had Ollama running,
+// which is a real (and common) setup.
+//
+// An empty or unset value means the default.
+const OllamaProbeHostEnv = "DARK_MEMORY_OLLAMA_PROBE_HOST"
+
 // probeOllama checks OLLAMA_HOST env var + a localhost probe at the
 // default Ollama port (11434). The probe is a single TCP dial with
 // a 500ms timeout — bounded latency, no HTTP.
@@ -219,14 +234,34 @@ func probeOllama() Result {
 			Source: "env:OLLAMA_HOST",
 		}
 	}
-	const defaultHost = "127.0.0.1:11434"
-	if probeTCP(defaultHost, 500*time.Millisecond) {
+	probeHost := DefaultOllamaHost
+	if v := strings.TrimSpace(os.Getenv(OllamaProbeHostEnv)); v != "" {
+		probeHost = v
+	}
+	if probeTCP(probeHost, 500*time.Millisecond) {
 		return Result{
 			Kind:   HarnessOllama,
-			Source: "probe:" + defaultHost,
+			Source: "probe:" + probeHost,
 		}
 	}
 	return Result{Kind: HarnessUnknown}
+}
+
+// OllamaAvailable reports whether a local Ollama daemon is reachable.
+//
+// It is the exported form of the probe the detector already does, and
+// it exists because the adapter's constructor NEVER fails: it builds
+// the client and returns, without talking to the daemon (its own
+// comment says the TCP probe is "detect.probeOllama's job"). So
+// without this check, a boot ladder that tries the Ollama adapter
+// would ALWAYS "succeed" at constructing it — on a machine with no
+// Ollama at all — and the server would boot with an embedder that
+// fails on every call instead of the disabled stub that degrades
+// cleanly.
+//
+// The check is cheap: one TCP dial with a 500ms timeout, no HTTP.
+func OllamaAvailable() bool {
+	return probeOllama().IsKnown()
 }
 
 // probeTCP opens a single TCP connection to addr with the given
@@ -275,10 +310,19 @@ func configPaths(harness string) []string {
 		if base != "" {
 			paths = append(paths, filepath.Join(base, "opencode", "config.toml"))
 			paths = append(paths, filepath.Join(base, "opencode", "config.json"))
+			// opencode.json is the name opencode ≥2 actually uses for
+			// its configuration file (MEASURED on 2026-11-18: the
+			// harness in this deployment has
+			// ~/.config/opencode/opencode.json and NO config.json nor
+			// config.toml). Without this entry the detector reported
+			// harness=unknown, and the embedder stayed in the "ask"
+			// state even with a perfectly good local daemon running.
+			paths = append(paths, filepath.Join(base, "opencode", "opencode.json"))
 		}
 		if home != "" {
 			paths = append(paths, filepath.Join(home, ".opencode", "config.toml"))
 			paths = append(paths, filepath.Join(home, ".config", "opencode", "config.toml"))
+			paths = append(paths, filepath.Join(home, ".config", "opencode", "opencode.json"))
 		}
 		return paths
 	case "codex":

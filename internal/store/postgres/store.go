@@ -2378,6 +2378,34 @@ func (s *Store) DeleteSpec(ctx context.Context, wc store.WriteContext, id int64)
 func (s *Store) ListSpecs(ctx context.Context, f vibeflow.SpecListFilters) ([]vibeflow.Spec, error) {
 	return nil, notImpl("ListSpecs")
 }
+
+// SPEC-194: the plan. Same posture as the spec methods above —
+// the Postgres driver is configured-but-unused on this host (the
+// production store is SQLite), so these are stubs that keep the
+// interface satisfied.
+//
+// They are NOT half-implementations on purpose: a method that stored
+// the plan but did not charge the budget atomically would be worse
+// than one that refuses, because the caller would believe the budget
+// was enforced. notImpl says "this driver does not do plans", which
+// is TRUE.
+//
+// The migration that adds the columns (v35, plan_columns) IS present
+// in this driver, so porting the four methods is a mechanical port of
+// the SQLite ones with the usual dialect differences ($1 placeholders,
+// pgx.Tx, TIMESTAMP WITH TIME ZONE).
+func (s *Store) SavePlan(ctx context.Context, wc store.WriteContext, specID int64, row *vibeflow.PlanRow) error {
+	return notImpl("SavePlan")
+}
+func (s *Store) GetPlan(ctx context.Context, specID int64) (*vibeflow.PlanRow, error) {
+	return nil, notImpl("GetPlan")
+}
+func (s *Store) GetOpenPlan(ctx context.Context, sessionID string) (*vibeflow.PlanRow, error) {
+	return nil, notImpl("GetOpenPlan")
+}
+func (s *Store) ChargePlanCall(ctx context.Context, wc store.WriteContext, specID int64, judgeCall bool) (*vibeflow.PlanRow, error) {
+	return nil, notImpl("ChargePlanCall")
+}
 func (s *Store) SaveBrandGuide(ctx context.Context, wc store.WriteContext, b *vibeflow.BrandGuide) error {
 	if err := s.requireProject(); err != nil {
 		return err
@@ -3702,6 +3730,37 @@ func (s *Store) GetVLPState(ctx context.Context, sessionID string) (*store.VLPSt
 		r.ConstitutionVer = *consVer
 	}
 	return r, nil
+}
+
+// SetOpenSpecID records which vibe_specs row the session is working
+// on, touching ONE column.
+//
+// Same contract and same reason as the sqlite one: it is an UPDATE
+// and not a SaveVLPState upsert, so it cannot clobber the VLP state
+// machine. It returns false (and no error) when there is no
+// vlp_state row for the session.
+func (s *Store) SetOpenSpecID(ctx context.Context, wc store.WriteContext, sessionID string, specID int64) (bool, error) {
+	if err := s.requireProject(); err != nil {
+		return false, err
+	}
+	if strings.TrimSpace(sessionID) == "" || specID <= 0 {
+		return false, nil
+	}
+	projectID, err := s.resolveWriteProject(ctx, wc)
+	if err != nil {
+		return false, err
+	}
+	if projectID == "" {
+		return false, nil
+	}
+	res, err := s.pool.Exec(ctx,
+		`UPDATE vlp_state SET open_spec_id = $1, updated_at = $2
+		 WHERE session_id = $3 AND project_id = $4`,
+		specID, time.Now().UTC().Format(time.RFC3339Nano), sessionID, projectID)
+	if err != nil {
+		return false, fmt.Errorf("postgres: set_open_spec_id: %w", err)
+	}
+	return res.RowsAffected() > 0, nil
 }
 
 // ListVLPStates returns rows filtered by stateFilter (NUMERIC — the int
