@@ -159,16 +159,40 @@ func (s *Store) GetOpenPlan(ctx context.Context, sessionID string) (*vibeflow.Pl
 	err = s.db.QueryRowContext(ctx,
 		`SELECT open_spec_id FROM vlp_state WHERE session_id = ? AND project_id = ?`,
 		sessionID, activeProject).Scan(&openSpecID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	if err == nil && openSpecID > 0 {
+		return s.getPlanLocked(ctx, openSpecID, activeProject)
+	}
+
+	// MEASURED el 2026-11-18: vlp_state.open_spec_id no lo escribia
+	// NADA en produccion (los dos constructores de VLPStateRow lo
+	// dejaron en 0), asi que el camino de arriba nunca encontraba un
+	// plan. El fix de raiz es que vibe_spec registre el spec abierto
+	// (Store.SetOpenSpecID), pero las filas YA escritas siguen con 0,
+	// y una sesion nueva que ya tiene specs y planes no encontraria
+	// su plan.
+	//
+	// Por eso hay un segundo camino: el spec MAS RECIENTE de la
+	// sesion que tenga un plan. No es una suposicion: la sesion
+	// trabajo sobre el spec que creo, y el plan vive en ese spec.
+	//
+	// El ORDER BY id DESC importa: el spec mas reciente es el que
+	// la sesion esta trabajando, no el primero que abrio.
+	var fallbackID int64
+	err = s.db.QueryRowContext(ctx,
+		`SELECT id FROM vibe_specs
+		 WHERE session_id = ? AND project_id = ? AND plan_json IS NOT NULL
+		 ORDER BY id DESC LIMIT 1`,
+		sessionID, activeProject).Scan(&fallbackID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
 	}
-	if openSpecID == 0 {
-		return nil, nil
-	}
-	return s.getPlanLocked(ctx, openSpecID, activeProject)
+	return s.getPlanLocked(ctx, fallbackID, activeProject)
 }
 
 // ChargePlanCall atomically charges ONE call to the plan's budget and

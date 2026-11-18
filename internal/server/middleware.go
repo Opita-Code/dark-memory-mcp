@@ -50,8 +50,10 @@ import (
 	"time"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/drift"
+	"github.com/dark-agents/dark-memory-mcp/internal/plan"
 	"github.com/dark-agents/dark-memory-mcp/internal/policy"
 	"github.com/dark-agents/dark-memory-mcp/internal/session"
+	"github.com/dark-agents/dark-memory-mcp/internal/store"
 	"github.com/dark-agents/dark-memory-mcp/internal/tools"
 )
 
@@ -89,6 +91,40 @@ type GateMiddleware struct {
 	FrameSource   policy.FrameSource
 	DriftChecker  *drift.Checker
 	ActiveSession ActiveSessionResolver
+
+	// PlanGate is the SPEC-194 gate of the plan. It is OPTIONAL in
+	// the same way DriftChecker is optional: when it is nil, the
+	// server behaves exactly as it did before this change (no plan is
+	// checked). A server that does not wire it keeps working.
+	//
+	// It is a field of the middleware and not a step of
+	// policy.PreCheck on purpose. policy.PreCheck is a pure function
+	// over FRAMES: it composes identity, capabilities, persona and
+	// scope and refuses when one of them is missing. The plan is not
+	// a frame: it lives in the store, it changes with every decision,
+	// and the gate has to CHARGE it (a write). A store write does not
+	// belong inside a function whose contract is "compose frames and
+	// decide".
+	//
+	// The middleware is the only place where a tool call is a real
+	// call with a real session, so it is the only place that can
+	// both ask the gate and pay for the answer.
+	PlanGate *plan.Gate
+
+	// PlanStrictness is the operator's switch (SPEC-194 T4,
+	// DARK_PLAN_STRICTNESS): off | warn | strict.
+	//
+	//   - off: the plan is not checked at all.
+	//   - warn: the plan IS checked; a refusal is RECORDED (in the
+	//     Error Observatory, through RecordRefusal) and the call is
+	//     let through. This is the default of the switch: the gate is
+	//     born measuring, not born blocking.
+	//   - strict: a refusal stops the call.
+	//
+	// The default of the switch is warn; the zero value of the field
+	// is off, so a middleware built without asking the environment
+	// does not start refusing calls.
+	PlanStrictness plan.Strictness
 	// ActiveProject returns the currently-active project_id (mirrors
 	// bootState.Store.ActiveProject). Used as a fallback by
 	// buildGateInput when args lacks project_id — many session-required
@@ -197,6 +233,69 @@ func (m *GateMiddleware) Wrap(
 		scope.ProjectID = m.SessionProject(ctx, gateIn.SessionID)
 	}
 	ctx = session.WithScope(ctx, scope)
+
+	// --- The gate of the plan (SPEC-194, T2) ---
+	//
+	// It sits HERE, after the scope is resolved and before inner,
+	// for two reasons:
+	//
+	//   - The scope is needed: the charge writes to the project of
+	//     the session (INV-7), and the WriteContext has to carry it.
+	//   - The charge has to happen BEFORE the call runs, and the
+	//     call is inner.
+	//
+	// The order of the checks is the one of SPEC-194 §3.4-bis:
+	//
+	//   1. is the tool exempt (the lifecycle of the plan)? -> pass
+	//   2. does the tool demand a plan?                  -> if not, pass
+	//   3. the gate decides: plan_required / not_approved /
+	//      budget_exceeded
+	//
+	// In `warn` mode a refusal is RECORDED and the call goes
+	// through: the gate is born measuring, not born blocking
+	// (SPEC-194 §3.6, D8). In `strict` mode the refusal stops the
+	// call. In `off` mode nothing is checked at all.
+	if m.PlanStrictness != plan.StrictnessOff && m.PlanGate != nil && !PlanLifecycleExempt(toolName) && IsPlanRequired(toolName) {
+		decision, err := m.PlanGate.Check(ctx, gateIn.SessionID, toolName,
+			isJudgeCallTool(toolName), m.planWriteContext(ctx, gateIn, toolName))
+		if err != nil {
+			// A broken store is not a refusal: it is an error.
+			// Under `strict` the call stops (the gate could not
+			// be evaluated, and "could not evaluate" is not
+			// "allowed"); under `warn` it goes through and the
+			// error is recorded, because a store that cannot be
+			// read must not stop the work.
+			m.recordRefusal(ctx, toolName, gateIn.SessionID, "ErrInternal",
+				fmt.Sprintf("plan gate: %v", err))
+			if m.PlanStrictness == plan.StrictnessStrict {
+				return refusalResponse(policy.ReasonOK,
+					fmt.Sprintf("plan gate: %v", err),
+					"Operator: the plan gate could not read the plan; check the store"), nil
+			}
+		} else if decision != nil && !decision.Allowed {
+			code := planReasonCode(decision.Reason)
+			// The refusal is recorded in BOTH modes: the Error
+			// Observatory (which is where the KPI of T10 reads
+			// from) and, in `warn`, the call goes through.
+			//
+			// The charge did NOT happen: the gate refuses BEFORE
+			// it charges, so a call that the plan did not
+			// authorise does not consume the plan's allowance.
+			// Charging it would mean the unauthorised calls eat
+			// the budget of the authorised ones.
+			m.recordRefusal(ctx, toolName, gateIn.SessionID, code, decision.Message)
+			if m.PlanStrictness == plan.StrictnessStrict {
+				return &tools.ToolResponse{
+					Error: &tools.ToolError{
+						Code:    code,
+						Message: decision.Message,
+						Field:   "plan",
+						Hint:    decision.Hint,
+					},
+				}, nil
+			}
+		}
+	}
 
 	resp, err := inner(ctx, args)
 	if err != nil {
@@ -371,6 +470,109 @@ func refusalResponse(r policy.Reason, message, hint string) *tools.ToolResponse 
 	}
 }
 
+// IsPlanRequired lists the tools that MUTATE the state of the kernel
+// and therefore demand an approved plan (SPEC-194, T2).
+//
+// It is the THIRD set of tools, next to the two that already existed:
+//
+//   - IsArtifactCreating: the tools whose OUTPUT goes to the judge.
+//   - RequiresActiveSession: the tools that need an identity.
+//
+// This one is about the tools that CHANGE something, and it is what
+// the plan gate watches.
+//
+// The list is hardcoded on purpose, for the same reason
+// IsArtifactCreating is: it is part of the wiring contract. Adding a
+// tool here is a change of contract for the harnesses that observe
+// ErrPlanRequired.
+//
+// # The list is deliberately INCOMPLETE on the mutating side
+//
+// Two decisions that look like omissions and are not:
+//
+//   - session_close is NOT here. If closing a session demanded an
+//     approved plan, a session whose plan is still in draft could
+//     never be closed, and the plan could never be approved either
+//     (the decision needs a live session). That is a trap, and a gate
+//     that can trap the operator is a gate with an escape hatch
+//     nobody told you about. Closing a session is always allowed.
+//
+//   - The tools of the plan's own lifecycle (plan_create, plan_get,
+//     plan_decide) are not here either, because they ARE the gate's
+//     exception (see PlanLifecycleExempt). Listing them here and
+//     exempting them below would be two lists to keep in sync for
+//     no reason.
+//
+// The other omission is on purpose too: this list names the tools
+// that MUTATE THE KERNEL. The tools that only READ (agent_memory_list,
+// agent_memory_recall, active_policy, memory_state, the context
+// projections, the judge utilities) are not here, and there is no
+// "read-only" flag on the tools to derive it from: the repo has no
+// such notion, so the list IS the notion.
+func IsPlanRequired(toolName string) bool {
+	switch toolName {
+	case "vibe_publish", // publishes the artifact
+		"resolve_drift",         // decides about a verdict
+		"judge",                 // spends the judge budget
+		"consensus",             // spends the judge budget
+		"admin_migrate",         // migrates the schema
+		"admin_vacuum",          // compacts the database
+		"vlp_handle_event",      // moves the VLP state machine
+		"agent_memory_save",     // writes memory
+		"agent_memory_update",   // writes memory
+		"agent_memory_archive",  // writes memory
+		"agent_memory_delegate", // creates a subagent binding
+		"subagent_register",
+		"subagent_unregister",
+		"llm_key_add", // touches the OS keyring
+		"llm_key_remove",
+		"llm_provider_bind", // changes the judge of the project
+		"oauth_connect",
+		"oauth_disconnect",
+		"project_create":
+		return true
+	}
+	return false
+}
+
+// PlanLifecycleExempt lists the tools that take part in the
+// lifecycle of the plan and therefore do NOT demand an approved plan.
+//
+// It is the ONLY place where the plan gate can be skipped, and it is
+// a CLOSED list. The gate itself has no "skip" parameter on purpose:
+// a flag in the arguments would be a door left open, and the one
+// caller that must not use it is exactly the one that would.
+//
+// # Without this list the gate does not start
+//
+// The plan hangs from a row of vibe_specs (SavePlan refuses a plan
+// without a spec), so creating the FIRST plan needs a spec. If
+// creating the spec needed an approved plan, the gate would deadlock:
+// to make a plan you need a spec, and to make a spec you need a plan.
+//
+// MEASURED: the independent review of PR #43 found exactly this
+// deadlock in the spec, where vibe_spec was in IsPlanRequired and
+// not in this list. The spec was corrected (SPEC-194 §3.4-bis) and
+// the exemption is here.
+//
+// The cost of exempting vibe_spec is written down in the spec: it can
+// create a spec (and, with DARK_MEMORY_V280=1, its auto-saved todos)
+// without a plan. Those are bounded, audited writes, and the work
+// that matters keeps demanding an approved plan.
+func PlanLifecycleExempt(toolName string) bool {
+	switch toolName {
+	case "plan_create", // proposes the plan (it is born in "draft")
+		"plan_get",    // reads the plan
+		"plan_decide", // the person decides about the plan
+		"vibe_spec",   // creates the spec the plan hangs from
+		"health_ping",
+		"memory_state",
+		"active_policy":
+		return true
+	}
+	return false
+}
+
 // IsArtifactCreating lists tools whose successful response should be
 // drift-checked before returning to the LLM (per ACTIVE_MEMORY_RFC.md
 // §A6). Read-only introspection tools are NOT in this set.
@@ -437,4 +639,68 @@ func buildArtifactInput(toolName string, args json.RawMessage, resp *tools.ToolR
 	}
 
 	return artifact
+}
+
+// isJudgeCallTool says whether a tool call spends the JUDGE budget
+// instead of the tool-call budget (SPEC-194 §3.8).
+//
+// The two budgets are distinct ceilings and charging the wrong one
+// would refuse a call whose own allowance was still available: a
+// judge call charged to the tool budget would eat the allowance of
+// the tool calls, and the other way around.
+//
+// The list is short on purpose: only the two tools that actually
+// call the judge as a TOOL spend the judge budget. The judge that
+// validates the shortlist of a plan is an INTERNAL call of the
+// orchestrator (PlanJudge), not a tool of the harness, and it does
+// not pass through this gate.
+func isJudgeCallTool(toolName string) bool {
+	switch toolName {
+	case "judge", "consensus":
+		return true
+	}
+	return false
+}
+
+// planReasonCode maps the string reason of the plan gate to the
+// canonical error_kind of the gate.
+//
+// The two packages do not import each other on purpose: the plan
+// gate lives with the plan (it needs the store) and the policy
+// reasons live with the policy (they are the wire contract). The
+// mapping is here, in the layer that knows both, and it is
+// exhaustive over the three reasons of SPEC-194: an unknown reason
+// maps to ErrPlanRequired, which is the SAFEST of the three (it
+// asks for a plan, and a plan cannot be worked around).
+func planReasonCode(reason string) string {
+	switch reason {
+	case plan.ReasonNotApproved:
+		return "ErrNotApproved"
+	case plan.ReasonBudgetExceeded:
+		return "ErrBudgetExceeded"
+	case plan.ReasonOK:
+		return "ErrGateOK"
+	default:
+		return "ErrPlanRequired"
+	}
+}
+
+// planWriteContext builds the WriteContext of the charge of a plan
+// call.
+//
+// The actor is the TOOL NAME, not the operator: this row says "this
+// tool call was charged to the plan", and the operator is already in
+// the session. The write_path is "plan_charge", which is distinct
+// from the "plan_create" / "plan_decide" of the lifecycle, so the
+// three kinds of row about a plan can be told apart in the audit.
+func (m *GateMiddleware) planWriteContext(ctx context.Context, gateIn policy.GateInput, toolName string) store.WriteContext {
+	wc := store.WriteContext{
+		Actor:     toolName,
+		SessionID: gateIn.SessionID,
+		WritePath: plan.WritePathCharge,
+	}
+	if sc, ok := session.ScopeFromContext(ctx); ok {
+		wc.ProjectID = sc.ProjectID
+	}
+	return wc
 }

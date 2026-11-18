@@ -3732,6 +3732,37 @@ func (s *Store) GetVLPState(ctx context.Context, sessionID string) (*store.VLPSt
 	return r, nil
 }
 
+// SetOpenSpecID records which vibe_specs row the session is working
+// on, touching ONE column.
+//
+// Same contract and same reason as the sqlite one: it is an UPDATE
+// and not a SaveVLPState upsert, so it cannot clobber the VLP state
+// machine. It returns false (and no error) when there is no
+// vlp_state row for the session.
+func (s *Store) SetOpenSpecID(ctx context.Context, wc store.WriteContext, sessionID string, specID int64) (bool, error) {
+	if err := s.requireProject(); err != nil {
+		return false, err
+	}
+	if strings.TrimSpace(sessionID) == "" || specID <= 0 {
+		return false, nil
+	}
+	projectID, err := s.resolveWriteProject(ctx, wc)
+	if err != nil {
+		return false, err
+	}
+	if projectID == "" {
+		return false, nil
+	}
+	res, err := s.pool.Exec(ctx,
+		`UPDATE vlp_state SET open_spec_id = $1, updated_at = $2
+		 WHERE session_id = $3 AND project_id = $4`,
+		specID, time.Now().UTC().Format(time.RFC3339Nano), sessionID, projectID)
+	if err != nil {
+		return false, fmt.Errorf("postgres: set_open_spec_id: %w", err)
+	}
+	return res.RowsAffected() > 0, nil
+}
+
 // ListVLPStates returns rows filtered by stateFilter (NUMERIC — the int
 // value of internal/vlp.State; empty = all states), newest-first. Limit
 // <= 0 means no limit.

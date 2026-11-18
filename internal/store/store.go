@@ -739,6 +739,28 @@ type Store interface {
 	// GetVLPState returns the row for sessionID under the active project,
 	// or nil if not found. Cross-project reads are denied (INV-7).
 	GetVLPState(ctx context.Context, sessionID string) (*VLPStateRow, error)
+	// SetOpenSpecID records which vibe_specs row the session is
+	// currently working on, WITHOUT touching the rest of the VLP row.
+	//
+	// Why a surgical setter and not SaveVLPState: SaveVLPState is
+	// an UPSERT of the WHOLE row, so setting the open spec through
+	// it would mean reading the row, changing one field and writing
+	// it back — a read-modify-write that can lose a state transition
+	// that happened in between. This method touches ONE column, so it
+	// cannot clobber the state machine.
+	//
+	// Why it exists (SPEC-194, PR B): the plan gate finds the plan of
+	// a session through this column (GetOpenPlan reads it). MEASURED
+	// on 2026-11-18: nothing in production ever WROTE it — the two
+	// constructors of VLPStateRow left it at 0 — so the gate would
+	// have found no plan at all and would have refused every mutating
+	// call in strict mode. The spec is what opens the spec, so the
+	// spec is what records it.
+	//
+	// It is NOT an error when there is no vlp_state row for the
+	// session: the setter creates nothing and reports it, so the
+	// caller can decide whether the absence matters.
+	SetOpenSpecID(ctx context.Context, wc WriteContext, sessionID string, specID int64) (bool, error)
 	// ListVLPStates returns rows filtered by stateFilter (NUMERIC — int
 	// value of internal/vlp.State as a string; empty = all states),
 	// newest-first. Limit <= 0 means no limit (caller is responsible

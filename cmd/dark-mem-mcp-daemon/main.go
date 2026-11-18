@@ -29,6 +29,7 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/errorobs"
 	"github.com/dark-agents/dark-memory-mcp/internal/federation"
 	"github.com/dark-agents/dark-memory-mcp/internal/orchestration"
+	"github.com/dark-agents/dark-memory-mcp/internal/plan"
 	"github.com/dark-agents/dark-memory-mcp/internal/server"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
 	"github.com/dark-agents/dark-memory-mcp/internal/tools"
@@ -114,9 +115,18 @@ func main() {
 	}
 	driftChecker := drift.NewChecker(bootState.Store, server.DriftJudgeFromOrchestrator(bootState.Orchestrator), strictness)
 
+	// SPEC-194 (T2, T4): wire the gate of the plan. See the comment
+	// in cmd/dark-mem-mcp/legacy_main.go: the switch is the env var
+	// (no per-project override yet), and its default is `warn` — the
+	// gate checks and records, and lets the call through.
+	planStrictness := plan.StrictnessFromEnv()
+	planGate := plan.NewGate(bootState.Store)
+
 	bootState.Gate = &server.GateMiddleware{
 		FrameSource:        frameSrc,
 		DriftChecker:       driftChecker,
+		PlanGate:           planGate,
+		PlanStrictness:     planStrictness,
 		ActiveSession:      activeSessionResolver,
 		ActiveProject:      bootState.Store.ActiveProject,
 		ActiveConstitution: func() (string, string) { return bootState.Config.ConstitutionID, bootState.Config.ConstitutionVer },

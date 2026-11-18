@@ -342,3 +342,47 @@ func TestValidDomainAndSeverity(t *testing.T) {
 		t.Error("ValidSeverity(bogus) = true, want false")
 	}
 }
+
+// SPEC-194 (PR B): the three reasons of the plan gate keep their OWN
+// code in the Error Observatory.
+//
+// The message the middleware sends is "gate refusal <code>: <text>",
+// and the generic gate branch matches "gate refusal" — so without a
+// branch of its own, the three reasons would ALL be persisted as
+// "ErrGateRefusal" and the KPI of T10 ("negatives by reason") would
+// be a LIKE instead of a GROUP BY.
+//
+// The test pins the three codes AND the fact that the generic branch
+// still catches the other refusals.
+func TestClassify_PlanReasonsKeepTheirOwnCode(t *testing.T) {
+	cases := []struct {
+		msg  string
+		want string
+	}{
+		{"gate refusal ErrPlanRequired: tool \"agent_memory_save\" requires an approved plan", "ErrPlanRequired"},
+		{"gate refusal ErrNotApproved: the open plan is \"draft\"", "ErrNotApproved"},
+		{"gate refusal ErrBudgetExceeded: the plan's tool_calls budget is exhausted (3/3)", "ErrBudgetExceeded"},
+	}
+	for _, c := range cases {
+		domain, code, sev := Classify(errors.New(c.msg))
+		if domain != DomainGate {
+			t.Errorf("Classify(%q) domain = %q, want %q", c.msg, domain, DomainGate)
+		}
+		if code != c.want {
+			t.Errorf("Classify(%q) code = %q, want %q", c.msg, code, c.want)
+		}
+		// A plan refusal is a refusal of the CALL, not a failure of
+		// the system: the severity is warn, like the other gate
+		// refusals that the middleware records.
+		if sev != SeverityWarn {
+			t.Errorf("Classify(%q) severity = %q, want %q", c.msg, sev, SeverityWarn)
+		}
+	}
+
+	// And the generic branch still catches the OTHER refusals: the
+	// three new branches must not have swallowed them.
+	_, code, _ := Classify(errors.New("gate refusal ErrFrameStaleTooFar: identity unavailable"))
+	if code != "ErrGateRefusal" {
+		t.Errorf("a non-plan gate refusal was classified as %q, want ErrGateRefusal", code)
+	}
+}

@@ -303,17 +303,33 @@ func TestChargePlanCall_RefusesAnUnapprovedPlan(t *testing.T) {
 func TestGetOpenPlan(t *testing.T) {
 	s := newPlanStore(t)
 	ctx := context.Background()
-	specID := seedSpec(t, s, "sess-open")
-	seedPlan(t, s, specID, 3, 1)
 
-	// With no vlp_state row, there is no open spec, so no open plan.
+	// A session whose spec has NO plan has no open plan.
+	//
+	// MEDIDO el 2026-11-18 (PR B): this test used to seed a spec WITH
+	// a plan and assert that GetOpenPlan returned nil, on the premise
+	// that "no vlp_state row means no open spec means no open plan".
+	// That premise was FICTION: nothing in production ever wrote
+	// vlp_state.open_spec_id (the two constructors of VLPStateRow
+	// left it at 0), so the gate of the plan would have found no plan
+	// at all and would have refused every mutating call in strict
+	// mode.
+	//
+	// The intent of the test is kept and the premise is fixed: the
+	// case that matters is a spec WITHOUT a plan, and there is no
+	// plan to find. The case of a spec WITH a plan and no
+	// open_spec_id is covered by
+	// TestGetOpenPlan_ResolvesTheOpenSpecOfTheSession (the fallback).
+	specID := seedSpec(t, s, "sess-open")
+
 	got, err := s.GetOpenPlan(ctx, "sess-open")
 	if err != nil {
 		t.Fatalf("GetOpenPlan: %v", err)
 	}
 	if got != nil {
-		t.Errorf("GetOpenPlan = %+v, want nil (no open spec)", got)
+		t.Errorf("GetOpenPlan = %+v, want nil (the spec has no plan)", got)
 	}
+	_ = specID
 }
 
 func TestPlanRow_EffectiveBudgetMergesTheAuthoritativeCounter(t *testing.T) {
@@ -455,5 +471,171 @@ func TestGetOpenPlan_Positive(t *testing.T) {
 	}
 	if got.Status != vibeflow.PlanApproved {
 		t.Errorf("Status = %q, want %q", got.Status, vibeflow.PlanApproved)
+	}
+}
+
+// MEASURED el 2026-11-18 (PR B): GetOpenPlan leans on
+// vlp_state.open_spec_id, and NOTHING in production ever wrote it —
+// the two constructors of VLPStateRow left it at 0. So the gate of
+// the plan would have found no plan at all.
+//
+// This test fixes the two halves of the fix:
+//
+//  1. SetOpenSpecID records the open spec (the root fix: vibe_spec
+//     calls it).
+//  2. GetOpenPlan falls back to the most recent spec of the session
+//     that has a plan, for the rows that were written before the
+//     fix.
+func TestGetOpenPlan_ResolvesTheOpenSpecOfTheSession(t *testing.T) {
+	s := newPlanStore(t)
+	ctx := context.Background()
+	sessionID := "sess-open-resolve"
+	specID := seedSpec(t, s, sessionID)
+	seedPlan(t, s, specID, 3, 1)
+
+	// A vlp_state row for the session, WITHOUT the open spec (the
+	// state that production was in).
+	if _, err := s.SaveVLPState(ctx, store.WriteContext{
+		Actor:     "test",
+		SessionID: sessionID,
+		WritePath: "test_seed_vlp",
+	}, &store.VLPStateRow{
+		SessionID: sessionID,
+		State:     1,
+	}); err != nil {
+		t.Fatalf("SaveVLPState: %v", err)
+	}
+
+	// The fallback finds the plan even though open_spec_id is 0.
+	got, err := s.GetOpenPlan(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("GetOpenPlan: %v", err)
+	}
+	if got == nil {
+		t.Fatal("GetOpenPlan = nil: the plan of the session was not found")
+	}
+	if got.SpecID != specID {
+		t.Errorf("SpecID = %d, want %d", got.SpecID, specID)
+	}
+
+	// And the root fix: SetOpenSpecID records it, and the first
+	// path (the explicit answer) then wins.
+	otherSpec := seedSpec(t, s, sessionID)
+	seedPlan(t, s, otherSpec, 3, 1)
+	ok, err := s.SetOpenSpecID(ctx, store.WriteContext{
+		Actor:     "test",
+		SessionID: sessionID,
+		WritePath: "test_set_open_spec",
+	}, sessionID, otherSpec)
+	if err != nil {
+		t.Fatalf("SetOpenSpecID: %v", err)
+	}
+	if !ok {
+		t.Fatal("SetOpenSpecID reported no row updated")
+	}
+	got, err = s.GetOpenPlan(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("GetOpenPlan: %v", err)
+	}
+	if got == nil || got.SpecID != otherSpec {
+		t.Fatalf("GetOpenPlan = %+v, want the spec %d recorded by SetOpenSpecID", got, otherSpec)
+	}
+}
+
+// The fallback picks the MOST RECENT spec with a plan: that is the
+// one the session is working on, not the first one it opened.
+func TestGetOpenPlan_FallbackPicksTheMostRecentPlan(t *testing.T) {
+	s := newPlanStore(t)
+	ctx := context.Background()
+	sessionID := "sess-most-recent"
+
+	first := seedSpec(t, s, sessionID)
+	seedPlan(t, s, first, 3, 1)
+	second := seedSpec(t, s, sessionID)
+	seedPlan(t, s, second, 3, 1)
+
+	got, err := s.GetOpenPlan(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("GetOpenPlan: %v", err)
+	}
+	if got == nil {
+		t.Fatal("GetOpenPlan = nil")
+	}
+	if got.SpecID != second {
+		t.Errorf("SpecID = %d, want %d (the most recent)", got.SpecID, second)
+	}
+}
+
+// A spec WITHOUT a plan does not become the open plan: the fallback
+// looks for a spec that HAS one.
+func TestGetOpenPlan_FallbackSkipsSpecsWithoutAPlan(t *testing.T) {
+	s := newPlanStore(t)
+	ctx := context.Background()
+	sessionID := "sess-with-plan-then-without"
+
+	withPlan := seedSpec(t, s, sessionID)
+	seedPlan(t, s, withPlan, 3, 1)
+	_ = seedSpec(t, s, sessionID) // a newer spec, with no plan
+
+	got, err := s.GetOpenPlan(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("GetOpenPlan: %v", err)
+	}
+	if got == nil {
+		t.Fatal("GetOpenPlan = nil")
+	}
+	if got.SpecID != withPlan {
+		t.Errorf("SpecID = %d, want %d (the one WITH a plan)", got.SpecID, withPlan)
+	}
+}
+
+// SetOpenSpecID touches ONE column: it must not clobber the VLP
+// state machine. A SaveVLPState upsert of the whole row would have
+// done that.
+func TestSetOpenSpecID_DoesNotClobberTheVLPState(t *testing.T) {
+	s := newPlanStore(t)
+	ctx := context.Background()
+	sessionID := "sess-vlp-state"
+
+	if _, err := s.SaveVLPState(ctx, store.WriteContext{
+		Actor:     "test",
+		SessionID: sessionID,
+		WritePath: "test_seed_vlp",
+	}, &store.VLPStateRow{
+		SessionID: sessionID,
+		State:     7,
+		TurnCount: 3,
+		LastEvent: "vibe_publish",
+	}); err != nil {
+		t.Fatalf("SaveVLPState: %v", err)
+	}
+
+	specID := seedSpec(t, s, sessionID)
+	if _, err := s.SetOpenSpecID(ctx, store.WriteContext{
+		Actor:     "test",
+		SessionID: sessionID,
+		WritePath: "test_set_open_spec",
+	}, sessionID, specID); err != nil {
+		t.Fatalf("SetOpenSpecID: %v", err)
+	}
+
+	state, err := s.GetVLPState(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("GetVLPState: %v", err)
+	}
+	if state == nil {
+		t.Fatal("GetVLPState = nil")
+	}
+	if state.State != 7 {
+		t.Errorf("State = %d, want 7: SetOpenSpecID clobbered the VLP state", state.State)
+	}
+	if state.TurnCount != 3 {
+		t.Errorf("TurnCount = %d, want 3: SetOpenSpecID clobbered the VLP state", state.TurnCount)
+	}
+	if state.LastEvent != "vibe_publish" {
+		t.Errorf("LastEvent = %q, want %q: SetOpenSpecID clobbered the VLP state", state.LastEvent, "vibe_publish")
+	}
+	if state.OpenSpecID != specID {
+		t.Errorf("OpenSpecID = %d, want %d", state.OpenSpecID, specID)
 	}
 }
