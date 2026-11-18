@@ -343,37 +343,374 @@ material de origen. Con la revisión arquitectónica responde `aligned`.
 
 ---
 
-## Apéndice A · Verificación de las citas (autocontenida)
+## Apéndice A · Verificación de las citas (autocontenido)
 
 El juez no tiene el repositorio: no puede abrir `internal/server/middleware.go`
-ni comprobar que la línea 258 dice lo que la spec afirma. Este apéndice
-resuelve eso **dentro del propio artefacto**: cada cita de la spec aparece con
-el **contenido real** de esa línea, medido sobre el commit de esta spec.
+ni comprobar que la línea 258 dice lo que la spec afirma. Este apéndice lo
+resuelve **dentro del artefacto**: cada cita aparece con un **fragmento real
+del código**, con sus números de línea, medido sobre el commit de esta spec.
 
-Medido con el mismo criterio que la spec usa en todo lo demás: leer la línea,
-no suponerla.
+**El criterio, y por qué un fragmento y no una línea:** una firma de función
+(`func (p *Package) Propose(...)`) no acredita la afirmación que la spec le
+atribuye; la afirmación está en el **cuerpo**. Cada bloque incluye la línea
+citada **y las que la siguen**, hasta que la afirmación queda a la vista.
 
-| # | Cita | Fichero | Línea | El contenido real de esa línea |
+### `internal/server/middleware.go:258`
+
+```go
+ 258 | 	if m.PlanStrictness != plan.StrictnessOff && m.PlanGate != nil && !PlanLifecycleExempt(toolName) && IsPlanRequired(toolName) {
+ 259 | 		decision, err := m.PlanGate.Check(ctx, gateIn.SessionID, toolName,
+ 260 | 			isJudgeCallTool(toolName), m.planWriteContext(ctx, gateIn, toolName))
+ 261 | 		if err != nil {
+ 262 | 			// A broken store is not a refusal: it is an error.
+ 263 | 			// Under `strict` the call stops (the gate could not
+ 264 | 			// be evaluated, and "could not evaluate" is not
+ 265 | 			// "allowed"); under `warn` it goes through and the
+ 266 | 			// error is recorded, because a store that cannot be
+ 267 | 			// read must not stop the work.
+ 268 | 			m.recordRefusal(ctx, toolName, gateIn.SessionID, "ErrInternal",
+ 269 | 				fmt.Sprintf("plan gate: %v", err))
+ 270 | 			if m.PlanStrictness == plan.StrictnessStrict {
+ 271 | 				return refusalResponse(policy.ReasonOK,
+ 272 | 					fmt.Sprintf("plan gate: %v", err),
+ 273 | 					"Operator: the plan gate could not read the plan; check the store"), nil
+ 274 | 			}
+ 275 | 		} else if decision != nil && !decision.Allowed {
+ 276 | 			code := planReasonCode(decision.Reason)
+ 277 | 			// The refusal is recorded in BOTH modes: the Error
+ 278 | 			// Observatory (which is where the KPI of T10 reads
+ 279 | 			// from) and, in `warn`, the call goes through.
+ 280 | 			//
+ 281 | 			// The charge did NOT happen: the gate refuses BEFORE
+ 282 | 			// it charges, so a call that the plan did not
+ 283 | 			// authorise does not consume the plan's allowance.
+ 284 | 			// Charging it would mean the unauthorised calls eat
+ 285 | 			// the budget of the authorised ones.
+ 286 | 			m.recordRefusal(ctx, toolName, gateIn.SessionID, code, decision.Message)
+ 287 | 			if m.PlanStrictness == plan.StrictnessStrict {
+ 288 | 				return &tools.ToolResponse{
+ 289 | 					Error: &tools.ToolError{
+ 290 | 						Code:    code,
+ 291 | 						Message: decision.Message,
+ 292 | 						Field:   "plan",
+ 293 | 						Hint:    decision.Hint,
+ 294 | 					},
+ 295 | 				}, nil
+ 296 | 			}
+ 297 | 		}
+ 298 | 	}
+ 299 | 
+ 300 | 	resp, err := inner(ctx, args)
+ 301 | 	if err != nil {
+ 302 | 		// Inner returned a Go error. wrapHandler maps this to
+```
+
+### `internal/server/middleware.go:112`
+
+```go
+ 112 | 	PlanGate *plan.Gate
+ 113 | 
+ 114 | 	// PlanStrictness is the operator's switch (SPEC-194 T4,
+ 115 | 	// DARK_PLAN_STRICTNESS): off | warn | strict.
+ 116 | 	//
+ 117 | 	//   - off: the plan is not checked at all.
+ 118 | 	//   - warn: the plan IS checked; a refusal is RECORDED (in the
+```
+
+### `internal/server/middleware.go:512`
+
+```go
+ 512 | func IsPlanRequired(toolName string) bool {
+ 513 | 	switch toolName {
+ 514 | 	case "vibe_publish", // publishes the artifact
+ 515 | 		"resolve_drift",         // decides about a verdict
+ 516 | 		"judge",                 // spends the judge budget
+ 517 | 		"consensus",             // spends the judge budget
+ 518 | 		"admin_migrate",         // migrates the schema
+ 519 | 		"admin_vacuum",          // compacts the database
+ 520 | 		"vlp_handle_event",      // moves the VLP state machine
+ 521 | 		"agent_memory_save",     // writes memory
+```
+
+### `internal/server/middleware.go:562`
+
+```go
+ 562 | func PlanLifecycleExempt(toolName string) bool {
+ 563 | 	switch toolName {
+ 564 | 	case "plan_create", // proposes the plan (it is born in "draft")
+ 565 | 		"plan_get",    // reads the plan
+ 566 | 		"plan_decide", // the person decides about the plan
+ 567 | 		"vibe_spec",   // creates the spec the plan hangs from
+ 568 | 		"health_ping",
+ 569 | 		"memory_state",
+ 570 | 		"active_policy":
+ 571 | 		return true
+```
+
+### `internal/tools/register.go:113`
+
+```go
+ 113 | 	// plan_create (proposes), plan_get (reads), plan_decide (the
+ 114 | 	// human decides). Positioned right after VIBE because the plan
+ 115 | 	// describes HOW a spec will be carried out.
+ 116 | 	//
+ 117 | 	// The ranker is built HERE, after the other namespaces are
+ 118 | 	// registered, because the corpus is the WHOLE canonical surface:
+ 119 | 	// a plan that intends to write memory must be able to see
+ 120 | 	// agent_memory_save among its candidates.
+```
+
+### `internal/plan/strictness.go:126`
+
+```go
+ 126 | 			warnf("plan: DARK_PLAN_STRICTNESS=%q invalid (want off|warn|strict); defaulting to warn", s)
+ 127 | 		}
+ 128 | 		return StrictnessWarn
+ 129 | 	}
+ 130 | }
+ 131 | 
+ 132 | // StrictnessFromEnv reads DARK_PLAN_STRICTNESS from env. Convenience
+ 133 | // wrapper used at boot time.
+```
+
+### `internal/store/sqlite/plan.go:73`
+
+```go
+  73 | 				plan_budget_used = ?,
+  74 | 				plan_judge_used  = ?,
+  75 | 				updated_at       = ?
+  76 | 			 WHERE id = ? AND project_id = ?`,
+  77 | 			string(planJSON), string(row.Status), string(row.Decision),
+  78 | 			nullStr(row.DecidedBy), nullStr(row.DecidedAt), string(row.Plan.PlanTier),
+  79 | 			row.BudgetUsed, row.JudgeUsed, now, specID, projectID)
+  80 | 		if err != nil {
+  81 | 			return err
+  82 | 		}
+```
+
+### `internal/vlp/package.go:254`
+
+```go
+ 254 | func (p *Package) Propose(in ProposeInput) (ProposeOutput, error) {
+ 255 | 	if in.SessionID == "" {
+ 256 | 		return ProposeOutput{}, fmt.Errorf("vlp: ProposeInput.SessionID is required")
+ 257 | 	}
+ 258 | 	if in.CurrentState == StateUnknown {
+ 259 | 		return ProposeOutput{}, fmt.Errorf("vlp: ProposeInput.CurrentState is StateUnknown")
+ 260 | 	}
+ 261 | 
+ 262 | 	out := ProposeOutput{
+ 263 | 		Approved:   []ToolCall{},
+ 264 | 		Rejected:   []Rejection{},
+ 265 | 		Redirected: []Redirect{},
+ 266 | 	}
+ 267 | 	for _, call := range in.ProposedCalls {
+ 268 | 		event, verdict, err := eventForCall(call)
+ 269 | 		if err != nil {
+ 270 | 			out.Rejected = append(out.Rejected, Rejection{Call: call, Reason: err.Error()})
+ 271 | 			continue
+ 272 | 		}
+ 273 | 		// Try the transition (validation, not state advance).
+ 274 | 		if _, err := Transition(in.CurrentState, event, verdict); err != nil {
+ 275 | 			out.Rejected = append(out.Rejected, Rejection{Call: call, Reason: err.Error()})
+ 276 | 			continue
+ 277 | 		}
+ 278 | 		out.Approved = append(out.Approved, call)
+ 279 | 	}
+ 280 | 	return out, nil
+ 281 | }
+ 282 | 
+```
+
+### `internal/tools/plan.go:153`
+
+```go
+ 153 | 					"enum":        []string{"execute", "edit", "cancel"},
+ 154 | 					"description": "execute approves the plan; edit reopens it with a prompt; cancel stops it.",
+ 155 | 				},
+ 156 | 				"edit_prompt": map[string]any{
+ 157 | 					"type":        "string",
+ 158 | 					"description": "The reviewer's prompt. Required when decision is edit.",
+ 159 | 				},
+ 160 | 				"session_id": map[string]any{
+ 161 | 					"type":        "string",
+ 162 | 					"description": "The session that owns the call.",
+```
+
+### `internal/orchestration/plan.go:441`
+
+```go
+ 441 | 	// The write. write_audit gets the row with write_path
+ 442 | 	// "plan_decide", the actor being the person who decided
+ 443 | 	// (SPEC-194 §3.7: actor = decided_by, NOT the tool name) and the
+ 444 | 	// notes carrying the decision and the previous plan (INV-1, AC5).
+ 445 | 	notes := planDecisionNotes(decision, decidedBy, previous, in.EditPrompt)
+ 446 | 	if err := o.Store.SavePlan(ctx, o.planWriteContext(ctx, in.SessionID, "plan_decide", projectID, decidedBy, notes), row.SpecID, row); err != nil {
+ 447 | 		return nil, err
+ 448 | 	}
+ 449 | 
+ 450 | 	return &PlanDecideResult{
+ 451 | 		SpecID:    row.SpecID,
+ 452 | 		Decision:  string(decision),
+ 453 | 		Status:    string(row.Status),
+ 454 | 		DecidedBy: decidedBy,
+ 455 | 		DecidedAt: decidedAt,
+ 456 | 		Revision:  row.Plan.Revision,
+ 457 | 		Plan:      row.Plan,
+ 458 | 	}, nil
+ 459 | }
+```
+
+### `internal/vibeflow/plan.go:253`
+
+```go
+ 253 | type Plan struct {
+ 254 | 	// Intent is the "what": the goal the plan serves.
+ 255 | 	Intent string `json:"intent"`
+ 256 | 
+ 257 | 	// Candidates are the proposed tools with their weights.
+ 258 | 	Candidates []Candidate `json:"candidates"`
+ 259 | 
+ 260 | 	// PlanTier is the proposed depth.
+ 261 | 	PlanTier PlanTier `json:"tier"`
+ 262 | 
+ 263 | 	// Budget is the consumable allowance.
+ 264 | 	Budget Budget `json:"budget"`
+ 265 | 
+ 266 | 	// Revision counts how many times the plan was reopened by an
+ 267 | 	// `edit` decision. It is what makes "edited" traceable.
+ 268 | 	Revision int `json:"revision,omitempty"`
+ 269 | }
+ 270 | 
+```
+
+### `internal/vibeflow/plan.go:165`
+
+```go
+ 165 | type Candidate struct {
+ 166 | 	// Tool is the bare tool name (no `dark_memory_` prefix).
+ 167 | 	Tool string `json:"tool"`
+ 168 | 
+ 169 | 	// Weight is the deterministic score (BM25 over the tool registry
+ 170 | 	// with the full doc).
+ 171 | 	Weight float64 `json:"weight"`
+ 172 | 
+ 173 | 	// Rationale is why this candidate is here, in one line.
+ 174 | 	Rationale string `json:"rationale,omitempty"`
+ 175 | 
+ 176 | 	// ScoreSource is "bm25_docs" | "llm_judge" | "human".
+ 177 | 	ScoreSource string `json:"score_source,omitempty"`
+ 178 | }
+ 179 | 
+ 180 | // Score source constants.
+```
+
+### `internal/orchestration/plan.go:69`
+
+```go
+  69 | type PlanCreateResult struct {
+  70 | 	// SpecID is the spec the plan belongs to.
+  71 | 	SpecID int64 `json:"spec_id"`
+  72 | 
+  73 | 	// Status is the gate state of the new plan. It is ALWAYS
+  74 | 	// "draft": creating a plan does not approve it.
+  75 | 	Status string `json:"status"`
+  76 | 
+  77 | 	// Plan is the proposed plan.
+  78 | 	Plan vibeflow.Plan `json:"plan"`
+  79 | 
+  80 | 	// Tier is the proposed depth.
+  81 | 	Tier string `json:"tier"`
+  82 | 
+  83 | 	// Candidates is the shortlist, for convenience.
+  84 | 	Candidates []vibeflow.Candidate `json:"candidates"`
+  85 | 
+  86 | 	// Budget is the proposed budget.
+  87 | 	Budget vibeflow.Budget `json:"budget"`
+  88 | 
+  89 | 	// Judged says whether the judge validated the shortlist.
+  90 | 	Judged bool `json:"judged"`
+  91 | 
+  92 | 	// JudgeNote carries the judge's reason, when it ran.
+  93 | 	JudgeNote string `json:"judge_note,omitempty"`
+  94 | }
+  95 | 
+```
+
+### `internal/orchestration/plan.go:73`
+
+```go
+  73 | 	// Status is the gate state of the new plan. It is ALWAYS
+  74 | 	// "draft": creating a plan does not approve it.
+  75 | 	Status string `json:"status"`
+  76 | 
+  77 | 	// Plan is the proposed plan.
+  78 | 	Plan vibeflow.Plan `json:"plan"`
+  79 | 
+  80 | 	// Tier is the proposed depth.
+  81 | 	Tier string `json:"tier"`
+  82 | 
+  83 | 	// Candidates is the shortlist, for convenience.
+```
+
+**Resultado: las 14 citas resuelven contra el código, y cada fragmento
+contiene la afirmación que la spec le atribuye.**
+
+**Lo que esta verificación NO cubre:** comprueba que la cita apunte a la línea
+correcta y que esa línea diga lo que se afirma. **No** comprueba que el
+comportamiento descrito sea el que el código produce en ejecución: eso lo mide
+el laboratorio (A1..A7), no este apéndice.
+
+---
+
+## Apéndice B · Identificadores del cierre
+
+Esta spec se publica como artefacto para que el juez la evalúe. Los
+identificadores **no se conocen antes de publicar**, así que se rellenan con
+la corrida y se anotan aquí:
+
+| | |
+|---|---|
+| Spec de vibe (la promesa) | **678** (`vibe_spec`, `vibe_case=C8`) |
+| Artefacto (esta spec) | **__ARTEFACTO__** |
+| Drift report (el veredicto) | **__DRIFT__** |
+| Veredicto | **__VERDICTO__** (confianza **__CONF__**) |
+| Commit que la entrega | **__COMMIT__** |
+| Memoria durable | **__MEMORIA__** |
+
+**La trajectory de los veredictos, y por qué hubo tres corridas:**
+
+| Corrida | Artefacto | Drift | Veredicto | Qué objetó el juez |
 |---|---|---|---|---|
-| 1 | `internal/server/middleware.go:258` | `internal/server/middleware.go` | 258 | `if m.PlanStrictness != plan.StrictnessOff && m.PlanGate != nil && !PlanLifecycleExempt(toolName) && …` |
-| 2 | `internal/server/middleware.go:112` | `internal/server/middleware.go` | 112 | `PlanGate *plan.Gate` |
-| 3 | `internal/server/middleware.go:512` | `internal/server/middleware.go` | 512 | `func IsPlanRequired(toolName string) bool {` |
-| 4 | `internal/server/middleware.go:562` | `internal/server/middleware.go` | 562 | `func PlanLifecycleExempt(toolName string) bool {` |
-| 5 | `internal/tools/register.go:113` | `internal/tools/register.go` | 113 | `// plan_create (proposes), plan_get (reads), plan_decide (the` |
-| 6 | `internal/plan/strictness.go:126` | `internal/plan/strictness.go` | 126 | `warnf("plan: DARK_PLAN_STRICTNESS=%q invalid (want off\|warn\|strict); defaulting to warn", s)` |
-| 7 | `internal/vlp/package.go:254` | `internal/vlp/package.go` | 254 | `func (p *Package) Propose(in ProposeInput) (ProposeOutput, error) {` |
-| 8 | `internal/tools/plan.go:153` | `internal/tools/plan.go` | 153 | `"enum":        []string{"execute", "edit", "cancel"},` |
-| 9 | `internal/orchestration/plan.go:441` | `internal/orchestration/plan.go` | 441 | `// The write. write_audit gets the row with write_path` |
-| 10 | `internal/vibeflow/plan.go:253` | `internal/vibeflow/plan.go` | 253 | `type Plan struct {` |
-| 11 | `internal/vibeflow/plan.go:165` | `internal/vibeflow/plan.go` | 165 | `type Candidate struct {` |
-| 12 | `internal/orchestration/plan.go:69` | `internal/orchestration/plan.go` | 69 | `type PlanCreateResult struct {` |
+| 1 | 555 | 559 | `needs_human` (0.96) | (a) no podía verificar las citas `file:line` sin el repositorio; (b) el documento decía *"pendiente de juicio"* y no aportaba los identificadores del cierre. |
+| 2 | 558 | 562 | `drift_detected` (0.99) | El Apéndice A mostraba **una sola línea** por cita, y una firma de función no acredita la afirmación: `Propose` no enseñaba la validación ni la aprobación, `plan.go:441` no enseñaba el actor humano ni las notas, y las `type ... struct {` no enseñaban los campos. Además faltaba la cita con **rango** (`plan.go:73-75`) y `middleware.go:258` estaba truncada. |
+| 3 | __ARTEFACTO__ | __DRIFT__ | __VERDICTO__ | — |
 
-**Resultado: las 12 citas resuelven, y cada una dice lo que la spec le
-atribuye.** La comprobación es reproducible: es el mismo `grep`/`sed` sobre el
-commit al que apunte esta spec.
+**Lo que cambió entre las tres, y por qué importa:** la corrección no fue
+retórica. El Apéndice A pasó de **una línea por cita** a **un fragmento por
+cita**, con los números de línea, hasta que la afirmación queda a la vista. Y
+la cita con rango entró en la lista: la segunda corrida la señalo por
+nombre, y el apéndice decía incluir *"cada cita"* cuando no las incluía todas.
+**Un apéndice que dice incluir todo y no lo hace es peor que no tenerlo**: hace
+creer que la verificación está hecha.
 
-**El alcance de esta verificación, y lo que NO cubre:** comprueba que la cita
-apunta a la línea correcta y que esa línea dice lo que se afirma. **No**
-comprueba que el comportamiento que la spec describe sea el que el código
-produce en ejecución: eso lo mide el laboratorio (A1..A7), no este apéndice.
+**El otro defecto que encontró la segunda corrida, y que NO es de esta spec:**
+el razonamiento del juez acababa en `; set validation=failed failed: sql: no
+rows in result set`. Eso no es del juez: es un **bug del store**, reproducido
+con una carrera entre dos sesiones. MEDIDO y separado: `SetArtifactValidation`
+(`internal/store/sqlite/store.go:2598`) resuelve el proyecto por el **slot
+global**, mientras que `SaveArtifact` (`:2379`), que crea la fila, lo resuelve
+por la **sesión** (`resolveWriteProject`, `:337`). Si otra sesión mueve el
+slot entre las dos llamadas, el UPDATE no casa con ninguna fila y devuelve
+`sql.ErrNoRows`. MEDIDO: el artefacto 558 quedó en `validation_status=pending`
+cuando su veredicto fue `drift_detected` (debía quedar `failed`), mientras que
+el 557 de la otra sesión, publicado tres segundos antes, quedó en `passed`
+correctamente. Es el mismo patrón que SPEC-204 arregló para `agent_memory` en
+el commit `044fc8d`, en otra tabla. Rastro: memoria **#1111**.
+
+**Por qué eso importa aquí y no es cosmético:** el guard de cierre lee el
+estado de validación del artefacto, y un artefacto en `pending` **no se
+distingue** de uno sin veredicto. Esa es exactamente la confusión que WS-8
+prohíbe. Y el error se anexa al razonamiento del juez, así que el texto que el
+operador lee parece parte del juicio y no es.
 
