@@ -19,10 +19,25 @@ permissions:
   #                   workflow: publish-npm.yml
   #                   environment: (the default one)
   #
-  # There is deliberately NO NODE_AUTH_TOKEN in this file: with OIDC,
-  # setup-node writes the short-lived credential to .npmrc itself, and a
-  # long-lived token in a secret would TAKE PRIORITY over OIDC — the
-  # Trusted Publisher would be configured but never used.
+  # TRANSITORIO (2026-11-18): el secret NODE_AUTH_TOKEN vuelve a estar
+  # inyectado en los cinco pasos que habla con el registro.
+  #
+  # Razon: el Trusted Publisher todavia NO esta configurado en npm (los
+  # siete paquetes siguen sin trustedPublishers), y npm NO valida esa
+  # configuracion al guardarla: el error solo aparece al publicar. Con el
+  # secret retirado, el workflow se queda sin credencial y la publicacion se
+  # rompe. MEDIDO: el run 44337475496 (workflow_dispatch con este workflow
+  # ya mergeado) fallo, y no por autenticacion sino antes, en el guard de
+  # version, porque workflow_dispatch no extrae el tag.
+  #
+  # Cuando el Trusted Publisher este configurado para los siete paquetes,
+  # este bloque se retira otra vez. El orden es el que dice npm:
+  #   1. configurar el Trusted Publisher y COMPROBAR que publica
+  #   2. retirar el secret (este bloque)
+  #   3. revocar el token de larga vida
+  # Con OIDC, setup-node escribe el credencial de vida corta en el .npmrc
+  # del runner, y el CLI de npm detecta el entorno OIDC y lo usa ANTES de
+  # caer al token tradicional.
 
 jobs:
   build-and-publish-platform:
@@ -128,6 +143,8 @@ jobs:
       - name: Check if version already published on npm (idempotency)
         id: check-exists
         working-directory: npm/platform-${{ matrix.npm-platform }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN }}
         run: |
           PACKAGE_NAME=$(node -p "require('./package.json').name")
           PACKAGE_VERSION=$(node -p "require('./package.json').version")
@@ -141,6 +158,8 @@ jobs:
       - name: Publish platform package to npm
         if: steps.check-exists.outputs.EXISTS != 'true'
         working-directory: npm/platform-${{ matrix.npm-platform }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN }}
         run: |
           PACKAGE_VERSION=$(node -p "require('./package.json').version")
           # npm REQUIRES --tag for prerelease versions. Derive the
@@ -179,6 +198,8 @@ jobs:
 
       - name: Verify all optionalDependencies exist on npm at this version
         working-directory: npm/wrapper
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN }}
         run: |
           node -e "
             const pkg = require('./package.json');
@@ -201,6 +222,8 @@ jobs:
       - name: Check if wrapper version already published on npm (idempotency)
         id: check-exists
         working-directory: npm/wrapper
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN }}
         run: |
           PACKAGE_NAME=$(node -p "require('./package.json').name")
           PACKAGE_VERSION=$(node -p "require('./package.json').version")
@@ -214,6 +237,8 @@ jobs:
       - name: Publish main wrapper to npm
         if: steps.check-exists.outputs.EXISTS != 'true'
         working-directory: npm/wrapper
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN }}
         run: |
           PACKAGE_VERSION=$(node -p "require('./package.json').version")
           if [[ "$PACKAGE_VERSION" == *"-"* ]]; then
