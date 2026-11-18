@@ -288,7 +288,13 @@ mismo estilo:
 func IsPlanRequired(toolName string) bool {
     switch toolName {
     case "vibe_publish",        // publica el artefacto
-        "vibe_spec",            // crea el spec
+        // NOTA: "vibe_spec" NO esta aqui. La version original de esta
+        // lista lo incluia, y era un deadlock: el plan cuelga de una fila
+        // de vibe_specs, asi que crear el primer plan necesita un spec, y
+        // crear el spec necesita un plan aprobado. vibe_spec esta en la
+        // lista de EXENTAS (3.4-bis), que se comprueba PRIMERO.
+        // MEDIDO el 2026-11-18: dejarlo en las dos listas es una bomba de
+        // relojería para quien implemente sin leer el orden.
         "resolve_drift",         // decide sobre un veredicto
         "judge",                 // gasta presupuesto de juez
         "consensus",             // gasta presupuesto de juez
@@ -408,28 +414,103 @@ en T2 la calibración fina de la lista**, medible con el KPI de obligación
 
 ### 3.5 El gate: dónde se enchufa
 
-El `GateMiddleware.Wrap` (`internal/server/middleware.go:142`) ya tiene tres
-fases. La de plan entra en `PreCheck`, **después** de la comprobación de
-identidad y **antes** de `inner`:
+> **CORREGIDO el 2026-11-18** (MEDIDO, al implementar el PR B). El texto
+> original de esta sección decia que el gate se engancha **dentro de
+> `policy.PreCheck`**, y eso es **imposible tal como estaba escrito**. Lo que
+> sigue es el texto corregido, con el porque de los tres puntos que lo
+> hacen imposible.
+
+**Por qué NO puede ser dentro de `policy.PreCheck`.** Tres razones, todas
+medidas:
+
+1. **`policy.PreCheck` no tiene store.** Su unica dependencia es
+   `FrameSource` (cinco metodos de frame) y `GateInput`. El plan no es un
+   frame: vive en el store, cambia con cada decision, y el gate tiene que
+   **cargarlo** (que es una escritura). Una escritura no cabe en una funcion
+   cuyo contrato es "componer frames y decidir".
+
+2. **El scope todavia no esta en el contexto.** `PreCheck` corre ANTES de
+   que el middleware resuelva el scope de la sesion
+   (`ctx = session.WithScope(ctx, scope)`). Y el cargo escribe en
+   `write_audit` con el `session_id` que sale del contexto
+   (`internal/store/sqlite/store.go`, `recordWriteLockedTx`). Si el cargo
+   ocurriera dentro de `PreCheck`, la fila del cargo iria **sin sesion**:
+   roto INV-1 en el punto exacto donde la spec dice que el rastro importa
+   mas (§3.7).
+
+3. **`RequiresActiveSession` se lo saltaria.** `PreCheck` devuelve
+   `Allowed: true` de golpe para las tools que no necesitan sesion
+   (`session_start`, `health_ping`, `project_create`, `admin_migrate`,
+   `admin_vacuum`, `load_constitution`...). Varias de esas estan en
+   `IsPlanRequired`. Con el gate dentro de `PreCheck`, **se saltarian el
+   gate del plan enteras**: un hueco de evasion.
+
+**La forma correcta**, y es la que usa el `DriftChecker` que ya existe
+(el precedente que esta misma seccion invoca):
 
 ```go
-// en PreCheck, tras el chequeo de identidad y antes de inner():
-if IsPlanRequired(toolName) {
-    if planGate != nil {
-        verdict := planGate.Check(ctx, toolName, gateIn.SessionID)
-        if !verdict.Allowed {
-            m.recordRefusal(ctx, toolName, gateIn.SessionID,
-                verdict.Reason.ErrorKind(), verdict.Message)
-            return refusalResponse(verdict.Reason, verdict.Message, verdict.Hint), nil
-        }
-    }
+// en internal/server/middleware.go, tras ctx = session.WithScope(ctx, scope)
+// y antes de resp, err := inner(ctx, args):
+if m.PlanStrictness != plan.StrictnessOff && m.PlanGate != nil &&
+    !PlanLifecycleExempt(toolName) && IsPlanRequired(toolName) {
+    decision, err := m.PlanGate.Check(ctx, gateIn.SessionID, toolName,
+        isJudgeCallTool(toolName), m.planWriteContext(ctx, gateIn, toolName))
+    // ... en strict: se devuelve el rechazo con su error_kind.
+    // ... en warn: la negativa queda registrada y la llamada pasa.
 }
 ```
 
+**Las tres listas quedan ortogonales**, que es el punto:
+
+| Lista | Capa | Pregunta que responde |
+|---|---|---|
+| `RequiresActiveSession` | `policy.PreCheck` | ¿puedo identificar esta llamada? |
+| `PlanLifecycleExempt` | middleware | ¿esta tool puede existir sin plan? |
+| `IsPlanRequired` | middleware | ¿esta tool muta y por tanto exige plan? |
+
 El `PlanGate` es un campo nuevo del middleware, **opcional** (nil = el gate
-no está cableado = comportamiento legacy, igual que `DriftChecker` hoy). Esto
-mantiene la compatibilidad: un servidor sin plan gate se comporta igual que
-hoy.
+no esta cableado = comportamiento legacy, igual que `DriftChecker` hoy).
+El `PlanStrictness` tambien, y su default es `warn` (§3.6).
+
+### 3.5-bis El requisito que el gate necesita: el spec abierto de la sesión
+
+> **AÑADIDO el 2026-11-18** (MEDIDO, al implementar el PR B). El gate
+> busca el plan de la sesión por `vlp_state.open_spec_id`, y eso **no
+> estaba resuelto**: nada en producción escribía esa columna.
+
+**El hallazgo.** `GetOpenPlan` lee `open_spec_id` de `vlp_state`, y los dos
+únicos constructores de `VLPStateRow` en producción
+(`internal/vlp/usecase.go` y `internal/vlp/persistence.go`) **no la
+asignan**: queda en `0`, y `GetOpenPlan` devuelve `(nil, nil)` cuando es `0`.
+Es decir: **el gate no habría encontrado ningún plan**, ni siquiera
+aprobado, y en `strict` habría rechazado **toda** llamada mutante. El
+presupuesto nunca se habría gastado. Es un hueco **preexistente** de
+`vlp_state`, que el gate del plan expone.
+
+**El arreglo tiene dos mitades**, porque una sola no basta:
+
+1. **La raíz**: la tool que abre el spec lo registra.
+   `vibe_spec` llama a `Store.SetOpenSpecID`, que es un `UPDATE` de **una
+   sola columna** — no un `SaveVLPState`, que es un upsert de la fila
+   entera y podría pisar una transición de la máquina de estados que
+   hubiera ocurrido entre la lectura y la escritura.
+
+2. **La compatibilidad**: `GetOpenPlan` cae, cuando `open_spec_id` es `0`,
+   al **spec más reciente de la sesión que tenga un plan**. Sin esto, las
+   filas ya escritas (y las sesiones cuyo spec se creó antes del arreglo)
+   seguirían sin plan.
+
+Las dos mitades son necesarias: la primera arregla el futuro y la segunda
+arregla el pasado. Y la segunda es además la que hace que el `ScopeFrame`
+de la sesión (que también lee `open_spec_id`) deje de decir "no hay spec
+abierto" cuando sí lo hay.
+
+**Side effect que conviene saber**: `GetOpenPlan` pasa a devolver el plan
+de la sesión cuando `open_spec_id` es 0. El test que fijaba lo contrario
+(`TestGetOpenPlan`) **codificaba una ficción** —que "sin fila de `vlp_state`
+no hay spec abierto, luego no hay plan"— y se ha corregido conservando su
+intención: el caso que de verdad importa es un spec **sin** plan, y ahí
+sigue sin haber plan.
 
 ### 3.6 La dureza: `DARK_PLAN_STRICTNESS` (espejo de `DARK_DRIFT_STRICTNESS`)
 
@@ -440,9 +521,45 @@ mis-typed the env"). La spec lo replica **con nombre propio**:
 
 | Modo | Efecto |
 |---|---|
-| `off` | No se comprueba el plan. Default. |
-| `warn` | Se registra la negativa en `write_audit` y **se deja pasar**. |
+| `off` | No se comprueba el plan. Sin lectura del store, sin cargo. |
+| `warn` | Se comprueba; la negativa se **registra** (en `write_audit` con `write_path=plan_gate_refusal`, y en el Error Observatory con su propio `code`) y **se deja pasar**. **Default del switch.** |
 | `strict` | Se **rechaza** con `ErrPlanRequired` / `ErrNotApproved` / `ErrBudgetExceeded`. |
+
+**El fallback NO es el mismo que el del drift, y por qué.** El drift cae a
+`off` con un valor desconocido porque su chequeo cuesta un round-trip LLM
+(60-130 s) y el default seguro es el que no lo paga. El plan cae a `warn`
+porque su chequeo es **determinista** (una lectura del store) y el switch
+existe para **medir**: caer a `off` por un typo apagaría la medición, que es
+justo lo contrario de lo que quiere un operador que escribió mal la variable.
+El "espejo con nombre propio" que pide esta sección es un espejo en la
+**forma** (enum, `String()`, parseo defensivo), no en el fallback.
+
+**Qué hace `warn` exactamente, y por qué no se copia el precedente del
+drift.** MEDIDO el 2026-11-18: el precedente que esta sección sugería
+(`validation_status="drift_pending"` fuera de banda) **no está implementado
+en ninguna parte**: la cadena `"drift_pending"` solo aparece en comentarios,
+el `DriftVerdict` del `PostCheckResult` se descarta en el middleware, y la
+columna `validation_status` de `vibe_artifacts` solo recibe `"passed"`,
+`"failed"` o `"pending"`. Copiar ese precedente sería copiar un contrato en
+papel.
+
+Así que el modo `warn` del plan se define **desde cero**:
+
+- la tool **se ejecuta** y devuelve su resultado normal;
+- la negativa queda en `write_audit` con `write_path=plan_gate_refusal` (un
+  `row_id=0` significa "no había plan al que apuntar");
+- la negativa queda en el Error Observatory con **su propio `code`**
+  (`ErrPlanRequired` / `ErrNotApproved` / `ErrBudgetExceeded`), no colapsada
+  en `ErrGateRefusal`: sin eso, el KPI de §6.2 nace roto y hay que buscar
+  con un `LIKE` en vez de un `GROUP BY`;
+- **la llamada rechazada no cobra presupuesto**: el rechazo es gratis. Si
+  cobrara, las llamadas no autorizadas comerían el presupuesto de las
+  autorizadas.
+
+**El `warn` por defecto cambia el comportamiento observable desde el primer
+día**: escribe filas nuevas en `write_audit` y en el Error Observatory. AC10
+describe el caso `off`, que **no** es el default. Es una consecuencia
+aceptada, y es la que hace que el KPI tenga datos desde el primer día.
 
 **Por qué `warn` es el default en esta spec, y no `strict`** (D8). En `strict`,
 cualquier tool mutante llamada sin plan aprobado se para, y **hoy el trabajo
@@ -636,7 +753,15 @@ spec no depende de eso.
   del revisor aplicado; el plan anterior queda en el rastro.
 - **AC6** — `plan_decide` deja fila en `write_audit` con `write_path =
   "plan_decide"`, `actor`, `session_id` y `notes` con la decisión.
-- **AC7** — El presupuesto se incrementa **una vez por tool call que pasa**,
+- **AC7** — El presupuesto se incrementa **una vez por tool call AUTORIZADA**
+  (una tool call que el gate deja pasar). MEDIDO el 2026-11-18: "que pasa"
+  es ambiguo y un implementador razonable lo leería como "pasa con éxito".
+  La semántica es **intentos autorizados**: una llamada que el gate deja
+  pasar y que luego falla dentro **ha gastado** su unidad, porque el coste de
+  una llamada fallida no es cero (consumió un round-trip, pudo escribir antes
+  de fallar) y un presupuesto que devuelve la unidad en el fallo deja un
+  número ilimitado de llamadas fallidas gratis. Y una llamada **rechazada**
+  no gasta nada.
   y el contador coincide con el número de tool calls del plan.
 - **AC8** — El juez **valida** el shortlist del plan; el plan aprobado contiene
   los candidatos que el juez validó, no otros.
