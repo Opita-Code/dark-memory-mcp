@@ -11,6 +11,90 @@ Versioning follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
 
+## [4.0.0-alpha.35] — 2026-11-18 — the embedder actually works, and the plan gets a gate
+
+Two things that were broken in every deployment are now fixed, plus the
+governance that measures them.
+
+### Fixed
+
+**The embedder could never run.** Not "needed a key" — it was structurally
+dead. Each adapter (`internal/embedder/{onnx,openai,voyage,ollama,mock}`)
+registers its factory with `embedder.RegisterAdapter` in its own `init()`,
+and **an `init()` only runs if the package is imported**. Measured: all five
+had **zero** production importers. So `tryKind()` could never find a
+factory, `DARK_MEMORY_EMBEDDER` had no effect whatever its value, and the
+server always booted with the disabled stub (`kind="none"`, `dim=0`). The
+hybrid retrieval axis (`Mode=vector|rrf`) was dead code in every deployment.
+
+Four more obstacles sat on top of that: `DefaultKind()` did not recognise
+`"ollama"`; the `FactoryAuto()` ladder had no Ollama rung; the harness
+detector looked for `config.json` when the real file since opencode 2 is
+`opencode.json`; and the Ollama adapter's constructor **never fails**, so a
+rung that tried it without checking reachability would have booted the server
+with an embedder that fails on every call.
+
+Measured with the embedder live (local Ollama, `nomic-embed-text`,
+dim 768): `embedder_setup_prompt` went from `status=ask`/`kind=none`/`dim=0`
+to `status=auto`/`kind=ollama`/`dim=768`, and the harness from `unknown` to
+`opencode`. The recall now **changes its result set**: a semantic query that
+shares no word with the memories brings up 15 memories the literal search
+does not find (Jaccard 0.17 between the two phrasings of the same query).
+
+**The closure guard gave a green it had not verified.** It checked the
+commit with `-d "$REPO_ROOT/.git"`, which is a directory only in a clone — in
+a git worktree `.git` is a *file*, and with a PR opened from a worktree (how
+the agent works) the guard skipped the commit check entirely and still
+printed `CIERRE: completo`. It now asks git (`git rev-parse --git-dir`,
+which knows both), and the "cannot be checked" case is a **failure with exit
+code 69**, not a note. A check that cannot be made is not a check that
+passes.
+
+### Added
+
+**A gate for the plan's budget.** The approved plan is an artefact with a
+budget of tool calls and of judge calls. The gate measures it and records
+every refusal — in `write_audit` and in the Error Observatory, with a code
+per reason. It is born measuring, not born blocking: `DARK_PLAN_STRICTNESS`
+has three modes (`off`, `warn`, `strict`), defaults to `warn`, and an
+unknown value degrades to `warn` — the opposite of the drift gate's
+fallback, because the drift precedent (`drift_pending`) is not implemented
+anywhere and there was nothing to mirror.
+
+The gate lives in the middleware, not in `policy.PreCheck`: `PreCheck` has no
+store, runs before the scope is resolved, and `RequiresActiveSession` skips
+it. The charge happens **before** `inner`, and only if the gate lets the
+call through — an authorised call that then fails *has* spent, a rejected
+one has not.
+
+### Changed
+
+- The spec no longer contradicts the code: `session_close` does not require
+  an approved plan, because if it did, a session with the plan in `draft`
+  could never be closed — and `plan_decide` runs inside the session you are
+  trying to close.
+- The five open pull requests were merged with their conflicts resolved and
+  measured: the merged binary reaches **64** internal packages, a number the
+  boundary test verifies, not one picked by taste.
+- The publish workflow is prepared for npm Trusted Publishing (OIDC). The
+  long-lived token is still in place until the Trusted Publisher is
+  configured, because npm does not validate that configuration when you
+  save it — the failure only shows up at publish time.
+
+### Not measured
+
+- The initial embedding sweep over the large corpus (616 specs, 508
+  artefacts, 21,624 `write_audit` rows): the embedder starts active, but
+  what the first vectorised run costs has not been measured.
+- The local ONNX adapter stays unregistered: it needs cgo, and neither the
+  CI runners nor the release builders have a C toolchain. It is not behind a
+  build tag either, because the resulting binary could not be built or
+  verified anywhere in this project's CI.
+- OpenAI and Voyage are registered as adapters but have not been run against
+  a real provider.
+
+---
+
 ## [4.0.0-alpha.34] — 2026-11-17 — the identity of a write comes from the session that asked for it
 
 The MCP server process is shared between several clients. Each client

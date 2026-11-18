@@ -29,13 +29,13 @@ pediste. Sin servidor remoto, sin telemetría, sin costo.
 
 [Qué es](#el-problema-que-resuelve) · [Quickstart](#quickstart) · [Las 81 herramientas](docs/tools.md) · [Vibe-cases](docs/tools.md#vibe-cases) · [Ayuda](docs/npm-install.md) · [Estado real](docs/v4-status.md) · [Contribuir](CONTRIBUTING.md)
 
-> **STATUS: v4-alpha.34** — pre-release. 81 herramientas canónicas, schema 33,
+> **STATUS: v4-alpha.35** — pre-release. 81 herramientas canónicas, schema 33,
 > MIT. Lo que funciona y lo que no está medido en
 > **[`docs/v4-status.md`](docs/v4-status.md)** — léelo antes de apostar
-> producción por esto. (Corte alpha.34: la identidad de la escritura
-> viene de la sesión que la pidió — el rastro ya lleva `session_id`; y el
-> keyring del SO no cuelga el arranque; tag → HEAD, CI publica npm +
-> registry.)
+> producción por esto. (Corte alpha.35: el embedder por fin funciona —los
+> adapters estaban huérfanos y el servidor arrancaba siempre con el stub—;
+> y el gate del plan mid[e] el presupuesto de tool calls y de llamadas al
+> juez.)
 
 </div>
 
@@ -137,7 +137,7 @@ Necesitas **Node.js 18+** (wrapper npm) o **Go 1.25+** (desde source).
 
 ```json
 {
-  "server": { "version": "4.0.0-alpha.34", "name": "dark-memory-mcp" },
+  "server": { "version": "4.0.0-alpha.35", "name": "dark-memory-mcp" },
   "db": { "live": true, "schema_version": 32 },
   "registry": { "canonical_tools": 81 }
 }
