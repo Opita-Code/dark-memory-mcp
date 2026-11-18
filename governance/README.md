@@ -275,7 +275,17 @@ no se dice, la raíz del repo se deduce de la propia ruta del artefacto.
 
 **Códigos de salida:** `0` cerrado · `64` uso · `65` sin artefacto publicado ·
 `66` sin rastro en memoria · `67` sin commit · `68` veredicto ausente (no es
-un fallo del cierre: se declara, no se disimula).
+un fallo del cierre: se declara, no se disimula) · `69` sin comprobar (no se
+encontró el repo, así que la parte (c) —el commit— no se pudo verificar: un
+check que no se puede hacer no es un check que pasa).
+
+El `69` es distinto del `67` a propósito: el `67` dice "hay repo y ningún
+commit cita el artefacto", y el `69` dice "no hay repo, así que no se puede
+saber". Son estados opuestos. MEDIDO el 2026-11-18: antes de este código, el
+caso "repo no encontrado" se imprimía como información y el guard seguía
+hasta el final, de modo que declaraba `CIERRE: completo` sin haber
+comprobado el commit. En un worktree de git (`.git` es un fichero, no un
+directorio) era el caso normal, no el raro.
 
 **El veredicto vigente es el último**, y el histórico se imprime entero.
 MEDIDO el 2026-11-16: un mismo sha puede tener muchas evaluaciones a lo largo
