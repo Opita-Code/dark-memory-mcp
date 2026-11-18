@@ -9,6 +9,20 @@ on:
 permissions:
   contents: read
   id-token: write  # Required for `npm publish --provenance` (SLSA build attestation)
+  #                 AND for npm Trusted Publishing (OIDC): npm reads the
+  #                 OIDC token that GitHub mints for this workflow and
+  #                 exchanges it for a short-lived publish credential.
+  #                 The publisher must be configured in npm for every one
+  #                 of the seven packages of this repo:
+  #                   org: opitacode
+  #                   package: <each of the 7>
+  #                   workflow: publish-npm.yml
+  #                   environment: (the default one)
+  #
+  # There is deliberately NO NODE_AUTH_TOKEN in this file: with OIDC,
+  # setup-node writes the short-lived credential to .npmrc itself, and a
+  # long-lived token in a secret would TAKE PRIORITY over OIDC — the
+  # Trusted Publisher would be configured but never used.
 
 jobs:
   build-and-publish-platform:
@@ -114,8 +128,6 @@ jobs:
       - name: Check if version already published on npm (idempotency)
         id: check-exists
         working-directory: npm/platform-${{ matrix.npm-platform }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN }}
         run: |
           PACKAGE_NAME=$(node -p "require('./package.json').name")
           PACKAGE_VERSION=$(node -p "require('./package.json').version")
@@ -129,8 +141,6 @@ jobs:
       - name: Publish platform package to npm
         if: steps.check-exists.outputs.EXISTS != 'true'
         working-directory: npm/platform-${{ matrix.npm-platform }}
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN }}
         run: |
           PACKAGE_VERSION=$(node -p "require('./package.json').version")
           # npm REQUIRES --tag for prerelease versions. Derive the
@@ -169,8 +179,6 @@ jobs:
 
       - name: Verify all optionalDependencies exist on npm at this version
         working-directory: npm/wrapper
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN }}
         run: |
           node -e "
             const pkg = require('./package.json');
@@ -193,8 +201,6 @@ jobs:
       - name: Check if wrapper version already published on npm (idempotency)
         id: check-exists
         working-directory: npm/wrapper
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN }}
         run: |
           PACKAGE_NAME=$(node -p "require('./package.json').name")
           PACKAGE_VERSION=$(node -p "require('./package.json').version")
@@ -208,8 +214,6 @@ jobs:
       - name: Publish main wrapper to npm
         if: steps.check-exists.outputs.EXISTS != 'true'
         working-directory: npm/wrapper
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NODE_AUTH_TOKEN }}
         run: |
           PACKAGE_VERSION=$(node -p "require('./package.json').version")
           if [[ "$PACKAGE_VERSION" == *"-"* ]]; then
