@@ -82,10 +82,8 @@ AC5, INV‑1).
 `mods/vibe-loop-git/adapters/` hay cuatro `SKILL.md`: `opencode`,
 `claude-code`, `claude-desktop`, `codex`. MEDIDO: el de opencode tiene 61
 líneas y es **documentación**, no cableado. Describe `opencode.jsonc` (el
-fichero real es `opencode.json`), menciona `MINIMAX_API_KEY` como *"your
-hardcoded LLM API key (live, 126 chars)"* — una referencia a un secreto en un
-fichero versionado, que además está obsoleta — y dice que el mod es
-*"LOCAL-ONLY — never git push"*, lo que hoy es falso.
+fichero real es `opencode.json`), menciona una API key en claro en un fichero
+versionado, y dice que el mod es *"never git push"*, lo que hoy es falso.
 
 ---
 
@@ -251,8 +249,9 @@ Lo que hay que escribir, y qué se **elimina**:
 | **Se escribe** | El bucle `plan_create → plan_get → desglose → pregunta → plan_decide`, en la superficie que el harness usa de verdad. |
 | **El formato de la pregunta** | El que el harness declare: `question` en opencode (ejecutar\|editar\|cancelar), o elicitación MCP donde exista (Cursor es el único de la lista que la anuncia). |
 
-**La decisión que hay que tomar y que esta spec no toma:** ¿el adaptador vive
-como **código Go** en el kernel, o como **plugin/skill** del harness?
+**La decisión, ya TOMADA con la superficie real medida** (L1, rastro: memoria
+**#1112**): ¿el adaptador vive como **código Go** en el kernel, o como
+**plugin/skill** del harness?
 
 - **Código Go**: el kernel no puede preguntar a la persona (no tiene canal), y
   el `Propose` es un validador, no una puerta. Habría que inventar un canal
@@ -261,9 +260,36 @@ como **código Go** en el kernel, o como **plugin/skill** del harness?
   pregunta, y el kernel ya tiene el gate y el rastro. **Los dos lados ya
   existen.** Solo falta el puente.
 
-La spec toma la segunda: **el adaptador es del harness, y el kernel solo
-garantiza el rechazo y guarda el rastro**. El kernel no crece con un canal de
-preguntas; el harness usa el que ya tiene.
+**La spec toma la segunda, y L1 lo confirma con el mecanismo exacto.** MEDIDO
+en el binario de opencode v2.2.3 de esta máquina:
+
+| | Lo medido |
+|---|---|
+| **Dónde vive un plugin** | `.opencode/plugins/*.ts\|js` (proyecto) o `~/.config/opencode/plugins/` (global). MEDIDO: hoy **no hay ninguno** instalado (`plugin list` → *"No plugins found"*). |
+| **La API** | `Plugin.define({id, setup})` con `ctx.tool.hook("execute.before")`, `ctx.tool.hook("execute.after")` y `ctx.permission.hook("evaluate")`. MEDIDO: los nombres v1 (`"tool.execute.before"` como clave) **no existen** en v2. |
+| **Qué ve el hook** | `tool.execute.before` recibe `{tool, sessionID, agent, messageID, id, input}` y puede mutar la entrada. `permission.evaluate` recibe el efecto ya computado (`allow`/`deny`/`ask`) y puede **forzar `deny`** y fijar el `message`. |
+| **Los permisos por tool** | Array `permissions: [{action, resource, effect}]`, con `effect ∈ allow\|deny\|ask`. El `action` de una tool MCP es **`<server>_<tool>`**. El matching es glob (`*`→`.*`), **gana la última regla que casa**, y si no casa ninguna el efecto es `ask`. La forma legacy `permission: {"<tool>": "ask"}` sigue operativa. `policies` es más dura: `effect ∈ allow\|deny` (nunca `ask`). |
+
+**El nombre del servidor importa, y no es el del repo.** MEDIDO: en
+`~/.config/opencode/opencode.json:95` el servidor MCP registrado se llama
+**`dark-memory`**, no `dark-memory-mcp` (esa cadena es el repo y el skill). Los
+ids de tool reales son **`dark-memory_agent_memory_save`**,
+`dark-memory_agent_memory_recall`… MEDIDO: 23 ocurrencias de
+`dark-memory_agent_memory_recall` en la tabla `permission` de
+`~/.local/share/opencode/opencode.db`. La matriz del laboratorio tiene que
+usar el nombre **real**; si alguien renombra el servidor, **todas** las reglas
+de permisos cambian de nombre.
+
+**Y el dato que hace el trabajo decidible:** MEDIDO, la config vigente **no
+tiene ninguna** de las tres claves (`grep "permission"` en `opencode.json` →
+**0 coincidencias**). O sea: hoy opencode no tiene reglas por tool, y lo
+único que protege es el default `ask`. **El laboratorio no parte de cero: parte
+de la ausencia de reglas**, que es justo lo que hay que demostrar que el gate
+sustituye.
+
+**Lo que el kernel NO crece:** ni un canal de preguntas, ni un tipo nuevo. El
+kernel sigue guaranteeing el rechazo y guardando el rastro; el harness usa el
+plugin que ya tiene.
 
 Esto además resuelve el coste de los otros nueve harnesses: cada uno aporta su
 propia superficie de pregunta, y el **contrato** (M1/M2/M3) es el mismo para
@@ -278,20 +304,19 @@ no tenerlo:
 
 1. **Que una persona real haya entendido el desglose.** El fixture simula la
    respuesta (§5.1).
-2. **Que un harness que no está instalado aquí cumpla el contrato.** En esta
-   máquina solo hay un harness utilizable: **opencode**. Los otros tres del
-   DMAP (Claude Code, Cursor) y los diez de W10 se declaran en la matriz, pero
-   su fila queda **"no verificable aquí"** hasta que haya quien los instale.
-   Declarar una fila como si estuviera verificada es exactamente el fallo que
-   se pagó con los adapters del embedder.
+2. **Que un harness que no está instalado aquí cumpla el contrato.** MEDIDO por
+   L1 (memoria #1112): **solo opencode está instalado** en esta máquina. Los
+   otros tres del DMAP (Claude Code, Cursor) y los diez de W10 se declaran en
+   la matriz con su fila marcada **"no verificable aquí"**. Declarar una fila
+   como verificada sin evidencia es el fallo que se pagó con los adapters del
+   embedder.
 3. **La fiabilidad entre repeticiones.** El criterio de `tau2-bench` es
    `pass^k`: la fiabilidad se mide **repetido**, con la dispersión. El
    laboratorio mide una corrida; la dispersión es otro entregable.
 4. **Que el gate sea suficiente sin el adaptador.** Al revés: el laboratorio
    **muestra** que el gate sin el adaptador no ve nada (M1 y M2 no existen).
-5. **El modo `strict` en producción.** MEDIDO: el gate nace en `warn`, que
-   deja pasar. El laboratorio debe poder forzarlo por sesión, porque si no,
-   M3 no se puede observar.
+5. **El modo `strict` en producción.** MEDIDO: el gate nace en `warn`, que deja
+   pasar. El laboratorio debe poder forzarlo por sesión, o M3 no se observa.
 
 ---
 
@@ -336,7 +361,7 @@ material de origen. Con la revisión arquitectónica responde `aligned`.
 | | Decisión | Quién |
 |---|---|---|
 | 1 | ¿La matriz y el fixture van versionados en el repo, y las configuraciones de harness se generan en un workspace local? | **PADRE** (decisión de workspace, WS-2/WS-3) |
-| 2 | ¿El adaptador se escribe como plugin de opencode o como skill? | **PADRE**, con el dato del surface real que trae L1 |
+| 2 | ¿El adaptador se escribe como plugin de opencode o como skill? | **RESUELTO** por L1: **plugin de opencode** (`tool.execute.before` + `permission.evaluate`). Rastro: memoria #1112 |
 | 3 | ¿El fixture exige a una persona real en algún scenario del CI? | **PADRE** |
 | 4 | La lista de las once specs atómicas de la Capa 1 y la Capa 5 (K5) | otro loop |
 | 5 | Los nueve ADRs (K6) | otro loop |
@@ -353,49 +378,24 @@ del código**, con sus números de línea, medido sobre el commit de esta spec.
 **El criterio, y por qué un fragmento y no una línea:** una firma de función
 (`func (p *Package) Propose(...)`) no acredita la afirmación que la spec le
 atribuye; la afirmación está en el **cuerpo**. Cada bloque incluye la línea
-citada **y las que la siguen**, hasta que la afirmación queda a la vista.
+citada **y el tramo donde la afirmación queda a la vista**.
+
+**Sobre las líneas omitidas:** cuando un bloque tiene un hueco, va **marcado**
+(`... (lineas N-M omitidas) ...`), nunca truncado en silencio. Una omisión
+declarada es información; una truncación sin marcar es una afirmación falsa
+sobre lo que el juez está leyendo.
 
 ### `internal/server/middleware.go:258`
 
 ```go
+ 256 | 	// (SPEC-194 §3.6, D8). In `strict` mode the refusal stops the
+ 257 | 	// call. In `off` mode nothing is checked at all.
  258 | 	if m.PlanStrictness != plan.StrictnessOff && m.PlanGate != nil && !PlanLifecycleExempt(toolName) && IsPlanRequired(toolName) {
  259 | 		decision, err := m.PlanGate.Check(ctx, gateIn.SessionID, toolName,
  260 | 			isJudgeCallTool(toolName), m.planWriteContext(ctx, gateIn, toolName))
  261 | 		if err != nil {
  262 | 			// A broken store is not a refusal: it is an error.
- 263 | 			// Under `strict` the call stops (the gate could not
- 264 | 			// be evaluated, and "could not evaluate" is not
- 265 | 			// "allowed"); under `warn` it goes through and the
- 266 | 			// error is recorded, because a store that cannot be
- 267 | 			// read must not stop the work.
- 268 | 			m.recordRefusal(ctx, toolName, gateIn.SessionID, "ErrInternal",
- 269 | 				fmt.Sprintf("plan gate: %v", err))
- 270 | 			if m.PlanStrictness == plan.StrictnessStrict {
- 271 | 				return refusalResponse(policy.ReasonOK,
- 272 | 					fmt.Sprintf("plan gate: %v", err),
- 273 | 					"Operator: the plan gate could not read the plan; check the store"), nil
- 274 | 			}
- 275 | 		} else if decision != nil && !decision.Allowed {
- 276 | 			code := planReasonCode(decision.Reason)
- 277 | 			// The refusal is recorded in BOTH modes: the Error
- 278 | 			// Observatory (which is where the KPI of T10 reads
- 279 | 			// from) and, in `warn`, the call goes through.
- 280 | 			//
- 281 | 			// The charge did NOT happen: the gate refuses BEFORE
- 282 | 			// it charges, so a call that the plan did not
- 283 | 			// authorise does not consume the plan's allowance.
- 284 | 			// Charging it would mean the unauthorised calls eat
- 285 | 			// the budget of the authorised ones.
- 286 | 			m.recordRefusal(ctx, toolName, gateIn.SessionID, code, decision.Message)
- 287 | 			if m.PlanStrictness == plan.StrictnessStrict {
- 288 | 				return &tools.ToolResponse{
- 289 | 					Error: &tools.ToolError{
- 290 | 						Code:    code,
- 291 | 						Message: decision.Message,
- 292 | 						Field:   "plan",
- 293 | 						Hint:    decision.Hint,
- 294 | 					},
- 295 | 				}, nil
+     |  ... (lineas 263-295 omitidas) ...
  296 | 			}
  297 | 		}
  298 | 	}
@@ -408,48 +408,49 @@ citada **y las que la siguen**, hasta que la afirmación queda a la vista.
 ### `internal/server/middleware.go:112`
 
 ```go
+ 110 | 	// call with a real session, so it is the only place that can
+ 111 | 	// both ask the gate and pay for the answer.
  112 | 	PlanGate *plan.Gate
  113 | 
  114 | 	// PlanStrictness is the operator's switch (SPEC-194 T4,
  115 | 	// DARK_PLAN_STRICTNESS): off | warn | strict.
  116 | 	//
- 117 | 	//   - off: the plan is not checked at all.
- 118 | 	//   - warn: the plan IS checked; a refusal is RECORDED (in the
 ```
 
 ### `internal/server/middleware.go:512`
 
 ```go
+ 508 | // agent_memory_recall, active_policy, memory_state, the context
+ 509 | // projections, the judge utilities) are not here, and there is no
+ 510 | // "read-only" flag on the tools to derive it from: the repo has no
+ 511 | // such notion, so the list IS the notion.
  512 | func IsPlanRequired(toolName string) bool {
  513 | 	switch toolName {
  514 | 	case "vibe_publish", // publishes the artifact
  515 | 		"resolve_drift",         // decides about a verdict
  516 | 		"judge",                 // spends the judge budget
- 517 | 		"consensus",             // spends the judge budget
- 518 | 		"admin_migrate",         // migrates the schema
- 519 | 		"admin_vacuum",          // compacts the database
- 520 | 		"vlp_handle_event",      // moves the VLP state machine
- 521 | 		"agent_memory_save",     // writes memory
 ```
 
 ### `internal/server/middleware.go:562`
 
 ```go
+ 558 | // The cost of exempting vibe_spec is written down in the spec: it can
+ 559 | // create a spec (and, with DARK_MEMORY_V280=1, its auto-saved todos)
+ 560 | // without a plan. Those are bounded, audited writes, and the work
+ 561 | // that matters keeps demanding an approved plan.
  562 | func PlanLifecycleExempt(toolName string) bool {
  563 | 	switch toolName {
  564 | 	case "plan_create", // proposes the plan (it is born in "draft")
  565 | 		"plan_get",    // reads the plan
  566 | 		"plan_decide", // the person decides about the plan
  567 | 		"vibe_spec",   // creates the spec the plan hangs from
- 568 | 		"health_ping",
- 569 | 		"memory_state",
- 570 | 		"active_policy":
- 571 | 		return true
 ```
 
 ### `internal/tools/register.go:113`
 
 ```go
+ 111 | 	RegisterVibe(reg, orch, st)
+ 112 | 	// PLAN (3) — SPEC-194 (2026-11-17). The plan surface:
  113 | 	// plan_create (proposes), plan_get (reads), plan_decide (the
  114 | 	// human decides). Positioned right after VIBE because the plan
  115 | 	// describes HOW a spec will be carried out.
@@ -463,14 +464,13 @@ citada **y las que la siguen**, hasta que la afirmación queda a la vista.
 ### `internal/plan/strictness.go:126`
 
 ```go
+ 124 | 	default:
+ 125 | 		if warnf != nil {
  126 | 			warnf("plan: DARK_PLAN_STRICTNESS=%q invalid (want off|warn|strict); defaulting to warn", s)
  127 | 		}
  128 | 		return StrictnessWarn
  129 | 	}
  130 | }
- 131 | 
- 132 | // StrictnessFromEnv reads DARK_PLAN_STRICTNESS from env. Convenience
- 133 | // wrapper used at boot time.
 ```
 
 ### `internal/store/sqlite/plan.go:73`
@@ -486,6 +486,9 @@ citada **y las que la siguen**, hasta que la afirmación queda a la vista.
   80 | 		if err != nil {
   81 | 			return err
   82 | 		}
+  83 | 		n, _ := res.RowsAffected()
+  84 | 		if n == 0 {
+  85 | 			return sql.ErrNoRows
 ```
 
 ### `internal/vlp/package.go:254`
@@ -496,13 +499,7 @@ citada **y las que la siguen**, hasta que la afirmación queda a la vista.
  256 | 		return ProposeOutput{}, fmt.Errorf("vlp: ProposeInput.SessionID is required")
  257 | 	}
  258 | 	if in.CurrentState == StateUnknown {
- 259 | 		return ProposeOutput{}, fmt.Errorf("vlp: ProposeInput.CurrentState is StateUnknown")
- 260 | 	}
- 261 | 
- 262 | 	out := ProposeOutput{
- 263 | 		Approved:   []ToolCall{},
- 264 | 		Rejected:   []Rejection{},
- 265 | 		Redirected: []Redirect{},
+     |  ... (lineas 259-265 omitidas) ...
  266 | 	}
  267 | 	for _, call := range in.ProposedCalls {
  268 | 		event, verdict, err := eventForCall(call)
@@ -518,23 +515,19 @@ citada **y las que la siguen**, hasta que la afirmación queda a la vista.
  278 | 		out.Approved = append(out.Approved, call)
  279 | 	}
  280 | 	return out, nil
- 281 | }
- 282 | 
 ```
 
 ### `internal/tools/plan.go:153`
 
 ```go
+ 150 | 				},
+ 151 | 				"decision": map[string]any{
+ 152 | 					"type":        "string",
  153 | 					"enum":        []string{"execute", "edit", "cancel"},
  154 | 					"description": "execute approves the plan; edit reopens it with a prompt; cancel stops it.",
  155 | 				},
  156 | 				"edit_prompt": map[string]any{
  157 | 					"type":        "string",
- 158 | 					"description": "The reviewer's prompt. Required when decision is edit.",
- 159 | 				},
- 160 | 				"session_id": map[string]any{
- 161 | 					"type":        "string",
- 162 | 					"description": "The session that owns the call.",
 ```
 
 ### `internal/orchestration/plan.go:441`
@@ -550,15 +543,17 @@ citada **y las que la siguen**, hasta que la afirmación queda a la vista.
  448 | 	}
  449 | 
  450 | 	return &PlanDecideResult{
- 451 | 		SpecID:    row.SpecID,
- 452 | 		Decision:  string(decision),
- 453 | 		Status:    string(row.Status),
- 454 | 		DecidedBy: decidedBy,
- 455 | 		DecidedAt: decidedAt,
- 456 | 		Revision:  row.Plan.Revision,
- 457 | 		Plan:      row.Plan,
- 458 | 	}, nil
- 459 | }
+     |  ... (lineas 451-460 omitidas) ...
+ 461 | // planDecisionNotes builds the annotation that goes into the
+ 462 | // write_audit row of a decision.
+ 463 | //
+ 464 | // It carries three things: what was decided, who decided it, and what
+ 465 | // the plan looked like BEFORE. The "before" is what SPEC-194 AC5 asks
+ 466 | // for ("el plan anterior queda en el rastro"): without it, an `edit`
+ 467 | // overwrites the plan and the trail only says that something changed.
+ 468 | func planDecisionNotes(decision vibeflow.Decision, decidedBy string, previous vibeflow.Plan, editPrompt string) string {
+ 469 | 	var b strings.Builder
+ 470 | 	b.WriteString("decision=")
 ```
 
 ### `internal/vibeflow/plan.go:253`
@@ -581,7 +576,6 @@ citada **y las que la siguen**, hasta que la afirmación queda a la vista.
  267 | 	// `edit` decision. It is what makes "edited" traceable.
  268 | 	Revision int `json:"revision,omitempty"`
  269 | }
- 270 | 
 ```
 
 ### `internal/vibeflow/plan.go:165`
@@ -601,8 +595,6 @@ citada **y las que la siguen**, hasta que la afirmación queda a la vista.
  176 | 	// ScoreSource is "bm25_docs" | "llm_judge" | "human".
  177 | 	ScoreSource string `json:"score_source,omitempty"`
  178 | }
- 179 | 
- 180 | // Score source constants.
 ```
 
 ### `internal/orchestration/plan.go:69`
@@ -618,9 +610,7 @@ citada **y las que la siguen**, hasta que la afirmación queda a la vista.
   76 | 
   77 | 	// Plan is the proposed plan.
   78 | 	Plan vibeflow.Plan `json:"plan"`
-  79 | 
-  80 | 	// Tier is the proposed depth.
-  81 | 	Tier string `json:"tier"`
+     |  ... (lineas 79-81 omitidas) ...
   82 | 
   83 | 	// Candidates is the shortlist, for convenience.
   84 | 	Candidates []vibeflow.Candidate `json:"candidates"`
@@ -651,6 +641,8 @@ citada **y las que la siguen**, hasta que la afirmación queda a la vista.
   81 | 	Tier string `json:"tier"`
   82 | 
   83 | 	// Candidates is the shortlist, for convenience.
+  84 | 	Candidates []vibeflow.Candidate `json:"candidates"`
+  85 | 
 ```
 
 **Resultado: las 14 citas resuelven contra el código, y cada fragmento
@@ -682,17 +674,15 @@ la corrida y se anotan aquí:
 
 | Corrida | Artefacto | Drift | Veredicto | Qué objetó el juez |
 |---|---|---|---|---|
-| 1 | 555 | 559 | `needs_human` (0.96) | (a) no podía verificar las citas `file:line` sin el repositorio; (b) el documento decía *"pendiente de juicio"* y no aportaba los identificadores del cierre. |
-| 2 | 558 | 562 | `drift_detected` (0.99) | El Apéndice A mostraba **una sola línea** por cita, y una firma de función no acredita la afirmación: `Propose` no enseñaba la validación ni la aprobación, `plan.go:441` no enseñaba el actor humano ni las notas, y las `type ... struct {` no enseñaban los campos. Además faltaba la cita con **rango** (`plan.go:73-75`) y `middleware.go:258` estaba truncada. |
+| 1 | 555 | 559 | `needs_human` (0.96) | No podía verificar las citas `file:line` sin el repositorio; y el documento decía *"pendiente de juicio"* sin los identificadores del cierre. |
+| 2 | 558 | 562 | `drift_detected` (0.99) | El Apéndice A mostraba **una sola línea** por cita (una firma no acredita la afirmación), faltaba la cita con **rango** (`plan.go:73-75`), y `middleware.go:258` estaba truncada. |
 | 3 | __ARTEFACTO__ | __DRIFT__ | __VERDICTO__ | — |
 
-**Lo que cambió entre las tres, y por qué importa:** la corrección no fue
-retórica. El Apéndice A pasó de **una línea por cita** a **un fragmento por
-cita**, con los números de línea, hasta que la afirmación queda a la vista. Y
-la cita con rango entró en la lista: la segunda corrida la señalo por
-nombre, y el apéndice decía incluir *"cada cita"* cuando no las incluía todas.
-**Un apéndice que dice incluir todo y no lo hace es peor que no tenerlo**: hace
-creer que la verificación está hecha.
+**Lo que cambió entre las tres:** el Apéndice A pasó de **una línea por cita**
+a **un fragmento por cita**, con los números de línea, hasta que la afirmación
+queda a la vista; y la cita con rango entró en la lista. **Un apéndice que dice
+incluir cada cita y no las incluye todas es peor que no tenerlo**: hace creer
+que la verificación está hecha.
 
 **El otro defecto que encontró la segunda corrida, y que NO es de esta spec:**
 el razonamiento del juez acababa en `; set validation=failed failed: sql: no
