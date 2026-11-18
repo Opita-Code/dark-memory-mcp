@@ -312,13 +312,35 @@ func IsPlanRequired(toolName string) bool {
         "llm_provider_bind",     // cambia el juez del proyecto
         "oauth_connect",
         "oauth_disconnect",
-        "project_create",
-        "session_close":
+        "project_create":
         return true
     }
     return false
 }
 ```
+
+**`session_close` NO está en esa lista, y no por descuido.** MEDIDO el
+2026-11-18: una revisión independiente encontró la divergencia entre esta
+sección y el código, que sí lo excluye (`internal/server/middleware.go`,
+`PlanLifecycleExempt`).
+
+La razón es una trampa, y la trampa es esta: si `session_close` exigiera
+un plan aprobado, **una sesión con el plan en `draft` no podría cerrarse
+nunca**. Y no solo eso: la decisión del plan la toma una persona
+(`plan_decide`), y `plan_decide` corre **dentro** de la sesión que se
+quiere cerrar. Cerrar la sesión exigiría un plan aprobado; aprobar el plan
+exige una sesión viva; y la única forma de aprobarlo es… cerrar la sesión.
+El gate se negaría a sí mismo en su propio ciclo de vida.
+
+Por eso `session_close` **no exige plan**, pero tampoco está en la lista de
+exentas: no está en ninguna de las dos, porque no es una tool del ciclo de
+vida del plan que haya que saltarse el gate — es una tool que **no tiene
+plan que obedecer**. El middleware la trata como cualquier otra tool sin
+plan: el gate la mira, no encuentra un plan, y la deja pasar.
+
+Si algún día `session_close` apareciera en la lista de "exige plan",
+`draft` sería un estado terminal: la sesión quedaría incerrable y el plan
+no aprobable. Ese es el invariante que esta lista protege.
 
 ### 3.4-bis Las tools del ciclo de vida del plan están exentas
 

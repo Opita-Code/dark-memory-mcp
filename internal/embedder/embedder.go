@@ -267,6 +267,28 @@ func factoryInner() (Embedder, error) {
 // result of Factory at boot and bail there.
 func FactoryAuto() Embedder {
 	// 1. Manual override (DARK_MEMORY_EMBEDDER).
+	//
+	// KNOWN DEBT, measured 2026-11-18: this rung does NOT check
+	// reachability, while rung 5 (the Ollama daemon) does. The
+	// Ollama adapter's constructor never fails by design (its own
+	// comment: "Returns immediately; first Embed call surfaces any
+	// network failures"), so an operator who sets
+	// DARK_MEMORY_EMBEDDER=ollama on a machine with no daemon gets an
+	// embedder that fails on EVERY call — which is worse than not
+	// having an embedder at all.
+	//
+	// It is not a regression: before this package existed, "ollama" was
+	// not a recognised kind (DefaultKind fell through to KindNone), so
+	// the override could not reach that adapter at all. What changed is
+	// that the override is now reachable, and it is not sealed.
+	//
+	// Why it is left open: the override is the operator saying "I know
+	// what I am doing" (a remote Ollama on another host, a
+	// DARK_MEMORY_OLLAMA_PROBE_HOST pointing somewhere else). Silently
+	// ignoring an explicit override would be worse than honouring it.
+	// The honest fix is to make the probe configurable per adapter and
+	// apply it to this rung too, which is a change of contract for the
+	// override's meaning.
 	if k := DefaultKind(); k != KindNone {
 		if e, err := tryKind(k); err == nil {
 			return NewSync(e)
