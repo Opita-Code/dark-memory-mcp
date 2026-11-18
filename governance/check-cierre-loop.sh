@@ -55,7 +55,12 @@
 #                   vibe sustituye a la que trae el artefacto.
 #
 # CODIGOS: 0 cerrado · 64 uso · 65 sin artefacto publicado · 66 sin rastro en
-# memoria · 67 sin commit · 68 veredicto ausente (no es fallo: se declara)
+# memoria · 67 sin commit · 68 veredicto ausente (no es fallo: se declara) ·
+# 69 SIN COMPROBAR: el repo no se encontro, asi que la parte (c) NO se pudo
+# verificar. MEDIDO el 2026-11-18: antes, el caso "repo no encontrado" se
+# imprimia como informacion y el guard seguia hasta el final, de modo que
+# imprimia "CIERRE: completo" sin haber comprobado el commit. Un check que no
+# se puede hacer NO es un check que pasa: por eso 69 es un fallo.
 
 set -uo pipefail
 
@@ -279,7 +284,12 @@ if [[ -z "$REPO_ROOT" ]]; then
 fi
 [[ -z "$REPO_ROOT" ]] && REPO_ROOT="$PWD"
 
-if [[ -d "$REPO_ROOT/.git" ]]; then
+# MEDIDO el 2026-11-18: el test era `-d "$REPO_ROOT/.git"`, que es un
+# DIRECTORIO solo en un clon. En un worktree de git, `.git` es un FICHERO, y
+# el guard se saltaba la comprobacion del commit entera (con un PR abierto
+# desde un worktree, que es como trabaja el agente). La comprobacion ahora la
+# hace git, que es quien sabe: un clon y un worktree son los dos repos.
+if git -C "$REPO_ROOT" rev-parse --git-dir >/dev/null 2>&1; then
   HIT=""
   COMO=""
   # 1) EL MARCADOR EXPLICITO, PRIMERO: "artefacto <id>" o "evaluacion <id>".
@@ -322,7 +332,12 @@ if [[ -d "$REPO_ROOT/.git" ]]; then
     fail "el artefacto esta publicado y con rastro en memoria, pero ningun commit lo cita: el cierre del loop exige el commit" 67
   fi
 else
-  echo "commit      : (repo no encontrado en $REPO_ROOT: se omite esta comprobacion)"
+  # MEDIDO el 2026-11-18: esto salia por pantalla y el guard seguia hasta el
+  # final, imprimiendo "CIERRE: completo" sin haber comprobado el commit. El
+  # cierre del loop son TRES partes, y una parte que no se pudo comprobar no
+  # es una parte cumplida. Por eso aqui se falla con 69 y no se sigue.
+  echo "commit      : (repo no encontrado en $REPO_ROOT: no se puede comprobar)" >&2
+  fail "no se encuentra el repo $REPO_ROOT: la parte (c) del cierre (el commit) NO se pudo comprobar. Un check que no se puede hacer no es un check que pasa" 69
 fi
 
 # ── veredicto ─────────────────────────────────────────────────────────────
