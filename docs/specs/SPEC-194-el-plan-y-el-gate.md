@@ -2,8 +2,8 @@
 
 > K1 del bucle (TODO #728). Es la spec que convierte el harness compuesto en
 > algo exigible, no en algo opcional.
-> Base: `f99bcc1` (SPEC-203 + SPEC-204 + parche C2 + keyring), que es la head
-> del PR #39.
+> Base: `9663113` = `upstream/main` tras el merge del PR #39 (SPEC-203 +
+> SPEC-204 + parche C2 + keyring) y de los PRs #38, #40 y #41.
 > Estado: propuesta, en revisión.
 > Decisiones del operador que la gobiernan: D7 (alcance del gate), D8 (dureza),
 > D9 (fuente única del plan), D11 (quién decide la configuración).
@@ -174,13 +174,15 @@ ALTER TABLE vibe_specs ADD COLUMN plan_tier     TEXT;      -- corta|media|larga
 ALTER TABLE vibe_specs ADD COLUMN plan_budget_used INTEGER NOT NULL DEFAULT 0;
 ```
 
-`plan_status` es el estado del gate, con tres valores:
+`plan_status` es el estado del gate, con **cinco** valores:
 
-| Estado | Significado |
-|---|---|
-| `draft` | El plan existe, nadie lo ha aprobado. Una tool mutante **se rechaza**. |
-| `approved` | La decisión humana es `execute`. Las tools del plan pueden ejecutarse. |
-| `executed` / `cancelled` / `edited` | Terminales; `edited` significa que el prompt del reviser cambió el plan y se re-abrió como `draft`. |
+| Estado | Significado | Terminal |
+|---|---|---|
+| `draft` | El plan existe, nadie lo ha aprobado. Una tool mutante **se rechaza**. | No |
+| `approved` | La decisión humana es `execute`. Las tools del plan pueden ejecutarse. | No |
+| `executed` | El plan se ejecutó hasta agotar su presupuesto o cumplir su objetivo. | Sí |
+| `edited` | El revisor cambió el plan con un prompt; se reabrió como `draft`. Es un estado **histórico**: el plan vivo vuelve a `draft`. | Sí (como estado recorrido) |
+| `cancelled` | La persona lo canceló. Las tools mutantes se rechazan con `ErrNotApproved` hasta que haya otro plan. | Sí |
 
 **Por qué en `vibe_specs` y no en `vlp_state`.** `vlp_state` es el estado de la
 máquina del VLP (9 estados, `internal/vlp/state.go:37-54`) y su esquema tiene
