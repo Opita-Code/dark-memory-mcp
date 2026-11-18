@@ -271,21 +271,31 @@ justo el fallo que la cisión del artefacto evita.
 Los quince AC son comprobables, no aspiracionales. Los que tienen forma
 binaria:
 
-| AC | Cómo se comprueba |
-|---|---|
-| AC2 | Tool mutante sin plan → `ErrPlanRequired` en `strict`; en `warn`, pasa con la negativa registrada. |
-| AC3 | Plan en `draft` → `ErrNotApproved`. |
-| AC4 | Presupuesto agotado → `ErrBudgetExceeded`. |
-| AC5 | `plan_decide(edit)` reabre el plan como `draft` con el prompt aplicado, y el plan anterior queda en el rastro. |
-| AC6 | Fila en `write_audit` con `write_path = "plan_decide"`, `actor`, `session_id` y `notes`. |
-| AC7 | El contador del presupuesto coincide con el número de tool calls del plan. |
-| AC11 | **Atomicidad**: dos llamadas concurrentes sobre el mismo plan no pueden gastarlo dos veces. |
-| AC13 | `plan_create` y `plan_decide` funcionan sin plan (la exención que evita el deadlock). |
-| AC14 | **No existe** ninguna bandera en los argumentos que permita saltarse el gate. |
-| AC15 | La lista de exentas es cerrada: un test falla si se le añade una tool sin justificación en el propio test. |
+**Los quince AC, itemizados.** Los que tienen forma binaria se comprueban
+con un test; los que son de sistema se comprueban con un comando.
 
-AC9 y AC10 son los que protegen de los excesos: las tools de lectura no
-exigen plan, y con `DARK_PLAN_STRICTNESS=off` el comportamiento es el de hoy.
+| AC | Qué exige | Cómo se comprueba | Forma |
+|---|---|---|---|
+| **AC1** | El plan se persiste y se recupera íntegro | `plan_get` devuelve los candidatos, el tier y el presupuesto idénticos a los guardados | Test |
+| **AC2** | Tool mutante sin plan → `ErrPlanRequired` | En `strict` se rechaza; en `warn` pasa con la negativa registrada | Test |
+| **AC3** | Plan en `draft` → `ErrNotApproved` | El gate rechaza mientras el estado no sea `approved` | Test |
+| **AC4** | Presupuesto agotado → `ErrBudgetExceeded` | Al llegar a `max_tool_calls` o `max_judge_calls` | Test |
+| **AC5** | `plan_decide(edit)` reabre como `draft` | El prompt del revisor queda aplicado y el plan anterior sigue en el rastro | Test |
+| **AC6** | Fila en `write_audit` | `write_path = "plan_decide"`, con `actor`, `session_id` y `notes` | Test |
+| **AC7** | El contador coincide con las tool calls | El `used_tool_calls` es igual al número de tool calls que pasaron | Test |
+| **AC8** | El juez **valida** el shortlist | El plan aprobado contiene los candidatos que el juez validó, no otros | Test |
+| **AC9** | Las tools de lectura no exigen plan | `recall`, `list`, `get` pasan sin plan abierto | Test |
+| **AC10** | `off` = comportamiento de hoy | Con `DARK_PLAN_STRICTNESS=off`, ningún rechazo por plan | Test |
+| **AC11** | El contador es **atómico** | Dos llamadas concurrentes sobre el mismo plan no pueden gastarlo dos veces | Test de concurrencia |
+| **AC12** | Build y CI en verde | `go build ./...`, `go test ./...` y los 6 checks del PR | Sistema |
+| **AC13** | El ciclo del plan no exige plan | `plan_create` y `plan_decide` funcionan sin plan abierto | Test |
+| **AC14** | **No hay** bandera para saltarse el gate | Ningún argumento del schema permite saltarlo | Test |
+| **AC15** | La lista de exentas es **cerrada** | Un test falla si se le añade una tool sin justificación en el propio test | Test |
+
+AC9, AC10 y AC14 son los que protegen de los excesos: las tools de lectura no
+exigen plan, con `off` el comportamiento es el de hoy, y no hay ninguna forma
+de saltarse el gate. AC15 protege la exención de que crezca sin que nadie lo
+justifique.
 
 ---
 
@@ -319,11 +329,18 @@ artefacto puede veredicarse distinto en dos corridas. Lo que cierra es el
 | El panel | D5: «el panel no es el producto». |
 | El token de npm | Sin relación; bloqueado por credenciales y en pausa. |
 
-La dependencia es **declarada y real**: K0 (SPEC-203/204) está en el PR #39,
-sin mergear. Sin la identidad resuelta, la fila de `plan_decide` puede caer
-en el proyecto equivocado — que es exactamente el defecto que SPEC-204
-arrancó a arreglar. Por eso K1 **no** puede aterrizar antes que el merge del
-PR #39.
+La dependencia es **real, y se ha discharged**: K0 (SPEC-203/204) estaba en el
+PR #39, **sin mergear** cuando se escribió la primera versión de este
+documento. El PR #39 se mergeó el 2026-11-17T23:18:50Z (commit `f09b3f7`),
+junto con los PRs #38, #40 y #41, y esta rama se rebasó sobre ese `main`
+(`9663113`).
+
+Consecuencia: **la dependencia bloqueante de K1 ha desaparecido**. Sin la
+identidad resuelta, la fila de `plan_decide` caería en el proyecto
+equivocado — el defecto exacto que SPEC-204 arrancó a arreglar — pero SPEC-204
+ya está en `main`, así que ese riesgo está cerrado y el código de K1 puede
+aterrizar. Lo que queda pendiente es una dependencia de **secuencia**, no de
+bloqueo: el gate de `strict` sigue necesitando el adaptador de W2/K2.
 
 ---
 

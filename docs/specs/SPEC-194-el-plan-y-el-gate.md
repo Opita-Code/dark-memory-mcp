@@ -3,7 +3,8 @@
 > K1 del bucle (TODO #728). Es la spec que convierte el harness compuesto en
 > algo exigible, no en algo opcional.
 > Base: `9663113` = `upstream/main` tras el merge del PR #39 (SPEC-203 +
-> SPEC-204 + parche C2 + keyring) y de los PRs #38, #40 y #41.
+> SPEC-204 + parche C2 + keyring) y de los PRs #38, #40 y #41. K0 está
+> **merged**, así que esta spec ya no tiene la dependencia bloqueante.
 > Estado: propuesta, en revisión.
 > Decisiones del operador que la gobiernan: D7 (alcance del gate), D8 (dureza),
 > D9 (fuente única del plan), D11 (quién decide la configuración).
@@ -709,7 +710,7 @@ documentos.
 
 | Dependencia | Estado | Nota |
 |---|---|---|
-| K0 (SPEC-203/204) | En el PR #39, sin mergear | **Bloqueante**: sin la identidad resuelta, la fila de `plan_decide` puede caer en el proyecto equivocado — el defecto exacto que SPEC-204 arregla. |
+| K0 (SPEC-203/204) | **Merged** el 2026-11-17 (`f09b3f7`), junto con los PRs #38, #40 y #41 | **Dependencia discharged.** Era bloqueante mientras estuvo sin mergear: sin la identidad resuelta, la fila de `plan_decide` caería en el proyecto equivocado — el defecto exacto que SPEC-204 arregla. Con SPEC-204 en `main`, el código de K1 puede aterrizar. Queda una dependencia de **secuencia**, no de bloqueo: `strict` sigue necesitando el adaptador de W2/K2. |
 | `internal/policy` (gate) | Existe | Se le añaden 3 razones. |
 | `internal/drift` (strictness) | Existe | Se le copia el patrón. |
 | `internal/vlp` (states) | Existe | El plan **no** es un estado del VLP (§3.2). |
