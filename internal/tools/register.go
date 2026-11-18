@@ -109,6 +109,18 @@ func RegisterAllWithDeps(reg *Registry, orch *orchestration.Orchestrator, st sto
 	RegisterAgentBootstrap(reg)
 	// VIBE (4)
 	RegisterVibe(reg, orch, st)
+	// PLAN (3) — SPEC-194 (2026-11-17). The plan surface:
+	// plan_create (proposes), plan_get (reads), plan_decide (the
+	// human decides). Positioned right after VIBE because the plan
+	// describes HOW a spec will be carried out.
+	//
+	// The ranker is built HERE, after the other namespaces are
+	// registered, because the corpus is the WHOLE canonical surface:
+	// a plan that intends to write memory must be able to see
+	// agent_memory_save among its candidates.
+	if err := RegisterPlan(reg, orch); err != nil {
+		return nil, fmt.Errorf("tools: RegisterAll: RegisterPlan: %w", err)
+	}
 	// OAUTH (4) — Phase 23 Sesión 6 (Tier 0 self-auth) + Sesión 8
 	// binary-activation fix (2026-10-14). The OAuth tools live in
 	// the cmd sub-module (cmd/dark-mem-mcp/internal/oauth) which

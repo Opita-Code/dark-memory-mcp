@@ -298,6 +298,24 @@ var canonicalNamespaces = []NamespaceGroup{
 		Tools: []string{"vibe_publish", "vibe_spec", "pipeline_status", "resolve_drift", "vibe_compile"},
 	},
 	{
+		// SPEC-194 (2026-11-17): the PLAN surface. 3 tools: the
+		// plan is proposed (plan_create), read (plan_get) and
+		// decided by a human (plan_decide).
+		//
+		// Positioned right after VIBE because the plan describes HOW a
+		// spec will be carried out: the plan and the vibe-loop belong
+		// together, and the plan must be visible next to the spec it
+		// belongs to.
+		//
+		// These 3 tools are EXEMPT from the plan gate (the exemption
+		// lives in the middleware, in a closed list): plan_decide is
+		// the tool that records the approval, so requiring an
+		// approved plan to approve the first plan would be a
+		// deadlock.
+		Name:  "PLAN",
+		Tools: []string{"plan_create", "plan_get", "plan_decide"},
+	},
+	{
 		// v2.20.0-alpha (Phase 23, Sesión 6). Tier 0 self-auth: users
 		// authenticate with their own Google/HuggingFace account via
 		// OAuth 2.0 + PKCE. Tokens stored in OS keyring (or env-var

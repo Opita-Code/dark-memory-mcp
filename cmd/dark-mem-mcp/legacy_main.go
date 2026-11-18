@@ -40,6 +40,7 @@ import (
 	"github.com/dark-agents/dark-memory-mcp/internal/errorobs"
 	"github.com/dark-agents/dark-memory-mcp/internal/federation"
 	"github.com/dark-agents/dark-memory-mcp/internal/orchestration"
+	"github.com/dark-agents/dark-memory-mcp/internal/plan"
 	"github.com/dark-agents/dark-memory-mcp/internal/policy"
 	"github.com/dark-agents/dark-memory-mcp/internal/server"
 	"github.com/dark-agents/dark-memory-mcp/internal/store"
@@ -257,11 +258,31 @@ func legacyMain() {
 	}
 	driftChecker := drift.NewChecker(bootState.Store, server.DriftJudgeFromOrchestrator(bootState.Orchestrator), strictness)
 
+	// SPEC-194 (T2, T4): wire the gate of the plan.
+	//
+	// The strictness comes from DARK_PLAN_STRICTNESS. There is NO
+	// per-project override for it (the drift one has one, added in
+	// 5X.3 with a column): a per-project override would need another
+	// migration, and the plan columns are already at v33 (sqlite) /
+	// v35 (postgres). It is left for a later iteration, and the
+	// switch is process-wide in the meantime, exactly like the spec
+	// says (§3.6).
+	//
+	// The default of the switch is `warn`: the gate CHECKS and
+	// RECORDS the refusal, and lets the call through. The gate is
+	// born measuring, not born blocking (D8): the work this repo
+	// does today calls mutating tools without an approved plan, and
+	// a gate that stops it is a gate that gets disabled on day one.
+	planStrictness := plan.StrictnessFromEnv()
+	planGate := plan.NewGate(bootState.Store)
+
 	bootState.Gate = &server.GateMiddleware{
-		FrameSource:   frameSrc,
-		DriftChecker:  driftChecker,
-		ActiveSession: activeSessionResolver,
-		ActiveProject: bootState.Store.ActiveProject,
+		FrameSource:    frameSrc,
+		DriftChecker:   driftChecker,
+		PlanGate:       planGate,
+		PlanStrictness: planStrictness,
+		ActiveSession:  activeSessionResolver,
+		ActiveProject:  bootState.Store.ActiveProject,
 		SessionProject: func(ctx context.Context, sessionID string) string {
 			// SPEC-203: the session is the authority for its own scope.
 			pid, err := bootState.Store.ProjectIDForSession(ctx, sessionID)

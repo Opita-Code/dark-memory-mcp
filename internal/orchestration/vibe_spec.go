@@ -405,6 +405,24 @@ func (o *Orchestrator) VibeSpec(ctx context.Context, in VibeSpecInput) (*VibeSpe
 	// already past drafting_spec = silent no-op.
 	o.emitVLP(ctx, in.SessionID, "orchestrator_vibe_spec", vlp.EventVibePublish)
 
+	// SPEC-194 (PR B): record the spec the session is working on.
+	//
+	// This is the column the gate of the plan reads to find the
+	// session's plan (GetOpenPlan). MEASURED on 2026-11-18: nothing
+	// in production ever WROTE it — the two constructors of
+	// VLPStateRow left it at 0 — so the gate would have found no
+	// plan and would have refused every mutating call.
+	//
+	// The spec is what opens the spec, so the spec is what records
+	// it. Best-effort: a session without a vlp_state row (or without
+	// a session at all) simply has no open spec, and the gate will
+	// say "plan_required", which is the honest answer.
+	if in.SessionID != "" {
+		if _, err := o.Store.SetOpenSpecID(ctx, wc, in.SessionID, specID); err != nil {
+			log.Printf("dark-mem-mcp: vibe_spec set_open_spec_id err=%v (spec_id=%d)", err, specID)
+		}
+	}
+
 	result := &VibeSpecResult{
 		SpecID:         specID,
 		TasksValidated: len(tasks),

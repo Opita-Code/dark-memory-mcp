@@ -23,13 +23,13 @@ pediste. Sin servidor remoto, sin telemetría, sin costo.
 
 [![MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Go 1.25+](https://img.shields.io/badge/Go-1.25%2B-00ADD8?logo=go&logoColor=white)](go.mod)
-[![MCP tools](https://img.shields.io/badge/MCP-78%20canonical%20tools-blueviolet)](docs/tools.md)
-[![Schema](https://img.shields.io/badge/schema-v32-blueviolet)](docs/v4-status.md)
+[![MCP tools](https://img.shields.io/badge/MCP-81%20canonical%20tools-blueviolet)](docs/tools.md)
+[![Schema](https://img.shields.io/badge/schema-v33-blueviolet)](docs/v4-status.md)
 [![Install](https://img.shields.io/badge/install-npx%20%40opita--code%2Fdark--memory--mcp-cc3534)](docs/npm-install.md)
 
-[Qué es](#el-problema-que-resuelve) · [Quickstart](#quickstart) · [Las 78 herramientas](docs/tools.md) · [Vibe-cases](docs/tools.md#vibe-cases) · [Ayuda](docs/npm-install.md) · [Estado real](docs/v4-status.md) · [Contribuir](CONTRIBUTING.md)
+[Qué es](#el-problema-que-resuelve) · [Quickstart](#quickstart) · [Las 81 herramientas](docs/tools.md) · [Vibe-cases](docs/tools.md#vibe-cases) · [Ayuda](docs/npm-install.md) · [Estado real](docs/v4-status.md) · [Contribuir](CONTRIBUTING.md)
 
-> **STATUS: v4-alpha.34** — pre-release. 78 herramientas canónicas, schema 32,
+> **STATUS: v4-alpha.34** — pre-release. 81 herramientas canónicas, schema 33,
 > MIT. Lo que funciona y lo que no está medido en
 > **[`docs/v4-status.md`](docs/v4-status.md)** — léelo antes de apostar
 > producción por esto. (Corte alpha.34: la identidad de la escritura
@@ -139,11 +139,11 @@ Necesitas **Node.js 18+** (wrapper npm) o **Go 1.25+** (desde source).
 {
   "server": { "version": "4.0.0-alpha.34", "name": "dark-memory-mcp" },
   "db": { "live": true, "schema_version": 32 },
-  "registry": { "canonical_tools": 78 }
+  "registry": { "canonical_tools": 81 }
 }
 ```
 
-78 es el registro medido en vivo. `server.version` es el stamp de build
+81 es el registro medido en vivo. `server.version` es el stamp de build
 (tag publicado o pseudo-versión local); la forma que importa es la de
 arriba: vivo + schema + conteo.
 
@@ -213,7 +213,7 @@ Catálogo completo: **[`docs/tools.md`](docs/tools.md)**.
 
 Honesto, porque un README que sólo vende no sirve para decidir:
 
-- **Pre-release.** 78 herramientas canónicas medidas en el registro
+- **Pre-release.** 81 herramientas canónicas medidas en el registro
   (+3 extras armadas por variable de entorno = 81). La superficie crece
   por release y la fija el freeze test — el delta desde alpha.31 es +5
   (`vibe_compile` + namespace OAUTH con 4). Detalle por namespace en
@@ -238,7 +238,7 @@ se contradice con el código que corre, así que no puede pudrirse en silencio.
 Tu agente (Claude / opencode / Cursor)
     │  MCP (JSON-RPC sobre stdin/stdout)
     ▼
-dark-mem-mcp.exe  ←── proceso local, 78+3 herramientas
+dark-mem-mcp.exe  ←── proceso local, 81+3 herramientas
     │  SQL
     ▼
 SQLite (archivo .db en tu disco)   ←── o Postgres con DARK_DRIVER=postgres

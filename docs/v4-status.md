@@ -138,22 +138,24 @@
 | Local-only policy | RETIRED 2026-10-08 — repo is public (`github.com/Opita-Code/dark-memory-mcp`, MIT + CC-BY-NC-4.0 for `mods/vibe-loop-git/`), releases published (npm + MCP Registry). Pushes and remote tags happen only by operator decision, not by default. |
 
 ---
-## 1. Tools inventory (78 canonical, 21 namespaces, schema v32)
+## 1. Tools inventory (81 canonical, 22 namespaces, schema v33)
 
 **Measured, not declared** (2026-10-15, verified by an in-package probe
 over `tools.NamespaceGroups()` and `tools.NamespaceCount()`, and live
-via `dark_memory_health_ping`: 78 canonical + 3 extras, schema 32):
+via `dark_memory_health_ping`: 81 canonical + 3 extras, schema 33):
 
-- **78 canonical tools** across **21 namespaces**
+- **81 canonical tools** across **22 namespaces**
 - Plus **3 env-gated armed extras** (`DARK_REDTEAM=armed` red-team,
-  federation under `DARK_FEDERATION_PEER_DSN`, and one more) → **81 tools
-  live** when armed. Both numbers are real; 78 is the canonical registry,
-  81 is the maximum reachable surface. Say which one you mean.
+  federation under `DARK_FEDERATION_PEER_DSN`, and one more) → **84 tools
+  live** when armed. Both numbers are real; 81 is the canonical registry,
+  84 is the maximum reachable surface. Say which one you mean.
 - Surface delta since the 73/20 baseline (2026-10-08): +1 `vibe_compile`
   in VIBE (Sesión 5bis, commit `c3b0a51`) + new OAUTH namespace with 4
   (`judge_options`, `oauth_connect`, `oauth_status`, `oauth_disconnect`;
-  Sesión 6, commit `8ed967a`). The freeze test
-  `TestCanonicalOrder_Frozen_78_21_28` pins this surface.
+  Sesión 6, commit `8ed967a`) + new PLAN namespace with 3
+  (`plan_create`, `plan_get`, `plan_decide`; SPEC-194, PR #43). The
+  freeze test `TestCanonicalOrder_Frozen_81_22_33` pins this surface,
+  schema v33 (`plan_columns`).
 - **On the old "97+" denominator (retired 2026-10-15):** revisions of
   this section and `README.md` cited "`97+` originally promised" with a
   pointer to `ARCHITECTURE-V4.md §6.3`. That pointer does not resolve —
@@ -1300,7 +1302,7 @@ The 8 AutoEmitter helpers + the EventWriter + the 2 observer tools
      its own go.mod. A parent-module `go list` cannot resolve it and
      reports nothing, which is how this section went stale for releases. -->
 
-- **63** internal packages reachable from the shipped binary
+- **64** internal packages reachable from the shipped binary
 - **12 of 14** `internal/v4alpha/` packages reachable
 
 The count went from 59 to 63 with the embedder adapters (PR
@@ -2601,7 +2603,7 @@ then OI-1..OI-3 BLOCKING operator validation from Loop 6 carry-over.
 
 | Reliability | What's stable |
 |---|---|
-| ✅ Stable (won't change) | Tool wire names (78 canonical, append-only: 73 at alpha.25 + `vibe_compile` + 4 OAUTH since), agent_memory schema, FTS5 ordering (INV-17), worker pool size=1, store/WithTx contract (INV-16), `sdd_evaluations` schema (22 cols; +4 for calibration in alpha.16), **events table schema v32 (27 cols, 3 indexes, polymorphic)**, judge MCP tool wire shapes (4 base + 7 util), persona registry ids (16 total, 8 v4alpha), `BootstrapCI` deterministic seed=42, **EVENTS namespace tools (event_log + event_replay) wire shapes**, **HMAC chain continuous across events + write_audit (ADR-016 + ADR-018)**, **LLM_BIND namespace tools (llm_provider_bind + llm_provider_probe) wire shapes**, **drift_judge 9-step pipeline (LLMJudge primary, NLI fallback)**, **provider_id prefix routing: judge-* → LLMJudge, chat-* → NLI ChatProvider**, **`vibe-loop-git v0.1.0` companion mod (6 loops + 1 design + 4 adapters + 7 templates + 9 tests, all SHIPPED) at `mods/vibe-loop-git/`**, **T-407-c 3-layer defensive pattern (per-model defaults table + operator override + finish_reason="length" retry-on-length) for `ChatProvider`** |
+| ✅ Stable (won't change) | Tool wire names (81 canonical, append-only: 73 at alpha.25 + `vibe_compile` + 4 OAUTH + 3 PLAN since), agent_memory schema, FTS5 ordering (INV-17), worker pool size=1, store/WithTx contract (INV-16), `sdd_evaluations` schema (22 cols; +4 for calibration in alpha.16), **events table schema v32 (27 cols, 3 indexes, polymorphic)**, judge MCP tool wire shapes (4 base + 7 util), persona registry ids (16 total, 8 v4alpha), `BootstrapCI` deterministic seed=42, **EVENTS namespace tools (event_log + event_replay) wire shapes**, **HMAC chain continuous across events + write_audit (ADR-016 + ADR-018)**, **LLM_BIND namespace tools (llm_provider_bind + llm_provider_probe) wire shapes**, **drift_judge 9-step pipeline (LLMJudge primary, NLI fallback)**, **provider_id prefix routing: judge-* → LLMJudge, chat-* → NLI ChatProvider**, **`vibe-loop-git v0.1.0` companion mod (6 loops + 1 design + 4 adapters + 7 templates + 9 tests, all SHIPPED) at `mods/vibe-loop-git/`**, **T-407-c 3-layer defensive pattern (per-model defaults table + operator override + finish_reason="length" retry-on-length) for `ChatProvider`** |
 | ⚠️ Likely to evolve | Package names (still aspirational vs actual drift), Pipeline API (LLM judge swap), Constitution (still hardcoded), persona override mechanism (spec 1155 v14 inheritance), progress emitter phases (3 → N as new pipeline stages emerge) |
 | ❌ Not implemented | security/* (INV-11..15), mutable Workflow, red-team mods, federated research, L6-VLP, admin (vacuum only), EmbedderRefresh wire (no embedder code), semantic CacheInvalidation wire (no semantic cache trigger) |
 
@@ -2790,6 +2792,50 @@ The summary below points to the upstream sources cited in this doc.
 | INV-16 dark-db concurrency uses `journal_mode=WAL` + `busy_timeout=5000ms` + `MaxOpenConns=8` (WAL readers-don't-block-writers, 1000-page auto-checkpoint, 3.51.3 fixes WAL-reset bug) | SQLite WAL docs | <https://sqlite.org/wal.html> |
 | `internal/v4alpha/store/` is backed by the pure-Go driver (no cgo) | modernc.org/sqlite v1.53.0 (pinned in `go.mod`, verified via `grep`) | <https://pkg.go.dev/modernc.org/sqlite> |
 | Judge pipeline (29 tools shipped, 4 commits, 16 ECs [15 original + EC-007b added alpha.16], 11 personas) is grounded in SOTA LLM-as-judge literature | `docs/judge-pipeline-v4.md` §9 (4 papers + Anthropic structured outputs + SQLite WAL + pkg.go.dev) | — |
+
+---
+
+## 7.1 The gate of the plan (SPEC-194 PR B) — measured state
+
+**What it is.** The gate watches the tools that MUTATE the kernel and asks
+the plan whether the call is authorised. It is wired in the middleware
+(`internal/server/middleware.go`), between the resolution of the scope and the
+call itself, and it is optional: a server that does not wire it behaves
+exactly as before.
+
+**Where it reads the plan from.** `vlp_state.open_spec_id`, with a fallback
+to the most recent spec of the session that has a plan. That fallback exists
+because MEASURED on 2026-11-18: nothing in production ever wrote
+`open_spec_id`, so the gate would have found no plan at all. The root fix is
+that `vibe_spec` records the spec the session opens.
+
+**Its hardness: `DARK_PLAN_STRICTNESS`.**
+
+| Mode | Effect | Default? |
+|---|---|---|
+| `off` | The plan is not checked. No store read, no charge. | |
+| `warn` | Checked; the refusal is RECORDED (`write_audit` with `write_path=plan_gate_refusal`, and the Error Observatory with its own `code`) and the call goes through. | **yes** |
+| `strict` | The call is refused with `ErrPlanRequired` / `ErrNotApproved` / `ErrBudgetExceeded`. | |
+
+The default is `warn` and not `strict` on purpose: the gate is born
+measuring, not born blocking. The real work calls mutating tools without an
+approved plan, and a gate that stops the work is a gate that gets disabled on
+day one.
+
+**Three things it does NOT do, so nobody expects them:**
+
+- It does not decide anything about the CONTENT of the call. It checks the
+  plan, not the artefact: the drift judge is still the one that judges.
+- It does not make the judge validate the shortlist. The judge that validates
+  a shortlist is an INTERNAL call of the orchestrator, and it is still not
+  wired (`plan_create` returns `judged=false`).
+- It does not charge a REFUSED call. The refusal is free: a call the plan did
+  not authorise does not consume the plan's allowance.
+
+**What it charges, and when.** The charge happens in the gate, BEFORE the
+call runs, and only when the gate lets the call through. A call that is
+allowed and then fails inside HAS consumed its unit: the budget measures
+authorised ATTEMPTS, not successes (the cost of a failed call is not zero).
 
 ---
 
