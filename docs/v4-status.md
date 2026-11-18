@@ -1311,6 +1311,36 @@ imported** — and nothing imported them. `internal/embedder/adapters` now
 does, explicitly, so the registration is a fact of the binary instead of
 an accident of what some other package happened to import.
 
+**This line is a race between two PRs, and the number depends on what
+else is in the binary.** MEASURED 2026-11-18: the plan gate (PR #45) and the
+embedder adapters (PR #46) both change this line, and Git DOES report the
+conflict — in this file and in `cmd/dark-mem-mcp/legacy_main.go`, where both
+add fields to the same struct literal. What Git does NOT tell you is which
+number is right: the **merged** binary reaches **64** (measured with both
+sets of changes applied, and `tests/docs` confirms it), while the gate's
+version alone says 60 and the embedder's version alone says 63.
+
+So the line is not a claim about the branch. It is a claim about the
+**merged binary**, and it has to be re-measured after any merge that touches
+`cmd/dark-mem-mcp`. That is exactly what `TestStatusDoc_BoundaryClaimsMatchBinary`
+does, and it is why it fails until the conflict is resolved with the right
+number rather than the one that happened to be on the branch.
+
+**How to resolve the conflict when it comes:** the two numbers are not
+alternatives to pick between by taste. Build the merged binary, run the
+boundary test, and put *its* number here. The conflict resolution for
+`cmd/dark-mem-mcp/legacy_main.go` is the union of both struct literals (the
+gate adds `PlanGate` and `PlanStrictness`; the embedder adds the blank
+import of the adapters package, which lives in the import block and does
+not conflict).
+
+**How to keep this from rotting again:** the count is a property of the
+*binary*, and this paragraph is a property of the *history*. They drift
+apart exactly when two PRs change the binary at once. The fix is not a
+cleverer sentence: it is to re-measure after every merge that touches
+`cmd/dark-mem-mcp` and update the number here, which is what
+`TestStatusDoc_BoundaryClaimsMatchBinary` forces you to do anyway.
+
 Dead — unreachable from `cmd/dark-mem-mcp`, owned and verdicted:
 
 | Package | LoC (2026-10-09) | Verdict |
