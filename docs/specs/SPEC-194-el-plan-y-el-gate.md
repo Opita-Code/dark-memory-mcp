@@ -91,7 +91,7 @@ acaba validando contra el plan equivocado. El kernel lo guarda, lo expone y
 lo hace valer; el runtime lo refleja.
 
 Consecuencia concreta: el kernel **no** conoce los planes de otros MCPs
-(`dark-copilot`, `dark-research`) y no puede hacerlos valer. Eso es D7: el
+(`[FUTURE-MCP-N]`, `dark-research`) y no puede hacerlos valer. Eso es D7: el
 gate de las tools de dark-memory es del kernel; el de las demás es del
 adaptador (W2/K2), y en ese caso el kernel expone el plan y el adaptador
 obedece.
@@ -642,7 +642,7 @@ plan**, no el diff. Motivo: el techo del artefacto es 32 KiB
 | No lo resuelve esta spec | Por qué |
 |---|---|
 | **Los adaptadores de harness** (el bucle desglose → `question` → `plan_decide`) | Es W2/K2 (TODO #729). Aquí se garantiza que **cuando** el harness nombre su plan, el kernel lo hace valer. |
-| **El gate de las tools de otros MCPs** (`dark-copilot`, `dark-research`) | D7: el kernel no puede hacer valer el plan de un MCP que no es suyo. Ese gate es del adaptador. |
+| **El gate de las tools de otros MCPs** (`[FUTURE-MCP-N]`, `dark-research`) | D7: el kernel no puede hacer valer el plan de un MCP que no es suyo. Ese gate es del adaptador. |
 | **La personalización de la configuración** (dureza, presupuestos, umbrales del tier) | Es W11 (TODO #767), y D11: lo decide la persona al configurar. Aquí el valor por defecto es `warn` y el resto son constantes. |
 | **El panel** | D5: «el panel no es el producto». |
 | **El token de npm** | Sin relación. Bloqueado por credenciales, en pausa. |

@@ -314,7 +314,7 @@ artefacto puede veredicarse distinto en dos corridas. Lo que cierra es el
 | Fuera de alcance | Por qué |
 |---|---|
 | Los adaptadores de harness (el bucle desglose → `question` → `plan_decide`) | Es W2/K2 (TODO #729). Aquí se garantiza que **cuando** el harness nombre su plan, el kernel lo hace valer. |
-| El gate de las tools de otros MCPs (`dark-copilot`, `dark-research`) | D7: el kernel no puede hacer valer el plan de un MCP que no es suyo. Ese gate es del adaptador. |
+| El gate de las tools de otros MCPs (`[FUTURE-MCP-N]`, `dark-research`) | D7: el kernel no puede hacer valer el plan de un MCP que no es suyo. Ese gate es del adaptador. |
 | La personalización de la configuración (dureza, presupuestos, umbrales) | Es W11 (TODO #767), y D11: lo decide la persona al configurar. |
 | El panel | D5: «el panel no es el producto». |
 | El token de npm | Sin relación; bloqueado por credenciales y en pausa. |
