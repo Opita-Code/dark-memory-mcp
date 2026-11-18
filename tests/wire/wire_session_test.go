@@ -59,6 +59,13 @@ type wireSession struct {
 // so a hung binary still fails the test fast.
 func startWireSession(t *testing.T) *wireSession {
 	t.Helper()
+	return startWireSessionWithEnv(t, nil)
+}
+
+// startWireSessionWithEnv is startWireSession with extra environment
+// variables (SPEC-194 PR B needs DARK_PLAN_STRICTNESS).
+func startWireSessionWithEnv(t *testing.T, extraEnv []string) *wireSession {
+	t.Helper()
 
 	bin := resolveWireBin(t)
 	dbDir := t.TempDir()
@@ -82,6 +89,7 @@ func startWireSession(t *testing.T) *wireSession {
 		// need a parent file we don't ship.
 		"DARK_CONSTITUTION_FILE=",
 	)
+	cmd.Env = append(cmd.Env, extraEnv...)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		t.Fatalf("wire: stdin pipe: %v", err)
