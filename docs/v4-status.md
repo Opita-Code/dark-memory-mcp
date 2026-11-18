@@ -1300,8 +1300,16 @@ The 8 AutoEmitter helpers + the EventWriter + the 2 observer tools
      its own go.mod. A parent-module `go list` cannot resolve it and
      reports nothing, which is how this section went stale for releases. -->
 
-- **59** internal packages reachable from the shipped binary
+- **63** internal packages reachable from the shipped binary
 - **12 of 14** `internal/v4alpha/` packages reachable
+
+The count went from 59 to 63 with the embedder adapters (PR
+`fix/embedder-adapters-huerfanos`): the shipped binary contained **no**
+embedder adapter at all, because each adapter registers its factory in
+its own `init()` and **an `init()` only runs if the package is
+imported** — and nothing imported them. `internal/embedder/adapters` now
+does, explicitly, so the registration is a fact of the binary instead of
+an accident of what some other package happened to import.
 
 Dead — unreachable from `cmd/dark-mem-mcp`, owned and verdicted:
 
