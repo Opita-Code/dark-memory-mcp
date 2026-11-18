@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"runtime/debug"
 	"strconv"
 	"syscall"
@@ -55,7 +56,7 @@ import (
 // single-binary dark-memory MCP boot sequence. Kept verbatim here
 // so the dispatcher in main.go can route to it without duplicating
 // 200+ lines of boot logic.
-func legacyMain() {
+func legacyMain(opts opciones) {
 	// Review-w4-002: panic recovery at the boot layer.
 	defer func() {
 		if r := recover(); r != nil {
@@ -332,10 +333,91 @@ func legacyMain() {
 		fmt.Fprintf(os.Stderr, "dark-mem-mcp: LLM failover init warning: %v\n", llmErr)
 	}
 
+	// El modo HTTP se decide por el flag `--http`, y el entorno
+	// (DARK_HTTP_ADDR) queda como respaldo para quien lo prefiera.
+	addr := opts.http
+	if addr == "" {
+		addr = os.Getenv("DARK_HTTP_ADDR")
+	}
+	if addr != "" {
+		// EL MODO LOCAL-FIRST. MEDIDO el 2026-11-18: el kernel se servia
+		// solo por stdio, asi que solo un harness (opencode) que lo lanza
+		// como hijo de proceso podia hablarle. Un NAVEGADOR no puede
+		// lanzar procesos: solo hace fetch. Con este modo, la pagina web
+		// publicada (memory.opitacode.com) puede hablar con el
+		// dark-memory que esta en el escritorio de QUIEN VISITA la
+		// pagina.
+		//
+		// EL MODELO, en cuatro reglas, cada una con su porque:
+		//
+		//  1. SOLO LOOPBACK POR DEFECTO. La direccion por defecto es
+		//     127.0.0.1. Un MCP local en todas las interfaces es un MCP
+		//     local en la red de la persona, con las 81 tools.
+		//  2. CORS RESTRINGIDO. Sin DARK_HTTP_ORIGINS no sale ninguna
+		//     cabecera Access-Control-*: una pagina cualquiera no puede ni
+		//     ver la respuesta. Con la lista, solo los origenes de la
+		//     lista pueden.
+		//  3. ANTI-DNS-REBINDING. mcp-go lo implementa: una peticion que
+		//     llega por loopback con una cabecera Host que no es de
+		//     loopback recibe 403. Sin esto, una pagina maliciosa podria
+		//     apuntar su dominio a 127.0.0.1 y hablar con el MCP local de
+		//     la victima desde su navegador. La especificacion MCP de
+		//     seguridad lo pide (2025-11-25).
+		//  4. NINGUNA CREDENCIAL EN EL SERVIDOR. El keyring es del
+		//     sistema operativo de la persona. Este transporte no lo
+		//     expone, y la pagina web no ve lo que hay dentro.
+		//
+		// QUE NO HACE: no cambia la logica de ninguna tool. Es el mismo
+		// MCPServer, con el mismo filtro de orden canonico, los mismos
+		// hooks y el mismo middleware del gate. Es otro TRANSPORTE.
+		origenes := opts.origen
+		if origenes == "" {
+			origenes = os.Getenv("DARK_HTTP_ORIGINS")
+		}
+		origins := splitList(origenes)
+		if err := srv.ServeHTTP(ctx, server.ServeHTTPOptions{
+			Addr:             addr,
+			AllowedOrigins:   origins,
+			AllowCredentials: os.Getenv("DARK_HTTP_CREDENTIALS") == "1",
+			PathPrefix:       envOr("DARK_HTTP_PATH", "/mcp"),
+			// MEDIDO el 2026-11-18: sin esto, el navegador REAL bloquea
+			// la peticion ("TypeError: Failed to fetch"), porque una
+			// pagina HTTPS que pide a 127.0.0.1 es una peticion a la
+			// red privada y Chrome exige la cabecera. Con curl no se
+			// nota: curl no aplica la politica del navegador.
+			AllowPrivateNetwork: os.Getenv("DARK_HTTP_PNA") != "0",
+		}); err != nil {
+			fmt.Fprintf(os.Stderr, "dark-mem-mcp: ServeHTTP failed: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	if err := srv.ServeStdio(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "dark-mem-mcp: ServeStdio failed: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// splitList parte una lista separada por comas, quitando lo que este
+// vacio. Para DARK_HTTP_ORIGINS.
+func splitList(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// envOr devuelve el valor de la variable de entorno, o el defecto.
+func envOr(name, defecto string) string {
+	if v := os.Getenv(name); v != "" {
+		return v
+	}
+	return defecto
 }
 
 // runStartupRecoverLegacy detects a closed_aborted session from a

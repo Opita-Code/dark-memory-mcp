@@ -19,8 +19,10 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"sort"
+	"time"
 
 	"github.com/dark-agents/dark-memory-mcp/internal/agentbootstrap"
 	"github.com/dark-agents/dark-memory-mcp/internal/tools"
@@ -378,6 +380,245 @@ func (s *Server) Close() {
 		return
 	}
 	_ = s.boot.Shutdown(context.Background())
+}
+
+// ServeHTTPOptions configura el transporte HTTP local.
+//
+// QUE ES ESTO. El kernel se ha servido siempre por stdio, para que un
+// harness (opencode) lo hable como hijo de proceso. Eso no lo puede
+// hablar un NAVEGADOR: el navegador no puede lanzar procesos ni abrir
+// pipes, solo hace fetch. Este transporte es lo que permite que una
+// pagina web publicada (por ejemplo memory.opitacode.com) hable con el
+// dark-memory que esta en el escritorio de QUIEN VISITA la pagina.
+//
+// EL MODELO DE SEGURIDAD, y por que cada piece viene de donde viene:
+//
+//  1. SOLO LOOPBACK POR DEFECTO. La direccion por defecto es 127.0.0.1,
+//     no 0.0.0.0. Un servidor MCP local en todas las interfaces es un
+//     servidor MCP en la red de la persona, con las 81 tools.
+//
+//  2. CORS RESTRINGIDO, no abierto. AllowedOrigins es una lista
+//     explicita de origenes (por ejemplo
+//     "https://memory.opitacode.com"). Sin origenes configurados, el
+//     transporte NO emite ninguna cabecera Access-Control-*: una pagina
+//     cualquiera no puede ni ver la respuesta.
+//
+//  3. ANTI-DNS-REBINDING. mcp-go lo implementa (server/http_localhost.go,
+//     rejectDNSRebinding): si la conexion viene de loopback pero la
+//     cabecera Host no es de loopback, responde 403. Sin esto, una
+//     pagina maliciosa podria apuntar su dominio a 127.0.0.1 y hablar con
+//     el MCP local de la victima desde su navegador. La especificacion
+//     MCP de seguridad lo pide (2025-11-25,
+//     basic/security_best_practices#local-mcp-server-compromise).
+//
+//  4. PRIVATE NETWORK ACCESS. MEDIDO el 2026-11-18: sin esto, el
+//     navegador REAL bloquea la peticion. Una pagina servida por HTTPS
+//     que pide a 127.0.0.1 es, para el navegador, una peticion a la red
+//     privada, y Chrome exige (PNA, antes "Local Network Access") que el
+//     preflight OPTIONS devuelva `Access-Control-Allow-Private-Network:
+//     true`. mcp-go v0.56.0 NO lo implementa (medido: ni una mencion de
+//     "Private-Network" en su server/). Con curl no se nota, porque curl
+//     no aplica la politica del navegador: con curl el preflight pasaba y
+//     con el navegador fallaba con "TypeError: Failed to fetch". Sin
+//     esto, el producto no existe en el navegador.
+//
+//  5. NINGUNA CREDENCIAL EN EL SERVIDOR. El keyring es del sistema
+//     operativo de la persona; este transporte no lo expone.
+type ServeHTTPOptions struct {
+	// Addr es la direccion de escucha. Por defecto "127.0.0.1:0" (un
+	// puerto efimero, elegido por el sistema operativo).
+	Addr string
+
+	// AllowedOrigins son los origenes de navegador autorizados. Vacio
+	// significa: sin CORS (nadie puede llamar desde una pagina).
+	AllowedOrigins []string
+
+	// AllowCredentials habilita Access-Control-Allow-Credentials.
+	// Es incompatible con "*" en AllowedOrigins: la especificacion de
+	// CORS lo prohibe, y mcp-go lo respeta (con "*" y credentials, el
+	// servidor repite el Origin en vez de mandar "*").
+	AllowCredentials bool
+
+	// PathPrefix es la ruta base del endpoint MCP. Por defecto "/mcp".
+	PathPrefix string
+
+	// AllowPrivateNetwork habilita `Access-Control-Allow-Private-Network:
+	// true` en las respuestas a origenes autorizados. Es lo que permite
+	// que una pagina HTTPS (la landing) hable con un servidor en
+	// 127.0.0.1. MEDIDO el 2026-11-18: sin esto, el navegador bloquea
+	// la peticion entera.
+	AllowPrivateNetwork bool
+}
+
+// pnaMiddleware anade el soporte de Private Network Access.
+//
+// QUE ES PNA. Una pagina HTTPS que pide a una direccion de la red local
+// (127.0.0.1, 192.168.x.x) le esta pidiendo al navegador que le de
+// acceso a la red privada de la persona. El navegador no lo concede por
+// las buenas: exige que el servidor de destino conteste al preflight con
+// `Access-Control-Allow-Private-Network: true`. Chrome lo lleva
+// haciendo desde 2024 (y lo pidio antes con el nombre de Local Network
+// Access).
+//
+// POR QUE SOLO SI EL ORIGEN ESTA AUTORIZADO. La cabecera no se manda
+// "a lo bruto": se responde true SOLO cuando el Origin de la peticion
+// esta en la lista de autorizados. Si se mandara siempre, cualquier
+// pagina podria usar la cabecera para leer la respuesta del servidor
+// local, que es justo lo que el CORS restringido evita.
+//
+// MEDIDO el 2026-11-18: con esta cabecera, el preflight desde
+// https://memory.opitacode.com pasa y el navegador llega al servidor.
+func pnaMiddleware(next http.Handler, permitidos []string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Solo tiene sentido en el preflight: la peticion de verdad no
+		// lleva la cabecera, y por eso el navegador decide con la
+		// respuesta al OPTIONS.
+		if r.Method == http.MethodOptions &&
+			r.Header.Get("Access-Control-Request-Private-Network") == "true" {
+			origin := r.Header.Get("Origin")
+			for _, p := range permitidos {
+				if p == "*" || (origin != "" && p == origin) {
+					w.Header().Set("Access-Control-Allow-Private-Network", "true")
+					break
+				}
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// originMiddleware rechaza con 403 las peticiones cuyo Origin no este
+// autorizado.
+//
+// QUE PIDE LA ESPECIFICACION. MEDIDO el 2026-11-18 en la spec de MCP
+// (version 2025-06-18 y la revision draft 2026-07-28), seccion de
+// seguridad del transporte Streamable HTTP:
+//
+//	"Servers MUST validate the Origin header on all incoming connections
+//	 to prevent DNS rebinding attacks. If the Origin header is present and
+//	 invalid, servers MUST respond with HTTP 403 Forbidden."
+//
+// Es un MUST, y lo que teniamos era otra cosa: CORS restringido (el
+// navegador no deja LEER la respuesta de un origen no autorizado) y el
+// chequeo anti-rebinding de mcp-go sobre la cabecera Host (403 si la
+// peticion llega por loopback con un Host que no es de loopback).
+//
+// LO QUE AÑADE. El 403 explicito: la respuesta dice por que se rechaza, y
+// un cliente que no es un navegador (un script, un curl) recibe la misma
+// respuesta que el navegador. Antes un origen no autorizado recibia un 200
+// sin cabecera CORS, que es correcto para un navegador pero opaco para
+// cualquier otro cliente.
+//
+// Y QUE NO SE ROMPE. Una peticion SIN cabecera Origin no se toca: es el
+// caso legitimo de una herramienta de linea de comandos en la maquina de la
+// persona, que es lo que el transporte por HTTP tiene que permitir.
+//
+// FAIL CLOSED. Sin origenes configurados, cualquier peticion que traiga
+// Origin recibe un 403: el servidor no esta listo para hablar con
+// paginas, y lo dice.
+func originMiddleware(next http.Handler, permitidos []string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if origin != "" {
+			permitido := false
+			for _, p := range permitidos {
+				if p == "*" || p == origin {
+					permitido = true
+					break
+				}
+			}
+			if !permitido {
+				w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+				w.WriteHeader(http.StatusForbidden)
+				fmt.Fprintf(w, "dark-mem-mcp: origen no autorizado: %s\n", origin)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// ServeHTTP sirve la superficie MCP completa sobre Streamable HTTP.
+//
+// QUE ES. El MISMO servidor MCP que sirve stdio, sobre el mismo
+// http.Handler: el filtro de orden canonico, los hooks, el
+// meta-propagador, los recursos y el middleware del gate se quedan igual.
+// No hay una segunda implementacion de las tools: hay un segundo
+// TRANSPORTE. Por eso el numero de tools y su orden son los mismos que
+// por stdio.
+//
+// POR QUE NO ES "UN SERVIDOR MAS". El kernel es un proceso local de la
+// persona: la base (DARK_DB) esta en su disco, el keyring es el suyo, y
+// la pagina web que lo invoca no ve nada mas que lo que esa tool
+// devuelve. Ese es el modelo local-first: los datos de la persona no
+// salen del equipo de la persona.
+//
+// Bloquea hasta que ctx se cancela.
+func (s *Server) ServeHTTP(ctx context.Context, opts ServeHTTPOptions) error {
+	if opts.Addr == "" {
+		opts.Addr = "127.0.0.1:0"
+	}
+	if opts.PathPrefix == "" {
+		opts.PathPrefix = "/mcp"
+	}
+
+	log.Printf("dark-mem-mcp: serving http (server=%s v%s addr=%s prefix=%s origins=%v pna=%v)",
+		s.boot.Config.ServerName, s.boot.Config.ServerVersion,
+		opts.Addr, opts.PathPrefix, opts.AllowedOrigins, opts.AllowPrivateNetwork)
+	defer s.boot.Shutdown(ctx)
+
+	var cors []server.CORSOption
+	if len(opts.AllowedOrigins) > 0 {
+		cors = append(cors, server.WithCORSAllowedOrigins(opts.AllowedOrigins...))
+		// MEDIDO el 2026-11-18: el navegador exige que la cabecera
+		// `Mcp-Protocol-Version` este en `Access-Control-Allow-Headers`.
+		// mcp-go anuncia por defecto Content-Type, Mcp-Session-Id,
+		// Last-Event-ID y Authorization, pero NO esa: y como el cliente
+		// de la pagina la manda en cada llamada, el preflight la rechaza
+		// y el navegador da "TypeError: Failed to fetch" sin dar mas
+		// pistas. El sintoma es el mismo que el de un origen no
+		// autorizado, pero la causa es otra.
+		cors = append(cors, server.WithCORSAllowedHeaders(
+			"Content-Type", "Mcp-Session-Id", "Last-Event-ID", "Authorization",
+			"Mcp-Protocol-Version"))
+		if opts.AllowCredentials {
+			cors = append(cors, server.WithCORSAllowCredentials())
+		}
+	}
+
+	httpSrv := server.NewStreamableHTTPServer(s.mcpSrv,
+		server.WithEndpointPath(opts.PathPrefix),
+		server.WithStreamableHTTPCORS(cors...),
+	)
+
+	// El servidor HTTP de mcp-go ya aplica la proteccion anti-rebinding
+	// (server/http_localhost.go): una peticion que llega por loopback
+	// con una cabecera Host que no es de loopback recibe 403.
+	//
+	// El middleware de PNA se envuelve por fuera: tiene que responder al
+	// preflight ANTES de que el handler de mcp-go lo ignore.
+	//
+	// Y el de Origin, por fuera de todo: la spec dice MUST validar el
+	// Origin y responder 403 si es invalido. Se comprueba antes que nada,
+	// para que un origen no autorizado no llegue ni al handler.
+	mux := http.NewServeMux()
+	mux.Handle(opts.PathPrefix,
+		originMiddleware(pnaMiddleware(httpSrv, opts.AllowedOrigins), opts.AllowedOrigins))
+
+	ln, err := net.Listen("tcp", opts.Addr)
+	if err != nil {
+		return err
+	}
+	log.Printf("dark-mem-mcp: http listening on %s (mcp endpoint %s)", ln.Addr(), opts.PathPrefix)
+
+	srv := &http.Server{Handler: mux}
+	go func() {
+		<-ctx.Done()
+		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(shutCtx)
+	}()
+	return srv.Serve(ln)
 }
 
 // Registry exposes the tool registry so callers (e.g. tests, the

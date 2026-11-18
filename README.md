@@ -164,6 +164,62 @@ Más detalle por host: **[`docs/npm-install.md`](docs/npm-install.md)**.
 
 ---
 
+## Desde el navegador: tu memoria en tu equipo, sin servidor en la nube
+
+Tu memoria es tuya. Y si es tuya, el servicio que la guarda también debería
+vivir en tu equipo, no en el datacenter de alguien.
+
+El mismo binario que habla con tu agente puede hablar con **un navegador**:
+MCP sobre HTTP, en `127.0.0.1`. La página web que abras entonces habla con
+*tu* dark-memory, y lo que escribas se queda en *tu* disco.
+
+```
+npx -y @opitacode/dark-memory-mcp --http 127.0.0.1:8899 --origen https://memory.opitacode.com
+```
+
+| flag | qué hace |
+|---|---|
+| `--http DIRECCION` | sirve MCP sobre HTTP. Sin este flag, el binario sirve stdio, igual que siempre. |
+| `--origen ORIGENES` | los orígenes de navegador autorizados, separados por comas. |
+
+La página de ejemplo está en **https://memory.opitacode.com** (es estática:
+no hay backend detrás). Al abrirla, busca el servidor en `127.0.0.1` y, si
+lo encuentra, sus demos escriben en tu memoria de verdad.
+
+**Lo que hace y lo que no hace**
+
+- El servidor escucha **solo en loopback** por defecto. Un MCP local en
+  todas las interfaces es un MCP local en tu red, con las 81 tools.
+- **CORS restringido**: sin `--origen` no se emite ninguna cabecera
+  `Access-Control-Allow-Origin`, así que ninguna página puede ni leer la
+  respuesta. Con la lista, solo esos orígenes pueden.
+- **Origen inválido → 403**: la especificación de MCP lo exige («los
+  servidores DEBEN validar la cabecera `Origin`… si está presente y no es
+  válida, DEBEN responder 403»). Sin cabecera `Origin` —una herramienta de
+  línea de comandos en tu máquina— la petición se sirve normal.
+- **Anti-DNS-rebinding**: si la petición llega por loopback pero la
+  cabecera `Host` no es de loopback, la respuesta es 403. Sin esto, una
+  página maliciosa podría apuntar su dominio a `127.0.0.1` y hablar con tu
+  MCP desde tu navegador.
+- **Private Network Access**: se emite `Access-Control-Allow-Private-Network:
+  true` en el preflight, y solo para los orígenes autorizados. (La guía de
+  Chrome lo marca como obsoleto y dice que nunca fue bloqueante: el
+  permiso de la persona es el que manda. Se mantiene porque es inocuo y
+  porque otros navegadores aún lo aplican.)
+- El **keyring** es el de tu sistema operativo. El transporte HTTP no lo
+  expone, y la página web no ve lo que hay dentro.
+
+**Lo que el navegador te va a pedir.** Chrome 151 (y los navegadores con
+Local Network Access) exigen que concedas permiso, explícitamente, para que
+un sitio HTTPS acceda a tu red local. Es el mismo modelo que el micrófono o
+la cámara: sin ese permiso, el navegador no deja que la página hable con tu
+servidor, y no hay forma de saltárselo desde el código.
+
+Lo que **no** cambia: la lógica de las tools, el orden canónico, el gate de
+sesión y el proyecto. Es otro transporte, no otra implementación.
+
+---
+
 ## Elige tu nivel
 
 **Nivel 1 — el cuaderno.** El agente recuerda entre sesiones. Para el primer día.
