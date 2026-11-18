@@ -89,3 +89,4 @@ pr-*-review-artifact.patch
 # artefacto del repo, y un `git add -A` lo publicaria. El gate de wire
 # (tests/wire) lo construye en local con el mismo nombre.
 cmd/dark-mem-mcp/dark-mem-mcp
+merge-review-architectural.md
