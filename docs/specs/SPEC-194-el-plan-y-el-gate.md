@@ -165,15 +165,38 @@ la persona lo **aprueba**. Tres capas, cada una con su autoridad. Esto es el
 ### 3.2 La tabla: campos nuevos en `vibe_specs`
 
 ```sql
--- migración v33 (nueva)
+-- migración v33 (nueva) — OCHO columnas, no siete (ver más abajo)
 ALTER TABLE vibe_specs ADD COLUMN plan_json     TEXT;      -- el Plan
 ALTER TABLE vibe_specs ADD COLUMN plan_status   TEXT NOT NULL DEFAULT 'draft';
 ALTER TABLE vibe_specs ADD COLUMN plan_decision TEXT;      -- execute|edit|cancel
 ALTER TABLE vibe_specs ADD COLUMN plan_decided_by TEXT;    -- actor
 ALTER TABLE vibe_specs ADD COLUMN plan_decided_at TEXT;
 ALTER TABLE vibe_specs ADD COLUMN plan_tier     TEXT;      -- corta|media|larga
-ALTER TABLE vibe_specs ADD COLUMN plan_budget_used INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE vibe_specs ADD COLUMN plan_budget_used INTEGER NOT NULL DEFAULT 0;  -- tool calls
+ALTER TABLE vibe_specs ADD COLUMN plan_judge_used  INTEGER NOT NULL DEFAULT 0;  -- judge calls
 ```
+
+**Ocho columnas, no siete: los dos contadores del presupuesto son columnas
+distintas.** La sección 3.8 ya describía los dos recursos (`used_tool_calls` y
+`used_judge_calls`), pero el DDL de arriba declaraba **un** contador. Eso es un
+defecto real, no una {:?} divergencia de redacción: **un solo contador no
+puede vigilar dos techos**. Lo demostró el test del store
+`TestChargePlanCall_JudgeBudgetIsSeparate`, que falló contra la
+implementación de un solo contador: la segunda llamada al juez gastaba su
+presupuesto sin que el techo de judge calls lo notara, porque el contador
+compartido ya estaba en su máximo por los tool calls.
+
+Y los contadores son **columnas**, no parte de `plan_json`, por una razón
+operativa: tienen que incrementarse **atómicamente** junto a la comprobación
+que los lee (AC11). Un contador dentro de un documento JSON no se puede
+incrementar atómicamente sin reescribir el documento entero, que es una
+carrera de lectura-modificación-escritura.
+
+Nota de versión: el DDL de esta sección es **v33 en sqlite** y **v35 en
+postgres**. Los dos drivers llevan contadores de versión independientes y ya
+estaban desalineados antes de este trabajo (postgres tenía dos migraciones
+que sqlite no tenía), así que el número de migración es una secuencia local
+de cada driver, no un contrato compartido.
 
 `plan_status` es el estado del gate, con **cinco** valores:
 
