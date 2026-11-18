@@ -259,6 +259,15 @@ tarda 60-130 s), así que **el plan se valida en `PreCheck` de forma
 determinista**, y el juez valida el shortlist **una vez**, cuando el plan se
 crea.
 
+**Y esa validación interna del shortlist NO pasa por el gate.** Es una
+llamada interna del orchestrator a `PlanJudge` (no una tool del harness), y
+además ocurre con el plan en `draft`: si pasara por el gate, se rechazaría
+con `ErrNotApproved` y el plan no se podría proponer nunca. Las tools
+`judge` y `consensus` **sí** están en `IsPlanRequired` y **sí** gastan
+presupuesto de juez: esas son llamadas del agente sobre otros artefactos, y
+exigen plan aprobado. Las dos cosas no se contradicen: el juez que valida
+el shortlist es interno y el que el agente pide es una tool.
+
 ### 3.4 La tercerización de las tools: `IsPlanRequired`
 
 Hoy hay dos conjuntos. La spec añade el tercero, en el mismo sitio y con el
@@ -329,6 +338,7 @@ func PlanLifecycleExempt(toolName string) bool {
     case "plan_create",   // propone el plan (nace en 'draft')
         "plan_get",      // consulta el plan
         "plan_decide",   // la persona decide sobre el plan
+        "vibe_spec",     // crea el spec DEL QUE cuelga el plan
         "health_ping",
         "memory_state",
         "active_policy":
@@ -337,6 +347,31 @@ func PlanLifecycleExempt(toolName string) bool {
     return false
 }
 ```
+
+**`vibe_spec` también está exenta, y sin ella el gate no arranca.** El plan
+cuelga de una fila de `vibe_specs` (`SavePlan` rechaza un plan sin spec), así
+que la lista `IsPlanRequired` de la sección 3.4, que **incluía
+`vibe_spec`**, era un deadlock con la exención de arriba: para crear el
+primer plan hacía falta un spec, y para crear el spec hacía falta un plan
+aprobado. El ciclo del plan no era el problema (ese sí está exento por
+diseño); el problema era `vibe_spec`.
+
+La alternativa considerada y **descartada**: que `plan_create` creara el spec
+en vez de colgar de uno. Sería más limpio en teoría, pero cambia el contrato
+de la tool (habría que pasarle el contenido del spec en vez de un
+`spec_id`), reordena el flujo y hace que el gate dependa de una tool que
+todavía no existe. La exención de `vibe_spec` es una lista cerrada más una
+tool, y su precio está medido y dicho abajo.
+
+**El precio de eximir `vibe_spec`, dicho en voz alta.** `vibe_spec` puede
+crear un spec sin plan, y con `DARK_MEMORY_V280=1` ese spec puede crear
+además sus `todo` auto-guardados (`auto_save_todos`). Ese es el hueco
+deliberado de la exención: una fila de spec y sus todos, sin plan. Se
+acepta porque son **escrituras acotadas y auditadas** (cada una deja fila
+en `write_audit`), y porque el trabajo de verdad —publicar, decidir, escribir
+memoria, migrar— sigue exigiendo plan. La alternativa sería que el
+`spec_id` del plan se crease solo, lo que obliga a `plan_create` a crear el
+spec; se deja para una iteración posterior si el hueco molesta.
 
 **Y el orden de las comprobaciones es explícito**, porque importa:
 
