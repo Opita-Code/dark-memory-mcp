@@ -1171,6 +1171,16 @@ type WriteContext struct {
 	// the INSERT statements. Adding this field + threading through
 	// the INSERT closes the round-trip gap.
 	SessionEvent string
+
+	// Notes is a free-text annotation for the write_audit row. It
+	// exists for the writes whose CONTENT is the trail: a human
+	// decision on a plan, for instance, is only a trail if the row
+	// says what was decided and what the state was before. Empty
+	// string means "no annotation" (NULL in the DB).
+	//
+	// It is additive: no existing caller sets it, so no existing
+	// write_audit row changes.
+	Notes string
 }
 
 // VacuumPolicy controls what Vacuum deletes.

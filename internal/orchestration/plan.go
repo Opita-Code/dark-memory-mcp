@@ -297,7 +297,7 @@ func (o *Orchestrator) PlanCreate(ctx context.Context, in PlanCreateInput) (*Pla
 
 	// 6. Persist. The write path is "plan_create", so the row lands
 	// in write_audit (INV-1) with the decision's actor.
-	if err := o.Store.SavePlan(ctx, o.planWriteContext(ctx, in.SessionID, "plan_create", projectID), in.SpecID, row); err != nil {
+	if err := o.Store.SavePlan(ctx, o.planWriteContext(ctx, in.SessionID, "plan_create", projectID, "plan_create", ""), in.SpecID, row); err != nil {
 		return nil, err
 	}
 
@@ -399,6 +399,13 @@ func (o *Orchestrator) PlanDecide(ctx context.Context, in PlanDecideInput) (*Pla
 	}
 	decidedAt := o.now().UTC().Format(time.RFC3339Nano)
 
+	// The PREVIOUS state is captured before anything changes: it goes
+	// into the notes of the audit row, because SPEC-194 AC5 asks for
+	// the previous plan to stay in the trail and a row that only says
+	// "plan_decide" does not say it.
+	previous := row.Plan
+	previous.Candidates = append([]vibeflow.Candidate(nil), row.Plan.Candidates...)
+
 	row.Decision = decision
 	row.DecidedBy = decidedBy
 	row.DecidedAt = decidedAt
@@ -407,19 +414,36 @@ func (o *Orchestrator) PlanDecide(ctx context.Context, in PlanDecideInput) (*Pla
 	case vibeflow.DecisionExecute:
 		row.Status = vibeflow.PlanApproved
 	case vibeflow.DecisionEdit:
-		// The reviewer changed the proposal. The live plan goes back
-		// to draft so that it has to be approved again, and the
-		// revision counter records that a revision happened.
+		// The reviewer changed the proposal, so the plan has to be
+		// approved AGAIN, and the revision counter records that a
+		// revision happened.
 		row.Plan.Revision++
 		row.Plan.Intent = strings.TrimSpace(in.EditPrompt)
+		// RE-PROPOSE. The reviewer narrowed the intent, so the
+		// shortlist is ranked again against the NEW intent: keeping
+		// the candidates of the old intent would be a plan that does
+		// not answer the question the reviewer asked (SPEC-194
+		// §3.7, "el plan se vuelve a proponer").
+		//
+		// The budget maxima are NOT touched: the allowance the
+		// human granted does not shrink because the intent changed.
+		// The spent counters live in their own columns and keep
+		// counting (the plan is the same plan).
+		if o.planRanker != nil {
+			row.Plan.Candidates = o.planRanker.Rank(row.Plan.Intent, defaultMaxCandidates)
+			row.Plan.PlanTier = vibeflow.PlanTierForCandidates(len(row.Plan.Candidates))
+		}
 		row.Status = vibeflow.PlanEdited
 	case vibeflow.DecisionCancel:
 		row.Status = vibeflow.PlanCancelled
 	}
 
 	// The write. write_audit gets the row with write_path
-	// "plan_decide" and the actor (INV-1).
-	if err := o.Store.SavePlan(ctx, o.planWriteContext(ctx, in.SessionID, "plan_decide", projectID), row.SpecID, row); err != nil {
+	// "plan_decide", the actor being the person who decided
+	// (SPEC-194 §3.7: actor = decided_by, NOT the tool name) and the
+	// notes carrying the decision and the previous plan (INV-1, AC5).
+	notes := planDecisionNotes(decision, decidedBy, previous, in.EditPrompt)
+	if err := o.Store.SavePlan(ctx, o.planWriteContext(ctx, in.SessionID, "plan_decide", projectID, decidedBy, notes), row.SpecID, row); err != nil {
 		return nil, err
 	}
 
@@ -434,14 +458,46 @@ func (o *Orchestrator) PlanDecide(ctx context.Context, in PlanDecideInput) (*Pla
 	}, nil
 }
 
+// planDecisionNotes builds the annotation that goes into the
+// write_audit row of a decision.
+//
+// It carries three things: what was decided, who decided it, and what
+// the plan looked like BEFORE. The "before" is what SPEC-194 AC5 asks
+// for ("el plan anterior queda en el rastro"): without it, an `edit`
+// overwrites the plan and the trail only says that something changed.
+func planDecisionNotes(decision vibeflow.Decision, decidedBy string, previous vibeflow.Plan, editPrompt string) string {
+	var b strings.Builder
+	b.WriteString("decision=")
+	b.WriteString(string(decision))
+	b.WriteString(" decided_by=")
+	b.WriteString(decidedBy)
+	if p := strings.TrimSpace(editPrompt); p != "" {
+		b.WriteString(" prompt=")
+		b.WriteString(p)
+	}
+	b.WriteString(" previous_intent=")
+	b.WriteString(previous.Intent)
+	b.WriteString(" previous_tier=")
+	b.WriteString(string(previous.PlanTier))
+	b.WriteString(" previous_candidates=")
+	b.WriteString(strings.Join(previous.CandidateNames(), ","))
+	fmt.Fprintf(&b, " previous_budget=%d/%d",
+		previous.Budget.MaxToolCalls, previous.Budget.MaxJudgeCalls)
+	return b.String()
+}
+
 // planWriteContext builds the WriteContext of a plan write. The
 // WritePath is the TOOL name, so write_audit says which tool made the
 // change.
-func (o *Orchestrator) planWriteContext(ctx context.Context, sessionID, writePath, projectID string) store.WriteContext {
+func (o *Orchestrator) planWriteContext(ctx context.Context, sessionID, writePath, projectID, actor, notes string) store.WriteContext {
 	wc := store.WriteContext{
-		Actor:     writePath,
+		Actor:     actor,
 		SessionID: sessionID,
 		WritePath: writePath,
+		// The notes are the annotation of the write_audit row. For
+		// a decision they carry what was decided and what the plan
+		// looked like before (SPEC-194 AC5).
+		Notes: notes,
 		// SPEC-204: the project resolved from the session is the
 		// project the write lands in. It is carried explicitly so the
 		// store applies the SAME identity the orchestrator resolved,

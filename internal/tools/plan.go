@@ -42,7 +42,6 @@ import (
 
 	"github.com/dark-agents/dark-memory-mcp/internal/orchestration"
 	"github.com/dark-agents/dark-memory-mcp/internal/plan"
-	"github.com/dark-agents/dark-memory-mcp/internal/vibeflow"
 )
 
 // RegisterPlan wires the PLAN namespace (3 tools).
@@ -223,9 +222,9 @@ func writeSchemaTokens(b *strings.Builder, v any) {
 	}
 }
 
-// planCandidatesFromDocs is a helper for tests and for the judge
-// adapter: it builds the candidate list from a corpus without going
-// through the orchestrator.
-func planCandidatesFromDocs(docs []plan.Document, intent string, k int) []vibeflow.Candidate {
-	return plan.NewRanker(docs).Rank(intent, k)
-}
+// NOTE: there is deliberately no "build the candidates here" helper.
+// An earlier version had one (planCandidatesFromDocs) with no caller:
+// the candidates are produced by the ranker that the orchestrator
+// holds, and a second path to build them would be a second thing to
+// keep in sync. The independent review of PR #43 flagged it as dead
+// code and it is gone.

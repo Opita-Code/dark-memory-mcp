@@ -196,14 +196,38 @@ type Budget struct {
 	UsedJudgeCalls int `json:"used_judge_calls"`
 }
 
-// Exhausted reports which resource ran out, if any. The returned
-// string is empty when the budget still has room.
-func (b Budget) Exhausted() string {
-	if b.UsedToolCalls >= b.MaxToolCalls {
-		return "tool_calls"
-	}
-	if b.UsedJudgeCalls >= b.MaxJudgeCalls {
-		return "judge_calls"
+// The two resources of the budget. They are DISTINCT ceilings, and a
+// call that spends one does not have to be refused because the other
+// ran out.
+const (
+	// ResourceToolCalls names the tool-call budget.
+	ResourceToolCalls = "tool_calls"
+	// ResourceJudgeCalls names the judge-call budget.
+	ResourceJudgeCalls = "judge_calls"
+)
+
+// Exhausted reports whether the GIVEN resource ran out. The returned
+// string is empty when that resource still has room.
+//
+// The resource is a parameter, and that is the whole point: the two
+// budgets are two ceilings. A version of this function that looked at
+// BOTH counters refused a tool call because the JUDGE budget was spent,
+// and refused a judge call because the TOOL budget was spent. With the
+// default tier `corta` (one judge call), a single judge call blocked
+// every mutating tool call of the plan while the tool budget sat
+// untouched. That defect was found by the independent review of PR #43
+// and it contradicted SPEC-194 §3.8, which says each counter cuts ITS
+// resource.
+func (b Budget) Exhausted(resource string) string {
+	switch resource {
+	case ResourceJudgeCalls:
+		if b.UsedJudgeCalls >= b.MaxJudgeCalls {
+			return ResourceJudgeCalls
+		}
+	case ResourceToolCalls:
+		if b.UsedToolCalls >= b.MaxToolCalls {
+			return ResourceToolCalls
+		}
 	}
 	return ""
 }
@@ -351,6 +375,8 @@ type PlanGateInput struct {
 	Authorised bool
 
 	// IsJudgeCall says whether this call spends the judge budget.
+	// It is LOAD-BEARING: the gate checks the ceiling of the
+	// resource being spent, and the two ceilings are independent.
 	IsJudgeCall bool
 }
 
@@ -415,8 +441,14 @@ func (g *PlanGate) Check(in PlanGateInput) PlanGateVerdict {
 		}
 	}
 
-	// 4. The budget is exhausted.
-	if exhausted := in.Budget.Exhausted(); exhausted != "" {
+	// 4. The budget of the RESOURCE BEING SPENT is exhausted. Only
+	// that one: the tool-call ceiling and the judge-call ceiling are
+	// independent, and spending one does not spend the other.
+	resource := ResourceToolCalls
+	if in.IsJudgeCall {
+		resource = ResourceJudgeCalls
+	}
+	if exhausted := in.Budget.Exhausted(resource); exhausted != "" {
 		return PlanGateVerdict{
 			Allowed:         false,
 			Reason:          ReasonBudgetExceeded,
@@ -430,14 +462,14 @@ func (g *PlanGate) Check(in PlanGateInput) PlanGateVerdict {
 }
 
 func budgetUsed(in PlanGateInput, resource string) int {
-	if resource == "judge_calls" {
+	if resource == ResourceJudgeCalls {
 		return in.Budget.UsedJudgeCalls
 	}
 	return in.Budget.UsedToolCalls
 }
 
 func budgetMax(in PlanGateInput, resource string) int {
-	if resource == "judge_calls" {
+	if resource == ResourceJudgeCalls {
 		return in.Budget.MaxJudgeCalls
 	}
 	return in.Budget.MaxToolCalls

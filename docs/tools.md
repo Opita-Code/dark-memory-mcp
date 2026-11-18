@@ -5,15 +5,15 @@
 > Para la lista completa con namespaces, tabla compacta y qué herramienta
 > usar en cada momento, sigue aquí.
 
-Dark Memory expone **78 herramientas canónicas** (más 3 extras armadas por
+Dark Memory expone **81 herramientas canónicas** (más 3 extras armadas por
 variable de entorno, 81 en total) agrupadas en **21 namespaces**. El agente
 las invoca con el prefijo `dark_memory_`.
 
-Las 78 son la superficie **canónica medida** en el código (fijada por el
-freeze test `TestCanonicalOrder_Frozen_78_21_28`; cualquier alta o baja
+Las 81 son la superficie **canónica medida** en el código (fijada por el
+freeze test `TestCanonicalOrder_Frozen_81_22_33`; cualquier alta o baja
 mueve ese test en el mismo commit). La fuente de verdad con el conteo por
-oficio está en [`v4-status.md §1`](v4-status.md#1-tools-inventory-78-canonical-21-namespaces-schema-v32).
-Estructura agrupada por 22 oficios (57 + 21 que antes faltaban aquí):
+oficio está en [`v4-status.md §1`](v4-status.md#1-tools-inventory-81-canonical-22-namespaces-schema-v33).
+Estructura agrupada por 22 oficios (57 + 24 que antes faltaban aquí):
 
 ### Sesión (7 tools)
 `session_start` · `session_resume` · `session_heartbeat` · `session_status` · `session_close` · `session_recover` · `session_resurrect`
@@ -46,9 +46,14 @@ El plan es el artefacto que dice, ANTES de hacer trabajo, qué tools se van a
 llamar, con qué profundidad y con qué presupuesto. `plan_create` propone los
 candidatos (BM25 sobre el registro de tools con la doc completa), el tier y el
 presupuesto; el juez valida el shortlist sin elegirlo; `plan_decide` registra la
-decisión humana (`execute` | `edit` | `cancel`) con su fila en `write_audit`.
+decisión humana (`execute` | `edit` | `cancel`) con su fila en `write_audit`
+(con quién decidió, qué se decidió y cómo era el plan antes).
 
-Las tres están **exentas** del gate del plan: `plan_decide` es la tool que
+Dos cosas que esta superficie **todavía no hace**, y que no hay que
+prometer: el juez **no está cableado** todavía, así que `plan_create`
+devuelve `judged=false` (el shortlist se propone, sin validar); y el gate
+**no existe** todavía, así que no hay nada que eximir. Las tres tools
+**estarán exentas** del gate cuando llegue: `plan_decide` es la tool que
 registra la aprobación, así que exigirle un plan aprobado para aprobar el
 primer plan sería un deadlock.
 

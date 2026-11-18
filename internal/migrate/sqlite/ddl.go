@@ -1604,7 +1604,7 @@ CREATE INDEX IF NOT EXISTS idx_last_modified_by_event_id ON agent_memory(last_mo
 		//     plan is PER SPEC. A session opens and closes several specs,
 		//     each with its own plan and its own human decision.
 		//
-		// WHY SEVEN COLUMNS AND NOT ONE JSON BLOB:
+		// WHY EIGHT COLUMNS AND NOT ONE JSON BLOB:
 		//
 		//   - plan_status, plan_decision, plan_decided_by and
 		//     plan_decided_at are QUERIED (the gate reads the status on

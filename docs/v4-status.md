@@ -142,18 +142,20 @@
 
 **Measured, not declared** (2026-10-15, verified by an in-package probe
 over `tools.NamespaceGroups()` and `tools.NamespaceCount()`, and live
-via `dark_memory_health_ping`: 78 canonical + 3 extras, schema 32):
+via `dark_memory_health_ping`: 81 canonical + 3 extras, schema 33):
 
-- **78 canonical tools** across **21 namespaces**
+- **81 canonical tools** across **22 namespaces**
 - Plus **3 env-gated armed extras** (`DARK_REDTEAM=armed` red-team,
-  federation under `DARK_FEDERATION_PEER_DSN`, and one more) → **81 tools
-  live** when armed. Both numbers are real; 78 is the canonical registry,
-  81 is the maximum reachable surface. Say which one you mean.
+  federation under `DARK_FEDERATION_PEER_DSN`, and one more) → **84 tools
+  live** when armed. Both numbers are real; 81 is the canonical registry,
+  84 is the maximum reachable surface. Say which one you mean.
 - Surface delta since the 73/20 baseline (2026-10-08): +1 `vibe_compile`
   in VIBE (Sesión 5bis, commit `c3b0a51`) + new OAUTH namespace with 4
   (`judge_options`, `oauth_connect`, `oauth_status`, `oauth_disconnect`;
-  Sesión 6, commit `8ed967a`). The freeze test
-  `TestCanonicalOrder_Frozen_78_21_28` pins this surface.
+  Sesión 6, commit `8ed967a`) + new PLAN namespace with 3
+  (`plan_create`, `plan_get`, `plan_decide`; SPEC-194, PR #43). The
+  freeze test `TestCanonicalOrder_Frozen_81_22_33` pins this surface,
+  schema v33 (`plan_columns`).
 - **On the old "97+" denominator (retired 2026-10-15):** revisions of
   this section and `README.md` cited "`97+` originally promised" with a
   pointer to `ARCHITECTURE-V4.md §6.3`. That pointer does not resolve —
@@ -2563,7 +2565,7 @@ then OI-1..OI-3 BLOCKING operator validation from Loop 6 carry-over.
 
 | Reliability | What's stable |
 |---|---|
-| ✅ Stable (won't change) | Tool wire names (78 canonical, append-only: 73 at alpha.25 + `vibe_compile` + 4 OAUTH since), agent_memory schema, FTS5 ordering (INV-17), worker pool size=1, store/WithTx contract (INV-16), `sdd_evaluations` schema (22 cols; +4 for calibration in alpha.16), **events table schema v32 (27 cols, 3 indexes, polymorphic)**, judge MCP tool wire shapes (4 base + 7 util), persona registry ids (16 total, 8 v4alpha), `BootstrapCI` deterministic seed=42, **EVENTS namespace tools (event_log + event_replay) wire shapes**, **HMAC chain continuous across events + write_audit (ADR-016 + ADR-018)**, **LLM_BIND namespace tools (llm_provider_bind + llm_provider_probe) wire shapes**, **drift_judge 9-step pipeline (LLMJudge primary, NLI fallback)**, **provider_id prefix routing: judge-* → LLMJudge, chat-* → NLI ChatProvider**, **`vibe-loop-git v0.1.0` companion mod (6 loops + 1 design + 4 adapters + 7 templates + 9 tests, all SHIPPED) at `mods/vibe-loop-git/`**, **T-407-c 3-layer defensive pattern (per-model defaults table + operator override + finish_reason="length" retry-on-length) for `ChatProvider`** |
+| ✅ Stable (won't change) | Tool wire names (81 canonical, append-only: 73 at alpha.25 + `vibe_compile` + 4 OAUTH + 3 PLAN since), agent_memory schema, FTS5 ordering (INV-17), worker pool size=1, store/WithTx contract (INV-16), `sdd_evaluations` schema (22 cols; +4 for calibration in alpha.16), **events table schema v32 (27 cols, 3 indexes, polymorphic)**, judge MCP tool wire shapes (4 base + 7 util), persona registry ids (16 total, 8 v4alpha), `BootstrapCI` deterministic seed=42, **EVENTS namespace tools (event_log + event_replay) wire shapes**, **HMAC chain continuous across events + write_audit (ADR-016 + ADR-018)**, **LLM_BIND namespace tools (llm_provider_bind + llm_provider_probe) wire shapes**, **drift_judge 9-step pipeline (LLMJudge primary, NLI fallback)**, **provider_id prefix routing: judge-* → LLMJudge, chat-* → NLI ChatProvider**, **`vibe-loop-git v0.1.0` companion mod (6 loops + 1 design + 4 adapters + 7 templates + 9 tests, all SHIPPED) at `mods/vibe-loop-git/`**, **T-407-c 3-layer defensive pattern (per-model defaults table + operator override + finish_reason="length" retry-on-length) for `ChatProvider`** |
 | ⚠️ Likely to evolve | Package names (still aspirational vs actual drift), Pipeline API (LLM judge swap), Constitution (still hardcoded), persona override mechanism (spec 1155 v14 inheritance), progress emitter phases (3 → N as new pipeline stages emerge) |
 | ❌ Not implemented | security/* (INV-11..15), mutable Workflow, red-team mods, federated research, L6-VLP, admin (vacuum only), EmbedderRefresh wire (no embedder code), semantic CacheInvalidation wire (no semantic cache trigger) |
 

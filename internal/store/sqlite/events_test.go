@@ -654,6 +654,12 @@ func TestMigrationIdempotency_V32(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("InsertEvent: %v", err)
 	}
+	// The version after the FIRST open, captured before the store is
+	// closed: it is the reference the second open is compared against.
+	sv1, err := st1.SchemaVersion(ctx)
+	if err != nil {
+		t.Fatalf("SchemaVersion (first open): %v", err)
+	}
 	st1.Close()
 
 	// Second open: re-applies all migrations. v32 is idempotent
@@ -666,16 +672,24 @@ func TestMigrationIdempotency_V32(t *testing.T) {
 	st2 := iface2.(*Store)
 	defer st2.Close()
 
-	// Schema version should still be the latest (v33 = plan_columns,
-	// SPEC-194 T5). The point of this assertion is IDEMPOTENCY: opening
-	// the DB a second time must not migrate it again.
+	// The point of this assertion is IDEMPOTENCY: opening the DB a
+	// second time must not migrate it again. So it compares the
+	// version of the SECOND opening with the version of the FIRST
+	// one, not with the constant of the migration set: comparing
+	// against the constant would be tautological (the store reports
+	// the migration set it knows, so it would always agree), and
+	// the independent review of PR #43 flagged exactly that.
+	//
+	// The absolute version is pinned elsewhere, by the freeze test
+	// (internal/tools: TestCanonicalOrder_Frozen_81_22_33), which is
+	// the place where "which version" is a contract.
 	sv, err := st2.SchemaVersion(ctx)
 	if err != nil {
 		t.Fatalf("SchemaVersion: %v", err)
 	}
-	// The schema version is the driver's own current version. The
-	// constant lives in internal/migrate/sqlite; the store reports
-	// what it actually migrated to, so they must agree.
+	if sv != sv1 {
+		t.Errorf("SchemaVersion after the second Open = %d; want %d (the same as after the first: opening must not migrate again)", sv, sv1)
+	}
 	if want := migrate_sqlite.CurrentVersion(); sv != want {
 		t.Errorf("SchemaVersion = %d; want %d (migrate_sqlite.CurrentVersion)", sv, want)
 	}

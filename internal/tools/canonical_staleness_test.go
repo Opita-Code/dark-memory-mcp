@@ -152,11 +152,13 @@ func TestCanonicalOrder_WirePrefixConsistent(t *testing.T) {
 // Bumping 73 → 78 (Sesión 5bis + Sesión 6, 2026-10-14, LUCIDEZ R16
 // disclosure): two deliberate surface additions that shipped without
 // updating this freeze (the freeze was red on HEAD until this bump):
-//   (a) Sesión 5bis commit c3b0a51 adds vibe_compile to VIBE
-//       (74th tool; bash compiler for the vibe-loop-git runtime).
-//   (b) Sesión 6 commit 8ed967a adds the OAUTH namespace with 4
-//       tools (judge_options + oauth_connect + oauth_status +
-//       oauth_disconnect) for Tier 0 self-auth.
+//
+//	(a) Sesión 5bis commit c3b0a51 adds vibe_compile to VIBE
+//	    (74th tool; bash compiler for the vibe-loop-git runtime).
+//	(b) Sesión 6 commit 8ed967a adds the OAUTH namespace with 4
+//	    tools (judge_options + oauth_connect + oauth_status +
+//	    oauth_disconnect) for Tier 0 self-auth.
+//
 // Surface advances 73 → 78 tools, 20 → 21 namespaces. Schema stays
 // v32. Suffix 28 unchanged (meaning per SPEC 1276; not re-derived
 // here — declared unknown per LUCIDEZ R6).
@@ -168,7 +170,7 @@ func TestCanonicalOrder_WirePrefixConsistent(t *testing.T) {
 //     plan_decide) in a new PLAN namespace. They are the first half
 //     of SPEC-194 (the second half, the gate, is PR B).
 //   - The schema bump is v33 = plan_columns: the plan lives on
-//     vibe_specs with seven new columns. No table is added and no
+//     vibe_specs with eight new columns. No table is added and no
 //     existing table changes shape, so the bump is additive.
 //
 // The same bump pattern was used before, twice, and both times the

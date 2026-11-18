@@ -223,8 +223,11 @@ func TestTierForCandidates(t *testing.T) {
 
 func TestBudget_ExhaustedAndRemaining(t *testing.T) {
 	b := Budget{MaxToolCalls: 3, MaxJudgeCalls: 1}
-	if got := b.Exhausted(); got != "" {
-		t.Errorf("Exhausted() = %q, want empty", got)
+	if got := b.Exhausted(ResourceToolCalls); got != "" {
+		t.Errorf("Exhausted(tool_calls) = %q, want empty", got)
+	}
+	if got := b.Exhausted(ResourceJudgeCalls); got != "" {
+		t.Errorf("Exhausted(judge_calls) = %q, want empty", got)
 	}
 	tc, jc := b.Remaining()
 	if tc != 3 || jc != 1 {
@@ -232,8 +235,13 @@ func TestBudget_ExhaustedAndRemaining(t *testing.T) {
 	}
 
 	b.UsedToolCalls = 3
-	if got := b.Exhausted(); got != "tool_calls" {
-		t.Errorf("Exhausted() = %q, want %q", got, "tool_calls")
+	if got := b.Exhausted(ResourceToolCalls); got != ResourceToolCalls {
+		t.Errorf("Exhausted(tool_calls) = %q, want %q", got, ResourceToolCalls)
+	}
+	// The judge ceiling is a DIFFERENT ceiling: spending the tool
+	// budget does not spend it.
+	if got := b.Exhausted(ResourceJudgeCalls); got != "" {
+		t.Errorf("Exhausted(judge_calls) = %q, want empty: the two ceilings are independent", got)
 	}
 	// Over budget (a race could push it past) must still read as
 	// exhausted, and Remaining must not go negative.
@@ -277,5 +285,53 @@ func TestPlanStatus_Terminal(t *testing.T) {
 		if !s.Terminal() {
 			t.Errorf("%q must be terminal", s)
 		}
+	}
+}
+
+// The two ceilings are INDEPENDENT. This test pins the defect that the
+// independent review of PR #43 found: the gate used to look at BOTH
+// counters, so with the default tier `corta` (one judge call) a single
+// judge call blocked EVERY mutating tool call of the plan while the
+// tool budget sat untouched.
+//
+// SPEC-194 §3.8 says each counter cuts ITS resource. This is that.
+func TestPlanGate_BudgetsAreIndependent(t *testing.T) {
+	g := NewPlanGate()
+
+	// The judge budget is spent; a tool call must still pass.
+	in := approvedPlan()
+	in.Budget.UsedJudgeCalls = 1 // MaxJudgeCalls = 1
+	in.IsJudgeCall = false
+	if v := g.Check(in); !v.Allowed {
+		t.Errorf("a tool call was refused because the JUDGE budget was spent: %s", v.Message)
+	}
+
+	// The tool budget is spent; a judge call must still pass.
+	in = approvedPlan()
+	in.Budget.UsedToolCalls = 3 // MaxToolCalls = 3
+	in.IsJudgeCall = true
+	if v := g.Check(in); !v.Allowed {
+		t.Errorf("a judge call was refused because the TOOL budget was spent: %s", v.Message)
+	}
+
+	// And each one still cuts its OWN resource.
+	in = approvedPlan()
+	in.Budget.UsedJudgeCalls = 1
+	in.IsJudgeCall = true
+	v := g.Check(in)
+	if v.Allowed {
+		t.Error("a judge call passed with the judge budget exhausted")
+	} else if v.BudgetExhausted != ResourceJudgeCalls {
+		t.Errorf("BudgetExhausted = %q, want %q", v.BudgetExhausted, ResourceJudgeCalls)
+	}
+
+	in = approvedPlan()
+	in.Budget.UsedToolCalls = 3
+	in.IsJudgeCall = false
+	v = g.Check(in)
+	if v.Allowed {
+		t.Error("a tool call passed with the tool budget exhausted")
+	} else if v.BudgetExhausted != ResourceToolCalls {
+		t.Errorf("BudgetExhausted = %q, want %q", v.BudgetExhausted, ResourceToolCalls)
 	}
 }

@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"path/filepath"
 	"sync"
@@ -328,5 +329,131 @@ func TestPlanRow_EffectiveBudgetMergesTheAuthoritativeCounter(t *testing.T) {
 	}
 	if b.MaxToolCalls != 8 {
 		t.Errorf("MaxToolCalls = %d, want 8 (the maximum lives in the document)", b.MaxToolCalls)
+	}
+}
+
+// T5 asked for a migration test and there was none: the columns were
+// declared in the migration and never checked. This one checks three
+// things: that the eight columns EXIST, that their DEFAULTS put a
+// pre-existing row in the safest possible state, and that a row
+// created before the plan existed reads back as a draft plan with
+// zero counters.
+func TestPlanColumns_MigrationV33(t *testing.T) {
+	s := newPlanStore(t)
+	ctx := context.Background()
+
+	rows, err := s.db.QueryContext(ctx, "PRAGMA table_info(vibe_specs)")
+	if err != nil {
+		t.Fatalf("PRAGMA table_info(vibe_specs): %v", err)
+	}
+	defer rows.Close()
+
+	type colInfo struct {
+		name    string
+		deflt   sql.NullString
+		notNull bool
+	}
+	cols := map[string]colInfo{}
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull int
+		var dflt sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &dflt, &pk); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		cols[name] = colInfo{name: name, deflt: dflt, notNull: notNull == 1}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+
+	want := []string{
+		"plan_json", "plan_status", "plan_decision", "plan_decided_by",
+		"plan_decided_at", "plan_tier", "plan_budget_used", "plan_judge_used",
+	}
+	for _, w := range want {
+		if _, ok := cols[w]; !ok {
+			t.Errorf("column %q is missing: the v33 migration did not create it", w)
+		}
+	}
+	if len(want) != 8 {
+		t.Fatalf("the expectation itself lists %d columns; the plan has eight", len(want))
+	}
+
+	// The default of plan_status has to be 'draft': a row that
+	// predates the plan must land in the SAFEST state (a plan exists,
+	// nobody approved it). A default of 'approved' would let a
+	// pre-existing row authorise calls.
+	if got := cols["plan_status"].deflt.String; got != "'draft'" {
+		t.Errorf("plan_status default = %q, want %q", got, "'draft'")
+	}
+	// And the counters start at zero.
+	for _, c := range []string{"plan_budget_used", "plan_judge_used"} {
+		if got := cols[c].deflt.String; got != "0" {
+			t.Errorf("%s default = %q, want %q", c, got, "0")
+		}
+	}
+
+	// A row created without touching the plan columns reads back as a
+	// draft plan with zero counters.
+	specID := seedSpec(t, s, "sess-legacy")
+	got, err := s.GetPlan(ctx, specID)
+	if err != nil {
+		t.Fatalf("GetPlan: %v", err)
+	}
+	if got != nil {
+		t.Errorf("GetPlan = %+v, want nil: a spec with no plan has no plan", got)
+	}
+	var status string
+	var used, judge int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT plan_status, plan_budget_used, plan_judge_used FROM vibe_specs WHERE id = ?`,
+		specID).Scan(&status, &used, &judge); err != nil {
+		t.Fatalf("read the plan columns: %v", err)
+	}
+	if status != "draft" {
+		t.Errorf("plan_status = %q, want %q", status, "draft")
+	}
+	if used != 0 || judge != 0 {
+		t.Errorf("counters = %d/%d, want 0/0", used, judge)
+	}
+}
+
+// GetOpenPlan reads the plan of the OPEN spec of the session. The
+// negative case was covered (no open spec); the positive one was not:
+// the path that the gate will actually use is the positive one.
+func TestGetOpenPlan_Positive(t *testing.T) {
+	s := newPlanStore(t)
+	ctx := context.Background()
+	specID := seedSpec(t, s, "sess-open2")
+	seedPlan(t, s, specID, 3, 1)
+
+	// The session opens that spec.
+	if _, err := s.SaveVLPState(ctx, store.WriteContext{
+		Actor:     "test",
+		SessionID: "sess-open2",
+		WritePath: "test_seed_vlp",
+	}, &store.VLPStateRow{
+		SessionID:  "sess-open2",
+		State:      1,
+		OpenSpecID: specID,
+	}); err != nil {
+		t.Fatalf("SaveVLPState: %v", err)
+	}
+
+	got, err := s.GetOpenPlan(ctx, "sess-open2")
+	if err != nil {
+		t.Fatalf("GetOpenPlan: %v", err)
+	}
+	if got == nil {
+		t.Fatal("GetOpenPlan = nil, want the plan of the open spec")
+	}
+	if got.SpecID != specID {
+		t.Errorf("SpecID = %d, want %d", got.SpecID, specID)
+	}
+	if got.Status != vibeflow.PlanApproved {
+		t.Errorf("Status = %q, want %q", got.Status, vibeflow.PlanApproved)
 	}
 }

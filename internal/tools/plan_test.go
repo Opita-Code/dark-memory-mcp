@@ -53,10 +53,13 @@ func newPlanEnv(t *testing.T) (*Registry, store.Store, *orchestration.Orchestrat
 
 	orch := orchestration.New(st, nil)
 	reg := NewRegistry()
-	// The plan tools need the orchestrator; the registry is otherwise
-	// empty because the plan's corpus is built from the registry
-	// itself and an empty corpus is fine for these assertions (the
-	// candidates come from whatever tools are registered).
+	// The corpus of the ranker is the REGISTRY itself, so the tests
+	// need a registry that looks like the real one: the agent-memory
+	// namespace is registered here so that an intent about writing a
+	// memory really finds agent_memory_save among the candidates.
+	// With a registry of only the three plan tools, every such intent
+	// would match nothing and the re-proposal test would be vacuous.
+	RegisterAgentMemory(reg, orch, st)
 	if err := RegisterPlan(reg, orch); err != nil {
 		t.Fatalf("RegisterPlan: %v", err)
 	}
@@ -430,5 +433,177 @@ func TestPlan_ToolFullDocIncludesTheSchema(t *testing.T) {
 	}
 	if !strings.Contains(doc, "Propose a plan") {
 		t.Errorf("the full doc does not include the description:\n%s", doc)
+	}
+}
+
+// The path without spec_id: the plan of the OPEN spec of the session.
+// The negative case was covered (no open spec); the positive one is
+// the path the gate will actually use, so it was the one that mattered.
+func TestPlan_GetAndDecideTheOpenSpecOfTheSession(t *testing.T) {
+	reg, st, orch := newPlanEnv(t)
+	specID := planSpec(t, st, orch, "open spec of the session")
+
+	planCall(t, reg, "plan_create", map[string]any{
+		"spec_id": specID,
+		"intent":  "save a memory",
+	})
+
+	// The session opens that spec.
+	if _, err := st.SaveVLPState(context.Background(), store.WriteContext{
+		Actor:     "test",
+		SessionID: "sess-plan",
+		WritePath: "test_seed_vlp",
+	}, &store.VLPStateRow{
+		SessionID:  "sess-plan",
+		State:      1,
+		OpenSpecID: specID,
+	}); err != nil {
+		t.Fatalf("SaveVLPState: %v", err)
+	}
+
+	// plan_get without spec_id reads the open plan.
+	var got struct {
+		Found  bool   `json:"found"`
+		SpecID int64  `json:"spec_id"`
+		Status string `json:"status"`
+	}
+	planData(t, planCall(t, reg, "plan_get", map[string]any{
+		"session_id": "sess-plan",
+	}), &got)
+	if !got.Found {
+		t.Fatal("plan_get without spec_id: found = false, but the session has an open plan")
+	}
+	if got.SpecID != specID {
+		t.Errorf("spec_id = %d, want %d", got.SpecID, specID)
+	}
+
+	// And plan_decide without spec_id decides on it.
+	var decided struct {
+		SpecID   int64  `json:"spec_id"`
+		Decision string `json:"decision"`
+		Status   string `json:"status"`
+	}
+	planData(t, planCall(t, reg, "plan_decide", map[string]any{
+		"session_id": "sess-plan",
+		"decision":   "execute",
+	}), &decided)
+	if decided.SpecID != specID {
+		t.Errorf("spec_id = %d, want %d", decided.SpecID, specID)
+	}
+	if decided.Status != "approved" {
+		t.Errorf("status = %q, want %q", decided.Status, "approved")
+	}
+}
+
+// The human decision has to leave a trail that says WHAT was decided
+// and what the plan looked like BEFORE (SPEC-194 §3.7 and AC5). The
+// earlier test only checked that the row EXISTS, which passes with an
+// empty row: the independent review of PR #43 caught that.
+func TestPlan_DecideLeavesATrailWithTheDecisionAndThePreviousPlan(t *testing.T) {
+	reg, st, orch := newPlanEnv(t)
+	specID := planSpec(t, st, orch, "audit the decision")
+
+	planCall(t, reg, "plan_create", map[string]any{
+		"spec_id": specID,
+		"intent":  "save a memory",
+	})
+	planCall(t, reg, "plan_decide", map[string]any{
+		"spec_id":    specID,
+		"decision":   "execute",
+		"decided_by": "the-operator",
+	})
+
+	rows, err := st.ListWrites(context.Background(), audit.ListFilters{
+		TableName: "vibe_specs",
+		WritePath: "plan_decide",
+		Limit:     50,
+	})
+	if err != nil {
+		t.Fatalf("ListWrites: %v", err)
+	}
+	var row *audit.WriteEvent
+	for i := range rows {
+		if rows[i].WritePath == "plan_decide" {
+			row = &rows[i]
+			break
+		}
+	}
+	if row == nil {
+		t.Fatal("write_audit has no row with write_path=plan_decide")
+	}
+
+	// The actor is the PERSON who decided, not the tool name.
+	if row.Actor != "the-operator" {
+		t.Errorf("actor = %q, want %q: the trail must name who decided", row.Actor, "the-operator")
+	}
+	// The notes say what was decided...
+	if !strings.Contains(row.Notes, "decision=execute") {
+		t.Errorf("notes %q do not say what was decided", row.Notes)
+	}
+	if !strings.Contains(row.Notes, "decided_by=the-operator") {
+		t.Errorf("notes %q do not say who decided", row.Notes)
+	}
+	// ...and what the plan looked like BEFORE (AC5).
+	if !strings.Contains(row.Notes, "previous_intent=") {
+		t.Errorf("notes %q do not carry the previous plan", row.Notes)
+	}
+	if !strings.Contains(row.Notes, "previous_candidates=") {
+		t.Errorf("notes %q do not carry the previous candidates", row.Notes)
+	}
+}
+
+// An edit has to RE-PROPOSE: the reviewer narrowed the intent, so the
+// shortlist is ranked again against the new one. Keeping the
+// candidates of the old intent would be a plan that does not answer
+// the question the reviewer asked (SPEC-194 §3.7).
+func TestPlan_EditReProposesTheShortlist(t *testing.T) {
+	reg, st, orch := newPlanEnv(t)
+	specID := planSpec(t, st, orch, "edit re-proposes")
+
+	planCall(t, reg, "plan_create", map[string]any{
+		"spec_id": specID,
+		"intent":  "write the quarterly sales report with charts and a summary",
+	})
+
+	var before struct {
+		Plan struct {
+			Candidates []struct {
+				Tool string `json:"tool"`
+			} `json:"candidates"`
+			Revision int `json:"revision"`
+		} `json:"plan"`
+	}
+	planData(t, planCall(t, reg, "plan_get", map[string]any{"spec_id": specID}), &before)
+
+	var decided struct {
+		Plan struct {
+			Candidates []struct {
+				Tool string `json:"tool"`
+			} `json:"candidates"`
+			Revision int `json:"revision"`
+		} `json:"plan"`
+	}
+	planData(t, planCall(t, reg, "plan_decide", map[string]any{
+		"spec_id":     specID,
+		"decision":    "edit",
+		"edit_prompt": "save a single memory row",
+	}), &decided)
+
+	if decided.Plan.Revision != 1 {
+		t.Errorf("revision = %d, want 1", decided.Plan.Revision)
+	}
+	if len(decided.Plan.Candidates) == 0 {
+		t.Fatal("the edit left no candidates: the plan was not re-proposed")
+	}
+	// The shortlist of the NEW intent must be about the memory write,
+	// not about the report.
+	sawMemory := false
+	for _, c := range decided.Plan.Candidates {
+		if c.Tool == "agent_memory_save" {
+			sawMemory = true
+		}
+	}
+	if !sawMemory {
+		t.Errorf("the re-proposed shortlist does not contain agent_memory_save: %+v", decided.Plan.Candidates)
 	}
 }

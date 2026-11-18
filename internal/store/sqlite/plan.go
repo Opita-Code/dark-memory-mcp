@@ -15,7 +15,7 @@ import (
 
 // SPEC-194: the persistence of the plan.
 //
-// The plan lives on vibe_specs (seven new columns, migration v33). It
+// The plan lives on vibe_specs (eight new columns, migration v33). It
 // is NOT a table of its own: a `plans` table would duplicate
 // vibe_specs and break the SPEC-204 rule ("resolve one thing in one
 // place"), and vlp_state cannot hold it because its index is UNIQUE
@@ -71,11 +71,12 @@ func (s *Store) SavePlan(ctx context.Context, wc store.WriteContext, specID int6
 				plan_decided_at  = ?,
 				plan_tier        = ?,
 				plan_budget_used = ?,
+				plan_judge_used  = ?,
 				updated_at       = ?
 			 WHERE id = ? AND project_id = ?`,
 			string(planJSON), string(row.Status), string(row.Decision),
 			nullStr(row.DecidedBy), nullStr(row.DecidedAt), string(row.Plan.PlanTier),
-			row.BudgetUsed, now, specID, projectID)
+			row.BudgetUsed, row.JudgeUsed, now, specID, projectID)
 		if err != nil {
 			return err
 		}
@@ -91,7 +92,12 @@ func (s *Store) SavePlan(ctx context.Context, wc store.WriteContext, specID int6
 			WritePath:       wc.WritePath,
 			ConstitutionID:  wc.ConstitutionID,
 			ConstitutionVer: wc.ConstitutionVer,
-			CreatedAt:       now,
+			// The notes carry what the decision was and what the
+			// plan looked like BEFORE it changed (SPEC-194 AC5: the
+			// previous plan stays in the trail). Without them the row
+			// says only "something changed", which is not a trail.
+			Notes:     wc.Notes,
+			CreatedAt: now,
 		}, "")
 	})
 }
@@ -224,22 +230,36 @@ func (s *Store) ChargePlanCall(ctx context.Context, wc store.WriteContext, specI
 					budget.UsedToolCalls, budget.MaxToolCalls))
 		}
 
-		// CONDITIONAL update: the WHERE clause re-asserts that the
-		// budget still has room. If a concurrent transaction spent it
-		// between our SELECT and this UPDATE, this matches zero rows.
+		// CONDITIONAL update. The WHERE clause re-asserts BOTH the
+		// approval AND the ceiling of the resource being spent:
+		//
+		//   AND plan_budget_used < <max_tool_calls>
+		//
+		// That condition is what makes the charge atomic AT THE
+		// DATABASE LEVEL: if a concurrent transaction spent the last
+		// unit between our SELECT and this UPDATE, the UPDATE matches
+		// zero rows and the caller gets ErrBudgetExceeded.
+		//
+		// The earlier version of this comment claimed the condition
+		// existed when it did not (the WHERE only re-asserted
+		// plan_status='approved'), so the real guarantee was the
+		// process mutex and not the SQL. The independent review of
+		// PR #43 caught it. Now the SQL says what the comment says.
 		var res sql.Result
 		if judgeCall {
 			res, err = tx.ExecContext(ctx,
 				`UPDATE vibe_specs SET plan_judge_used = plan_judge_used + 1,
 				 updated_at = ?
-				 WHERE id = ? AND project_id = ? AND plan_status = 'approved'`,
-				now, specID, projectID)
+				 WHERE id = ? AND project_id = ? AND plan_status = 'approved'
+				   AND plan_judge_used < ?`,
+				now, specID, projectID, budget.MaxJudgeCalls)
 		} else {
 			res, err = tx.ExecContext(ctx,
 				`UPDATE vibe_specs SET plan_budget_used = plan_budget_used + 1,
 				 updated_at = ?
-				 WHERE id = ? AND project_id = ? AND plan_status = 'approved'`,
-				now, specID, projectID)
+				 WHERE id = ? AND project_id = ? AND plan_status = 'approved'
+				   AND plan_budget_used < ?`,
+				now, specID, projectID, budget.MaxToolCalls)
 		}
 		if err != nil {
 			return err
