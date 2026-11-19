@@ -1,5 +1,5 @@
 # =============================================================================
-# Constitution de política de workspace — dark-agents/workspace-policy v1.4.1
+# Constitution de política de workspace — dark-agents/workspace-policy v1.5.1
 # =============================================================================
 #
 # TL;DR: la política del operador que mantiene cada artefacto de proyecto
@@ -46,8 +46,8 @@
 # =============================================================================
 
 id: dark-agents/workspace-policy
-version: 1.4.1
-sha256: e93d0abba96d0c9e04863f602fe5e3c7ad13a4ff3ebe477c7560c38fe331051c
+version: 1.5.1
+sha256: c116b699f518251e917af18450d401223c690ede9a422c19bceafb9b8bd1966a
 invariants: [INV-1, INV-2, INV-3, INV-4, INV-5, INV-6, INV-7, INV-8, INV-9, INV-10, INV-11, INV-12, INV-13, INV-14, INV-15]
 
 # M4.1 — política de auto-actualización. Una política local de operador no se
@@ -148,8 +148,8 @@ refusal:
 
 meta:
   id: "dark-agents/workspace-policy"
-  version: 1.4.1
-  label: "disciplina de workspace y de cierre - los artefactos viven en el workspace del proyecto, la politica se aplica en codigo, y el hallazgo se cablea al juez y a opencode antes de darse por terminado"
+  version: 1.5.1
+  label: "disciplina de workspace y de cierre - los artefactos viven en el workspace del proyecto y su temporal tambien, la politica se aplica en codigo, y el hallazgo se cablea al juez y a opencode antes de darse por terminado"
   source: "operator:workspace-governance"
 
 scope:
@@ -161,7 +161,7 @@ scope:
 
     Fuera de alcance:
       - Rutas del sistema y de paquetes fuera del workspace (/usr, /opt, /etc).
-      - Intermediarios descartables cuya vida acaba dentro de la tarea en curso.
+      - Intermediarios descartables: viven en <workspace_root>/<project_id>/.tmp/, nunca en el temporal global.
       - Los workspaces de otros operadores en esta máquina.
 
 operational_rules:
@@ -170,7 +170,7 @@ operational_rules:
 
       WS-1 (un workspace por proyecto): cada proyecto tiene exactamente una raíz de workspaces en <workspace_root>/<project_id>, y es un checkout real, no un directorio de trabajo improvisado. El home es espacio personal, no de proyecto: no guarda artefactos de proyecto.
 
-      WS-2 (sin workspaces temporales): /tmp, /var/tmp y cualquier otra ubicación temporal NO deben guardar artefactos de proyecto. Un fichero que importa se mueve al workspace en la misma tarea que lo crea.
+      WS-2 (sin workspaces temporales): /tmp, /var/tmp y cualquier otra ubicación temporal NO deben guardar trabajo de proyecto: ni los artefactos que importan ni el temporal de la sesión. El temporal de cada proyecto vive DENTRO de su workspace, en <workspace_root>/<project_id>/.tmp/, y TMPDIR apunta ahí mientras se trabaja en ese proyecto. Un fichero que importa se mueve al workspace en la misma tarea que lo crea, y se queda dentro: nada del trabajo de un proyecto vive en el temporal global ni en el home.
 
       WS-3 (ruta canónica): los entregables se citan por su ruta dentro del workspace. Al publicar un artefacto (vibe_publish / artifact_ref) la ruta DEBE resolver dentro del workspace del proyecto.
 
@@ -194,7 +194,7 @@ workspace:
     - /tmp
     - /var/tmp
     - "<home_root>"
-  forbidden_roots_note: "<home_root> es el home personal del operador. Es una raíz prohibida para artefactos de proyecto; la configuración bajo ~/.config y ~/.local sí se permite, porque es estado del operador, no trabajo de proyecto."
+  forbidden_roots_note: "<home_root> es el home personal del operador. Es una raíz prohibida para el trabajo de proyecto: la configuración bajo ~/.config y ~/.local sí se permite, porque es estado del operador, no trabajo de proyecto. El temporal global (~/.cache/tmp) cae dentro de <home_root> y por tanto también está prohibido para el trabajo de un proyecto: el temporal de cada proyecto es <workspace_root>/<project_id>/.tmp/, y TMPDIR apunta ahí mientras se trabaja en ese proyecto."
 
 # La sección persona que lee el inyector. Cada campo va en una sola línea:
 # governance/check-constitution.sh compara estos tres valores contra la forma
